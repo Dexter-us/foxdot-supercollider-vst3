@@ -839,7 +839,7 @@ BEGIN_FACTORY_DEF("Dexter U.S.", "", "")
 DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            PClassInfo::kManyInstances,
            kVstAudioEffectClass,
-           "Dexter FoxDot Live",
+           "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
            "0.2.0",

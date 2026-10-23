@@ -140,7 +140,7 @@ public:
         if (!registerWindowClass())
             return Steinberg::kResultFalse;
 
-        window_ = CreateWindowExW(0, kWindowClass, L"Dexter U.S. SuperCollider Live Code",
+        window_ = CreateWindowExW(0, kWindowClass, L"Dexter U.S FoxDot",
                                   WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
                                   0, 0, kViewWidth, kViewHeight,
                                   static_cast<HWND>(parent), nullptr,
@@ -375,7 +375,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S. Foxdot",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),

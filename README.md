@@ -23,7 +23,7 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 - Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
 - MIDI note events are emitted on a VST3 event output bus; the pattern supports up to 8 simultaneous notes, with extra audio voices reserved for short release tails.
 - Internal audio applies MIDI velocity and a per-voice 5 ms attack / 12 ms release envelope, then normalizes the chord mix to keep level reasonably consistent.
-- The native editor footer displays “Dexter U.S. Foxdot”; the VST3 manufacturer metadata remains Dexter U.S.
+- The plugin display name and native editor branding read “Dexter U.S FoxDot”; the VST3 manufacturer metadata remains Dexter U.S.
 - Dexter U.S. manufacturer metadata.
 
 Example:
