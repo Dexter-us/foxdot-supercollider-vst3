@@ -44,9 +44,18 @@ set(SDK_ROOT "${VST3_SDK_ROOT}")
 set(public_sdk_SOURCE_DIR "${VST3_SDK_ROOT}/public.sdk")
 set(pluginterfaces_SOURCE_DIR "${VST3_SDK_ROOT}/pluginterfaces")
 
-find_library(SC_LIBSCSYNTH NAMES scsynth libscsynth PATHS "${SC_BUILD_DIR}/server/scsynth" NO_DEFAULT_PATH REQUIRED)
-find_library(SC_TLSF NAMES tlsf PATHS "${SC_BUILD_DIR}/external_libraries" NO_DEFAULT_PATH REQUIRED)
-find_library(SC_PORTAUDIO NAMES portaudio portaudio_static PATHS "${SC_BUILD_DIR}/external_libraries/portaudio/portaudio_submodule" NO_DEFAULT_PATH REQUIRED)
+find_library(SC_LIBSCSYNTH NAMES scsynth libscsynth
+  PATHS "${SC_BUILD_DIR}/server/scsynth"
+  PATH_SUFFIXES Release RelWithDebInfo Debug
+  NO_DEFAULT_PATH REQUIRED)
+find_library(SC_TLSF NAMES tlsf
+  PATHS "${SC_BUILD_DIR}/external_libraries"
+  PATH_SUFFIXES Release RelWithDebInfo Debug
+  NO_DEFAULT_PATH REQUIRED)
+find_library(SC_PORTAUDIO NAMES portaudio portaudio_static
+  PATHS "${SC_BUILD_DIR}/external_libraries/portaudio/portaudio_submodule"
+  PATH_SUFFIXES Release RelWithDebInfo Debug
+  NO_DEFAULT_PATH REQUIRED)
 
 smtg_add_vst3plugin(dexter_sc_tone processor.cpp "${SDK_ROOT}/public.sdk/source/vst/vstsinglecomponenteffect.cpp")
 smtg_target_add_plugin_resources(dexter_sc_tone

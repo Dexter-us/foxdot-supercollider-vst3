@@ -37,3 +37,15 @@ cmake --build build/vst3-callback --target dexter_sc_tone
 ```
 
 The build runs Steinberg's validator as a post-build check. `SC_UGEN_PLUGIN_PATH` is used only at build time to find platform-matched modules to copy into the VST3 package; the runtime loads them from the package's `Resources/SCPlugins` folder.
+
+## Windows smoke build
+
+The Windows script and GitHub Actions job use Visual Studio 2022 x64 to build the pinned SuperCollider engine and UGen modules, build the VST3 bundle, and run the VST3 validator. The script clones the pinned SuperCollider revision and VST3 SDK tag into a temporary build directory; it does not require the full SuperCollider IDE or Qt.
+
+On Windows with Git, CMake 3.25 or newer, and the Visual Studio 2022 C++ workload installed, run from the repository root:
+
+```powershell
+.\tools\build-windows-vst3.ps1
+```
+
+The GitHub Actions workflow also uploads the validated Windows VST3 bundle as a downloadable artifact when the job succeeds. This is a smoke-build path; Windows audio-host behavior still needs to be tested in a real VST3 host.
