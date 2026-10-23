@@ -7,7 +7,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - A SuperCollider world and SynthDef render inside a VST3 module.
 - The host owns the audio callback; each VST block is split into SuperCollider's fixed 64-sample blocks and buffered for variable host block sizes.
 - The three required UGen modules (`OscUGens`, `BinaryOpUGens`, and `IOUGens`) are copied into `Contents/Resources/SCPlugins`. The plugin locates that folder relative to its loaded module; no build-machine UGen path is compiled into the binary.
-- The required CPython embeddable runtime files and its `math` extension are copied into `Contents/Resources/Python`, with the Python license notice.
+- The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
 - The editor supports `tempo(bpm)` and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0)`.
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the plugin's sample clock.
 - A MIDI output event bus is exposed to the host.

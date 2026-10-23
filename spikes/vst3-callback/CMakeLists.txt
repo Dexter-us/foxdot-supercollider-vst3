@@ -54,11 +54,6 @@ foreach(PYTHON_VCRUNTIME_FILE vcruntime140.dll vcruntime140_1.dll)
     list(APPEND PYTHON_RUNTIME_FILES "${PYTHON_RUNTIME_DIR}/${PYTHON_VCRUNTIME_FILE}")
   endif()
 endforeach()
-set(PYTHON_EXTENSION_MODULES "${PYTHON_RUNTIME_DIR}/DLLs/math.pyd")
-if(NOT EXISTS "${PYTHON_EXTENSION_MODULES}")
-  message(FATAL_ERROR "The portable Python package is missing DLLs/math.pyd")
-endif()
-
 set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)
 set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -90,11 +85,6 @@ smtg_add_vst3plugin(dexter_sc_tone
 smtg_target_add_plugin_resources(dexter_sc_tone
   OUTPUT_SUBDIRECTORY "Python"
   RESOURCES ${PYTHON_RUNTIME_FILES})
-if(PYTHON_EXTENSION_MODULES)
-  smtg_target_add_plugin_resources(dexter_sc_tone
-    OUTPUT_SUBDIRECTORY "Python/DLLs"
-    RESOURCES ${PYTHON_EXTENSION_MODULES})
-endif()
 smtg_target_add_plugin_resources(dexter_sc_tone
   OUTPUT_SUBDIRECTORY "SCPlugins"
   RESOURCES ${SC_UGEN_MODULE_FILES})

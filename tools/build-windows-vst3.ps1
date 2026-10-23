@@ -95,15 +95,16 @@ if (-not (Test-Path (Join-Path $pythonRuntime "python3.dll"))) {
 if (-not (Test-Path (Join-Path $pythonRuntime "vcruntime140.dll"))) {
     throw "The CPython embeddable distribution is missing vcruntime140.dll."
 }
-if (-not (Test-Path (Join-Path $pythonRuntime "DLLs/math.pyd"))) {
-    throw "The CPython embeddable distribution is missing DLLs/math.pyd."
-}
-$pthFile = Join-Path $pythonRuntime "python312._pth"
-$pthLines = Get-Content $pthFile
-if ($pthLines -notcontains "DLLs") {
-    Add-Content -Path $pthFile -Value "DLLs"
+$pythonExe = Join-Path $pythonRuntime "python.exe"
+if (-not (Test-Path $pythonExe)) {
+    throw "The CPython embeddable distribution is missing python.exe."
 }
 Write-Host "Prepared bundled CPython $pythonVersion runtime."
+
+& $pythonExe -c "import sys, time, traceback; assert sys.version_info[:2] == (3, 12)"
+if ($LASTEXITCODE -ne 0) {
+    throw "The bundled CPython runtime did not pass its startup smoke test."
+}
 
 if (-not (Test-Path (Join-Path $scSource ".git"))) {
     if (Test-Path $scSource) {
@@ -226,7 +227,7 @@ foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt")) {
     }
 }
 foreach ($pythonFile in @("Python/python312.dll", "Python/python3.dll", "Python/python312.zip",
-        "Python/python312._pth", "Python/vcruntime140.dll", "Python/DLLs/math.pyd")) {
+        "Python/python312._pth", "Python/vcruntime140.dll")) {
     if (-not (Test-Path (Join-Path $resourceRoot $pythonFile))) {
         throw "The VST3 bundle is missing portable Python runtime file $pythonFile"
     }

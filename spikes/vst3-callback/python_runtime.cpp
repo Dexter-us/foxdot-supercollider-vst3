@@ -1,5 +1,6 @@
 #include "python_runtime.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <fstream>
@@ -87,7 +88,7 @@ std::string makeEvaluationScript(const std::string& sourcePath,
 def tempo(bpm):
     global _dexter_bpm
     bpm = float(bpm)
-    if not math.isfinite(bpm) or not 20.0 <= bpm <= 300.0:
+    if bpm != bpm or not 20.0 <= bpm <= 300.0:
         raise ValueError('tempo must be from 20 to 300 BPM')
     _dexter_bpm = bpm
 
@@ -100,11 +101,11 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0):
     duration = step if duration is None else float(duration)
     offset = float(offset)
     velocity = int(velocity)
-    if not math.isfinite(step) or not math.isfinite(duration) or not math.isfinite(offset):
+    if step != step or duration != duration or offset != offset:
         raise ValueError('step, duration, and offset must be finite numbers')
-    if step < 0.1 or duration < 0.02 or duration > step:
+    if step < 0.1 or step > 4096 or duration < 0.02 or duration > step:
         raise ValueError('step must be at least 0.1 beats; duration must be 0.02 beats or longer and fit within the step')
-    if offset < 0.0 or offset + len(notes) * step > 4096:
+    if offset < 0.0 or offset > 4096 or offset + len(notes) * step > 4096:
         raise ValueError('offset and pattern length must fit within 4096 beats')
     if not 1 <= velocity <= 127:
         raise ValueError('velocity must be 1..127')
@@ -126,10 +127,10 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0):
 )PY";
 
     std::ostringstream script;
-    script << "import builtins, math, traceback, sys, time\n"
+    script << "import builtins, traceback, sys, time\n"
            << "_dexter_scope = globals().setdefault(" << pythonLiteral(namespaceName) << ", {})\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
-           << "'_dexter_length': 1.0, '_dexter_slots': 0, 'math': math})\n"
+           << "'_dexter_length': 1.0, '_dexter_slots': 0})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
            << "('abs', 'all', 'any', 'bool', 'dict', 'enumerate', 'filter', 'float', "
            << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', "
@@ -187,7 +188,7 @@ bool parseResult(const std::filesystem::path& resultPath,
         marker != "OK" || eventCount > 256 ||
         !std::isfinite(pattern.bpm) || !std::isfinite(pattern.lengthBeats) ||
         pattern.bpm < 20.0 || pattern.bpm > 300.0 ||
-        pattern.lengthBeats <= 0.0) {
+        pattern.lengthBeats <= 0.0 || pattern.lengthBeats > 4096.0) {
         error = "Python returned an invalid pattern.";
         return false;
     }
@@ -198,13 +199,26 @@ bool parseResult(const std::filesystem::path& resultPath,
         PythonNoteEvent event;
         if (!(input >> event.beat >> event.durationBeats >> event.midiNote >> event.velocity) ||
             !std::isfinite(event.beat) || !std::isfinite(event.durationBeats) ||
-            event.beat < 0.0 || event.durationBeats <= 0.0 ||
+            event.beat < 0.0 || event.beat > pattern.lengthBeats ||
+            event.durationBeats < 0.02 ||
+            event.beat + event.durationBeats > pattern.lengthBeats + 1e-9 ||
             event.midiNote < 0 || event.midiNote > 127 ||
             event.velocity < 1 || event.velocity > 127) {
             error = "Python returned a malformed note event.";
             return false;
         }
         pattern.events.push_back(event);
+    }
+    std::sort(pattern.events.begin(), pattern.events.end(),
+              [](const PythonNoteEvent& a, const PythonNoteEvent& b) {
+                  return a.beat < b.beat;
+              });
+    for (std::size_t i = 1; i < pattern.events.size(); ++i) {
+        const auto& previous = pattern.events[i - 1];
+        if (pattern.events[i].beat + 1e-9 < previous.beat + previous.durationBeats) {
+            error = "Python returned overlapping notes in a monophonic pattern.";
+            return false;
+        }
     }
     return true;
 }
