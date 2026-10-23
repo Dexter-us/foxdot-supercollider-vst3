@@ -18,6 +18,20 @@ if (-not (Test-Path (Join-Path $pluginSource "CMakeLists.txt"))) {
 
 $scCommit = "ef5771bce3d1c9c780cafd58cf032ec4a3f36d10"
 $vst3Tag = "v3.8.1_build_84"
+
+$vswhere = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Microsoft Visual Studio\Installer\vswhere.exe"
+if (-not (Test-Path $vswhere)) {
+    throw "Visual Studio 2022 or 2026 Build Tools are required for the Windows build."
+}
+$vsVersion = (& $vswhere -latest -products "*" -property installationVersion).Trim()
+if ($LASTEXITCODE -ne 0 -or $vsVersion -notmatch "^(?<major>\d+)\.") {
+    throw "Could not determine the installed Visual Studio version from vswhere."
+}
+switch ([int]$Matches["major"]) {
+    17 { $vsGenerator = "Visual Studio 17 2022" }
+    18 { $vsGenerator = "Visual Studio 18 2026" }
+    default { throw "Unsupported Visual Studio version $vsVersion; use Visual Studio 2022 or 2026." }
+}
 $scSource = Join-Path $BuildRoot "deps/supercollider"
 $scBuild = Join-Path $BuildRoot "supercollider-build"
 $vst3Sdk = Join-Path $BuildRoot "deps/vst3sdk"
@@ -38,7 +52,7 @@ function Invoke-Checked {
 
 foreach ($tool in @("git", "cmake")) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "Required command '$tool' was not found. Install Git and CMake, then use a Visual Studio 2022 Developer environment."
+        throw "Required command '$tool' was not found. Install Git, CMake, and Visual Studio 2022 or 2026 Build Tools."
     }
 }
 
@@ -76,7 +90,7 @@ try {
     Invoke-Checked "cmake" @(
         "-S", $scSource,
         "-B", $scBuild,
-        "-G", "Visual Studio 17 2022",
+        "-G", $vsGenerator,
         "-A", "x64",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
         "-DSC_QT=OFF",
@@ -133,7 +147,7 @@ $ugenPluginPath = $moduleDirectories[0]
 Invoke-Checked "cmake" @(
     "-S", $pluginSource,
     "-B", $pluginBuild,
-    "-G", "Visual Studio 17 2022",
+    "-G", $vsGenerator,
     "-A", "x64",
     "-DVST3_SDK_ROOT=$vst3Sdk",
     "-DSC_SOURCE_DIR=$scSource",
