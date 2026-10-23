@@ -2,6 +2,7 @@
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/main/moduleinit.h"
 #include "pluginterfaces/base/ustring.h"
+#include "pluginterfaces/vst/ivstevents.h"
 
 #include "SC_WorldOptions.h"
 #include "SC_Prototypes.h"
