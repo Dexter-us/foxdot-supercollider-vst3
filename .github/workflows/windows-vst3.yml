@@ -21,7 +21,21 @@ jobs:
 
       - name: Build SuperCollider and the VST3, then validate
         shell: pwsh
-        run: .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+        run: |
+          $buildLog = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3-build.log"
+          try {
+            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" *> $buildLog
+            if ($LASTEXITCODE -ne 0) {
+              throw "Build script exited with code $LASTEXITCODE"
+            }
+          }
+          catch {
+            Write-Host "Build failed. Last 160 log lines:"
+            if (Test-Path $buildLog) {
+              Get-Content $buildLog -Tail 160
+            }
+            throw
+          }
 
       - name: Upload Windows VST3 bundle
         uses: actions/upload-artifact@v4
