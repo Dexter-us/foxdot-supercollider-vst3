@@ -8,11 +8,6 @@
 class ICodeEditorHost {
 public:
     virtual ~ICodeEditorHost() = default;
-    virtual std::string editorSource() = 0;
-    virtual bool hasEditorSource() = 0;
-    virtual void setEditorSource(const std::string& source) = 0;
-    virtual bool syncToDaw() = 0;
-    virtual void setSyncToDaw(bool enabled) = 0;
     virtual void submitCode(const std::string& source) = 0;
     virtual void stopPattern() = 0;
     virtual std::string editorStatus() = 0;

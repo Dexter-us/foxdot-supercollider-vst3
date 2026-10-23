@@ -27,8 +27,7 @@ constexpr int kStatusId = 104;
 constexpr int kExamplesId = 105;
 constexpr int kOpenId = 106;
 constexpr int kSaveId = 107;
-constexpr int kSyncId = 108;
-constexpr int kViewWidth = 820;
+constexpr int kViewWidth = 720;
 constexpr int kViewHeight = 480;
 constexpr int kMargin = 10;
 constexpr int kToolbarHeight = 32;
@@ -150,13 +149,11 @@ public:
             if (editor_) {
                 currentSource_ = editorSource();
                 sourceInitialized_ = true;
-                if (host_)
-                    host_->setEditorSource(toUtf8(currentSource_));
             }
             DestroyWindow(window_);
             window_ = nullptr;
             editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ =
-                syncButton_ = examples_ = status_ = nullptr;
+                examples_ = status_ = nullptr;
         }
         return Steinberg::kResultOk;
     }
@@ -296,19 +293,10 @@ private:
                 view->saveSource();
                 return 0;
             }
-            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kSyncId) {
-                if (view->host_ && view->syncButton_) {
-                    const auto checked = SendMessageW(view->syncButton_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-                    view->host_->setSyncToDaw(checked);
-                }
-                return 0;
-            }
             if (LOWORD(wParam) == kEditorId && HIWORD(wParam) == EN_CHANGE) {
                 if (!view->updatingEditor_) {
                     view->documentDirty_ = true;
                     view->updateSaveButton();
-                    if (view->host_)
-                        view->host_->setEditorSource(toUtf8(view->editorSource()));
                 }
                 return 0;
             }
@@ -325,12 +313,10 @@ private:
             if (view->editor_) {
                 view->currentSource_ = view->editorSource();
                 view->sourceInitialized_ = true;
-                if (view->host_)
-                    view->host_->setEditorSource(toUtf8(view->currentSource_));
             }
             view->window_ = nullptr;
             view->editor_ = view->runButton_ = view->stopButton_ =
-                view->openButton_ = view->saveButton_ = view->syncButton_ = view->examples_ =
+                view->openButton_ = view->saveButton_ = view->examples_ =
                     view->status_ = nullptr;
             return 0;
         }
@@ -358,15 +344,6 @@ private:
                                       0, 0, 62, 26, window_,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSaveId)),
                                       moduleInstance(), nullptr);
-        syncButton_ = CreateWindowExW(0, L"BUTTON", L"Sync to DAW",
-                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                                      0, 0, 100, 26, window_,
-                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSyncId)),
-                                      moduleInstance(), nullptr);
-        if (syncButton_ && host_) {
-            SendMessageW(syncButton_, BM_SETCHECK,
-                         host_->syncToDaw() ? BST_CHECKED : BST_UNCHECKED, 0);
-        }
         examples_ = CreateWindowExW(0, L"COMBOBOX", nullptr,
                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP |
                                         CBS_DROPDOWNLIST | WS_VSCROLL,
@@ -388,11 +365,7 @@ private:
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
         if (!sourceInitialized_) {
-            currentSource_ = host_ && host_->hasEditorSource()
-                                 ? fromUtf8(host_->editorSource())
-                                 : kInitialCode;
-            if (!host_ && currentSource_.empty())
-                currentSource_ = kInitialCode;
+            currentSource_ = kInitialCode;
             sourceInitialized_ = true;
         }
         updatingEditor_ = true;
@@ -422,8 +395,7 @@ private:
         MoveWindow(openButton_, kMargin + 120, buttonY, 56, kToolbarHeight - 4, TRUE);
         MoveWindow(saveButton_, kMargin + 180, buttonY, 62, kToolbarHeight - 4, TRUE);
         MoveWindow(examples_, kMargin + 248, buttonY, 154, kToolbarHeight - 4, TRUE);
-        MoveWindow(syncButton_, kMargin + 410, buttonY, 104, kToolbarHeight - 4, TRUE);
-        MoveWindow(status_, kMargin + 520, buttonY, std::max(100, width - 530),
+        MoveWindow(status_, kMargin + 410, buttonY, std::max(100, width - 420),
                    kToolbarHeight - 4, TRUE);
         const int editorTop = kMargin + kToolbarHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
@@ -455,8 +427,6 @@ private:
         currentSource_ = source;
         sourceInitialized_ = true;
         documentDirty_ = false;
-        if (host_)
-            host_->setEditorSource(toUtf8(source));
         updateSaveButton();
     }
 
@@ -650,17 +620,6 @@ private:
     void refreshStatus() {
         if (!host_ || !status_)
             return;
-        if (syncButton_) {
-            const bool sync = host_->syncToDaw();
-            const auto checked = SendMessageW(syncButton_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-            if (checked != sync)
-                SendMessageW(syncButton_, BM_SETCHECK, sync ? BST_CHECKED : BST_UNCHECKED, 0);
-        }
-        const auto restoredSource = fromUtf8(host_->editorSource());
-        if (!documentDirty_ && host_->hasEditorSource() &&
-            restoredSource != currentSource_) {
-            setEditorSource(restoredSource);
-        }
         const auto message = fromUtf8(host_->editorStatus());
         SetWindowTextW(status_, message.c_str());
     }
@@ -674,7 +633,6 @@ private:
     HWND stopButton_ = nullptr;
     HWND openButton_ = nullptr;
     HWND saveButton_ = nullptr;
-    HWND syncButton_ = nullptr;
     HWND examples_ = nullptr;
     HWND status_ = nullptr;
     std::wstring currentFilePath_;

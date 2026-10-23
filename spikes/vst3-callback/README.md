@@ -10,9 +10,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
 - The editor supports `tempo(bpm)` and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0)`.
 - The Windows editor can open and save UTF-8 Python scripts and includes three starter patterns. The dialogs default to the bundle's `Portable` folder, which is created beside `Contents`; the editor prompts before replacing unsaved edits.
-- The editor can optionally follow the DAW's tempo and play/stop state. With **Sync to DAW** off, `tempo(bpm)` remains the pattern clock; with it on, valid host tempo and musical-position data drive the pattern.
-- VST3 project state stores the editor code and sync setting. Loading a project restores the script in the editor but does not execute user code automatically.
-- Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the selected clock.
+- Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the plugin's sample clock.
 - A MIDI output event bus is exposed to the host.
 
 ## Prototype limits
@@ -20,7 +18,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - SuperCollider is pinned at `ef5771bce3d1c9c780cafd58cf032ec4a3f36d10`; the VST3 SDK checkout is 3.8.1. The Windows script bundles CPython 3.12.10. GitHub Actions builds and validates the Windows VST3; audio, editor, and MIDI behavior still require testing in a real Windows DAW.
 - The engine uses `WorldOptions::mRealTime = false` so SuperCollider does not initialize its own audio driver. This one-voice test graph runs in the host callback, but this is not a real-time-safety guarantee for arbitrary UGens or future code. Audit allocations, locks, and thread behavior before treating it as a production instrument.
 - Audio pitch follows scheduled MIDI notes in 64-sample SuperCollider blocks, so audio onset is quantized to that block size; MIDI events retain sample offsets.
-- The first version is monophonic and has no arbitrary SynthDef evaluation. DAW synchronization is optional and depends on the host supplying tempo and musical-position context. The editor is currently Windows-only.
+- The first version is monophonic, has no arbitrary SynthDef evaluation, and does not follow DAW transport. The editor is currently Windows-only.
 - User code is intentionally constrained but not a security sandbox. Pattern evaluation has a two-second Python loop guard; avoid untrusted scripts.
 - SuperCollider is GPL-3.0, the Python runtime uses the PSF license, and the VST3 SDK is MIT-licensed. Package notices are included; binary distribution must comply with the relevant source and notice requirements. Review remaining transitive dependency terms before release.
 
