@@ -23,6 +23,7 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 - Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
 - MIDI note events are emitted on a VST3 event output bus; SuperCollider renders the pattern through a fixed 8-voice pool.
 - MIDI output preserves each note's velocity; the prototype's internal chord audio uses a gain-normalized mix with average chord velocity.
+- A short 5 ms transition ramp reduces clicks when internal audio voices start or stop.
 - Dexter U.S. manufacturer metadata.
 
 Example:

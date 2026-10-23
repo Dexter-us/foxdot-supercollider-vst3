@@ -241,7 +241,16 @@ public:
                 updateSynthForBlock(sampleClock_ + static_cast<std::uint64_t>(frame));
                 renderSCBlock();
             }
-            const float sample = outputBlock_[cursor_++];
+            float sample = outputBlock_[cursor_++];
+            if (audioTransitionRemainingSamples_ > 0) {
+                const auto elapsed = audioTransitionTotalSamples_ -
+                                     audioTransitionRemainingSamples_ + 1;
+                const float mix = static_cast<float>(elapsed) /
+                                  static_cast<float>(audioTransitionTotalSamples_);
+                sample = audioTransitionStartSample_ * (1.0f - mix) + sample * mix;
+                --audioTransitionRemainingSamples_;
+            }
+            lastOutputSample_ = sample;
             for (int32 channel = 0; channel < output.numChannels; ++channel) {
                 if (output.channelBuffers32[channel])
                     output.channelBuffers32[channel][frame] = sample;
@@ -357,6 +366,7 @@ public:
 
 private:
     static constexpr int kSCBlockSize = 64;
+    static constexpr double kClickRampSeconds = 0.005;
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kMaxPolyphony = 8;
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
@@ -482,12 +492,23 @@ private:
     }
 
     void stopAudioVoices() {
+        bool hadActiveVoice = false;
         for (auto& voice : audioVoices_) {
+            hadActiveVoice = hadActiveVoice || voice.midiNote >= 0;
             if (voice.synth)
                 Node_SetRun(&voice.synth->mNode, 0);
             voice.midiNote = -1;
             voice.velocity = 0;
         }
+        if (hadActiveVoice)
+            requestAudioTransition();
+    }
+
+    void requestAudioTransition() {
+        audioTransitionStartSample_ = lastOutputSample_;
+        audioTransitionTotalSamples_ = static_cast<std::uint32_t>(
+            std::max(1.0, std::round(sampleRate_ * kClickRampSeconds)));
+        audioTransitionRemainingSamples_ = audioTransitionTotalSamples_;
     }
 
     void collectMidiEvents(std::uint64_t blockStart, std::uint64_t blockEnd,
@@ -574,6 +595,7 @@ private:
             }
         }
 
+        bool voicesChanged = false;
         for (auto& voice : audioVoices_) {
             if (voice.midiNote < 0)
                 continue;
@@ -585,6 +607,7 @@ private:
                     Node_SetRun(&voice.synth->mNode, 0);
                 voice.midiNote = -1;
                 voice.velocity = 0;
+                voicesChanged = true;
             }
         }
 
@@ -602,6 +625,7 @@ private:
                 if (found == audioVoices_.end())
                     continue;
                 found->midiNote = desiredNotes[i];
+                voicesChanged = true;
                 if (found->synth) {
                     const float frequency = 440.0f * std::pow(
                         2.0f, static_cast<float>(desiredNotes[i] - 69) / 12.0f);
@@ -612,6 +636,8 @@ private:
             found->velocity = desiredVelocities[i];
             velocitySum += desiredVelocities[i];
         }
+        if (voicesChanged)
+            requestAudioTransition();
         // The fixed SynthDef has no per-voice amp control, so normalize the
         // summed chord and apply its average MIDI velocity at the mix output.
         audioGain_ = desiredCount == 0
@@ -707,6 +733,10 @@ private:
         cursor_ = kSCBlockSize;
         outputBlock_.fill(0.0f);
         audioGain_ = 0.0f;
+        lastOutputSample_ = 0.0f;
+        audioTransitionStartSample_ = 0.0f;
+        audioTransitionTotalSamples_ = 0;
+        audioTransitionRemainingSamples_ = 0;
         playing_ = false;
         activeMidiNotes_.fill(false);
     }
@@ -727,6 +757,10 @@ private:
     std::uint64_t sampleClock_ = 0;
     std::array<bool, 128> activeMidiNotes_{};
     float audioGain_ = 0.0f;
+    float lastOutputSample_ = 0.0f;
+    float audioTransitionStartSample_ = 0.0f;
+    std::uint32_t audioTransitionTotalSamples_ = 0;
+    std::uint32_t audioTransitionRemainingSamples_ = 0;
     std::atomic<bool> stopRequested_{false};
     std::mutex scriptThreadMutex_;
     std::thread scriptThread_;
