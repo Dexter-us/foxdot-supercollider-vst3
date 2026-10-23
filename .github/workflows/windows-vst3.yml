@@ -26,7 +26,7 @@ jobs:
       - name: Upload Windows VST3 bundle
         uses: actions/upload-artifact@v4
         with:
-          name: dexter-sc-tone-vst3-windows-x64
+          name: dexter-foxdot-live-vst3-windows-x64
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3
           if-no-files-found: error
           retention-days: 14

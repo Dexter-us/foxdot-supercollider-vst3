@@ -35,6 +35,7 @@ switch ([int]$Matches["major"]) {
 $scSource = Join-Path $BuildRoot "deps/supercollider"
 $scBuild = Join-Path $BuildRoot "supercollider-build"
 $vst3Sdk = Join-Path $BuildRoot "deps/vst3sdk"
+$pythonRuntime = Join-Path $BuildRoot "deps/python-3.12-embed"
 $pluginBuild = Join-Path $BuildRoot "plugin-build"
 
 function Invoke-Checked {
@@ -58,6 +59,52 @@ foreach ($tool in @("git", "cmake")) {
 
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $BuildRoot "deps") | Out-Null
+
+$pythonVersion = "3.12.10"
+$pythonArchive = Join-Path $BuildRoot "deps/python-3.12-embed-amd64.zip"
+if (-not (Test-Path (Join-Path $pythonRuntime "python312.dll"))) {
+    New-Item -ItemType Directory -Force -Path $pythonRuntime | Out-Null
+    Invoke-WebRequest `
+        -Uri "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip" `
+        -OutFile $pythonArchive
+    Expand-Archive -Path $pythonArchive -DestinationPath $pythonRuntime -Force
+}
+if (-not (Test-Path (Join-Path $pythonRuntime "PYTHON-LICENSE.txt"))) {
+    $packageLicense = Join-Path $pythonRuntime "LICENSE.txt"
+    if (Test-Path $packageLicense) {
+        Copy-Item $packageLicense (Join-Path $pythonRuntime "PYTHON-LICENSE.txt")
+    }
+    else {
+        Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/python/cpython/v$pythonVersion/LICENSE" `
+            -OutFile (Join-Path $pythonRuntime "PYTHON-LICENSE.txt")
+    }
+}
+if (-not (Test-Path (Join-Path $pythonRuntime "python312._pth"))) {
+    throw "The CPython embeddable distribution is missing python312._pth."
+}
+if (-not (Test-Path (Join-Path $pythonRuntime "python312.zip"))) {
+    throw "The CPython embeddable distribution is missing python312.zip."
+}
+if (-not (Test-Path (Join-Path $pythonRuntime "python312.dll"))) {
+    throw "The CPython embeddable distribution is missing python312.dll."
+}
+if (-not (Test-Path (Join-Path $pythonRuntime "python3.dll"))) {
+    throw "The CPython embeddable distribution is missing python3.dll."
+}
+if (-not (Test-Path (Join-Path $pythonRuntime "vcruntime140.dll"))) {
+    throw "The CPython embeddable distribution is missing vcruntime140.dll."
+}
+if (-not (Test-Path (Join-Path $pythonRuntime "DLLs/math.pyd"))) {
+    throw "The CPython embeddable distribution is missing DLLs/math.pyd."
+}
+$pthFile = Join-Path $pythonRuntime "python312._pth"
+$pthLines = Get-Content $pthFile
+if ($pthLines -notcontains "DLLs") {
+    Add-Content -Path $pthFile -Value "DLLs"
+}
+Write-Host "Prepared bundled CPython $pythonVersion runtime."
+}
 
 if (-not (Test-Path (Join-Path $scSource ".git"))) {
     if (Test-Path $scSource) {
@@ -152,7 +199,8 @@ Invoke-Checked "cmake" @(
     "-DVST3_SDK_ROOT=$vst3Sdk",
     "-DSC_SOURCE_DIR=$scSource",
     "-DSC_BUILD_DIR=$scBuild",
-    "-DSC_UGEN_PLUGIN_PATH=$ugenPluginPath"
+    "-DSC_UGEN_PLUGIN_PATH=$ugenPluginPath",
+    "-DPYTHON_RUNTIME_DIR=$pythonRuntime"
 )
 Invoke-Checked "cmake" @(
     "--build", $pluginBuild,
@@ -177,6 +225,15 @@ foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt")) {
     if (-not (Test-Path (Join-Path $resourceRoot $license))) {
         throw "The VST3 bundle is missing license file $license"
     }
+}
+foreach ($pythonFile in @("Python/python312.dll", "Python/python3.dll", "Python/python312.zip",
+        "Python/python312._pth", "Python/vcruntime140.dll", "Python/DLLs/math.pyd")) {
+    if (-not (Test-Path (Join-Path $resourceRoot $pythonFile))) {
+        throw "The VST3 bundle is missing portable Python runtime file $pythonFile"
+    }
+}
+if (-not (Test-Path (Join-Path $resourceRoot "Licenses/PYTHON-LICENSE.txt"))) {
+    throw "The VST3 bundle is missing Python's license file"
 }
 
 $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |

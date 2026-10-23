@@ -5,6 +5,7 @@ set(VST3_SDK_ROOT "" CACHE PATH "Path to Steinberg VST3 SDK checkout")
 set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")
 set(SC_BUILD_DIR "" CACHE PATH "Path to configured SuperCollider build")
 set(SC_UGEN_PLUGIN_PATH "" CACHE PATH "Directory containing required SuperCollider UGen modules")
+set(PYTHON_RUNTIME_DIR "" CACHE PATH "Directory containing the portable CPython embeddable runtime")
 if(NOT EXISTS "${VST3_SDK_ROOT}/CMakeLists.txt")
   message(FATAL_ERROR "Set VST3_SDK_ROOT")
 endif()
@@ -33,6 +34,30 @@ endforeach()
 if(NOT EXISTS "${SC_SOURCE_DIR}/COPYING")
   message(FATAL_ERROR "SuperCollider COPYING license file not found in SC_SOURCE_DIR")
 endif()
+if(NOT IS_DIRECTORY "${PYTHON_RUNTIME_DIR}")
+  message(FATAL_ERROR "Set PYTHON_RUNTIME_DIR to the extracted Windows CPython 3.12 embeddable runtime")
+endif()
+foreach(PYTHON_REQUIRED_FILE python312.dll python3.dll python312.zip python312._pth
+    vcruntime140.dll PYTHON-LICENSE.txt)
+  if(NOT EXISTS "${PYTHON_RUNTIME_DIR}/${PYTHON_REQUIRED_FILE}")
+    message(FATAL_ERROR "Required portable Python runtime file not found: ${PYTHON_RUNTIME_DIR}/${PYTHON_REQUIRED_FILE}")
+  endif()
+endforeach()
+
+set(PYTHON_RUNTIME_FILES
+  "${PYTHON_RUNTIME_DIR}/python312.dll"
+  "${PYTHON_RUNTIME_DIR}/python3.dll"
+  "${PYTHON_RUNTIME_DIR}/python312.zip"
+  "${PYTHON_RUNTIME_DIR}/python312._pth")
+foreach(PYTHON_VCRUNTIME_FILE vcruntime140.dll vcruntime140_1.dll)
+  if(EXISTS "${PYTHON_RUNTIME_DIR}/${PYTHON_VCRUNTIME_FILE}")
+    list(APPEND PYTHON_RUNTIME_FILES "${PYTHON_RUNTIME_DIR}/${PYTHON_VCRUNTIME_FILE}")
+  endif()
+endforeach()
+set(PYTHON_EXTENSION_MODULES "${PYTHON_RUNTIME_DIR}/DLLs/math.pyd")
+if(NOT EXISTS "${PYTHON_EXTENSION_MODULES}")
+  message(FATAL_ERROR "The portable Python package is missing DLLs/math.pyd")
+endif()
 
 set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)
 set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -57,12 +82,25 @@ find_library(SC_PORTAUDIO NAMES portaudio portaudio_static
   PATH_SUFFIXES Release RelWithDebInfo Debug
   NO_DEFAULT_PATH REQUIRED)
 
-smtg_add_vst3plugin(dexter_sc_tone processor.cpp "${SDK_ROOT}/public.sdk/source/vst/vstsinglecomponenteffect.cpp")
+smtg_add_vst3plugin(dexter_sc_tone
+  processor.cpp
+  python_runtime.cpp
+  win32_code_editor.cpp
+  "${SDK_ROOT}/public.sdk/source/vst/vstsinglecomponenteffect.cpp")
+smtg_target_add_plugin_resources(dexter_sc_tone
+  OUTPUT_SUBDIRECTORY "Python"
+  RESOURCES ${PYTHON_RUNTIME_FILES})
+if(PYTHON_EXTENSION_MODULES)
+  smtg_target_add_plugin_resources(dexter_sc_tone
+    OUTPUT_SUBDIRECTORY "Python/DLLs"
+    RESOURCES ${PYTHON_EXTENSION_MODULES})
+endif()
 smtg_target_add_plugin_resources(dexter_sc_tone
   OUTPUT_SUBDIRECTORY "SCPlugins"
   RESOURCES ${SC_UGEN_MODULE_FILES})
 smtg_target_add_plugin_resource(dexter_sc_tone "${SC_SOURCE_DIR}/COPYING" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${VST3_SDK_ROOT}/LICENSE.txt" "Licenses")
+smtg_target_add_plugin_resource(dexter_sc_tone "${PYTHON_RUNTIME_DIR}/PYTHON-LICENSE.txt" "Licenses")
 target_compile_features(dexter_sc_tone PRIVATE cxx_std_17)
 target_include_directories(dexter_sc_tone PRIVATE
   "${SC_SOURCE_DIR}/include/common" "${SC_SOURCE_DIR}/common"
@@ -70,7 +108,8 @@ target_include_directories(dexter_sc_tone PRIVATE
   "${SC_SOURCE_DIR}/server/scsynth" "${SC_SOURCE_DIR}/external_libraries"
   "${SC_SOURCE_DIR}/external_libraries/nova-simd" "${SC_SOURCE_DIR}/external_libraries/nova-tt"
   "${SC_SOURCE_DIR}/external_libraries/boost_sync/include" "${SC_SOURCE_DIR}/external_libraries/boost"
-  "${SC_SOURCE_DIR}/external_libraries/TLSF-2.4.6/src" "${CMAKE_CURRENT_SOURCE_DIR}")
+  "${SC_SOURCE_DIR}/external_libraries/TLSF-2.4.6/src" "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${PYTHON_RUNTIME_DIR}")
 target_compile_definitions(dexter_sc_tone PRIVATE
   SC_AUDIO_API=SC_AUDIO_API_PORTAUDIO SC_MEMORY_ALIGNMENT=32 SC_FFT_GREEN NO_LIBSNDFILE NO_X11 NOVA_SIMD
   )
