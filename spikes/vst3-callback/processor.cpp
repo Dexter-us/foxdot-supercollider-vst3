@@ -1,6 +1,7 @@
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/main/moduleinit.h"
+#include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/base/ustring.h"
 #include "pluginterfaces/vst/ivstevents.h"
 
@@ -108,6 +109,72 @@ public:
             return nullptr;
         return createCodeEditorView(
             this, static_cast<IEditController*>(this));
+    }
+
+    tresult PLUGIN_API getState(IBStream* stream) override {
+        if (!stream)
+            return kInvalidArgument;
+
+        std::string source;
+        {
+            std::lock_guard<std::mutex> lock(editorStateMutex_);
+            source = editorSource_;
+        }
+        if (source.size() > kMaxEditorSourceBytes)
+            return kResultFalse;
+
+        std::array<char, 4> magic{'D', 'X', 'C', '1'};
+        std::array<char, 4> length{};
+        encodeUint32(static_cast<std::uint32_t>(source.size()), length);
+
+        if (!writeStreamBytes(stream, magic.data(), static_cast<int32>(magic.size())) ||
+            !writeStreamBytes(stream, length.data(), static_cast<int32>(length.size())) ||
+            (!source.empty() &&
+             !writeStreamBytes(stream, source.data(), static_cast<int32>(source.size()))))
+            return kResultFalse;
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API setState(IBStream* stream) override {
+        if (!stream)
+            return kInvalidArgument;
+
+        std::array<char, 4> magic{};
+        int32 bytesRead = 0;
+        while (bytesRead < static_cast<int32>(magic.size())) {
+            int32 chunkRead = 0;
+            if (stream->read(magic.data() + bytesRead,
+                             static_cast<int32>(magic.size()) - bytesRead,
+                             &chunkRead) != kResultOk)
+                return kResultFalse;
+            if (chunkRead == 0)
+                return bytesRead == 0 ? kResultOk : kResultFalse;
+            bytesRead += chunkRead;
+        }
+        if (magic != std::array<char, 4>{'D', 'X', 'C', '1'})
+            return kResultFalse;
+
+        std::array<char, 4> length{};
+        if (!readStreamBytes(stream, length.data(), static_cast<int32>(length.size())))
+            return kResultFalse;
+        const auto sourceLength = decodeUint32(length);
+        if (sourceLength > kMaxEditorSourceBytes)
+            return kResultFalse;
+
+        std::string source(sourceLength, '\0');
+        if (!source.empty() &&
+            !readStreamBytes(stream, source.data(), static_cast<int32>(source.size())))
+            return kResultFalse;
+        if (source.find('\0') != std::string::npos)
+            return kResultFalse;
+
+        {
+            std::lock_guard<std::mutex> lock(editorStateMutex_);
+            editorSource_ = std::move(source);
+            hasEditorSource_ = true;
+        }
+        stopPattern();
+        return kResultOk;
     }
 
     tresult PLUGIN_API setupProcessing(ProcessSetup& setup) override {
@@ -270,6 +337,24 @@ public:
         setEditorStatus("Stopping pattern...");
     }
 
+    std::string editorSource() override {
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        return editorSource_;
+    }
+
+    bool hasEditorSource() override {
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        return hasEditorSource_;
+    }
+
+    void setEditorSource(const std::string& source) override {
+        if (source.size() > kMaxEditorSourceBytes)
+            return;
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        editorSource_ = source;
+        hasEditorSource_ = true;
+    }
+
     std::string editorStatus() override {
         std::lock_guard<std::mutex> lock(statusMutex_);
         return editorStatus_;
@@ -282,6 +367,46 @@ private:
     static constexpr int kSCBlockSize = 64;
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
+    static constexpr std::size_t kMaxEditorSourceBytes = 256 * 1024;
+
+    static void encodeUint32(std::uint32_t value, std::array<char, 4>& bytes) {
+        for (std::size_t i = 0; i < bytes.size(); ++i)
+            bytes[i] = static_cast<char>((value >> (i * 8)) & 0xffu);
+    }
+
+    static std::uint32_t decodeUint32(const std::array<char, 4>& bytes) {
+        std::uint32_t value = 0;
+        for (std::size_t i = 0; i < bytes.size(); ++i)
+            value |= static_cast<std::uint32_t>(
+                         static_cast<unsigned char>(bytes[i])) << (i * 8);
+        return value;
+    }
+
+    static bool writeStreamBytes(IBStream* stream, const void* bytes, int32 size) {
+        auto* data = const_cast<char*>(static_cast<const char*>(bytes));
+        int32 offset = 0;
+        while (offset < size) {
+            int32 written = 0;
+            if (stream->write(data + offset, size - offset, &written) != kResultOk ||
+                written <= 0)
+                return false;
+            offset += written;
+        }
+        return true;
+    }
+
+    static bool readStreamBytes(IBStream* stream, void* bytes, int32 size) {
+        auto* data = static_cast<char*>(bytes);
+        int32 offset = 0;
+        while (offset < size) {
+            int32 read = 0;
+            if (stream->read(data + offset, size - offset, &read) != kResultOk ||
+                read <= 0)
+                return false;
+            offset += read;
+        }
+        return true;
+    }
 
     struct PatternState {
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
@@ -562,6 +687,10 @@ private:
     std::atomic<std::uint64_t> scriptGeneration_{0};
     std::mutex statusMutex_;
     std::string editorStatus_ = "Ready. Use tempo() and play().";
+    std::mutex editorStateMutex_;
+    std::string editorSource_ =
+        "tempo(120)\r\nplay([60, 64, 67, 72], step=0.5, duration=0.45)\r\n";
+    bool hasEditorSource_ = true;
 };
 
 } // namespace Steinberg::Vst

@@ -149,6 +149,8 @@ public:
             if (editor_) {
                 currentSource_ = editorSource();
                 sourceInitialized_ = true;
+                if (host_)
+                    host_->setEditorSource(toUtf8(currentSource_));
             }
             DestroyWindow(window_);
             window_ = nullptr;
@@ -297,6 +299,8 @@ private:
                 if (!view->updatingEditor_) {
                     view->documentDirty_ = true;
                     view->updateSaveButton();
+                    if (view->host_)
+                        view->host_->setEditorSource(toUtf8(view->editorSource()));
                 }
                 return 0;
             }
@@ -313,6 +317,8 @@ private:
             if (view->editor_) {
                 view->currentSource_ = view->editorSource();
                 view->sourceInitialized_ = true;
+                if (view->host_)
+                    view->host_->setEditorSource(toUtf8(view->currentSource_));
             }
             view->window_ = nullptr;
             view->editor_ = view->runButton_ = view->stopButton_ =
@@ -365,7 +371,11 @@ private:
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
         if (!sourceInitialized_) {
-            currentSource_ = kInitialCode;
+            currentSource_ = host_ && host_->hasEditorSource()
+                                 ? fromUtf8(host_->editorSource())
+                                 : kInitialCode;
+            if (!host_ && currentSource_.empty())
+                currentSource_ = kInitialCode;
             sourceInitialized_ = true;
         }
         updatingEditor_ = true;
@@ -427,6 +437,8 @@ private:
         currentSource_ = source;
         sourceInitialized_ = true;
         documentDirty_ = false;
+        if (host_)
+            host_->setEditorSource(toUtf8(source));
         updateSaveButton();
     }
 
@@ -620,6 +632,11 @@ private:
     void refreshStatus() {
         if (!host_ || !status_)
             return;
+        const auto restoredSource = fromUtf8(host_->editorSource());
+        if (!documentDirty_ && host_->hasEditorSource() &&
+            restoredSource != currentSource_) {
+            setEditorSource(restoredSource);
+        }
         const auto message = fromUtf8(host_->editorStatus());
         SetWindowTextW(status_, message.c_str());
     }

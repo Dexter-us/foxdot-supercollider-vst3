@@ -9,11 +9,13 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 - **Code:** Bundled CPython 3.12 runtime with a deliberately small, FoxDot-style pattern/player API. This is not full FoxDot compatibility.
 - **Synthesis:** SuperCollider's synthesis engine runs in the plugin process. No separate SuperCollider application/server process.
 - **Control path:** Python evaluates on a worker thread; a bounded event pattern is handed directly to the audio callback. No OSC or external server.
-- **Tempo:** Each pattern uses its own tempo, defaulting to 120 BPM. DAW transport synchronization is out of scope for this first slice.
+- **Tempo:** Each pattern has its own tempo, defaulting to 120 BPM. Timing is controlled by `tempo(bpm)`, independent of DAW transport.
 
 ## Current prototype
 
-- Windows native editor with Run, Stop, and a status/error line.
+- Windows native editor with Run, Stop, Open, Save, and starter examples.
+- Open/Save dialogs default to a `Portable` folder beside the VST3 bundle.
+- The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
 - `tempo(bpm)` and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0)`.
 - MIDI note numbers 0–127, `None` rests, repeating patterns, and one monophonic voice.
 - Maximum 256 note slots per pattern, 4096 beats, and 20–300 BPM.
@@ -34,8 +36,8 @@ This is only a pattern-and-pitch slice: user code does not define arbitrary Supe
 
 - Full compatibility with all FoxDot syntax, classes, synths, samples, and editor behavior.
 - An external SuperCollider process, network OSC, or remote server control.
-- DAW transport/tempo following, MIDI clock, or network synchronization.
-- Polyphony, user-defined SynthDefs, sample playback, MIDI input, presets, plugin state persistence, and macOS/Linux editor support.
+- DAW tempo/transport sync, MIDI clock, or network synchronization.
+- Polyphony, user-defined SynthDefs, sample playback, MIDI input, full FoxDot compatibility, and macOS/Linux editor support.
 
 ## Architecture
 
@@ -49,7 +51,8 @@ This is only a pattern-and-pitch slice: user code does not define arbitrary Supe
 2. **Complete:** Bundle the required SuperCollider UGen modules and license texts.
 3. **Complete in prototype:** Add Windows editor, embedded Python, repeating note patterns, and VST3 MIDI output.
 4. **In progress:** Validate the Python editor/runtime and MIDI/audio behavior in a Windows DAW; the user can test on Windows only.
-5. **Later:** Add transport sync, polyphony, persistent code/presets, and broader FoxDot-like features.
+5. **In progress:** Save and restore editor code with DAW project state.
+6. **Later:** Add polyphony and incrementally expand the FoxDot-inspired pattern API; full FoxDot compatibility is not assumed.
 
 ## Licensing and upstream code
 

@@ -10,7 +10,8 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
 - The editor supports `tempo(bpm)` and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0)`.
 - The Windows editor can open and save UTF-8 Python scripts and includes three starter patterns. The dialogs default to the bundle's `Portable` folder, which is created beside `Contents`; the editor prompts before replacing unsaved edits.
-- Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the plugin's sample clock.
+- VST3 project state stores the editor code. Loading a project restores the script in the editor but does not execute user code automatically.
+- Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
 - A MIDI output event bus is exposed to the host.
 
 ## Prototype limits
