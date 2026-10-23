@@ -15,15 +15,51 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
+#include <string>
+#include <system_error>
+#include <vector>
 
-#ifndef SC_UGEN_PLUGIN_PATH
-#define SC_UGEN_PLUGIN_PATH ""
+#if defined(_WIN32)
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace {
 std::mutex scLibraryLifecycleMutex;
 Steinberg::ModuleTerminator cleanupSuperCollider([] { deinitialize_library(); });
+
+std::filesystem::path pluginBinaryPath() {
+#if defined(_WIN32)
+    HMODULE module = nullptr;
+    const auto address = reinterpret_cast<LPCWSTR>(&pluginBinaryPath);
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            address, &module))
+        return {};
+
+    std::vector<wchar_t> path(32768);
+    const DWORD length = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size())
+        return {};
+    return std::filesystem::path(std::wstring(path.data(), length));
+#else
+    Dl_info info{};
+    if (dladdr(reinterpret_cast<void*>(&pluginBinaryPath), &info) == 0 || !info.dli_fname)
+        return {};
+    return std::filesystem::path(info.dli_fname);
+#endif
+}
+
+std::filesystem::path bundledUGenPath() {
+    const auto binaryPath = pluginBinaryPath();
+    if (binaryPath.empty())
+        return {};
+    return binaryPath.parent_path().parent_path() / "Resources" / "SCPlugins";
+}
 }
 
 namespace Steinberg::Vst {
@@ -97,6 +133,12 @@ private:
 
     bool initializeWorld() {
         std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
+        const auto ugenPath = bundledUGenPath();
+        std::error_code pathError;
+        if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError))
+            return false;
+        ugenPluginPath_ = ugenPath.u8string();
+
         WorldOptions options;
         options.mRealTime = false;
         options.mPreferredSampleRate = sampleRate_;
@@ -107,7 +149,7 @@ private:
         options.mLoadGraphDefs = 0;
         options.mRendezvous = false;
         options.mVerbosity = -1;
-        options.mUGensPluginPath = SC_UGEN_PLUGIN_PATH;
+        options.mUGensPluginPath = ugenPluginPath_.c_str();
 
         world_ = World_New(&options);
         if (!world_)
@@ -170,6 +212,7 @@ private:
 
     double sampleRate_ = 48000.0;
     World* world_ = nullptr;
+    std::string ugenPluginPath_;
     std::array<float, kSCBlockSize> outputBlock_{};
     int cursor_ = kSCBlockSize;
 };

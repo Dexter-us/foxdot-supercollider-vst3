@@ -8,6 +8,9 @@ set(SC_UGEN_PLUGIN_PATH "" CACHE PATH "Directory containing required SuperCollid
 if(NOT EXISTS "${VST3_SDK_ROOT}/CMakeLists.txt")
   message(FATAL_ERROR "Set VST3_SDK_ROOT")
 endif()
+if(NOT EXISTS "${VST3_SDK_ROOT}/LICENSE.txt")
+  message(FATAL_ERROR "VST3 SDK LICENSE.txt not found in VST3_SDK_ROOT")
+endif()
 if(NOT EXISTS "${SC_SOURCE_DIR}/include/server/SC_WorldOptions.h")
   message(FATAL_ERROR "Set SC_SOURCE_DIR")
 endif()
@@ -18,10 +21,24 @@ if(NOT IS_DIRECTORY "${SC_UGEN_PLUGIN_PATH}")
   message(FATAL_ERROR "Set SC_UGEN_PLUGIN_PATH to the built SuperCollider UGen modules directory")
 endif()
 
+set(SC_UGEN_MODULE_FILES
+  "${SC_UGEN_PLUGIN_PATH}/OscUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/BinaryOpUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/IOUGens.scx")
+foreach(SC_UGEN_MODULE_FILE IN LISTS SC_UGEN_MODULE_FILES)
+  if(NOT EXISTS "${SC_UGEN_MODULE_FILE}")
+    message(FATAL_ERROR "Required SuperCollider UGen module not found: ${SC_UGEN_MODULE_FILE}")
+  endif()
+endforeach()
+if(NOT EXISTS "${SC_SOURCE_DIR}/COPYING")
+  message(FATAL_ERROR "SuperCollider COPYING license file not found in SC_SOURCE_DIR")
+endif()
+
 set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)
 set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)
+set(SMTG_CREATE_BUNDLE_FOR_WINDOWS ON CACHE BOOL "" FORCE)
 add_subdirectory("${VST3_SDK_ROOT}" "${CMAKE_BINARY_DIR}/vst3sdk")
 set(SDK_ROOT "${VST3_SDK_ROOT}")
 set(public_sdk_SOURCE_DIR "${VST3_SDK_ROOT}/public.sdk")
@@ -32,6 +49,11 @@ find_library(SC_TLSF NAMES tlsf PATHS "${SC_BUILD_DIR}/external_libraries" NO_DE
 find_library(SC_PORTAUDIO NAMES portaudio portaudio_static PATHS "${SC_BUILD_DIR}/external_libraries/portaudio/portaudio_submodule" NO_DEFAULT_PATH REQUIRED)
 
 smtg_add_vst3plugin(dexter_sc_tone processor.cpp "${SDK_ROOT}/public.sdk/source/vst/vstsinglecomponenteffect.cpp")
+smtg_target_add_plugin_resources(dexter_sc_tone
+  OUTPUT_SUBDIRECTORY "SCPlugins"
+  RESOURCES ${SC_UGEN_MODULE_FILES})
+smtg_target_add_plugin_resource(dexter_sc_tone "${SC_SOURCE_DIR}/COPYING" "Licenses")
+smtg_target_add_plugin_resource(dexter_sc_tone "${VST3_SDK_ROOT}/LICENSE.txt" "Licenses")
 target_compile_features(dexter_sc_tone PRIVATE cxx_std_17)
 target_include_directories(dexter_sc_tone PRIVATE
   "${SC_SOURCE_DIR}/include/common" "${SC_SOURCE_DIR}/common"
@@ -40,10 +62,9 @@ target_include_directories(dexter_sc_tone PRIVATE
   "${SC_SOURCE_DIR}/external_libraries/nova-simd" "${SC_SOURCE_DIR}/external_libraries/nova-tt"
   "${SC_SOURCE_DIR}/external_libraries/boost_sync/include" "${SC_SOURCE_DIR}/external_libraries/boost"
   "${SC_SOURCE_DIR}/external_libraries/TLSF-2.4.6/src" "${CMAKE_CURRENT_SOURCE_DIR}")
-file(TO_CMAKE_PATH "${SC_UGEN_PLUGIN_PATH}" SC_UGEN_PLUGIN_PATH_CMAKE)
 target_compile_definitions(dexter_sc_tone PRIVATE
   SC_AUDIO_API=SC_AUDIO_API_PORTAUDIO SC_MEMORY_ALIGNMENT=32 SC_FFT_GREEN NO_LIBSNDFILE NO_X11 NOVA_SIMD
-  SC_UGEN_PLUGIN_PATH="${SC_UGEN_PLUGIN_PATH_CMAKE}")
+  )
 target_link_libraries(dexter_sc_tone PRIVATE sdk "${SC_LIBSCSYNTH}" "${SC_TLSF}" "${SC_PORTAUDIO}" ${CMAKE_DL_LIBS})
 if(WIN32)
   target_link_libraries(dexter_sc_tone PRIVATE winmm ole32 uuid ws2_32)
