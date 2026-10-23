@@ -105,7 +105,7 @@ target_compile_definitions(dexter_sc_tone PRIVATE
   )
 target_link_libraries(dexter_sc_tone PRIVATE sdk "${SC_LIBSCSYNTH}" "${SC_TLSF}" "${SC_PORTAUDIO}" ${CMAKE_DL_LIBS})
 if(WIN32)
-  target_link_libraries(dexter_sc_tone PRIVATE winmm ole32 uuid ws2_32)
+  target_link_libraries(dexter_sc_tone PRIVATE comdlg32 winmm ole32 uuid ws2_32)
 elseif(UNIX AND NOT APPLE)
   target_link_libraries(dexter_sc_tone PRIVATE m rt pthread)
 endif()

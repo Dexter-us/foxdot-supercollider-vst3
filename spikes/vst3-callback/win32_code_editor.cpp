@@ -5,12 +5,18 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <commdlg.h>
 
 #include "base/source/fobject.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
+#include <utility>
 
 namespace {
 constexpr wchar_t kWindowClass[] = L"DexterSCCodeEditorView";
@@ -18,11 +24,39 @@ constexpr int kEditorId = 101;
 constexpr int kRunId = 102;
 constexpr int kStopId = 103;
 constexpr int kStatusId = 104;
+constexpr int kExamplesId = 105;
+constexpr int kOpenId = 106;
+constexpr int kSaveId = 107;
 constexpr int kViewWidth = 720;
 constexpr int kViewHeight = 480;
 constexpr int kMargin = 10;
 constexpr int kToolbarHeight = 32;
 constexpr int kStatusHeight = 24;
+constexpr std::size_t kMaxScriptBytes = 256 * 1024;
+constexpr std::size_t kMaxScriptCharacters = 65536;
+
+struct CodeExample {
+    const wchar_t* name;
+    const wchar_t* source;
+};
+
+constexpr std::array<CodeExample, 3> kCodeExamples{{
+    {L"Four-note pulse",
+     L"tempo(120)\r\n"
+     L"play([60, 64, 67, 72], step=0.5, duration=0.4)\r\n"},
+    {L"Resting rhythm",
+     L"tempo(110)\r\n"
+     L"play([60, None, 67, None, 72, 67, None, 64], "
+     L"step=0.25, duration=0.2)\r\n"},
+    {L"Slow bass",
+     L"tempo(88)\r\n"
+     L"play([36, None, 43, None, 36, 48, 43, None], "
+     L"step=0.5, duration=0.4, velocity=90)\r\n"},
+}};
+
+constexpr wchar_t kInitialCode[] =
+    L"tempo(120)\r\n"
+    L"play([60, 64, 67, 72], step=0.5, duration=0.45)\r\n";
 
 std::string toUtf8(const std::wstring& text) {
     if (text.empty())
@@ -41,13 +75,14 @@ std::string toUtf8(const std::wstring& text) {
 std::wstring fromUtf8(const std::string& text) {
     if (text.empty())
         return {};
-    const int required = MultiByteToWideChar(CP_UTF8, 0, text.data(),
+    const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
                                              static_cast<int>(text.size()),
                                              nullptr, 0);
     if (required <= 0)
         return {};
     std::wstring result(static_cast<std::size_t>(required), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                        static_cast<int>(text.size()),
                         result.data(), required);
     return result;
 }
@@ -111,9 +146,14 @@ public:
     Steinberg::tresult PLUGIN_API removed() override {
         if (window_) {
             KillTimer(window_, 1);
+            if (editor_) {
+                currentSource_ = editorSource();
+                sourceInitialized_ = true;
+            }
             DestroyWindow(window_);
             window_ = nullptr;
-            editor_ = runButton_ = stopButton_ = status_ = nullptr;
+            editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ =
+                examples_ = status_ = nullptr;
         }
         return Steinberg::kResultOk;
     }
@@ -224,14 +264,39 @@ private:
                 SetWindowTextW(view->status_, L"Stopped.");
                 return 0;
             }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kOpenId) {
+                view->openSource();
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kSaveId) {
+                view->saveSource();
+                return 0;
+            }
+            if (LOWORD(wParam) == kEditorId && HIWORD(wParam) == EN_CHANGE) {
+                if (!view->updatingEditor_) {
+                    view->documentDirty_ = true;
+                    view->updateSaveButton();
+                }
+                return 0;
+            }
+            if (LOWORD(wParam) == kExamplesId && HIWORD(wParam) == CBN_SELCHANGE) {
+                view->loadSelectedExample();
+                return 0;
+            }
             break;
         case WM_TIMER:
             view->refreshStatus();
             return 0;
         case WM_DESTROY:
             KillTimer(window, 1);
+            if (view->editor_) {
+                view->currentSource_ = view->editorSource();
+                view->sourceInitialized_ = true;
+            }
             view->window_ = nullptr;
-            view->editor_ = view->runButton_ = view->stopButton_ = view->status_ = nullptr;
+            view->editor_ = view->runButton_ = view->stopButton_ =
+                view->openButton_ = view->saveButton_ = view->examples_ =
+                    view->status_ = nullptr;
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
@@ -239,55 +304,276 @@ private:
 
     void createChildren() {
         runButton_ = CreateWindowExW(0, L"BUTTON", L"Run",
-                                     WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                     0, 0, 80, 26, window_,
+                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                     0, 0, 56, 26, window_,
                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kRunId)),
                                      moduleInstance(), nullptr);
         stopButton_ = CreateWindowExW(0, L"BUTTON", L"Stop",
-                                      WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                      0, 0, 80, 26, window_,
+                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                      0, 0, 56, 26, window_,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStopId)),
                                       moduleInstance(), nullptr);
-        status_ = CreateWindowExW(0, L"STATIC", L"Ready. Use tempo() and play().",
+        openButton_ = CreateWindowExW(0, L"BUTTON", L"Open",
+                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                      0, 0, 56, 26, window_,
+                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kOpenId)),
+                                      moduleInstance(), nullptr);
+        saveButton_ = CreateWindowExW(0, L"BUTTON", L"Save",
+                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                      0, 0, 62, 26, window_,
+                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSaveId)),
+                                      moduleInstance(), nullptr);
+        examples_ = CreateWindowExW(0, L"COMBOBOX", nullptr,
+                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                        CBS_DROPDOWNLIST | WS_VSCROLL,
+                                    0, 0, 160, 180, window_,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kExamplesId)),
+                                    moduleInstance(), nullptr);
+        if (examples_) {
+            SendMessageW(examples_, CB_ADDSTRING, 0,
+                         reinterpret_cast<LPARAM>(L"Examples..."));
+            for (const auto& example : kCodeExamples) {
+                SendMessageW(examples_, CB_ADDSTRING, 0,
+                             reinterpret_cast<LPARAM>(example.name));
+            }
+            SendMessageW(examples_, CB_SETCURSEL, 0, 0);
+        }
+        status_ = CreateWindowExW(0, L"STATIC", L"Ready. Choose an example or edit code.",
                                   WS_CHILD | WS_VISIBLE | SS_LEFT,
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        editor_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
-                                  L"tempo(120)\r\nplay([60, 64, 67, 72], step=0.5, duration=0.45)\r\n",
+        if (!sourceInitialized_) {
+            currentSource_ = kInitialCode;
+            sourceInitialized_ = true;
+        }
+        updatingEditor_ = true;
+        editor_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", currentSource_.c_str(),
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE |
                                       ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL,
                                   0, 0, 600, 380, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kEditorId)),
                                   moduleInstance(), nullptr);
-        SendMessageW(editor_, EM_SETLIMITTEXT, 65536, 0);
-        SendMessageW(editor_, WM_SETFONT,
-                     reinterpret_cast<WPARAM>(GetStockObject(ANSI_FIXED_FONT)), TRUE);
+        updatingEditor_ = false;
+        if (editor_) {
+            SendMessageW(editor_, EM_SETLIMITTEXT, kMaxScriptCharacters, 0);
+            SendMessageW(editor_, WM_SETFONT,
+                         reinterpret_cast<WPARAM>(GetStockObject(ANSI_FIXED_FONT)), TRUE);
+        }
         SetTimer(window_, 1, 250, nullptr);
         layoutChildren(kViewWidth, kViewHeight);
+        updateSaveButton();
     }
 
     void layoutChildren(int width, int height) {
         if (!editor_)
             return;
         const int buttonY = kMargin;
-        MoveWindow(runButton_, kMargin, buttonY, 80, kToolbarHeight - 4, TRUE);
-        MoveWindow(stopButton_, kMargin + 88, buttonY, 80, kToolbarHeight - 4, TRUE);
-        MoveWindow(status_, kMargin + 180, buttonY, std::max(100, width - 190), kToolbarHeight - 4, TRUE);
+        MoveWindow(runButton_, kMargin, buttonY, 56, kToolbarHeight - 4, TRUE);
+        MoveWindow(stopButton_, kMargin + 60, buttonY, 56, kToolbarHeight - 4, TRUE);
+        MoveWindow(openButton_, kMargin + 120, buttonY, 56, kToolbarHeight - 4, TRUE);
+        MoveWindow(saveButton_, kMargin + 180, buttonY, 62, kToolbarHeight - 4, TRUE);
+        MoveWindow(examples_, kMargin + 248, buttonY, 154, kToolbarHeight - 4, TRUE);
+        MoveWindow(status_, kMargin + 410, buttonY, std::max(100, width - 420),
+                   kToolbarHeight - 4, TRUE);
         const int editorTop = kMargin + kToolbarHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
         MoveWindow(editor_, kMargin, editorTop, std::max(160, width - 2 * kMargin), editorHeight, TRUE);
     }
 
-    void runSource() {
-        if (!editor_ || !host_)
-            return;
+    void updateSaveButton() {
+        if (saveButton_)
+            SetWindowTextW(saveButton_, documentDirty_ ? L"Save*" : L"Save");
+    }
+
+    std::wstring editorSource() const {
+        if (!editor_)
+            return {};
         const int length = GetWindowTextLengthW(editor_);
         std::wstring source(static_cast<std::size_t>(length) + 1, L'\0');
         if (length > 0)
             GetWindowTextW(editor_, source.data(), length + 1);
         source.resize(static_cast<std::size_t>(length));
-        host_->submitCode(toUtf8(source));
+        return source;
+    }
+
+    void setEditorSource(const std::wstring& source) {
+        if (!editor_)
+            return;
+        updatingEditor_ = true;
+        SetWindowTextW(editor_, source.c_str());
+        updatingEditor_ = false;
+        currentSource_ = source;
+        sourceInitialized_ = true;
+        documentDirty_ = false;
+        updateSaveButton();
+    }
+
+    bool confirmReplaceDocument() {
+        if (!documentDirty_)
+            return true;
+        const int answer = MessageBoxW(
+            window_, L"Save changes before replacing this script?",
+            L"Unsaved script changes", MB_YESNOCANCEL | MB_ICONWARNING);
+        if (answer == IDYES)
+            return saveSource();
+        return answer == IDNO;
+    }
+
+    bool chooseScriptPath(bool saveDialog, std::wstring& selectedPath) {
+        std::array<wchar_t, 32768> path{};
+        if (saveDialog && !currentFilePath_.empty()) {
+            const auto count = std::min(currentFilePath_.size(), path.size() - 1);
+            std::copy_n(currentFilePath_.data(), count, path.data());
+            path[count] = L'\0';
+        }
+
+        static constexpr wchar_t filter[] =
+            L"Python scripts (*.py)\0*.py\0All files (*.*)\0*.*\0";
+        OPENFILENAMEW dialog{};
+        dialog.lStructSize = sizeof(dialog);
+        dialog.hwndOwner = window_;
+        dialog.lpstrFilter = filter;
+        dialog.nFilterIndex = 1;
+        dialog.lpstrFile = path.data();
+        dialog.nMaxFile = static_cast<DWORD>(path.size());
+        dialog.lpstrDefExt = L"py";
+        dialog.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_PATHMUSTEXIST |
+                       OFN_NOCHANGEDIR |
+                       (saveDialog ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
+
+        const BOOL selected = saveDialog ? GetSaveFileNameW(&dialog)
+                                         : GetOpenFileNameW(&dialog);
+        if (!selected)
+            return false;
+        selectedPath = path.data();
+        return true;
+    }
+
+    void openSource() {
+        std::wstring selectedPath;
+        if (!chooseScriptPath(false, selectedPath) || !confirmReplaceDocument())
+            return;
+
+        const std::filesystem::path path(selectedPath);
+        std::error_code error;
+        const auto size = std::filesystem::file_size(path, error);
+        if (error || size > kMaxScriptBytes) {
+            MessageBoxW(window_,
+                        error ? L"Could not read that script file."
+                              : L"Script files must be 256 KB or smaller.",
+                        L"Open script", MB_OK | MB_ICONERROR);
+            return;
+        }
+
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            MessageBoxW(window_, L"Could not open that script file.",
+                        L"Open script", MB_OK | MB_ICONERROR);
+            return;
+        }
+        std::string source(static_cast<std::size_t>(size), '\0');
+        if (!source.empty())
+            input.read(source.data(), static_cast<std::streamsize>(source.size()));
+        if ((!input && !source.empty()) || source.find('\0') != std::string::npos) {
+            MessageBoxW(window_, L"That file could not be read as a text script.",
+                        L"Open script", MB_OK | MB_ICONERROR);
+            return;
+        }
+        if (source.size() >= 3 &&
+            static_cast<unsigned char>(source[0]) == 0xEF &&
+            static_cast<unsigned char>(source[1]) == 0xBB &&
+            static_cast<unsigned char>(source[2]) == 0xBF) {
+            source.erase(0, 3);
+        }
+        const auto wideSource = fromUtf8(source);
+        if (!source.empty() && wideSource.empty()) {
+            MessageBoxW(window_, L"Scripts must use valid UTF-8 text.",
+                        L"Open script", MB_OK | MB_ICONERROR);
+            return;
+        }
+        if (wideSource.size() > kMaxScriptCharacters) {
+            MessageBoxW(window_, L"Script files must contain 65,536 characters or fewer.",
+                        L"Open script", MB_OK | MB_ICONERROR);
+            return;
+        }
+
+        setEditorSource(wideSource);
+        currentFilePath_ = selectedPath;
+        if (examples_)
+            SendMessageW(examples_, CB_SETCURSEL, 0, 0);
+        SetWindowTextW(status_, L"Script loaded. Press Run to evaluate.");
+    }
+
+    bool saveSourceToPath(const std::wstring& path) {
+        const auto source = toUtf8(editorSource());
+        std::ofstream output(std::filesystem::path(path),
+                             std::ios::binary | std::ios::trunc);
+        if (!output) {
+            MessageBoxW(window_, L"Could not write that script file.",
+                        L"Save script", MB_OK | MB_ICONERROR);
+            return false;
+        }
+        output.write(source.data(), static_cast<std::streamsize>(source.size()));
+        output.flush();
+        if (!output) {
+            MessageBoxW(window_, L"An error occurred while saving the script.",
+                        L"Save script", MB_OK | MB_ICONERROR);
+            return false;
+        }
+        return true;
+    }
+
+    bool saveSourceAs() {
+        std::wstring selectedPath;
+        if (!chooseScriptPath(true, selectedPath))
+            return false;
+        if (!saveSourceToPath(selectedPath))
+            return false;
+        currentFilePath_ = std::move(selectedPath);
+        currentSource_ = editorSource();
+        sourceInitialized_ = true;
+        documentDirty_ = false;
+        updateSaveButton();
+        SetWindowTextW(status_, L"Python script saved.");
+        return true;
+    }
+
+    bool saveSource() {
+        if (currentFilePath_.empty())
+            return saveSourceAs();
+        if (!saveSourceToPath(currentFilePath_))
+            return false;
+        currentSource_ = editorSource();
+        sourceInitialized_ = true;
+        documentDirty_ = false;
+        updateSaveButton();
+        SetWindowTextW(status_, L"Python script saved.");
+        return true;
+    }
+
+    void loadSelectedExample() {
+        if (!examples_)
+            return;
+        const auto selection = static_cast<int>(
+            SendMessageW(examples_, CB_GETCURSEL, 0, 0));
+        if (selection <= 0 ||
+            static_cast<std::size_t>(selection - 1) >= kCodeExamples.size()) {
+            return;
+        }
+        const auto example = kCodeExamples[static_cast<std::size_t>(selection - 1)];
+        if (confirmReplaceDocument()) {
+            currentFilePath_.clear();
+            setEditorSource(example.source);
+            SetWindowTextW(status_, L"Example loaded. Press Run to evaluate.");
+        }
+        SendMessageW(examples_, CB_SETCURSEL, 0, 0);
+    }
+
+    void runSource() {
+        if (!editor_ || !host_)
+            return;
+        host_->submitCode(toUtf8(editorSource()));
         SetWindowTextW(status_, L"Evaluating Python...");
     }
 
@@ -305,7 +591,15 @@ private:
     HWND editor_ = nullptr;
     HWND runButton_ = nullptr;
     HWND stopButton_ = nullptr;
+    HWND openButton_ = nullptr;
+    HWND saveButton_ = nullptr;
+    HWND examples_ = nullptr;
     HWND status_ = nullptr;
+    std::wstring currentFilePath_;
+    std::wstring currentSource_;
+    bool updatingEditor_ = false;
+    bool documentDirty_ = false;
+    bool sourceInitialized_ = false;
 };
 } // namespace
 
