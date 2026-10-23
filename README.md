@@ -21,9 +21,9 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 - Chords can be written as nested lists, such as `play([[60, 64, 67], [62, 65, 69]])`; separate `play()` calls can layer parts.
 - Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20–300 BPM.
 - Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
-- MIDI note events are emitted on a VST3 event output bus; SuperCollider renders the pattern through a fixed 8-voice pool.
-- MIDI output preserves each note's velocity; the prototype's internal chord audio uses a gain-normalized mix with average chord velocity.
-- A short 5 ms transition ramp reduces clicks when internal audio voices start or stop.
+- MIDI note events are emitted on a VST3 event output bus; the pattern supports up to 8 simultaneous notes, with extra audio voices reserved for short release tails.
+- Internal audio applies MIDI velocity and a per-voice 5 ms attack / 12 ms release envelope, then normalizes the chord mix to keep level reasonably consistent.
+- The native editor footer displays “Dexter U.S. Foxdot”; the VST3 manufacturer metadata remains Dexter U.S.
 - Dexter U.S. manufacturer metadata.
 
 Example:

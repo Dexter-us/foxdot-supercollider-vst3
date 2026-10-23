@@ -27,6 +27,7 @@ constexpr int kStatusId = 104;
 constexpr int kExamplesId = 105;
 constexpr int kOpenId = 106;
 constexpr int kSaveId = 107;
+constexpr int kBrandId = 108;
 constexpr int kViewWidth = 720;
 constexpr int kViewHeight = 480;
 constexpr int kMargin = 10;
@@ -159,7 +160,7 @@ public:
             DestroyWindow(window_);
             window_ = nullptr;
             editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ =
-                examples_ = status_ = nullptr;
+                examples_ = status_ = brand_ = nullptr;
         }
         return Steinberg::kResultOk;
     }
@@ -327,7 +328,7 @@ private:
             view->window_ = nullptr;
             view->editor_ = view->runButton_ = view->stopButton_ =
                 view->openButton_ = view->saveButton_ = view->examples_ =
-                    view->status_ = nullptr;
+                    view->status_ = view->brand_ = nullptr;
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
@@ -374,6 +375,11 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S. Foxdot",
+                                 WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
+                                 0, 0, 210, kStatusHeight, window_,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
+                                 moduleInstance(), nullptr);
         if (!sourceInitialized_) {
             currentSource_ = host_ && host_->hasEditorSource()
                                  ? fromUtf8(host_->editorSource())
@@ -414,6 +420,8 @@ private:
         const int editorTop = kMargin + kToolbarHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
         MoveWindow(editor_, kMargin, editorTop, std::max(160, width - 2 * kMargin), editorHeight, TRUE);
+        MoveWindow(brand_, std::max(kMargin, width - 220),
+                   height - kStatusHeight - kMargin, 210, kStatusHeight, TRUE);
     }
 
     void updateSaveButton() {
@@ -656,6 +664,7 @@ private:
     HWND saveButton_ = nullptr;
     HWND examples_ = nullptr;
     HWND status_ = nullptr;
+    HWND brand_ = nullptr;
     std::wstring currentFilePath_;
     std::wstring currentSource_;
     bool updatingEditor_ = false;

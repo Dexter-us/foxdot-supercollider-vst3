@@ -218,11 +218,10 @@ public:
                 stopActiveMidiNotes(data.outputEvents, 0);
                 activePattern_ = pendingPattern_;
                 pendingPatternReady_ = false;
-                patternStartSample_ = sampleClock_;
+                patternStartSample_ = sampleClock_ +
+                                      static_cast<std::uint64_t>(kSCBlockSize - cursor_);
                 playing_ = true;
                 stopAudioVoices();
-                audioGain_ = 0.0f;
-                muteRemainingAudioBlock();
             }
             patternLock.unlock();
         }
@@ -230,27 +229,17 @@ public:
         if (stopRequested_.exchange(false, std::memory_order_acq_rel)) {
             stopActiveMidiNotes(data.outputEvents, 0);
             stopAudioVoices();
-            audioGain_ = 0.0f;
             playing_ = false;
-            muteRemainingAudioBlock();
         }
 
         emitPatternMidi(data);
         for (int32 frame = 0; frame < data.numSamples; ++frame) {
             if (cursor_ == kSCBlockSize) {
-                updateSynthForBlock(sampleClock_ + static_cast<std::uint64_t>(frame));
-                renderSCBlock();
+                const auto blockStart = sampleClock_ + static_cast<std::uint64_t>(frame);
+                updateSynthForBlock(blockStart);
+                renderSCBlock(blockStart);
             }
-            float sample = outputBlock_[cursor_++];
-            if (audioTransitionRemainingSamples_ > 0) {
-                const auto elapsed = audioTransitionTotalSamples_ -
-                                     audioTransitionRemainingSamples_ + 1;
-                const float mix = static_cast<float>(elapsed) /
-                                  static_cast<float>(audioTransitionTotalSamples_);
-                sample = audioTransitionStartSample_ * (1.0f - mix) + sample * mix;
-                --audioTransitionRemainingSamples_;
-            }
-            lastOutputSample_ = sample;
+            const float sample = outputBlock_[cursor_++];
             for (int32 channel = 0; channel < output.numChannels; ++channel) {
                 if (output.channelBuffers32[channel])
                     output.channelBuffers32[channel][frame] = sample;
@@ -366,9 +355,15 @@ public:
 
 private:
     static constexpr int kSCBlockSize = 64;
-    static constexpr double kClickRampSeconds = 0.005;
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kMaxPolyphony = 8;
+    static constexpr std::size_t kAudioVoiceCount = 16;
+    static constexpr int kFirstAudioBus = 2;
+    static constexpr int kNumAudioBusChannels = 32;
+    static constexpr double kAttackSeconds = 0.005;
+    static constexpr double kReleaseSeconds = 0.012;
+    static_assert(kFirstAudioBus + kAudioVoiceCount <= kNumAudioBusChannels,
+                  "The SuperCollider world needs one private audio bus per synth voice.");
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
     static constexpr std::size_t kMaxEditorSourceBytes = 256 * 1024;
 
@@ -429,17 +424,24 @@ private:
         Graph* synth = nullptr;
         int midiNote = -1;
         int velocity = 0;
+        std::uint64_t startSample = 0;
+        std::uint64_t endSample = 0;
+        bool releasing = false;
+        std::uint64_t releaseStartSample = 0;
+        std::uint64_t releaseEndSample = 0;
+        float releaseStartGain = 0.0f;
+    };
+
+    struct ScheduledAudioNote {
+        int midiNote = -1;
+        int velocity = 0;
+        std::uint64_t startSample = 0;
+        std::uint64_t endSample = 0;
     };
 
     void setEditorStatus(std::string status) {
         std::lock_guard<std::mutex> lock(statusMutex_);
         editorStatus_ = std::move(status);
-    }
-
-    void muteRemainingAudioBlock() {
-        if (cursor_ < kSCBlockSize) {
-            std::fill(outputBlock_.begin() + cursor_, outputBlock_.end(), 0.0f);
-        }
     }
 
     void joinScriptThread() {
@@ -491,24 +493,66 @@ private:
         }
     }
 
-    void stopAudioVoices() {
-        bool hadActiveVoice = false;
-        for (auto& voice : audioVoices_) {
-            hadActiveVoice = hadActiveVoice || voice.midiNote >= 0;
-            if (voice.synth)
-                Node_SetRun(&voice.synth->mNode, 0);
-            voice.midiNote = -1;
-            voice.velocity = 0;
-        }
-        if (hadActiveVoice)
-            requestAudioTransition();
+    std::uint64_t envelopeSamples(double seconds) const {
+        return static_cast<std::uint64_t>(
+            std::max(1.0, std::round(sampleRate_ * seconds)));
     }
 
-    void requestAudioTransition() {
-        audioTransitionStartSample_ = lastOutputSample_;
-        audioTransitionTotalSamples_ = static_cast<std::uint32_t>(
-            std::max(1.0, std::round(sampleRate_ * kClickRampSeconds)));
-        audioTransitionRemainingSamples_ = audioTransitionTotalSamples_;
+    float voiceEnvelopeAt(const AudioVoice& voice, std::uint64_t sample) const {
+        if (voice.releasing) {
+            if (sample < voice.releaseStartSample)
+                return voice.releaseStartGain;
+            if (sample >= voice.releaseEndSample)
+                return 0.0f;
+            const auto releaseLength = voice.releaseEndSample - voice.releaseStartSample;
+            const float remaining = static_cast<float>(voice.releaseEndSample - sample);
+            return voice.releaseStartGain * remaining /
+                   static_cast<float>(releaseLength);
+        }
+        if (voice.midiNote < 0 || sample < voice.startSample ||
+            sample >= voice.endSample)
+            return 0.0f;
+
+        const auto duration = voice.endSample - voice.startSample;
+        const auto attack = std::min(envelopeSamples(kAttackSeconds), duration / 2);
+        const auto release = std::min(envelopeSamples(kReleaseSeconds), duration / 2);
+        float gain = 1.0f;
+        if (attack > 0 && sample < voice.startSample + attack) {
+            gain = std::min(gain, static_cast<float>(sample - voice.startSample) /
+                                      static_cast<float>(attack));
+        }
+        if (release > 0 && sample >= voice.endSample - release) {
+            gain = std::min(gain, static_cast<float>(voice.endSample - sample) /
+                                      static_cast<float>(release));
+        }
+        return gain;
+    }
+
+    void deactivateAudioVoice(AudioVoice& voice) {
+        if (voice.synth)
+            Node_SetRun(&voice.synth->mNode, 0);
+        auto* synth = voice.synth;
+        voice = {};
+        voice.synth = synth;
+    }
+
+    void stopAudioVoices() {
+        const auto now = sampleClock_ +
+                         static_cast<std::uint64_t>(kSCBlockSize - cursor_);
+        for (auto& voice : audioVoices_) {
+            if (voice.midiNote < 0 || voice.releasing)
+                continue;
+            const float gain = voiceEnvelopeAt(voice, now);
+            if (gain <= 0.0f) {
+                deactivateAudioVoice(voice);
+                continue;
+            }
+            voice.releasing = true;
+            voice.releaseStartSample = now;
+            voice.releaseEndSample = now + envelopeSamples(kReleaseSeconds);
+            voice.releaseStartGain = gain;
+            voice.midiNote = -1;
+        }
     }
 
     void collectMidiEvents(std::uint64_t blockStart, std::uint64_t blockEnd,
@@ -571,79 +615,73 @@ private:
     }
 
     void updateSynthForBlock(std::uint64_t blockStart) {
-        std::array<int, kMaxPolyphony> desiredNotes{};
-        std::array<int, kMaxPolyphony> desiredVelocities{};
+        std::array<ScheduledAudioNote, kMaxPolyphony> desired{};
         std::size_t desiredCount = 0;
         if (playing_ && activePattern_.eventCount > 0 &&
             blockStart + kSCBlockSize / 2 >= patternStartSample_) {
             const double samplesPerBeat = sampleRate_ * 60.0 / activePattern_.bpm;
             const double beat = static_cast<double>(
                 blockStart + kSCBlockSize / 2 - patternStartSample_) / samplesPerBeat;
-            double loopPosition = std::fmod(beat, activePattern_.lengthBeats);
-            if (loopPosition < 0.0)
-                loopPosition += activePattern_.lengthBeats;
+            const auto cycle = static_cast<std::int64_t>(
+                std::floor(beat / activePattern_.lengthBeats));
+            const double loopPosition =
+                beat - static_cast<double>(cycle) * activePattern_.lengthBeats;
             for (std::size_t i = 0; i < activePattern_.eventCount; ++i) {
                 const auto& event = activePattern_.events[i];
                 if (loopPosition >= event.beat &&
                     loopPosition < event.beat + event.durationBeats) {
                     if (desiredCount >= kMaxPolyphony)
                         break;
-                    desiredNotes[desiredCount] = event.midiNote;
-                    desiredVelocities[desiredCount] = event.velocity;
+                    const double absoluteStartBeat =
+                        static_cast<double>(cycle) * activePattern_.lengthBeats + event.beat;
+                    const double absoluteEndBeat = absoluteStartBeat + event.durationBeats;
+                    desired[desiredCount] = ScheduledAudioNote{
+                        event.midiNote,
+                        event.velocity,
+                        patternStartSample_ + static_cast<std::uint64_t>(
+                                                  std::llround(absoluteStartBeat * samplesPerBeat)),
+                        patternStartSample_ + static_cast<std::uint64_t>(
+                                                  std::llround(absoluteEndBeat * samplesPerBeat))};
                     ++desiredCount;
                 }
             }
         }
 
-        bool voicesChanged = false;
         for (auto& voice : audioVoices_) {
-            if (voice.midiNote < 0)
-                continue;
-            const bool stillActive = std::find(
-                desiredNotes.begin(), desiredNotes.begin() + desiredCount,
-                voice.midiNote) != desiredNotes.begin() + desiredCount;
-            if (!stillActive) {
-                if (voice.synth)
-                    Node_SetRun(&voice.synth->mNode, 0);
-                voice.midiNote = -1;
-                voice.velocity = 0;
-                voicesChanged = true;
-            }
+            if (voice.releasing && voice.releaseEndSample <= blockStart)
+                deactivateAudioVoice(voice);
+            else if (voice.midiNote >= 0 && voice.endSample <= blockStart)
+                deactivateAudioVoice(voice);
         }
 
-        int velocitySum = 0;
         for (std::size_t i = 0; i < desiredCount; ++i) {
+            const auto& note = desired[i];
             auto found = std::find_if(audioVoices_.begin(), audioVoices_.end(),
                                       [&](const AudioVoice& voice) {
-                                          return voice.midiNote == desiredNotes[i];
+                                          return voice.midiNote == note.midiNote &&
+                                                 voice.startSample == note.startSample;
                                       });
             if (found == audioVoices_.end()) {
                 found = std::find_if(audioVoices_.begin(), audioVoices_.end(),
                                      [](const AudioVoice& voice) {
-                                         return voice.midiNote < 0;
+                                         return voice.midiNote < 0 && !voice.releasing;
                                      });
                 if (found == audioVoices_.end())
                     continue;
-                found->midiNote = desiredNotes[i];
-                voicesChanged = true;
+                found->midiNote = note.midiNote;
+                found->velocity = note.velocity;
+                found->startSample = note.startSample;
+                found->endSample = note.endSample;
+                found->releasing = false;
                 if (found->synth) {
                     const float frequency = 440.0f * std::pow(
-                        2.0f, static_cast<float>(desiredNotes[i] - 69) / 12.0f);
+                        2.0f, static_cast<float>(note.midiNote - 69) / 12.0f);
                     Graph_SetControl(found->synth, 1, frequency);
                     Node_SetRun(&found->synth->mNode, 1);
                 }
             }
-            found->velocity = desiredVelocities[i];
-            velocitySum += desiredVelocities[i];
+            found->velocity = note.velocity;
         }
-        if (voicesChanged)
-            requestAudioTransition();
-        // The fixed SynthDef has no per-voice amp control, so normalize the
-        // summed chord and apply its average MIDI velocity at the mix output.
-        audioGain_ = desiredCount == 0
-                         ? 0.0f
-                         : static_cast<float>(velocitySum) /
-                               (127.0f * static_cast<float>(desiredCount * desiredCount));
     }
 
     bool initializeWorld() {
@@ -660,7 +698,7 @@ private:
         options.mBufLength = kSCBlockSize;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
-        options.mNumAudioBusChannels = 32;
+        options.mNumAudioBusChannels = kNumAudioBusChannels;
         options.mLoadGraphDefs = 0;
         options.mRendezvous = false;
         options.mVerbosity = -1;
@@ -689,6 +727,7 @@ private:
             return false;
         }
         int32 nodeId = 100;
+        std::size_t voiceIndex = 0;
         for (auto& voice : audioVoices_) {
             sc_msg_iter noControls(0, "");
             if (Graph_New(world_, definition, nodeId++, &noControls,
@@ -696,8 +735,11 @@ private:
                 discardPartialWorld();
                 return false;
             }
+            const auto outputBus = kFirstAudioBus + static_cast<int>(voiceIndex);
+            Graph_SetControl(voice.synth, 0, static_cast<float>(outputBus));
             Group_AddTail(root, &voice.synth->mNode);
             Node_SetRun(&voice.synth->mNode, 0);
+            ++voiceIndex;
         }
         cursor_ = kSCBlockSize;
         return true;
@@ -712,10 +754,36 @@ private:
             voice = {};
     }
 
-    void renderSCBlock() {
+    void renderSCBlock(std::uint64_t blockStart) {
         World_Run(world_);
-        for (int i = 0; i < kSCBlockSize; ++i)
-            outputBlock_[static_cast<std::size_t>(i)] = world_->mAudioBus[i] * audioGain_;
+        for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
+            const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
+            float mixed = 0.0f;
+            std::size_t contributingVoices = 0;
+            for (std::size_t voiceIndex = 0; voiceIndex < audioVoices_.size(); ++voiceIndex) {
+                const auto& voice = audioVoices_[voiceIndex];
+                const float envelope = voiceEnvelopeAt(voice, absoluteSample);
+                if (envelope <= 0.0f || voice.velocity <= 0)
+                    continue;
+                const auto bus = static_cast<std::size_t>(kFirstAudioBus) + voiceIndex;
+                const auto offset = bus * static_cast<std::size_t>(world_->mBufLength) +
+                                    static_cast<std::size_t>(sampleIndex);
+                const float velocity = static_cast<float>(voice.velocity) / 127.0f;
+                mixed += world_->mAudioBus[offset] * envelope * velocity;
+                ++contributingVoices;
+            }
+            outputBlock_[static_cast<std::size_t>(sampleIndex)] =
+                contributingVoices == 0
+                    ? 0.0f
+                    : mixed / static_cast<float>(contributingVoices);
+        }
+
+        const auto blockEnd = blockStart + static_cast<std::uint64_t>(kSCBlockSize);
+        for (auto& voice : audioVoices_) {
+            if ((voice.releasing && voice.releaseEndSample <= blockEnd) ||
+                (voice.midiNote >= 0 && voice.endSample <= blockEnd))
+                deactivateAudioVoice(voice);
+        }
         ++world_->mBufCounter;
         cursor_ = 0;
     }
@@ -732,11 +800,6 @@ private:
             voice = {};
         cursor_ = kSCBlockSize;
         outputBlock_.fill(0.0f);
-        audioGain_ = 0.0f;
-        lastOutputSample_ = 0.0f;
-        audioTransitionStartSample_ = 0.0f;
-        audioTransitionTotalSamples_ = 0;
-        audioTransitionRemainingSamples_ = 0;
         playing_ = false;
         activeMidiNotes_.fill(false);
     }
@@ -744,7 +807,7 @@ private:
     std::string scriptNamespace_;
     double sampleRate_ = 48000.0;
     World* world_ = nullptr;
-    std::array<AudioVoice, kMaxPolyphony> audioVoices_{};
+    std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::string ugenPluginPath_;
     std::array<float, kSCBlockSize> outputBlock_{};
     int cursor_ = kSCBlockSize;
@@ -756,11 +819,6 @@ private:
     std::uint64_t patternStartSample_ = 0;
     std::uint64_t sampleClock_ = 0;
     std::array<bool, 128> activeMidiNotes_{};
-    float audioGain_ = 0.0f;
-    float lastOutputSample_ = 0.0f;
-    float audioTransitionStartSample_ = 0.0f;
-    std::uint32_t audioTransitionTotalSamples_ = 0;
-    std::uint32_t audioTransitionRemainingSamples_ = 0;
     std::atomic<bool> stopRequested_{false};
     std::mutex scriptThreadMutex_;
     std::thread scriptThread_;
