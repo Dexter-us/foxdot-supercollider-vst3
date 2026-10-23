@@ -104,7 +104,6 @@ if ($pthLines -notcontains "DLLs") {
     Add-Content -Path $pthFile -Value "DLLs"
 }
 Write-Host "Prepared bundled CPython $pythonVersion runtime."
-}
 
 if (-not (Test-Path (Join-Path $scSource ".git"))) {
     if (Test-Path $scSource) {
