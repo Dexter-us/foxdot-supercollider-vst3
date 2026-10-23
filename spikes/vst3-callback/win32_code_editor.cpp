@@ -215,6 +215,27 @@ private:
         return module;
     }
 
+    static std::filesystem::path portableScriptDirectory() {
+        const auto module = moduleInstance();
+        if (!module)
+            return {};
+
+        std::array<wchar_t, 32768> modulePath{};
+        const DWORD length = GetModuleFileNameW(
+            module, modulePath.data(), static_cast<DWORD>(modulePath.size()));
+        if (length == 0 || length >= modulePath.size())
+            return {};
+
+        const auto bundleRoot =
+            std::filesystem::path(std::wstring(modulePath.data(), length))
+                .parent_path()
+                .parent_path()
+                .parent_path();
+        if (bundleRoot.empty())
+            return {};
+        return bundleRoot / L"Portable";
+    }
+
     static bool registerWindowClass() {
         static bool registered = false;
         if (registered)
@@ -428,11 +449,30 @@ private:
             path[count] = L'\0';
         }
 
+        const auto portableDirectory = portableScriptDirectory();
+        if (!portableDirectory.empty()) {
+            std::error_code directoryError;
+            std::filesystem::create_directories(portableDirectory, directoryError);
+            if (directoryError) {
+                MessageBoxW(window_,
+                            L"Could not create the Portable folder beside the VST3. "
+                            L"The dialog will still open so you can choose another folder.",
+                            L"Portable scripts", MB_OK | MB_ICONWARNING);
+            }
+        } else {
+            MessageBoxW(window_,
+                        L"Could not locate the VST3 folder. The dialog will open at its default location.",
+                        L"Portable scripts", MB_OK | MB_ICONWARNING);
+        }
+
         static constexpr wchar_t filter[] =
             L"Python scripts (*.py)\0*.py\0All files (*.*)\0*.*\0";
         OPENFILENAMEW dialog{};
         dialog.lStructSize = sizeof(dialog);
         dialog.hwndOwner = window_;
+        dialog.lpstrInitialDir = portableDirectory.empty()
+                                     ? nullptr
+                                     : portableDirectory.c_str();
         dialog.lpstrFilter = filter;
         dialog.nFilterIndex = 1;
         dialog.lpstrFile = path.data();

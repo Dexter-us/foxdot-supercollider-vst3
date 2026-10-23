@@ -9,7 +9,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - The three required UGen modules (`OscUGens`, `BinaryOpUGens`, and `IOUGens`) are copied into `Contents/Resources/SCPlugins`. The plugin locates that folder relative to its loaded module; no build-machine UGen path is compiled into the binary.
 - The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
 - The editor supports `tempo(bpm)` and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0)`.
-- The Windows editor can open and save UTF-8 Python scripts and includes three starter patterns. It prompts before replacing unsaved edits.
+- The Windows editor can open and save UTF-8 Python scripts and includes three starter patterns. The dialogs default to the bundle's `Portable` folder, which is created beside `Contents`; the editor prompts before replacing unsaved edits.
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the plugin's sample clock.
 - A MIDI output event bus is exposed to the host.
 

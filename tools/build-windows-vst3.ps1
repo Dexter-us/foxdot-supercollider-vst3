@@ -215,6 +215,11 @@ if (-not $bundle) {
     throw "The VST3 bundle was not produced under $pluginBuild"
 }
 
+$portableDirectory = Join-Path $bundle.FullName "Portable"
+New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null
+Copy-Item -Path (Join-Path $pluginSource "Portable/README.txt") `
+    -Destination (Join-Path $portableDirectory "README.txt") -Force
+
 $resourceRoot = Join-Path $bundle.FullName "Contents/Resources"
 foreach ($module in $requiredModules) {
     if (-not (Test-Path (Join-Path $resourceRoot "SCPlugins/$module"))) {
@@ -234,6 +239,9 @@ foreach ($pythonFile in @("Python/python312.dll", "Python/python3.dll", "Python/
 }
 if (-not (Test-Path (Join-Path $resourceRoot "Licenses/PYTHON-LICENSE.txt"))) {
     throw "The VST3 bundle is missing Python's license file"
+}
+if (-not (Test-Path (Join-Path $portableDirectory "README.txt"))) {
+    throw "The VST3 bundle is missing its Portable scripts folder"
 }
 
 $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
