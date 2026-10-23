@@ -40,7 +40,7 @@ struct CodeExample {
     const wchar_t* source;
 };
 
-constexpr std::array<CodeExample, 3> kCodeExamples{{
+constexpr std::array<CodeExample, 4> kCodeExamples{{
     {L"Four-note pulse",
      L"tempo(120)\r\n"
      L"play([60, 64, 67, 72], step=0.5, duration=0.4)\r\n"},
@@ -52,6 +52,10 @@ constexpr std::array<CodeExample, 3> kCodeExamples{{
      L"tempo(88)\r\n"
      L"play([36, None, 43, None, 36, 48, 43, None], "
      L"step=0.5, duration=0.4, velocity=90)\r\n"},
+    {L"Chord steps",
+     L"tempo(100)\r\n"
+     L"play([[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]], "
+     L"step=1, duration=0.9)\r\n"},
 }};
 
 constexpr wchar_t kInitialCode[] =

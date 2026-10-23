@@ -1,6 +1,7 @@
 #include "python_runtime.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <fstream>
@@ -110,18 +111,39 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0):
     if not 1 <= velocity <= 127:
         raise ValueError('velocity must be 1..127')
     if _dexter_slots + len(notes) > 256:
-        raise ValueError('a pattern is limited to 256 note slots')
-    for i, note in enumerate(notes):
-        if note is None:
+        raise ValueError('a pattern is limited to 256 step slots')
+    additions = []
+    for i, item in enumerate(notes):
+        if item is None:
             continue
-        note = int(note)
-        if not 0 <= note <= 127:
-            raise ValueError('MIDI notes must be 0..127')
+        chord = list(item) if isinstance(item, (list, tuple)) else [item]
+        if len(chord) > 8:
+            raise ValueError('a chord can contain at most 8 notes')
         start = offset + i * step
-        if any(start < old_start + old_duration and start + duration > old_start
-               for old_start, old_duration, _, _ in _dexter_events):
-            raise ValueError('overlapping notes are not supported in this monophonic prototype')
-        _dexter_events.append((start, duration, note, velocity))
+        for note in chord:
+            note = int(note)
+            if not 0 <= note <= 127:
+                raise ValueError('MIDI notes must be 0..127')
+            additions.append((start, duration, note, velocity))
+    if len(_dexter_events) + len(additions) > 256:
+        raise ValueError('a pattern is limited to 256 note events')
+    candidate = _dexter_events + additions
+    points = sorted([(start, 1, note) for start, dur, note, _ in candidate] +
+                    [(start + dur, -1, note) for start, dur, note, _ in candidate])
+    active = 0
+    active_pitches = set()
+    for beat, delta, note in points:
+        if delta < 0:
+            active -= 1
+            active_pitches.discard(note)
+        else:
+            if active >= 8:
+                raise ValueError('a pattern can have at most 8 simultaneous notes')
+            if note in active_pitches:
+                raise ValueError('the same MIDI pitch cannot overlap itself')
+            active += 1
+            active_pitches.add(note)
+    _dexter_events.extend(additions)
     _dexter_slots += len(notes)
     _dexter_length = max(_dexter_length, offset + len(notes) * step)
 )PY";
@@ -213,11 +235,37 @@ bool parseResult(const std::filesystem::path& resultPath,
               [](const PythonNoteEvent& a, const PythonNoteEvent& b) {
                   return a.beat < b.beat;
               });
-    for (std::size_t i = 1; i < pattern.events.size(); ++i) {
-        const auto& previous = pattern.events[i - 1];
-        if (pattern.events[i].beat + 1e-9 < previous.beat + previous.durationBeats) {
-            error = "Python returned overlapping notes in a monophonic pattern.";
-            return false;
+    struct Boundary {
+        double beat;
+        int note;
+        int delta;
+    };
+    std::vector<Boundary> boundaries;
+    boundaries.reserve(pattern.events.size() * 2);
+    for (const auto& event : pattern.events) {
+        boundaries.push_back({event.beat, event.midiNote, 1});
+        boundaries.push_back({event.beat + event.durationBeats, event.midiNote, -1});
+    }
+    std::sort(boundaries.begin(), boundaries.end(),
+              [](const Boundary& a, const Boundary& b) {
+                  if (a.beat != b.beat)
+                      return a.beat < b.beat;
+                  return a.delta < b.delta;
+              });
+    std::array<bool, 128> activePitches{};
+    int activeNotes = 0;
+    for (const auto& boundary : boundaries) {
+        if (boundary.delta < 0) {
+            --activeNotes;
+            activePitches[static_cast<std::size_t>(boundary.note)] = false;
+        } else {
+            const auto pitch = static_cast<std::size_t>(boundary.note);
+            if (activeNotes >= 8 || activePitches[pitch]) {
+                error = "Python returned a pattern with invalid overlapping polyphony.";
+                return false;
+            }
+            ++activeNotes;
+            activePitches[pitch] = true;
         }
     }
     return true;

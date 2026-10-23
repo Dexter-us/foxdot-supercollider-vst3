@@ -17,10 +17,12 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 - Open/Save dialogs default to a `Portable` folder beside the VST3 bundle.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
 - `tempo(bpm)` and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0)`.
-- MIDI note numbers 0–127, `None` rests, repeating patterns, and one monophonic voice.
-- Maximum 256 note slots per pattern, 4096 beats, and 20–300 BPM.
+- MIDI note numbers 0–127, `None` rests, repeating patterns, and up to 8 simultaneous audio voices.
+- Chords can be written as nested lists, such as `play([[60, 64, 67], [62, 65, 69]])`; separate `play()` calls can layer parts.
+- Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20–300 BPM.
 - Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
-- MIDI note events are emitted on a VST3 event output bus; SuperCollider renders the same single-voice pattern to audio.
+- MIDI note events are emitted on a VST3 event output bus; SuperCollider renders the pattern through a fixed 8-voice pool.
+- MIDI output preserves each note's velocity; the prototype's internal chord audio uses a gain-normalized mix with average chord velocity.
 - Dexter U.S. manufacturer metadata.
 
 Example:
@@ -30,6 +32,14 @@ tempo(120)
 play([60, 64, None, 67], step=0.5, duration=0.4)
 ```
 
+Chord example:
+
+```python
+tempo(100)
+play([[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]],
+     step=1, duration=0.9)
+```
+
 This is only a pattern-and-pitch slice: user code does not define arbitrary SuperCollider SynthDefs or access the full FoxDot API. The Python worker has a 2-second guard for ordinary Python loops and a restricted built-ins set, but this is not a security sandbox; only run code you trust.
 
 ## Not included yet
@@ -37,7 +47,7 @@ This is only a pattern-and-pitch slice: user code does not define arbitrary Supe
 - Full compatibility with all FoxDot syntax, classes, synths, samples, and editor behavior.
 - An external SuperCollider process, network OSC, or remote server control.
 - DAW tempo/transport sync, MIDI clock, or network synchronization.
-- Polyphony, user-defined SynthDefs, sample playback, MIDI input, full FoxDot compatibility, and macOS/Linux editor support.
+- User-defined SynthDefs, sample playback, MIDI input, full FoxDot compatibility, and macOS/Linux editor support.
 
 ## Architecture
 
@@ -52,7 +62,7 @@ This is only a pattern-and-pitch slice: user code does not define arbitrary Supe
 3. **Complete in prototype:** Add Windows editor, embedded Python, repeating note patterns, and VST3 MIDI output.
 4. **In progress:** Validate the Python editor/runtime and MIDI/audio behavior in a Windows DAW; the user can test on Windows only.
 5. **In progress:** Save and restore editor code with DAW project state.
-6. **Later:** Add polyphony and incrementally expand the FoxDot-inspired pattern API; full FoxDot compatibility is not assumed.
+6. **Later:** Incrementally expand the FoxDot-inspired pattern API; full FoxDot compatibility is not assumed.
 
 ## Licensing and upstream code
 
