@@ -1,8 +1,10 @@
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/main/moduleinit.h"
+#include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/base/ustring.h"
 #include "pluginterfaces/vst/ivstevents.h"
+#include "pluginterfaces/vst/ivstprocesscontext.h"
 
 #include "SC_WorldOptions.h"
 #include "SC_Prototypes.h"
@@ -110,6 +112,85 @@ public:
             this, static_cast<IEditController*>(this));
     }
 
+    tresult PLUGIN_API getState(IBStream* stream) override {
+        if (!stream)
+            return kInvalidArgument;
+
+        std::string source;
+        {
+            std::lock_guard<std::mutex> lock(editorStateMutex_);
+            source = editorSource_;
+        }
+        if (source.size() > kMaxEditorSourceBytes)
+            return kResultFalse;
+
+        std::array<char, 4> magic{'D', 'X', 'S', '1'};
+        std::array<char, 4> flags{};
+        encodeUint32(syncToDaw_.load(std::memory_order_acquire) ? 1u : 0u, flags);
+        std::array<char, 4> length{};
+        encodeUint32(static_cast<std::uint32_t>(source.size()), length);
+
+        if (!writeStreamBytes(stream, magic.data(), static_cast<int32>(magic.size())) ||
+            !writeStreamBytes(stream, flags.data(), static_cast<int32>(flags.size())) ||
+            !writeStreamBytes(stream, length.data(), static_cast<int32>(length.size())) ||
+            (!source.empty() &&
+             !writeStreamBytes(stream, source.data(), static_cast<int32>(source.size()))))
+            return kResultFalse;
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API setState(IBStream* stream) override {
+        if (!stream)
+            return kInvalidArgument;
+
+        std::array<char, 4> magic{};
+        int32 bytesRead = 0;
+        while (bytesRead < static_cast<int32>(magic.size())) {
+            int32 chunkRead = 0;
+            if (stream->read(magic.data() + bytesRead,
+                             static_cast<int32>(magic.size()) - bytesRead,
+                             &chunkRead) != kResultOk)
+                return kResultFalse;
+            if (chunkRead == 0)
+                return bytesRead == 0 ? kResultOk : kResultFalse;
+            bytesRead += chunkRead;
+        }
+        if (magic != std::array<char, 4>{'D', 'X', 'S', '1'})
+            return kResultFalse;
+
+        std::array<char, 4> flags{};
+        std::array<char, 4> length{};
+        if (!readStreamBytes(stream, flags.data(), static_cast<int32>(flags.size())) ||
+            !readStreamBytes(stream, length.data(), static_cast<int32>(length.size())))
+            return kResultFalse;
+        const auto flagValue = decodeUint32(flags);
+        const auto sourceLength = decodeUint32(length);
+        if (sourceLength > kMaxEditorSourceBytes)
+            return kResultFalse;
+
+        std::string source(sourceLength, '\0');
+        if (!source.empty() &&
+            !readStreamBytes(stream, source.data(), static_cast<int32>(source.size())))
+            return kResultFalse;
+        if (source.find('\0') != std::string::npos)
+            return kResultFalse;
+
+        {
+            std::lock_guard<std::mutex> lock(editorStateMutex_);
+            editorSource_ = std::move(source);
+            hasEditorSource_ = true;
+        }
+        syncToDaw_.store((flagValue & 1u) != 0, std::memory_order_release);
+        stopPattern();
+        return kResultOk;
+    }
+
+    uint32 PLUGIN_API getProcessContextRequirements() override {
+        return IProcessContextRequirements::kNeedProjectTimeMusic |
+               IProcessContextRequirements::kNeedTempo |
+               IProcessContextRequirements::kNeedTransportState;
+    }
+
     tresult PLUGIN_API setupProcessing(ProcessSetup& setup) override {
         const auto baseResult = SingleComponentEffect::setupProcessing(setup);
         if (baseResult != kResultOk)
@@ -145,23 +226,68 @@ public:
         if (!world_)
             return kResultFalse;
 
-        std::unique_lock<std::mutex> patternLock(patternMutex_, std::try_to_lock);
-        if (patternLock.owns_lock()) {
-            if (pendingPatternReady_) {
-                if (activeMidiNote_ >= 0)
-                    addMidiNoteEvent(data.outputEvents, 0, activeMidiNote_, 0, false);
-                activePattern_ = pendingPattern_;
-                pendingPatternReady_ = false;
-                patternStartSample_ = sampleClock_;
-                playing_ = true;
-                activeAudioNote_ = -1;
-                audioGain_ = 0.0f;
-                activeMidiNote_ = -1;
-                if (synth_)
-                    Node_SetRun(&synth_->mNode, 0);
-                muteRemainingAudioBlock();
+        const auto* context = data.processContext;
+        const bool syncRequested = syncToDaw_.load(std::memory_order_acquire);
+        const bool syncAvailable = context &&
+            (context->state & ProcessContext::kTempoValid) &&
+            (context->state & ProcessContext::kProjectTimeMusicValid) &&
+            std::isfinite(context->tempo) && context->tempo >= 20.0 &&
+            context->tempo <= 300.0 && std::isfinite(context->projectTimeMusic);
+        const bool useDawSync = syncRequested && syncAvailable;
+        const bool transportPlaying = useDawSync &&
+            (context->state & ProcessContext::kPlaying) != 0;
+        const bool dawTransportResumed = useDawSync && transportPlaying &&
+            !lastDawTransportPlaying_;
+        dawSyncAvailable_.store(syncAvailable, std::memory_order_release);
+        dawTransportPlaying_.store(transportPlaying, std::memory_order_release);
+        lastDawTransportPlaying_ = useDawSync && transportPlaying;
+
+        bool newPattern = false;
+        {
+            std::unique_lock<std::mutex> patternLock(patternMutex_, std::try_to_lock);
+            if (patternLock.owns_lock()) {
+                if (pendingPatternReady_) {
+                    if (activeMidiNote_ >= 0)
+                        addMidiNoteEvent(data.outputEvents, 0, activeMidiNote_, 0, false);
+                    activePattern_ = pendingPattern_;
+                    pendingPatternReady_ = false;
+                    playing_ = true;
+                    newPattern = true;
+                    activeAudioNote_ = -1;
+                    audioGain_ = 0.0f;
+                    activeMidiNote_ = -1;
+                    if (synth_)
+                        Node_SetRun(&synth_->mNode, 0);
+                    muteRemainingAudioBlock();
+                }
             }
-            patternLock.unlock();
+        }
+
+        const double bpm = useDawSync ? context->tempo : activePattern_.bpm;
+        const double safeBpm = std::isfinite(bpm) && bpm >= 20.0 && bpm <= 300.0
+                                   ? bpm
+                                   : 120.0;
+        const double beatsPerSample = safeBpm / (60.0 * sampleRate_);
+        const double blockStartBeat = useDawSync
+                                          ? context->projectTimeMusic
+                                          : static_cast<double>(sampleClock_) * beatsPerSample;
+
+        if (useDawSync != lastClockUsesDaw_) {
+            if (playing_) {
+                waitingForDawPlay_ = useDawSync && !transportPlaying;
+                if (!waitingForDawPlay_)
+                    patternStartBeat_ = blockStartBeat;
+            }
+            lastClockUsesDaw_ = useDawSync;
+        }
+        if (newPattern) {
+            waitingForDawPlay_ = useDawSync && !transportPlaying;
+            if (!waitingForDawPlay_)
+                patternStartBeat_ = blockStartBeat;
+        }
+        if (useDawSync && transportPlaying && waitingForDawPlay_ && playing_) {
+            patternStartBeat_ = blockStartBeat;
+            waitingForDawPlay_ = false;
         }
 
         if (stopRequested_.exchange(false, std::memory_order_acq_rel)) {
@@ -171,15 +297,32 @@ public:
             activeAudioNote_ = -1;
             audioGain_ = 0.0f;
             playing_ = false;
+            waitingForDawPlay_ = false;
             if (synth_)
                 Node_SetRun(&synth_->mNode, 0);
             muteRemainingAudioBlock();
         }
 
-        emitPatternMidi(data);
+        const bool patternAudible = playing_ &&
+            (!useDawSync || transportPlaying) && !waitingForDawPlay_;
+        if (useDawSync && !transportPlaying && activeMidiNote_ >= 0) {
+            addMidiNoteEvent(data.outputEvents, 0, activeMidiNote_, 0, false);
+            activeMidiNote_ = -1;
+        }
+        if (!patternAudible && synth_) {
+            Node_SetRun(&synth_->mNode, 0);
+            activeAudioNote_ = -1;
+            audioGain_ = 0.0f;
+            muteRemainingAudioBlock();
+        }
+
+        emitPatternMidi(data, blockStartBeat, safeBpm, patternAudible,
+                        dawTransportResumed && !newPattern);
         for (int32 frame = 0; frame < data.numSamples; ++frame) {
             if (cursor_ == kSCBlockSize) {
-                updateSynthForBlock(sampleClock_ + static_cast<std::uint64_t>(frame));
+                const auto frameBeat = blockStartBeat +
+                    static_cast<double>(frame) * beatsPerSample;
+                updateSynthForBlock(frameBeat, safeBpm, patternAudible);
                 renderSCBlock();
             }
             const float sample = outputBlock_[cursor_++];
@@ -270,7 +413,39 @@ public:
         setEditorStatus("Stopping pattern...");
     }
 
+    std::string editorSource() override {
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        return editorSource_;
+    }
+
+    bool hasEditorSource() override {
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        return hasEditorSource_;
+    }
+
+    void setEditorSource(const std::string& source) override {
+        if (source.size() > kMaxEditorSourceBytes)
+            return;
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        editorSource_ = source;
+        hasEditorSource_ = true;
+    }
+
+    bool syncToDaw() override {
+        return syncToDaw_.load(std::memory_order_acquire);
+    }
+
+    void setSyncToDaw(bool enabled) override {
+        syncToDaw_.store(enabled, std::memory_order_release);
+    }
+
     std::string editorStatus() override {
+        if (syncToDaw_.load(std::memory_order_acquire)) {
+            if (!dawSyncAvailable_.load(std::memory_order_acquire))
+                return "DAW sync enabled; host timing unavailable, using tempo().";
+            if (!dawTransportPlaying_.load(std::memory_order_acquire))
+                return "DAW sync enabled; waiting for DAW Play.";
+        }
         std::lock_guard<std::mutex> lock(statusMutex_);
         return editorStatus_;
     }
@@ -282,6 +457,46 @@ private:
     static constexpr int kSCBlockSize = 64;
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
+    static constexpr std::size_t kMaxEditorSourceBytes = 256 * 1024;
+
+    static void encodeUint32(std::uint32_t value, std::array<char, 4>& bytes) {
+        for (std::size_t i = 0; i < bytes.size(); ++i)
+            bytes[i] = static_cast<char>((value >> (i * 8)) & 0xffu);
+    }
+
+    static std::uint32_t decodeUint32(const std::array<char, 4>& bytes) {
+        std::uint32_t value = 0;
+        for (std::size_t i = 0; i < bytes.size(); ++i)
+            value |= static_cast<std::uint32_t>(
+                         static_cast<unsigned char>(bytes[i])) << (i * 8);
+        return value;
+    }
+
+    static bool writeStreamBytes(IBStream* stream, const void* bytes, int32 size) {
+        auto* data = const_cast<char*>(static_cast<const char*>(bytes));
+        int32 offset = 0;
+        while (offset < size) {
+            int32 written = 0;
+            if (stream->write(data + offset, size - offset, &written) != kResultOk ||
+                written <= 0)
+                return false;
+            offset += written;
+        }
+        return true;
+    }
+
+    static bool readStreamBytes(IBStream* stream, void* bytes, int32 size) {
+        auto* data = static_cast<char*>(bytes);
+        int32 offset = 0;
+        while (offset < size) {
+            int32 read = 0;
+            if (stream->read(data + offset, size - offset, &read) != kResultOk ||
+                read <= 0)
+                return false;
+            offset += read;
+        }
+        return true;
+    }
 
     struct PatternState {
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
@@ -291,7 +506,7 @@ private:
     };
 
     struct TimedMidiEvent {
-        std::uint64_t sample = 0;
+        int32 sampleOffset = 0;
         int midiNote = 60;
         int velocity = 100;
         bool noteOn = false;
@@ -348,60 +563,86 @@ private:
         outputEvents->addEvent(event);
     }
 
-    void collectMidiEvents(std::uint64_t blockStart, std::uint64_t blockEnd,
+    void collectMidiEvents(double blockStartBeat, double blockEndBeat, double bpm,
+                           int32 blockSamples,
                            std::array<TimedMidiEvent, kMaxMidiEventsPerBlock>& result,
                            std::size_t& resultCount) const {
         resultCount = 0;
         if (!playing_ || activePattern_.eventCount == 0 ||
-            activePattern_.lengthBeats <= 0.0 || activePattern_.bpm <= 0.0)
+            activePattern_.lengthBeats <= 0.0 || bpm <= 0.0 ||
+            !std::isfinite(blockStartBeat) || !std::isfinite(blockEndBeat))
             return;
 
-        const double samplesPerBeat = sampleRate_ * 60.0 / activePattern_.bpm;
-        const double startBeat = static_cast<double>(blockStart - patternStartSample_) / samplesPerBeat;
-        const double endBeat = static_cast<double>(blockEnd - patternStartSample_) / samplesPerBeat;
-        const auto firstCycle = std::max<std::int64_t>(
-            0, static_cast<std::int64_t>(std::floor(startBeat / activePattern_.lengthBeats)) - 1);
+        const double samplesPerBeat = sampleRate_ * 60.0 / bpm;
+        const double startBeat = blockStartBeat - patternStartBeat_;
+        const double endBeat = blockEndBeat - patternStartBeat_;
+        if (std::abs(startBeat) > 1.0e9 || std::abs(endBeat) > 1.0e9)
+            return;
+        const auto firstCycle = static_cast<std::int64_t>(
+            std::floor(startBeat / activePattern_.lengthBeats)) - 1;
         const auto lastCycle = static_cast<std::int64_t>(
             std::floor(endBeat / activePattern_.lengthBeats)) + 1;
 
-        auto append = [&](std::uint64_t sample, int note, int velocity, bool noteOn) {
-            if (sample < blockStart || sample >= blockEnd ||
-                resultCount >= result.size())
+        auto append = [&](double eventBeat, int note, int velocity, bool noteOn) {
+            const auto offset = static_cast<std::int64_t>(
+                std::llround((eventBeat - blockStartBeat) * samplesPerBeat));
+            if (offset < 0 || offset >= blockSamples || resultCount >= result.size())
                 return;
-            result[resultCount++] = TimedMidiEvent{sample, note, velocity, noteOn};
+            result[resultCount++] = TimedMidiEvent{
+                static_cast<int32>(offset), note, velocity, noteOn};
         };
 
         for (std::int64_t cycle = firstCycle; cycle <= lastCycle; ++cycle) {
             const double cycleBeat = static_cast<double>(cycle) * activePattern_.lengthBeats;
             for (std::size_t i = 0; i < activePattern_.eventCount; ++i) {
                 const auto& note = activePattern_.events[i];
-                const auto onSample = patternStartSample_ +
-                    static_cast<std::uint64_t>(std::llround((cycleBeat + note.beat) * samplesPerBeat));
-                const auto offSample = patternStartSample_ +
-                    static_cast<std::uint64_t>(std::llround(
-                        (cycleBeat + note.beat + note.durationBeats) * samplesPerBeat));
-                append(onSample, note.midiNote, note.velocity, true);
-                append(offSample, note.midiNote, 0, false);
+                const auto eventStart = patternStartBeat_ + cycleBeat + note.beat;
+                append(eventStart, note.midiNote, note.velocity, true);
+                append(eventStart + note.durationBeats, note.midiNote, 0, false);
             }
         }
 
         std::sort(result.begin(), result.begin() + resultCount,
                   [](const TimedMidiEvent& a, const TimedMidiEvent& b) {
-                      if (a.sample != b.sample)
-                          return a.sample < b.sample;
+                      if (a.sampleOffset != b.sampleOffset)
+                          return a.sampleOffset < b.sampleOffset;
                       return !a.noteOn && b.noteOn;
                   });
     }
 
-    void emitPatternMidi(ProcessData& data) {
+    void emitPatternMidi(ProcessData& data, double blockStartBeat, double bpm,
+                         bool patternAudible, bool resumeMidi) {
+        if (!patternAudible)
+            return;
         std::array<TimedMidiEvent, kMaxMidiEventsPerBlock> events{};
         std::size_t count = 0;
-        collectMidiEvents(sampleClock_, sampleClock_ + static_cast<std::uint64_t>(data.numSamples),
+        const double blockEndBeat = blockStartBeat +
+            static_cast<double>(data.numSamples) * bpm / (60.0 * sampleRate_);
+        collectMidiEvents(blockStartBeat, blockEndBeat, bpm, data.numSamples,
                           events, count);
+        if (resumeMidi && count < events.size()) {
+            int note = -1;
+            int velocity = 0;
+            if (currentNoteAtBeat(blockStartBeat, note, velocity)) {
+                const bool alreadyStartsHere = std::any_of(
+                    events.begin(), events.begin() + count,
+                    [note](const TimedMidiEvent& event) {
+                        return event.sampleOffset == 0 && event.noteOn &&
+                               event.midiNote == note;
+                    });
+                if (!alreadyStartsHere)
+                    events[count++] = TimedMidiEvent{0, note, velocity, true};
+            }
+        }
+        std::sort(events.begin(), events.begin() + count,
+                  [](const TimedMidiEvent& a, const TimedMidiEvent& b) {
+                      if (a.sampleOffset != b.sampleOffset)
+                          return a.sampleOffset < b.sampleOffset;
+                      return !a.noteOn && b.noteOn;
+                  });
         for (std::size_t i = 0; i < count; ++i) {
             const auto& event = events[i];
-            addMidiNoteEvent(data.outputEvents,
-                             static_cast<int32>(event.sample - sampleClock_),
+            addMidiNoteEvent(data.outputEvents, event.sampleOffset,
                              event.midiNote, event.velocity, event.noteOn);
             if (event.noteOn)
                 activeMidiNote_ = event.midiNote;
@@ -410,29 +651,44 @@ private:
         }
     }
 
-    void updateSynthForBlock(std::uint64_t blockStart) {
+    bool currentNoteAtBeat(double timelineBeat, int& midiNote,
+                           int& velocity) const {
+        if (!playing_ || activePattern_.eventCount == 0 ||
+            activePattern_.lengthBeats <= 0.0 || !std::isfinite(timelineBeat))
+            return false;
+        const double beat = timelineBeat - patternStartBeat_;
+        if (std::abs(beat) > 1.0e9)
+            return false;
+        double loopPosition = std::fmod(beat, activePattern_.lengthBeats);
+        if (loopPosition < 0.0)
+            loopPosition += activePattern_.lengthBeats;
+
+        double latestStartBeat = -1.0;
+        midiNote = -1;
+        velocity = 0;
+        for (std::size_t i = 0; i < activePattern_.eventCount; ++i) {
+            const auto& event = activePattern_.events[i];
+            if (loopPosition >= event.beat &&
+                loopPosition < event.beat + event.durationBeats &&
+                event.beat >= latestStartBeat) {
+                midiNote = event.midiNote;
+                velocity = event.velocity;
+                latestStartBeat = event.beat;
+            }
+        }
+        return midiNote >= 0;
+    }
+
+    void updateSynthForBlock(double blockStartBeat, double bpm, bool patternAudible) {
         if (!synth_)
             return;
         int noteToPlay = -1;
         int velocity = 0;
-        double latestStartBeat = -1.0;
-        if (playing_ && activePattern_.eventCount > 0 &&
-            blockStart + kSCBlockSize / 2 >= patternStartSample_) {
-            const double samplesPerBeat = sampleRate_ * 60.0 / activePattern_.bpm;
-            const double beat = static_cast<double>(
-                blockStart + kSCBlockSize / 2 - patternStartSample_) / samplesPerBeat;
-            const double loopPosition = std::fmod(beat, activePattern_.lengthBeats);
-            for (std::size_t i = 0; i < activePattern_.eventCount; ++i) {
-                const auto& event = activePattern_.events[i];
-                if (loopPosition >= event.beat &&
-                    loopPosition < event.beat + event.durationBeats &&
-                    event.beat >= latestStartBeat) {
-                    noteToPlay = event.midiNote;
-                    velocity = event.velocity;
-                    latestStartBeat = event.beat;
-                }
-            }
-        }
+        if (patternAudible && bpm > 0.0)
+            currentNoteAtBeat(blockStartBeat +
+                                  static_cast<double>(kSCBlockSize / 2) *
+                                      bpm / (60.0 * sampleRate_),
+                              noteToPlay, velocity);
 
         if (noteToPlay >= 0) {
             if (noteToPlay != activeAudioNote_) {
@@ -534,6 +790,9 @@ private:
         outputBlock_.fill(0.0f);
         audioGain_ = 0.0f;
         playing_ = false;
+        waitingForDawPlay_ = false;
+        lastClockUsesDaw_ = false;
+        lastDawTransportPlaying_ = false;
         activeAudioNote_ = -1;
         activeMidiNote_ = -1;
     }
@@ -550,7 +809,10 @@ private:
     PatternState pendingPattern_{};
     bool pendingPatternReady_ = false;
     bool playing_ = false;
-    std::uint64_t patternStartSample_ = 0;
+    double patternStartBeat_ = 0.0;
+    bool lastClockUsesDaw_ = false;
+    bool waitingForDawPlay_ = false;
+    bool lastDawTransportPlaying_ = false;
     std::uint64_t sampleClock_ = 0;
     int activeAudioNote_ = -1;
     int activeMidiNote_ = -1;
@@ -562,6 +824,13 @@ private:
     std::atomic<std::uint64_t> scriptGeneration_{0};
     std::mutex statusMutex_;
     std::string editorStatus_ = "Ready. Use tempo() and play().";
+    std::mutex editorStateMutex_;
+    std::string editorSource_ =
+        "tempo(120)\r\nplay([60, 64, 67, 72], step=0.5, duration=0.45)\r\n";
+    bool hasEditorSource_ = true;
+    std::atomic<bool> syncToDaw_{false};
+    std::atomic<bool> dawSyncAvailable_{false};
+    std::atomic<bool> dawTransportPlaying_{false};
 };
 
 } // namespace Steinberg::Vst
