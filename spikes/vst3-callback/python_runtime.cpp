@@ -93,7 +93,29 @@ def tempo(bpm):
         raise ValueError('tempo must be from 20 to 300 BPM')
     _dexter_bpm = bpm
 
-def play(notes, step=1.0, duration=None, velocity=100, offset=0.0):
+def scale(name='major', root=60):
+    global _dexter_scale, _dexter_root
+    name = str(name).strip().lower().replace(' ', '_').replace('-', '_')
+    scales = {
+        'major': (0, 2, 4, 5, 7, 9, 11),
+        'minor': (0, 2, 3, 5, 7, 8, 10),
+        'natural_minor': (0, 2, 3, 5, 7, 8, 10),
+        'aeolian': (0, 2, 3, 5, 7, 8, 10),
+        'dorian': (0, 2, 3, 5, 7, 9, 10),
+        'mixolydian': (0, 2, 4, 5, 7, 9, 10),
+        'major_pentatonic': (0, 2, 4, 7, 9),
+        'minor_pentatonic': (0, 3, 5, 7, 10),
+        'blues': (0, 3, 5, 6, 7, 10),
+    }
+    if name not in scales:
+        raise ValueError('unknown scale; choose major, minor, dorian, mixolydian, major_pentatonic, minor_pentatonic, or blues')
+    root = int(root)
+    if not 0 <= root <= 127:
+        raise ValueError('scale root must be a MIDI note from 0 to 127')
+    _dexter_scale = scales[name]
+    _dexter_root = root
+
+def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False):
     global _dexter_length, _dexter_slots
     if isinstance(notes, (int, float)):
         notes = [notes]
@@ -122,8 +144,11 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0):
         start = offset + i * step
         for note in chord:
             note = int(note)
+            if degrees:
+                octave, degree = divmod(note, len(_dexter_scale))
+                note = _dexter_root + octave * 12 + _dexter_scale[degree]
             if not 0 <= note <= 127:
-                raise ValueError('MIDI notes must be 0..127')
+                raise ValueError('notes must resolve to MIDI pitches 0..127')
             additions.append((start, duration, note, velocity))
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
@@ -152,9 +177,10 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0):
     script << "import builtins, traceback, sys, time\n"
            << "_dexter_scope = globals().setdefault(" << pythonLiteral(namespaceName) << ", {})\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
-           << "'_dexter_length': 1.0, '_dexter_slots': 0})\n"
+           << "'_dexter_length': 1.0, '_dexter_slots': 0, "
+           << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
-           << "('abs', 'all', 'any', 'bool', 'dict', 'enumerate', 'filter', 'float', "
+           << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
            << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', "
            << "'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum', 'tuple', "
            << "'zip', 'ValueError', 'TypeError', 'ZeroDivisionError', "

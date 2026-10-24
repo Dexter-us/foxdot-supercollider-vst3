@@ -16,7 +16,8 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 - Windows native editor with Run, Stop, Open, Save, and starter examples.
 - Open/Save dialogs default to a `Portable` folder beside the VST3 bundle.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
-- `tempo(bpm)` and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0)`.
+- `tempo(bpm)`, `scale(name="major", root=60)`, and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False)`.
+- Raw MIDI pitches remain the default. With `degrees=True`, zero-based scale degrees map to pitches using major, minor, dorian, mixolydian, major/minor pentatonic, or blues scales; degrees wrap across octaves.
 - MIDI note numbers 0–127, `None` rests, repeating patterns, and up to 8 simultaneous audio voices.
 - Chords can be written as nested lists, such as `play([[60, 64, 67], [62, 65, 69]])`; separate `play()` calls can layer parts.
 - Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20–300 BPM.
@@ -39,6 +40,14 @@ Chord example:
 tempo(100)
 play([[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]],
      step=1, duration=0.9)
+```
+
+Scale-degree example:
+
+```python
+tempo(112)
+scale("minor", root=60)
+play([0, 2, 4, 6, 4, 2], step=0.5, duration=0.4, degrees=True)
 ```
 
 This is only a pattern-and-pitch slice: user code does not define arbitrary SuperCollider SynthDefs or access the full FoxDot API. The Python worker has a 2-second guard for ordinary Python loops and a restricted built-ins set, but this is not a security sandbox; only run code you trust.
