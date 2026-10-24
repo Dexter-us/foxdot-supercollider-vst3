@@ -383,8 +383,9 @@ private:
     static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kNumAudioBusChannels = 128;
-    static constexpr double kAttackSeconds = 0.005;
-    static constexpr double kReleaseSeconds = 0.012;
+    static constexpr double kAttackSeconds = 0.010;
+    static constexpr double kReleaseSeconds = 0.040;
+    static constexpr double kMixSmoothingSeconds = 0.010;
     static_assert(kFirstAudioBus + kAudioVoiceCount <= kNumAudioBusChannels,
                   "The SuperCollider world needs one private audio bus per synth voice.");
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
@@ -816,6 +817,9 @@ private:
 
     void renderSCBlock(std::uint64_t blockStart) {
         World_Run(world_);
+        // Smooth voice-count compensation so player changes do not step the mix level.
+        const float mixSmoothing = std::exp(
+            -1.0f / static_cast<float>(sampleRate_ * kMixSmoothingSeconds));
         for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
             const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
             float mixed = 0.0f;
@@ -832,10 +836,11 @@ private:
                 mixed += world_->mAudioBus[offset] * envelope * velocity;
                 ++contributingVoices;
             }
-            outputBlock_[static_cast<std::size_t>(sampleIndex)] =
-                contributingVoices == 0
-                    ? 0.0f
-                    : mixed / static_cast<float>(contributingVoices);
+            const float targetMixGain = contributingVoices == 0
+                                            ? 0.0f
+                                            : 1.0f / static_cast<float>(contributingVoices);
+            mixGain_ += (targetMixGain - mixGain_) * mixSmoothing;
+            outputBlock_[static_cast<std::size_t>(sampleIndex)] = mixed * mixGain_;
         }
 
         const auto blockEnd = blockStart + static_cast<std::uint64_t>(kSCBlockSize);
@@ -873,6 +878,7 @@ private:
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::string ugenPluginPath_;
     std::array<float, kSCBlockSize> outputBlock_{};
+    float mixGain_ = 0.0f;
     int cursor_ = kSCBlockSize;
     std::mutex patternMutex_;
     std::array<PatternState, kPlayerCount> activePatterns_{};
@@ -904,7 +910,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.3.1",
+           "0.3.2",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

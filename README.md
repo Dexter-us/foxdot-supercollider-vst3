@@ -23,7 +23,7 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 - Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20ÃÂ¢ÃÂÃÂ300 BPM.
 - Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
 - MIDI note events are emitted on the VST3 event output bus, with each player assigned its own MIDI channel; the engine supports up to 64 simultaneous notes and eight extra short-release voices.
-- Internal audio applies MIDI velocity and a per-voice 5 ms attack / 12 ms release envelope, then normalizes the chord mix to keep level reasonably consistent.
+- Internal audio applies MIDI velocity, per-voice attack/release envelopes, and smoothed voice-count mix compensation to avoid abrupt level changes as players start and stop.
 - The plugin display name and native editor branding read ÃÂ¢ÃÂÃÂDexter U.S FoxDotÃÂ¢ÃÂÃÂ; the VST3 manufacturer metadata remains Dexter U.S.
 - Dexter U.S. manufacturer metadata.
 
