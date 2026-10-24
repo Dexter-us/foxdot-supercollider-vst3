@@ -224,17 +224,38 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
 
 class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
-                 offset=0.0, degrees=False):
+                 offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
+                 cutoff=20000.0, echo=0.0, delay=0.25):
         self.notes = notes
         self.step = step
         self.duration = duration
         self.velocity = velocity
         self.offset = offset
         self.degrees = degrees
+        if synth not in ('sine', 'triangle', 'saw', 'square'):
+            raise ValueError('synth must be sine, triangle, saw, or square')
+        self.synth = synth
+        self.amp = float(amp)
+        self.pan = float(pan)
+        self.cutoff = float(cutoff)
+        self.echo = float(echo)
+        self.delay = float(delay)
+        if self.amp != self.amp or not 0.0 <= self.amp <= 1.0:
+            raise ValueError('amp must be between 0 and 1')
+        if self.pan != self.pan or not -1.0 <= self.pan <= 1.0:
+            raise ValueError('pan must be between -1 and 1')
+        if self.cutoff != self.cutoff or not 20.0 <= self.cutoff <= 20000.0:
+            raise ValueError('cutoff must be between 20 and 20000 Hz')
+        if self.echo != self.echo or not 0.0 <= self.echo <= 0.75:
+            raise ValueError('echo must be between 0 and 0.75')
+        if self.delay != self.delay or not 0.05 <= self.delay <= 1.0:
+            raise ValueError('delay must be between 0.05 and 1 second')
 
 def sequence(notes, step=1.0, duration=None, velocity=100,
-             offset=0.0, degrees=False):
-    return PlayerPattern(notes, step, duration, velocity, offset, degrees)
+             offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
+             cutoff=20000.0, echo=0.0, delay=0.25):
+    return PlayerPattern(notes, step, duration, velocity, offset, degrees,
+                        synth, amp, pan, cutoff, echo, delay)
 
 class Player:
     def __init__(self, number):
@@ -262,13 +283,18 @@ class Player:
         playerIndex = self.number - 1
         if not 0 <= playerIndex < 8:
             raise ValueError('player number must be 1..8')
-        _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength, compiledEvents)
+        synthIndex = ('sine', 'triangle', 'saw', 'square').index(pattern.synth)
+        _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
+                                        compiledEvents, synthIndex, pattern.amp,
+                                        pattern.pan, pattern.cutoff, pattern.echo,
+                                        pattern.delay)
         if playerIndex == 0:
             _dexter_default_touched = False
         return self
 
     def stop(self):
-        _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [])
+        _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
+                                             0.0, 20000.0, 0.0, 0.25)
 
 p1 = Player(1)
 p2 = Player(2)
@@ -310,12 +336,12 @@ p8 = Player(8)
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']))\n"
+            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _f.write('OK\\t{}\\n'.format(len(_updates)))\n"
             << "        for _player in sorted(_updates):\n"
-            << "            _stopped, _bpm, _length, _events = _updates[_player]\n"
-            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events)))\n"
+            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay = _updates[_player]\n"
+            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay))\n"
             << "            for _e in _events:\n"
             << "                _f.write('N\\t{}\\t{}\\t{}\\t{}\\n'.format(*_e))\n"
             << "except BaseException:\n"
@@ -356,12 +382,21 @@ bool parseResult(const std::filesystem::path& resultPath,
         std::size_t eventCount = 0;
         PythonPlayerUpdate update;
         if (!(input >> record >> update.playerIndex >> stopped >> update.bpm >>
-              update.lengthBeats >> eventCount) || record != 'P' ||
-            update.playerIndex < 0 || update.playerIndex >= 8 || stopped < 0 || stopped > 1 ||
+              update.lengthBeats >> eventCount >> update.synthIndex >> update.amplitude >>
+              update.pan >> update.cutoffHz >> update.echoMix >> update.echoDelaySeconds) ||
+            record != 'P' || update.playerIndex < 0 || update.playerIndex >= 8 ||
+            stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
             !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
-            update.lengthBeats > 4096.0) {
+            update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 3 ||
+            !std::isfinite(update.amplitude) || update.amplitude < 0.0 || update.amplitude > 1.0 ||
+            !std::isfinite(update.pan) || update.pan < -1.0 || update.pan > 1.0 ||
+            !std::isfinite(update.cutoffHz) || update.cutoffHz < 20.0 ||
+            update.cutoffHz > 20000.0 || !std::isfinite(update.echoMix) ||
+            update.echoMix < 0.0 || update.echoMix > 0.75 ||
+            !std::isfinite(update.echoDelaySeconds) || update.echoDelaySeconds < 0.05 ||
+            update.echoDelaySeconds > 1.0) {
             error = "Python returned a malformed player update.";
             return false;
         }

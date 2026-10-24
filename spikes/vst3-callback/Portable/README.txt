@@ -4,3 +4,5 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 
 06-pattern-tools.py demonstrates reverse, rotate, repeat, transpose, and Euclidean rhythm helpers.
 07-independent-players.py shows separate p1 and p2 parts; edit or stop one without replacing the other.
+
+08-synths-and-controls.py demonstrates oscillator choices and per-player amp, pan, cutoff, and echo settings. These settings shape the plugin's internal stereo audio; MIDI output remains note events.

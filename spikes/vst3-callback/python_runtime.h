@@ -16,6 +16,12 @@ struct PythonPlayerUpdate {
     bool stopped = false;
     double bpm = 120.0;
     double lengthBeats = 1.0;
+    int synthIndex = 0;
+    double amplitude = 1.0;
+    double pan = 0.0;
+    double cutoffHz = 20000.0;
+    double echoMix = 0.0;
+    double echoDelaySeconds = 0.25;
     std::vector<PythonNoteEvent> events;
 };
 

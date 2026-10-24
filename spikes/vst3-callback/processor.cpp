@@ -222,7 +222,12 @@ public:
                         continue;
                     stopPlayerMidiNotes(data.outputEvents, 0, static_cast<int>(player));
                     stopAudioVoices(static_cast<int>(player));
+                    const auto previous = activePatterns_[player];
                     activePatterns_[player] = pendingPatterns_[player];
+                    if (!activePatterns_[player].active) {
+                        activePatterns_[player].echoMix = previous.echoMix;
+                        activePatterns_[player].echoDelaySeconds = previous.echoDelaySeconds;
+                    }
                     patternStartSamples_[player] = newStart;
                 }
                 pendingPlayerMask_ = 0;
@@ -244,10 +249,16 @@ public:
                 updateSynthForBlock(blockStart);
                 renderSCBlock(blockStart);
             }
-            const float sample = outputBlock_[cursor_++];
+            const auto outputSample = static_cast<std::size_t>(cursor_++);
+            const float leftSample = outputBlock_[0][outputSample];
+            const float rightSample = outputBlock_[1][outputSample];
             for (int32 channel = 0; channel < output.numChannels; ++channel) {
-                if (output.channelBuffers32[channel])
-                    output.channelBuffers32[channel][frame] = sample;
+                if (!output.channelBuffers32[channel])
+                    continue;
+                const float sample = channel == 0 ? leftSample
+                                    : channel == 1 ? rightSample
+                                                   : 0.5f * (leftSample + rightSample);
+                output.channelBuffers32[channel][frame] = sample;
             }
         }
         sampleClock_ += static_cast<std::uint64_t>(data.numSamples);
@@ -313,6 +324,12 @@ public:
                         next.active = !player.stopped;
                         next.bpm = player.bpm;
                         next.lengthBeats = player.lengthBeats;
+                        next.synthIndex = player.synthIndex;
+                        next.amplitude = static_cast<float>(player.amplitude);
+                        next.pan = static_cast<float>(player.pan);
+                        next.cutoffHz = static_cast<float>(player.cutoffHz);
+                        next.echoMix = static_cast<float>(player.echoMix);
+                        next.echoDelaySeconds = player.echoDelaySeconds;
                         next.eventCount = player.events.size();
                         std::copy(player.events.begin(), player.events.end(), next.events.begin());
                         totalNotes += player.events.size();
@@ -386,6 +403,9 @@ private:
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kMixSmoothingSeconds = 0.010;
+    static constexpr std::size_t kMaxEchoBufferSamples = 96000;
+    static constexpr float kEchoFeedback = 0.35f;
+    static constexpr double kPi = 3.14159265358979323846;
     static_assert(kFirstAudioBus + kAudioVoiceCount <= kNumAudioBusChannels,
                   "The SuperCollider world needs one private audio bus per synth voice.");
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
@@ -435,6 +455,12 @@ private:
         std::size_t eventCount = 0;
         double bpm = 120.0;
         double lengthBeats = 1.0;
+        int synthIndex = 0;
+        float amplitude = 1.0f;
+        float pan = 0.0f;
+        float cutoffHz = 20000.0f;
+        float echoMix = 0.0f;
+        double echoDelaySeconds = 0.25;
         bool active = false;
     };
 
@@ -451,6 +477,15 @@ private:
         int playerIndex = -1;
         int midiNote = -1;
         int velocity = 0;
+        int synthIndex = 0;
+        float amplitude = 1.0f;
+        float pan = 0.0f;
+        float leftGain = 0.70710678f;
+        float rightGain = 0.70710678f;
+        float cutoffHz = 20000.0f;
+        float frequencyHz = 440.0f;
+        float filterState = 0.0f;
+        float filterCoefficient = 1.0f;
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
         bool releasing = false;
@@ -463,6 +498,10 @@ private:
         int playerIndex = 0;
         int midiNote = -1;
         int velocity = 0;
+        int synthIndex = 0;
+        float amplitude = 1.0f;
+        float pan = 0.0f;
+        float cutoffHz = 20000.0f;
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
     };
@@ -698,6 +737,7 @@ private:
                 const double absoluteEndBeat = absoluteStartBeat + event.durationBeats;
                 desired[desiredCount++] = ScheduledAudioNote{
                     static_cast<int>(player), event.midiNote, event.velocity,
+                    pattern.synthIndex, pattern.amplitude, pattern.pan, pattern.cutoffHz,
                     patternStart + static_cast<std::uint64_t>(
                         std::llround(absoluteStartBeat * samplesPerBeat)),
                     patternStart + static_cast<std::uint64_t>(
@@ -731,14 +771,26 @@ private:
                 found->playerIndex = note.playerIndex;
                 found->midiNote = note.midiNote;
                 found->velocity = note.velocity;
+                found->synthIndex = note.synthIndex;
+                found->amplitude = note.amplitude;
+                found->pan = note.pan;
+                found->leftGain = std::sqrt(std::max(0.0f, (1.0f - note.pan) * 0.5f));
+                found->rightGain = std::sqrt(std::max(0.0f, (1.0f + note.pan) * 0.5f));
+                found->cutoffHz = note.cutoffHz;
+                found->filterState = 0.0f;
+                const double maxCutoff = sampleRate_ * 0.45;
+                const double clampedCutoff = std::min<double>(note.cutoffHz, maxCutoff);
+                found->filterCoefficient = clampedCutoff >= maxCutoff
+                    ? 1.0f
+                    : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
+                found->frequencyHz = 440.0f * std::pow(
+                    2.0f, static_cast<float>(note.midiNote - 69) / 12.0f);
                 found->startSample = note.startSample;
                 found->endSample = note.endSample;
                 found->releasing = false;
                 if (found->synth) {
-                    const float frequency = 440.0f * std::pow(
-                        2.0f, static_cast<float>(note.midiNote - 69) / 12.0f);
-                    Graph_SetControl(found->synth, 1, frequency);
-                    Node_SetRun(&found->synth->mNode, 1);
+                    Graph_SetControl(found->synth, 1, found->frequencyHz);
+                    Node_SetRun(&found->synth->mNode, note.synthIndex == 0 ? 1 : 0);
                 }
             }
             found->velocity = note.velocity;
@@ -752,6 +804,12 @@ private:
         if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError))
             return false;
         ugenPluginPath_ = ugenPath.u8string();
+
+        try {
+            echoBuffer_.assign(kPlayerCount * 2 * kMaxEchoBufferSamples, 0.0f);
+        } catch (...) {
+            return false;
+        }
 
         WorldOptions options;
         options.mRealTime = false;
@@ -815,32 +873,117 @@ private:
             voice = {};
     }
 
+    static float polyBlep(double phase, double step) {
+        if (phase < step) {
+            phase /= step;
+            return static_cast<float>(phase + phase - phase * phase - 1.0);
+        }
+        if (phase > 1.0 - step) {
+            phase = (phase - 1.0) / step;
+            return static_cast<float>(phase * phase + phase + phase + 1.0);
+        }
+        return 0.0f;
+    }
+
+    float alternateOscillatorSample(const AudioVoice& voice, std::uint64_t sample) const {
+        const double cycles = std::fmod(
+            static_cast<double>(sample - voice.startSample) * voice.frequencyHz / sampleRate_,
+            1.0);
+        const double phase = cycles < 0.0 ? cycles + 1.0 : cycles;
+        const double step = std::min(0.49, static_cast<double>(voice.frequencyHz) / sampleRate_);
+        if (voice.synthIndex == 1)
+            return static_cast<float>(2.0 * std::asin(std::sin(2.0 * kPi * phase)) / kPi);
+        if (voice.synthIndex == 2)
+            return static_cast<float>(2.0 * phase - 1.0 - polyBlep(phase, step));
+        double halfCycle = phase + 0.5;
+        if (halfCycle >= 1.0)
+            halfCycle -= 1.0;
+        const double square = phase < 0.5 ? 1.0 : -1.0;
+        return static_cast<float>(square + polyBlep(phase, step) - polyBlep(halfCycle, step));
+    }
+
+    static std::size_t echoOffset(std::size_t player, std::size_t channel,
+                                  std::size_t sample) {
+        return (player * 2 + channel) * kMaxEchoBufferSamples + sample;
+    }
+
     void renderSCBlock(std::uint64_t blockStart) {
         World_Run(world_);
-        // Smooth voice-count compensation so player changes do not step the mix level.
         const float mixSmoothing = std::exp(
             -1.0f / static_cast<float>(sampleRate_ * kMixSmoothingSeconds));
         for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
             const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
-            float mixed = 0.0f;
+            std::array<float, kPlayerCount> playerLeft{};
+            std::array<float, kPlayerCount> playerRight{};
+            std::array<bool, kPlayerCount> playerHasVoice{};
             std::size_t contributingVoices = 0;
             for (std::size_t voiceIndex = 0; voiceIndex < audioVoices_.size(); ++voiceIndex) {
-                const auto& voice = audioVoices_[voiceIndex];
+                auto& voice = audioVoices_[voiceIndex];
                 const float envelope = voiceEnvelopeAt(voice, absoluteSample);
-                if (envelope <= 0.0f || voice.velocity <= 0)
+                if (envelope <= 0.0f || voice.velocity <= 0 || voice.playerIndex < 0 ||
+                    voice.playerIndex >= static_cast<int>(kPlayerCount))
                     continue;
                 const auto bus = static_cast<std::size_t>(kFirstAudioBus) + voiceIndex;
                 const auto offset = bus * static_cast<std::size_t>(world_->mBufLength) +
                                     static_cast<std::size_t>(sampleIndex);
+                const float source = voice.synthIndex == 0
+                    ? world_->mAudioBus[offset]
+                    : alternateOscillatorSample(voice, absoluteSample);
+                voice.filterState += voice.filterCoefficient * (source - voice.filterState);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
-                mixed += world_->mAudioBus[offset] * envelope * velocity;
+                const float amplitude = voice.filterState * envelope * velocity * voice.amplitude;
+                const auto player = static_cast<std::size_t>(voice.playerIndex);
+                playerLeft[player] += amplitude * voice.leftGain;
+                playerRight[player] += amplitude * voice.rightGain;
+                playerHasVoice[player] = true;
                 ++contributingVoices;
             }
-            const float targetMixGain = contributingVoices == 0
-                                            ? 0.0f
-                                            : 1.0f / static_cast<float>(contributingVoices);
+
+            float leftMixed = 0.0f;
+            float rightMixed = 0.0f;
+            const auto writeIndex = static_cast<std::size_t>(absoluteSample % kMaxEchoBufferSamples);
+            std::size_t echoTailPlayers = 0;
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                const auto& pattern = activePatterns_[player];
+                const float dryLeft = playerLeft[player];
+                const float dryRight = playerRight[player];
+                auto& echoMix = echoMixSmoothed_[player];
+                echoMix += (pattern.echoMix - echoMix) * mixSmoothing;
+                if (echoMix > 1e-5f && !echoBuffer_.empty()) {
+                    const auto requestedDelay = std::round(pattern.echoDelaySeconds * sampleRate_);
+                    const auto delaySamples = static_cast<std::size_t>(
+                        std::max(1.0, std::min<double>(kMaxEchoBufferSamples - 1,
+                                                       requestedDelay)));
+                    const auto readIndex = (writeIndex + kMaxEchoBufferSamples - delaySamples) %
+                                           kMaxEchoBufferSamples;
+                    const auto leftOffset = echoOffset(player, 0, readIndex);
+                    const auto rightOffset = echoOffset(player, 1, readIndex);
+                    const float delayedLeft = echoBuffer_[leftOffset];
+                    const float delayedRight = echoBuffer_[rightOffset];
+                    if (!playerHasVoice[player] &&
+                        (std::abs(delayedLeft) > 1e-6f || std::abs(delayedRight) > 1e-6f))
+                        ++echoTailPlayers;
+                    leftMixed += dryLeft + delayedLeft * echoMix;
+                    rightMixed += dryRight + delayedRight * echoMix;
+                    echoBuffer_[echoOffset(player, 0, writeIndex)] =
+                        dryLeft + delayedLeft * kEchoFeedback;
+                    echoBuffer_[echoOffset(player, 1, writeIndex)] =
+                        dryRight + delayedRight * kEchoFeedback;
+                } else {
+                    leftMixed += dryLeft;
+                    rightMixed += dryRight;
+                    echoBuffer_[echoOffset(player, 0, writeIndex)] = 0.0f;
+                    echoBuffer_[echoOffset(player, 1, writeIndex)] = 0.0f;
+                }
+            }
+
+            const auto mixContributors = contributingVoices + echoTailPlayers;
+            const float targetMixGain = mixContributors == 0
+                                            ? 1.0f
+                                            : 1.0f / static_cast<float>(mixContributors);
             mixGain_ += (targetMixGain - mixGain_) * mixSmoothing;
-            outputBlock_[static_cast<std::size_t>(sampleIndex)] = mixed * mixGain_;
+            outputBlock_[0][static_cast<std::size_t>(sampleIndex)] = leftMixed * mixGain_;
+            outputBlock_[1][static_cast<std::size_t>(sampleIndex)] = rightMixed * mixGain_;
         }
 
         const auto blockEnd = blockStart + static_cast<std::uint64_t>(kSCBlockSize);
@@ -864,7 +1007,11 @@ private:
         for (auto& voice : audioVoices_)
             voice = {};
         cursor_ = kSCBlockSize;
-        outputBlock_.fill(0.0f);
+        for (auto& channel : outputBlock_)
+            channel.fill(0.0f);
+        std::fill(echoBuffer_.begin(), echoBuffer_.end(), 0.0f);
+        echoMixSmoothed_.fill(0.0f);
+        mixGain_ = 0.0f;
         for (auto& pattern : activePatterns_)
             pattern = {};
         for (auto& playerNotes : activeMidiNotes_)
@@ -877,7 +1024,9 @@ private:
     World* world_ = nullptr;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::string ugenPluginPath_;
-    std::array<float, kSCBlockSize> outputBlock_{};
+    std::array<std::array<float, kSCBlockSize>, 2> outputBlock_{};
+    std::vector<float> echoBuffer_;
+    std::array<float, kPlayerCount> echoMixSmoothed_{};
     float mixGain_ = 0.0f;
     int cursor_ = kSCBlockSize;
     std::mutex patternMutex_;
@@ -910,7 +1059,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.3.2",
+           "0.4.0",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

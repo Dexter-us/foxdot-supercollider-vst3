@@ -253,8 +253,8 @@ if (-not (Test-Path (Join-Path $portableDirectory "README.txt"))) {
     throw "The VST3 bundle is missing its Portable scripts folder"
 }
 $portableExamples = @(Get-ChildItem -Path $portableDirectory -Filter "*.py" -File)
-if ($portableExamples.Count -lt 7) {
-    throw "Expected at least seven packaged starter Python scripts in Portable; found $($portableExamples.Count)."
+if ($portableExamples.Count -lt 8) {
+    throw "Expected at least eight packaged starter Python scripts in Portable; found $($portableExamples.Count)."
 }
 
 $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
