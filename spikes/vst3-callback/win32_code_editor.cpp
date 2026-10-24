@@ -5,7 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <commdlg.h>
+#include <shobjidl.h>
 
 #include "base/source/fobject.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
@@ -330,7 +330,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.2.0",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.2.1",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -420,51 +420,101 @@ private:
     }
 
     bool chooseScriptPath(bool saveDialog, std::wstring& selectedPath) {
-        std::array<wchar_t, 32768> path{};
-        if (saveDialog && !currentFilePath_.empty()) {
-            const auto count = std::min(currentFilePath_.size(), path.size() - 1);
-            std::copy_n(currentFilePath_.data(), count, path.data());
-            path[count] = L'\0';
-        }
-
         const auto portableDirectory = portableScriptDirectory();
-        if (!portableDirectory.empty()) {
-            std::error_code directoryError;
-            std::filesystem::create_directories(portableDirectory, directoryError);
-            if (directoryError) {
-                MessageBoxW(window_,
-                            L"Could not create the Portable folder beside the VST3. "
-                            L"The dialog will still open so you can choose another folder.",
-                            L"Portable scripts", MB_OK | MB_ICONWARNING);
-            }
-        } else {
+        if (portableDirectory.empty()) {
             MessageBoxW(window_,
-                        L"Could not locate the VST3 folder. The dialog will open at its default location.",
-                        L"Portable scripts", MB_OK | MB_ICONWARNING);
+                        L"Could not locate the VST3 folder for the Portable scripts directory.",
+                        L"Portable scripts", MB_OK | MB_ICONERROR);
+            return false;
         }
 
-        static constexpr wchar_t filter[] =
-            L"Python scripts (*.py)\0*.py\0All files (*.*)\0*.*\0";
-        OPENFILENAMEW dialog{};
-        dialog.lStructSize = sizeof(dialog);
-        dialog.hwndOwner = window_;
-        dialog.lpstrInitialDir = portableDirectory.empty()
-                                     ? nullptr
-                                     : portableDirectory.c_str();
-        dialog.lpstrFilter = filter;
-        dialog.nFilterIndex = 1;
-        dialog.lpstrFile = path.data();
-        dialog.nMaxFile = static_cast<DWORD>(path.size());
-        dialog.lpstrDefExt = L"py";
-        dialog.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_PATHMUSTEXIST |
-                       OFN_NOCHANGEDIR |
-                       (saveDialog ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
-
-        const BOOL selected = saveDialog ? GetSaveFileNameW(&dialog)
-                                         : GetOpenFileNameW(&dialog);
-        if (!selected)
+        std::error_code directoryError;
+        std::filesystem::create_directories(portableDirectory, directoryError);
+        if (directoryError) {
+            std::wstring message = L"Could not create the Portable folder:\n";
+            message += portableDirectory.wstring();
+            MessageBoxW(window_, message.c_str(), L"Portable scripts",
+                        MB_OK | MB_ICONERROR);
             return false;
-        selectedPath = path.data();
+        }
+
+        struct ComApartment {
+            HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            bool uninitialize = SUCCEEDED(result);
+            ~ComApartment() { if (uninitialize) CoUninitialize(); }
+        } apartment;
+        if (FAILED(apartment.result) && apartment.result != RPC_E_CHANGED_MODE) {
+            MessageBoxW(window_, L"Could not initialize Windows file dialogs.",
+                        L"Portable scripts", MB_OK | MB_ICONERROR);
+            return false;
+        }
+
+        IFileDialog* dialog = nullptr;
+        const CLSID dialogClass = saveDialog ? CLSID_FileSaveDialog : CLSID_FileOpenDialog;
+        HRESULT result = CoCreateInstance(dialogClass, nullptr, CLSCTX_INPROC_SERVER,
+                                          IID_PPV_ARGS(&dialog));
+        if (FAILED(result) || !dialog) {
+            MessageBoxW(window_, L"Could not create a Windows file dialog.",
+                        L"Portable scripts", MB_OK | MB_ICONERROR);
+            return false;
+        }
+        struct ComRelease {
+            IUnknown* object;
+            ~ComRelease() { if (object) object->Release(); }
+        } dialogRelease{dialog};
+
+        static constexpr COMDLG_FILTERSPEC filters[] = {
+            {L"Python scripts (*.py)", L"*.py"},
+            {L"All files (*.*)", L"*.*"}};
+        result = dialog->SetFileTypes(2, filters);
+        if (SUCCEEDED(result))
+            result = dialog->SetFileTypeIndex(1);
+        if (SUCCEEDED(result))
+            result = dialog->SetDefaultExtension(L"py");
+
+        IShellItem* folder = nullptr;
+        if (SUCCEEDED(result))
+            result = SHCreateItemFromParsingName(portableDirectory.c_str(), nullptr,
+                                                 IID_PPV_ARGS(&folder));
+        ComRelease folderRelease{folder};
+        if (SUCCEEDED(result))
+            result = dialog->SetFolder(folder);
+
+        DWORD options = FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR;
+        options |= saveDialog ? FOS_OVERWRITEPROMPT : FOS_FILEMUSTEXIST;
+        if (SUCCEEDED(result))
+            result = dialog->SetOptions(options);
+        if (SUCCEEDED(result) && saveDialog)
+            result = dialog->SetFileName(L"new-pattern.py");
+        if (FAILED(result)) {
+            std::wstring message = L"Could not set the dialog folder to:\n";
+            message += portableDirectory.wstring();
+            MessageBoxW(window_, message.c_str(), L"Portable scripts",
+                        MB_OK | MB_ICONERROR);
+            return false;
+        }
+
+        result = dialog->Show(window_);
+        if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED))
+            return false;
+        if (FAILED(result)) {
+            MessageBoxW(window_, L"The file dialog could not be displayed.",
+                        L"Portable scripts", MB_OK | MB_ICONERROR);
+            return false;
+        }
+
+        IShellItem* selectedItem = nullptr;
+        result = dialog->GetResult(&selectedItem);
+        ComRelease selectedRelease{selectedItem};
+        if (FAILED(result) || !selectedItem)
+            return false;
+
+        PWSTR selectedFilePath = nullptr;
+        result = selectedItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedFilePath);
+        if (FAILED(result) || !selectedFilePath)
+            return false;
+        selectedPath = selectedFilePath;
+        CoTaskMemFree(selectedFilePath);
         return true;
     }
 

@@ -14,17 +14,17 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 ## Current prototype
 
 - Windows native editor with Run, Stop, Open, and Save. Six starter patterns are separate `.py` files in the `Portable` folder.
-- Open/Save dialogs default to a `Portable` folder beside the VST3 bundle.
+- Open and Save As explicitly start in the `Portable` folder beside the VST3 bundle; ordinary Save writes back to the currently opened or saved script.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
 - `tempo(bpm)`, `scale(name="major", root=60)`, and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False)`. Pattern helpers include `reverse`, `rotate`, `repeat`, `transpose`, and `euclid`.
 - Raw MIDI pitches remain the default. With `degrees=True`, zero-based scale degrees map to pitches using major, minor, dorian, mixolydian, major/minor pentatonic, or blues scales; degrees wrap across octaves.
-- MIDI note numbers 0Ã¢ÂÂ127, `None` rests, repeating patterns, and up to 8 simultaneous audio voices.
+- MIDI note numbers 0ÃÂ¢ÃÂÃÂ127, `None` rests, repeating patterns, and up to 8 simultaneous audio voices.
 - Chords can be written as nested lists, such as `play([[60, 64, 67], [62, 65, 69]])`; separate `play()` calls can layer parts.
-- Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20Ã¢ÂÂ300 BPM.
+- Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20ÃÂ¢ÃÂÃÂ300 BPM.
 - Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
 - MIDI note events are emitted on a VST3 event output bus; the pattern supports up to 8 simultaneous notes, with extra audio voices reserved for short release tails.
 - Internal audio applies MIDI velocity and a per-voice 5 ms attack / 12 ms release envelope, then normalizes the chord mix to keep level reasonably consistent.
-- The plugin display name and native editor branding read Ã¢ÂÂDexter U.S FoxDotÃ¢ÂÂ; the VST3 manufacturer metadata remains Dexter U.S.
+- The plugin display name and native editor branding read ÃÂ¢ÃÂÃÂDexter U.S FoxDotÃÂ¢ÃÂÃÂ; the VST3 manufacturer metadata remains Dexter U.S.
 - Dexter U.S. manufacturer metadata.
 
 Example:

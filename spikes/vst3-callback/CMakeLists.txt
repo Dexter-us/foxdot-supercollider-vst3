@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.2.0)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.2.1)
 
 set(VST3_SDK_ROOT "" CACHE PATH "Path to Steinberg VST3 SDK checkout")
 set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")
@@ -105,7 +105,7 @@ target_compile_definitions(dexter_sc_tone PRIVATE
   )
 target_link_libraries(dexter_sc_tone PRIVATE sdk "${SC_LIBSCSYNTH}" "${SC_TLSF}" "${SC_PORTAUDIO}" ${CMAKE_DL_LIBS})
 if(WIN32)
-  target_link_libraries(dexter_sc_tone PRIVATE comdlg32 winmm ole32 uuid ws2_32)
+  target_link_libraries(dexter_sc_tone PRIVATE shell32 comdlg32 winmm ole32 uuid ws2_32)
 elseif(UNIX AND NOT APPLE)
   target_link_libraries(dexter_sc_tone PRIVATE m rt pthread)
 endif()
