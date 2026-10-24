@@ -1,9 +1,34 @@
+import ast
 import builtins
+import re
 import sys
 
 if len(sys.argv) != 3:
     raise SystemExit('usage: test-pattern-api.py python_runtime.cpp Portable-directory')
 source = open(sys.argv[1], encoding='utf-8').read()
+# Reconstruct makeEvaluationScript's streamed C++ string pieces and compile the
+# generated Python wrapper. This catches indentation/syntax errors that an API
+# unit test alone cannot see.
+wrapper_start = source.find('std::string makeEvaluationScript(')
+wrapper_end = source.find('return script.str();', wrapper_start)
+if wrapper_start < 0 or wrapper_end < 0:
+    raise SystemExit('Could not find makeEvaluationScript in python_runtime.cpp')
+wrapper_cpp = source[wrapper_start:wrapper_end]
+wrapper_parts = []
+for token in re.findall(r'<<\s*("(?:\\.|[^"\\])*"|pythonLiteral\([^)]*\))', wrapper_cpp):
+    if token.startswith('"'):
+        wrapper_parts.append(ast.literal_eval(token))
+    else:
+        argument = token[len('pythonLiteral('):-1]
+        placeholders = {'namespaceName': 'test_scope', 'api': '',
+                        'sourcePath': 'source.py', 'resultPath': 'result.out'}
+        if argument not in placeholders:
+            raise SystemExit('Unknown generated-wrapper placeholder: ' + argument)
+        wrapper_parts.append(repr(placeholders[argument]))
+try:
+    compile(''.join(wrapper_parts), '<generated evaluation wrapper>', 'exec')
+except SyntaxError as error:
+    raise SystemExit('Generated Python evaluation wrapper is invalid: ' + str(error))
 start_marker = 'static constexpr char api[] = R"PY(' + chr(10)
 end_marker = ')PY";'
 start = source.find(start_marker)

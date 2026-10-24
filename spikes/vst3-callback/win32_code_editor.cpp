@@ -26,7 +26,8 @@ constexpr int kStopId = 103;
 constexpr int kStatusId = 104;
 constexpr int kOpenId = 106;
 constexpr int kSaveId = 107;
-constexpr int kBrandId = 108;
+constexpr int kSaveAsId = 108;
+constexpr int kBrandId = 109;
 constexpr int kViewWidth = 720;
 constexpr int kViewHeight = 480;
 constexpr int kMargin = 10;
@@ -135,7 +136,8 @@ public:
             }
             DestroyWindow(window_);
             window_ = nullptr;
-            editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ = status_ = brand_ = nullptr;
+            editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ = saveAsButton_ =
+                status_ = brand_ = nullptr;
         }
         return Steinberg::kResultOk;
     }
@@ -253,9 +255,19 @@ private:
         case WM_CREATE:
             view->createChildren();
             return 0;
-        case WM_SIZE:
-            view->layoutChildren(LOWORD(lParam), HIWORD(lParam));
+        case WM_SIZE: {
+            RECT client{};
+            GetClientRect(window, &client);
+            view->layoutChildren(client.right - client.left, client.bottom - client.top);
+            InvalidateRect(window, nullptr, TRUE);
             return 0;
+        }
+        case WM_ERASEBKGND: {
+            RECT client{};
+            GetClientRect(window, &client);
+            FillRect(reinterpret_cast<HDC>(wParam), &client, GetSysColorBrush(COLOR_WINDOW));
+            return 1;
+        }
         case WM_COMMAND:
             if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kRunId) {
                 view->runSource();
@@ -273,6 +285,10 @@ private:
             }
             if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kSaveId) {
                 view->saveSource();
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kSaveAsId) {
+                view->saveSourceAs();
                 return 0;
             }
             if (LOWORD(wParam) == kEditorId && HIWORD(wParam) == EN_CHANGE) {
@@ -298,7 +314,8 @@ private:
             }
             view->window_ = nullptr;
             view->editor_ = view->runButton_ = view->stopButton_ =
-                view->openButton_ = view->saveButton_ = view->status_ = view->brand_ = nullptr;
+                view->openButton_ = view->saveButton_ = view->saveAsButton_ =
+                    view->status_ = view->brand_ = nullptr;
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
@@ -325,12 +342,17 @@ private:
                                       0, 0, 62, 26, window_,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSaveId)),
                                       moduleInstance(), nullptr);
+        saveAsButton_ = CreateWindowExW(0, L"BUTTON", L"Save As",
+                                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                        0, 0, 76, 26, window_,
+                                        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSaveAsId)),
+                                        moduleInstance(), nullptr);
         status_ = CreateWindowExW(0, L"STATIC", L"Ready. Open a script or edit code.",
                                   WS_CHILD | WS_VISIBLE | SS_LEFT,
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.3.0",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.3.1",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -369,7 +391,8 @@ private:
         MoveWindow(stopButton_, kMargin + 60, buttonY, 56, kToolbarHeight - 4, TRUE);
         MoveWindow(openButton_, kMargin + 120, buttonY, 56, kToolbarHeight - 4, TRUE);
         MoveWindow(saveButton_, kMargin + 180, buttonY, 62, kToolbarHeight - 4, TRUE);
-        MoveWindow(status_, kMargin + 260, buttonY, std::max(100, width - 270),
+        MoveWindow(saveAsButton_, kMargin + 250, buttonY, 76, kToolbarHeight - 4, TRUE);
+        MoveWindow(status_, kMargin + 330, buttonY, std::max(100, width - 350),
                    kToolbarHeight - 4, TRUE);
         const int editorTop = kMargin + kToolbarHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
@@ -646,6 +669,7 @@ private:
     HWND stopButton_ = nullptr;
     HWND openButton_ = nullptr;
     HWND saveButton_ = nullptr;
+    HWND saveAsButton_ = nullptr;
     HWND status_ = nullptr;
     HWND brand_ = nullptr;
     std::wstring currentFilePath_;
