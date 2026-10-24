@@ -24,7 +24,6 @@ constexpr int kEditorId = 101;
 constexpr int kRunId = 102;
 constexpr int kStopId = 103;
 constexpr int kStatusId = 104;
-constexpr int kExamplesId = 105;
 constexpr int kOpenId = 106;
 constexpr int kSaveId = 107;
 constexpr int kBrandId = 108;
@@ -35,33 +34,6 @@ constexpr int kToolbarHeight = 32;
 constexpr int kStatusHeight = 24;
 constexpr std::size_t kMaxScriptBytes = 256 * 1024;
 constexpr std::size_t kMaxScriptCharacters = 65536;
-
-struct CodeExample {
-    const wchar_t* name;
-    const wchar_t* source;
-};
-
-constexpr std::array<CodeExample, 5> kCodeExamples{{
-    {L"Four-note pulse",
-     L"tempo(120)\r\n"
-     L"play([60, 64, 67, 72], step=0.5, duration=0.4)\r\n"},
-    {L"Resting rhythm",
-     L"tempo(110)\r\n"
-     L"play([60, None, 67, None, 72, 67, None, 64], "
-     L"step=0.25, duration=0.2)\r\n"},
-    {L"Slow bass",
-     L"tempo(88)\r\n"
-     L"play([36, None, 43, None, 36, 48, 43, None], "
-     L"step=0.5, duration=0.4, velocity=90)\r\n"},
-    {L"Chord steps",
-     L"tempo(100)\r\n"
-     L"play([[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]], "
-     L"step=1, duration=0.9)\r\n"},
-    {L"Scale degrees",
-     L"tempo(112)\r\n"
-     L"scale('minor', root=60)\r\n"
-     L"play([0, 2, 4, 6, 4, 2], step=0.5, duration=0.4, degrees=True)\r\n"},
-}};
 
 constexpr wchar_t kInitialCode[] =
     L"tempo(120)\r\n"
@@ -163,8 +135,7 @@ public:
             }
             DestroyWindow(window_);
             window_ = nullptr;
-            editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ =
-                examples_ = status_ = brand_ = nullptr;
+            editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ = status_ = brand_ = nullptr;
         }
         return Steinberg::kResultOk;
     }
@@ -313,10 +284,6 @@ private:
                 }
                 return 0;
             }
-            if (LOWORD(wParam) == kExamplesId && HIWORD(wParam) == CBN_SELCHANGE) {
-                view->loadSelectedExample();
-                return 0;
-            }
             break;
         case WM_TIMER:
             view->refreshStatus();
@@ -331,8 +298,7 @@ private:
             }
             view->window_ = nullptr;
             view->editor_ = view->runButton_ = view->stopButton_ =
-                view->openButton_ = view->saveButton_ = view->examples_ =
-                    view->status_ = view->brand_ = nullptr;
+                view->openButton_ = view->saveButton_ = view->status_ = view->brand_ = nullptr;
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
@@ -359,27 +325,12 @@ private:
                                       0, 0, 62, 26, window_,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSaveId)),
                                       moduleInstance(), nullptr);
-        examples_ = CreateWindowExW(0, L"COMBOBOX", nullptr,
-                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-                                        CBS_DROPDOWNLIST | WS_VSCROLL,
-                                    0, 0, 160, 180, window_,
-                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kExamplesId)),
-                                    moduleInstance(), nullptr);
-        if (examples_) {
-            SendMessageW(examples_, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(L"Examples..."));
-            for (const auto& example : kCodeExamples) {
-                SendMessageW(examples_, CB_ADDSTRING, 0,
-                             reinterpret_cast<LPARAM>(example.name));
-            }
-            SendMessageW(examples_, CB_SETCURSEL, 0, 0);
-        }
-        status_ = CreateWindowExW(0, L"STATIC", L"Ready. Choose an example or edit code.",
+        status_ = CreateWindowExW(0, L"STATIC", L"Ready. Open a script or edit code.",
                                   WS_CHILD | WS_VISIBLE | SS_LEFT,
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.1.0",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -418,8 +369,7 @@ private:
         MoveWindow(stopButton_, kMargin + 60, buttonY, 56, kToolbarHeight - 4, TRUE);
         MoveWindow(openButton_, kMargin + 120, buttonY, 56, kToolbarHeight - 4, TRUE);
         MoveWindow(saveButton_, kMargin + 180, buttonY, 62, kToolbarHeight - 4, TRUE);
-        MoveWindow(examples_, kMargin + 248, buttonY, 154, kToolbarHeight - 4, TRUE);
-        MoveWindow(status_, kMargin + 410, buttonY, std::max(100, width - 420),
+        MoveWindow(status_, kMargin + 260, buttonY, std::max(100, width - 270),
                    kToolbarHeight - 4, TRUE);
         const int editorTop = kMargin + kToolbarHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
@@ -568,8 +518,6 @@ private:
 
         setEditorSource(wideSource);
         currentFilePath_ = selectedPath;
-        if (examples_)
-            SendMessageW(examples_, CB_SETCURSEL, 0, 0);
         SetWindowTextW(status_, L"Script loaded. Press Run to evaluate.");
     }
 
@@ -620,24 +568,6 @@ private:
         return true;
     }
 
-    void loadSelectedExample() {
-        if (!examples_)
-            return;
-        const auto selection = static_cast<int>(
-            SendMessageW(examples_, CB_GETCURSEL, 0, 0));
-        if (selection <= 0 ||
-            static_cast<std::size_t>(selection - 1) >= kCodeExamples.size()) {
-            return;
-        }
-        const auto example = kCodeExamples[static_cast<std::size_t>(selection - 1)];
-        if (confirmReplaceDocument()) {
-            currentFilePath_.clear();
-            setEditorSource(example.source);
-            SetWindowTextW(status_, L"Example loaded. Press Run to evaluate.");
-        }
-        SendMessageW(examples_, CB_SETCURSEL, 0, 0);
-    }
-
     void runSource() {
         if (!editor_ || !host_)
             return;
@@ -666,7 +596,6 @@ private:
     HWND stopButton_ = nullptr;
     HWND openButton_ = nullptr;
     HWND saveButton_ = nullptr;
-    HWND examples_ = nullptr;
     HWND status_ = nullptr;
     HWND brand_ = nullptr;
     std::wstring currentFilePath_;

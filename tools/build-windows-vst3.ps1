@@ -217,8 +217,12 @@ if (-not $bundle) {
 
 $portableDirectory = Join-Path $bundle.FullName "Portable"
 New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null
-Copy-Item -Path (Join-Path $pluginSource "Portable/README.txt") `
-    -Destination (Join-Path $portableDirectory "README.txt") -Force
+$portableSource = Join-Path $pluginSource "Portable"
+if (-not (Test-Path $portableSource)) {
+    throw "Portable examples folder is missing: $portableSource"
+}
+Get-ChildItem -Path $portableSource -Force |
+    Copy-Item -Destination $portableDirectory -Recurse -Force
 
 $resourceRoot = Join-Path $bundle.FullName "Contents/Resources"
 foreach ($module in $requiredModules) {
@@ -242,6 +246,10 @@ if (-not (Test-Path (Join-Path $resourceRoot "Licenses/PYTHON-LICENSE.txt"))) {
 }
 if (-not (Test-Path (Join-Path $portableDirectory "README.txt"))) {
     throw "The VST3 bundle is missing its Portable scripts folder"
+}
+$portableExamples = @(Get-ChildItem -Path $portableDirectory -Filter "*.py" -File)
+if ($portableExamples.Count -lt 5) {
+    throw "Expected at least five packaged starter Python scripts in Portable; found $($portableExamples.Count)."
 }
 
 $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
