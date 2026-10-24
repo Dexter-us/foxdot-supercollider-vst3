@@ -115,6 +115,54 @@ def scale(name='major', root=60):
     _dexter_scale = scales[name]
     _dexter_root = root
 
+def reverse(pattern):
+    return list(reversed(pattern))
+
+def rotate(pattern, amount=1):
+    values = list(pattern)
+    if not values:
+        return values
+    amount = int(amount) % len(values)
+    return values[-amount:] + values[:-amount] if amount else values
+
+def repeat(pattern, count=2):
+    values = list(pattern)
+    count = int(count)
+    if count < 1 or len(values) * count > 256:
+        raise ValueError('repeat must produce between 1 and 256 steps')
+    return values * count
+
+def transpose(pattern, interval=1):
+    interval = int(interval)
+    result = []
+    for item in pattern:
+        if item is None:
+            result.append(None)
+        elif isinstance(item, (list, tuple)):
+            result.append([int(note) + interval for note in item])
+        else:
+            result.append(int(item) + interval)
+    return result
+
+def euclid(hits, steps, note=60, rotation=0):
+    hits = int(hits)
+    steps = int(steps)
+    note = int(note)
+    if steps < 1 or steps > 256 or hits < 0 or hits > steps:
+        raise ValueError('euclid requires 0 <= hits <= steps <= 256')
+    if not 0 <= note <= 127:
+        raise ValueError('euclidean note must be a MIDI pitch from 0 to 127')
+    values = []
+    accumulator = 0
+    for _ in range(steps):
+        accumulator += hits
+        if accumulator >= steps:
+            values.append(note)
+            accumulator -= steps
+        else:
+            values.append(None)
+    return rotate(values, rotation)
+
 def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False):
     global _dexter_length, _dexter_slots
     if isinstance(notes, (int, float)):

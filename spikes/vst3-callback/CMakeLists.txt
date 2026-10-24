@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.1.0)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.2.0)
 
 set(VST3_SDK_ROOT "" CACHE PATH "Path to Steinberg VST3 SDK checkout")
 set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")

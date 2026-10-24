@@ -105,6 +105,11 @@ Write-Host "Prepared bundled CPython $pythonVersion runtime."
 if ($LASTEXITCODE -ne 0) {
     throw "The bundled CPython runtime did not pass its startup smoke test."
 }
+$patternApiTest = Join-Path $repoRoot "tools/test-pattern-api.py"
+if (-not (Test-Path $patternApiTest)) {
+    throw "The pattern API smoke test is missing: $patternApiTest"
+}
+Invoke-Checked $pythonExe @($patternApiTest, (Join-Path $pluginSource 'python_runtime.cpp'))
 
 if (-not (Test-Path (Join-Path $scSource ".git"))) {
     if (Test-Path $scSource) {
@@ -248,8 +253,8 @@ if (-not (Test-Path (Join-Path $portableDirectory "README.txt"))) {
     throw "The VST3 bundle is missing its Portable scripts folder"
 }
 $portableExamples = @(Get-ChildItem -Path $portableDirectory -Filter "*.py" -File)
-if ($portableExamples.Count -lt 5) {
-    throw "Expected at least five packaged starter Python scripts in Portable; found $($portableExamples.Count)."
+if ($portableExamples.Count -lt 6) {
+    throw "Expected at least six packaged starter Python scripts in Portable; found $($portableExamples.Count)."
 }
 
 $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
