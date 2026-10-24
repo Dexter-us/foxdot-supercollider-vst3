@@ -11,10 +11,16 @@ struct PythonNoteEvent {
     int velocity = 100;
 };
 
-struct PythonPattern {
+struct PythonPlayerUpdate {
+    int playerIndex = 0;
+    bool stopped = false;
     double bpm = 120.0;
     double lengthBeats = 1.0;
     std::vector<PythonNoteEvent> events;
+};
+
+struct PythonPattern {
+    std::vector<PythonPlayerUpdate> players;
 };
 
 class PortablePython {

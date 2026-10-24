@@ -7,6 +7,7 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <utility>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -164,7 +165,8 @@ def euclid(hits, steps, note=60, rotation=0):
     return rotate(values, rotation)
 
 def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False):
-    global _dexter_length, _dexter_slots
+    global _dexter_length, _dexter_slots, _dexter_default_touched
+    _dexter_default_touched = True
     if isinstance(notes, (int, float)):
         notes = [notes]
     notes = list(notes)
@@ -219,13 +221,71 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
     _dexter_events.extend(additions)
     _dexter_slots += len(notes)
     _dexter_length = max(_dexter_length, offset + len(notes) * step)
+
+class PlayerPattern:
+    def __init__(self, notes, step=1.0, duration=None, velocity=100,
+                 offset=0.0, degrees=False):
+        self.notes = notes
+        self.step = step
+        self.duration = duration
+        self.velocity = velocity
+        self.offset = offset
+        self.degrees = degrees
+
+def sequence(notes, step=1.0, duration=None, velocity=100,
+             offset=0.0, degrees=False):
+    return PlayerPattern(notes, step, duration, velocity, offset, degrees)
+
+class Player:
+    def __init__(self, number):
+        self.number = number
+
+    def __rshift__(self, pattern):
+        global _dexter_events, _dexter_length, _dexter_slots
+        global _dexter_default_touched
+        if not isinstance(pattern, PlayerPattern):
+            raise TypeError('assign sequence(...) to a player using >>')
+        saved = (_dexter_events, _dexter_length, _dexter_slots,
+                 _dexter_default_touched)
+        _dexter_events = []
+        _dexter_length = 1.0
+        _dexter_slots = 0
+        _dexter_default_touched = False
+        try:
+            play(pattern.notes, step=pattern.step, duration=pattern.duration,
+                 velocity=pattern.velocity, offset=pattern.offset,
+                 degrees=pattern.degrees)
+            compiledLength = _dexter_length
+            compiledEvents = list(_dexter_events)
+        finally:
+            _dexter_events, _dexter_length, _dexter_slots, _dexter_default_touched = saved
+        playerIndex = self.number - 1
+        if not 0 <= playerIndex < 8:
+            raise ValueError('player number must be 1..8')
+        _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength, compiledEvents)
+        if playerIndex == 0:
+            _dexter_default_touched = False
+        return self
+
+    def stop(self):
+        _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [])
+
+p1 = Player(1)
+p2 = Player(2)
+p3 = Player(3)
+p4 = Player(4)
+p5 = Player(5)
+p6 = Player(6)
+p7 = Player(7)
+p8 = Player(8)
 )PY";
 
     std::ostringstream script;
     script << "import builtins, traceback, sys, time\n"
            << "_dexter_scope = globals().setdefault(" << pythonLiteral(namespaceName) << ", {})\n"
+           << "_dexter_scope['__name__'] = 'dexter'\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
-           << "'_dexter_length': 1.0, '_dexter_slots': 0, "
+           << "'_dexter_length': 1.0, '_dexter_slots': 0, '_dexter_updates': {}, '_dexter_default_touched': False, "
            << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
            << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
@@ -249,10 +309,15 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
            << "    finally:\n"
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
-           << "        _f.write('OK\\t{}\\t{}\\t{}\\n'.format(_dexter_scope['_dexter_bpm'], "
-           << "_dexter_scope['_dexter_length'], len(_dexter_scope['_dexter_events'])))\n"
-           << "        for _e in _dexter_scope['_dexter_events']:\n"
-           << "            _f.write('{}\\t{}\\t{}\\t{}\\n'.format(*_e))\n"
+           << "if _dexter_scope['_dexter_default_touched']:\n"
+           << "    _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']))\n"
+           << "_updates = _dexter_scope['_dexter_updates']\n"
+           << "_f.write('OK\\t{}\\n'.format(len(_updates)))\n"
+           << "for _player in sorted(_updates):\n"
+           << "    _stopped, _bpm, _length, _events = _updates[_player]\n"
+           << "    _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events)))\n"
+           << "    for _e in _events:\n"
+           << "        _f.write('N\\t{}\\t{}\\t{}\\t{}\\n'.format(*_e))\n"
            << "except BaseException:\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
            << "        _f.write('ERROR\\n' + traceback.format_exc())\n";
@@ -267,7 +332,6 @@ bool parseResult(const std::filesystem::path& resultPath,
         error = "Python did not produce a result file.";
         return false;
     }
-
     std::string header;
     std::getline(input, header);
     if (header == "ERROR") {
@@ -276,71 +340,83 @@ bool parseResult(const std::filesystem::path& resultPath,
         error = message.str();
         return false;
     }
-
     std::istringstream fields(header);
     std::string marker;
-    std::size_t eventCount = 0;
-    if (!(fields >> marker >> pattern.bpm >> pattern.lengthBeats >> eventCount) ||
-        marker != "OK" || eventCount > 256 ||
-        !std::isfinite(pattern.bpm) || !std::isfinite(pattern.lengthBeats) ||
-        pattern.bpm < 20.0 || pattern.bpm > 300.0 ||
-        pattern.lengthBeats <= 0.0 || pattern.lengthBeats > 4096.0) {
-        error = "Python returned an invalid pattern.";
+    std::size_t updateCount = 0;
+    if (!(fields >> marker >> updateCount) || marker != "OK" || updateCount > 8) {
+        error = "Python returned an invalid player update list.";
         return false;
     }
-
-    pattern.events.clear();
-    pattern.events.reserve(eventCount);
-    for (std::size_t i = 0; i < eventCount; ++i) {
-        PythonNoteEvent event;
-        if (!(input >> event.beat >> event.durationBeats >> event.midiNote >> event.velocity) ||
-            !std::isfinite(event.beat) || !std::isfinite(event.durationBeats) ||
-            event.beat < 0.0 || event.beat > pattern.lengthBeats ||
-            event.durationBeats < 0.02 ||
-            event.beat + event.durationBeats > pattern.lengthBeats + 1e-9 ||
-            event.midiNote < 0 || event.midiNote > 127 ||
-            event.velocity < 1 || event.velocity > 127) {
-            error = "Python returned a malformed note event.";
+    pattern.players.clear();
+    pattern.players.reserve(updateCount);
+    std::array<bool, 8> seenPlayers{};
+    for (std::size_t playerNumber = 0; playerNumber < updateCount; ++playerNumber) {
+        char record = 0;
+        int stopped = 0;
+        std::size_t eventCount = 0;
+        PythonPlayerUpdate update;
+        if (!(input >> record >> update.playerIndex >> stopped >> update.bpm >>
+              update.lengthBeats >> eventCount) || record != 'P' ||
+            update.playerIndex < 0 || update.playerIndex >= 8 || stopped < 0 || stopped > 1 ||
+            seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
+            !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
+            !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
+            update.lengthBeats > 4096.0) {
+            error = "Python returned a malformed player update.";
             return false;
         }
-        pattern.events.push_back(event);
-    }
-    std::sort(pattern.events.begin(), pattern.events.end(),
-              [](const PythonNoteEvent& a, const PythonNoteEvent& b) {
-                  return a.beat < b.beat;
-              });
-    struct Boundary {
-        double beat;
-        int note;
-        int delta;
-    };
-    std::vector<Boundary> boundaries;
-    boundaries.reserve(pattern.events.size() * 2);
-    for (const auto& event : pattern.events) {
-        boundaries.push_back({event.beat, event.midiNote, 1});
-        boundaries.push_back({event.beat + event.durationBeats, event.midiNote, -1});
-    }
-    std::sort(boundaries.begin(), boundaries.end(),
-              [](const Boundary& a, const Boundary& b) {
-                  if (a.beat != b.beat)
-                      return a.beat < b.beat;
-                  return a.delta < b.delta;
-              });
-    std::array<bool, 128> activePitches{};
-    int activeNotes = 0;
-    for (const auto& boundary : boundaries) {
-        if (boundary.delta < 0) {
-            --activeNotes;
-            activePitches[static_cast<std::size_t>(boundary.note)] = false;
-        } else {
-            const auto pitch = static_cast<std::size_t>(boundary.note);
-            if (activeNotes >= 8 || activePitches[pitch]) {
-                error = "Python returned a pattern with invalid overlapping polyphony.";
+        seenPlayers[static_cast<std::size_t>(update.playerIndex)] = true;
+        update.stopped = stopped != 0;
+        update.events.reserve(eventCount);
+        for (std::size_t i = 0; i < eventCount; ++i) {
+            char noteRecord = 0;
+            PythonNoteEvent event;
+            if (!(input >> noteRecord >> event.beat >> event.durationBeats >>
+                  event.midiNote >> event.velocity) || noteRecord != 'N' ||
+                !std::isfinite(event.beat) || !std::isfinite(event.durationBeats) ||
+                event.beat < 0.0 || event.beat > update.lengthBeats ||
+                event.durationBeats < 0.02 ||
+                event.beat + event.durationBeats > update.lengthBeats + 1e-9 ||
+                event.midiNote < 0 || event.midiNote > 127 ||
+                event.velocity < 1 || event.velocity > 127) {
+                error = "Python returned a malformed note event.";
                 return false;
             }
-            ++activeNotes;
-            activePitches[pitch] = true;
+            update.events.push_back(event);
         }
+        std::sort(update.events.begin(), update.events.end(),
+                  [](const PythonNoteEvent& a, const PythonNoteEvent& b) {
+                      return a.beat < b.beat;
+                  });
+        struct Boundary { double beat; int note; int delta; };
+        std::vector<Boundary> boundaries;
+        boundaries.reserve(update.events.size() * 2);
+        for (const auto& event : update.events) {
+            boundaries.push_back({event.beat, event.midiNote, 1});
+            boundaries.push_back({event.beat + event.durationBeats, event.midiNote, -1});
+        }
+        std::sort(boundaries.begin(), boundaries.end(),
+                  [](const Boundary& a, const Boundary& b) {
+                      if (a.beat != b.beat) return a.beat < b.beat;
+                      return a.delta < b.delta;
+                  });
+        std::array<bool, 128> activePitches{};
+        int activeNotes = 0;
+        for (const auto& boundary : boundaries) {
+            if (boundary.delta < 0) {
+                --activeNotes;
+                activePitches[static_cast<std::size_t>(boundary.note)] = false;
+            } else {
+                const auto pitch = static_cast<std::size_t>(boundary.note);
+                if (activeNotes >= 8 || activePitches[pitch]) {
+                    error = "Player pattern exceeds polyphony or overlaps a repeated pitch.";
+                    return false;
+                }
+                ++activeNotes;
+                activePitches[pitch] = true;
+            }
+        }
+        pattern.players.push_back(std::move(update));
     }
     return true;
 }

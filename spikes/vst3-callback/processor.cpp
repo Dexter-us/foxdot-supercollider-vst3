@@ -198,7 +198,7 @@ public:
         return size == kSample32 ? kResultTrue : kResultFalse;
     }
 
-    tresult PLUGIN_API process(ProcessData& data) override {
+    tresult PLUGIN_API process(ProcessData& data) {
         if (data.numOutputs < 1 || !data.outputs)
             return kResultOk;
         auto& output = data.outputs[0];
@@ -208,20 +208,24 @@ public:
             if (output.channelBuffers32[channel])
                 std::fill_n(output.channelBuffers32[channel], data.numSamples, 0.0f);
         }
-
         if (!world_)
             return kResultFalse;
 
         std::unique_lock<std::mutex> patternLock(patternMutex_, std::try_to_lock);
         if (patternLock.owns_lock()) {
-            if (pendingPatternReady_) {
-                stopActiveMidiNotes(data.outputEvents, 0);
-                activePattern_ = pendingPattern_;
-                pendingPatternReady_ = false;
-                patternStartSample_ = sampleClock_ +
-                                      static_cast<std::uint64_t>(kSCBlockSize - cursor_);
-                playing_ = true;
-                stopAudioVoices();
+            const auto updateMask = pendingPlayerMask_;
+            if (updateMask != 0) {
+                const auto newStart = sampleClock_ +
+                    static_cast<std::uint64_t>(kSCBlockSize - cursor_);
+                for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                    if ((updateMask & static_cast<std::uint8_t>(1u << player)) == 0)
+                        continue;
+                    stopPlayerMidiNotes(data.outputEvents, 0, static_cast<int>(player));
+                    stopAudioVoices(static_cast<int>(player));
+                    activePatterns_[player] = pendingPatterns_[player];
+                    patternStartSamples_[player] = newStart;
+                }
+                pendingPlayerMask_ = 0;
             }
             patternLock.unlock();
         }
@@ -229,7 +233,8 @@ public:
         if (stopRequested_.exchange(false, std::memory_order_acq_rel)) {
             stopActiveMidiNotes(data.outputEvents, 0);
             stopAudioVoices();
-            playing_ = false;
+            for (auto& pattern : activePatterns_)
+                pattern.active = false;
         }
 
         emitPatternMidi(data);
@@ -282,32 +287,49 @@ public:
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
                     }
-
                     if (scriptGeneration_.load(std::memory_order_acquire) != generation) {
                         setEditorStatus("Evaluation cancelled.");
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
                     }
-
-                    if (pattern.events.size() > kMaxPatternEvents) {
-                        setEditorStatus("The pattern exceeds the 256-note limit.");
+                    if (pattern.players.empty()) {
+                        setEditorStatus("No players changed.");
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
                     }
 
-                    PatternState next;
-                    next.bpm = pattern.bpm;
-                    next.lengthBeats = pattern.lengthBeats;
-                    next.eventCount = pattern.events.size();
-                    std::copy(pattern.events.begin(), pattern.events.end(), next.events.begin());
+                    std::array<PatternState, kPlayerCount> updates{};
+                    std::uint8_t updateMask = 0;
+                    std::size_t totalNotes = 0;
+                    for (const auto& player : pattern.players) {
+                        if (player.playerIndex < 0 ||
+                            player.playerIndex >= static_cast<int>(kPlayerCount) ||
+                            player.events.size() > kMaxPatternEvents) {
+                            setEditorStatus("Player update exceeds the supported limit.");
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
+                        auto& next = updates[static_cast<std::size_t>(player.playerIndex)];
+                        next.active = !player.stopped;
+                        next.bpm = player.bpm;
+                        next.lengthBeats = player.lengthBeats;
+                        next.eventCount = player.events.size();
+                        std::copy(player.events.begin(), player.events.end(), next.events.begin());
+                        totalNotes += player.events.size();
+                        updateMask |= static_cast<std::uint8_t>(1u << player.playerIndex);
+                    }
                     {
                         std::lock_guard<std::mutex> lock(patternMutex_);
-                        pendingPattern_ = next;
-                        pendingPatternReady_ = true;
+                        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                            if (updateMask & static_cast<std::uint8_t>(1u << player))
+                                pendingPatterns_[player] = updates[player];
+                        }
+                        pendingPlayerMask_ |= updateMask;
                     }
-                    setEditorStatus("Pattern running - " +
-                                    std::to_string(pattern.events.size()) +
-                                    " notes at " + std::to_string(pattern.bpm) + " BPM.");
+                    setEditorStatus("Updated " + std::to_string(pattern.players.size()) +
+                                    " player(s), " + std::to_string(totalNotes) +
+                                    " notes at " + std::to_string(pattern.players.front().bpm) +
+                                    " BPM.");
                 } catch (const std::exception& exception) {
                     setEditorStatus(std::string("Python worker error: ") + exception.what());
                 } catch (...) {
@@ -356,10 +378,11 @@ public:
 private:
     static constexpr int kSCBlockSize = 64;
     static constexpr std::size_t kMaxPatternEvents = 256;
+    static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
-    static constexpr std::size_t kAudioVoiceCount = 16;
+    static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
     static constexpr int kFirstAudioBus = 2;
-    static constexpr int kNumAudioBusChannels = 32;
+    static constexpr int kNumAudioBusChannels = 128;
     static constexpr double kAttackSeconds = 0.005;
     static constexpr double kReleaseSeconds = 0.012;
     static_assert(kFirstAudioBus + kAudioVoiceCount <= kNumAudioBusChannels,
@@ -411,10 +434,12 @@ private:
         std::size_t eventCount = 0;
         double bpm = 120.0;
         double lengthBeats = 1.0;
+        bool active = false;
     };
 
     struct TimedMidiEvent {
         std::uint64_t sample = 0;
+        int playerIndex = 0;
         int midiNote = 60;
         int velocity = 100;
         bool noteOn = false;
@@ -422,6 +447,7 @@ private:
 
     struct AudioVoice {
         Graph* synth = nullptr;
+        int playerIndex = -1;
         int midiNote = -1;
         int velocity = 0;
         std::uint64_t startSample = 0;
@@ -433,6 +459,7 @@ private:
     };
 
     struct ScheduledAudioNote {
+        int playerIndex = 0;
         int midiNote = -1;
         int velocity = 0;
         std::uint64_t startSample = 0;
@@ -457,7 +484,7 @@ private:
     }
 
     static void addMidiNoteEvent(IEventList* outputEvents, int32 sampleOffset,
-                                 int midiNote, int velocity, bool noteOn) {
+                                 int midiNote, int velocity, bool noteOn, int channel = 0) {
         if (!outputEvents)
             return;
         Event event{};
@@ -467,7 +494,7 @@ private:
         event.flags = 0;
         if (noteOn) {
             event.type = Event::kNoteOnEvent;
-            event.noteOn.channel = 0;
+            event.noteOn.channel = static_cast<int16>(channel);
             event.noteOn.pitch = static_cast<int16>(midiNote);
             event.noteOn.tuning = 0.0f;
             event.noteOn.velocity = static_cast<float>(velocity) / 127.0f;
@@ -475,7 +502,7 @@ private:
             event.noteOn.noteId = -1;
         } else {
             event.type = Event::kNoteOffEvent;
-            event.noteOff.channel = 0;
+            event.noteOff.channel = static_cast<int16>(channel);
             event.noteOff.pitch = static_cast<int16>(midiNote);
             event.noteOff.velocity = static_cast<float>(velocity) / 127.0f;
             event.noteOff.noteId = -1;
@@ -484,13 +511,22 @@ private:
         outputEvents->addEvent(event);
     }
 
-    void stopActiveMidiNotes(IEventList* outputEvents, int32 sampleOffset) {
-        for (std::size_t note = 0; note < activeMidiNotes_.size(); ++note) {
-            if (!activeMidiNotes_[note])
+    void stopPlayerMidiNotes(IEventList* outputEvents, int32 sampleOffset, int playerIndex) {
+        if (playerIndex < 0 || playerIndex >= static_cast<int>(kPlayerCount))
+            return;
+        auto& notes = activeMidiNotes_[static_cast<std::size_t>(playerIndex)];
+        for (std::size_t note = 0; note < notes.size(); ++note) {
+            if (!notes[note])
                 continue;
-            addMidiNoteEvent(outputEvents, sampleOffset, static_cast<int>(note), 0, false);
-            activeMidiNotes_[note] = false;
+            addMidiNoteEvent(outputEvents, sampleOffset, static_cast<int>(note), 0, false,
+                             playerIndex);
+            notes[note] = false;
         }
+    }
+
+    void stopActiveMidiNotes(IEventList* outputEvents, int32 sampleOffset) {
+        for (std::size_t player = 0; player < kPlayerCount; ++player)
+            stopPlayerMidiNotes(outputEvents, sampleOffset, static_cast<int>(player));
     }
 
     std::uint64_t envelopeSamples(double seconds) const {
@@ -536,11 +572,12 @@ private:
         voice.synth = synth;
     }
 
-    void stopAudioVoices() {
+    void stopAudioVoices(int playerIndex = -1) {
         const auto now = sampleClock_ +
                          static_cast<std::uint64_t>(kSCBlockSize - cursor_);
         for (auto& voice : audioVoices_) {
-            if (voice.midiNote < 0 || voice.releasing)
+            if ((playerIndex >= 0 && voice.playerIndex != playerIndex) ||
+                voice.midiNote < 0 || voice.releasing)
                 continue;
             const float gain = voiceEnvelopeAt(voice, now);
             if (gain <= 0.0f) {
@@ -559,44 +596,48 @@ private:
                            std::array<TimedMidiEvent, kMaxMidiEventsPerBlock>& result,
                            std::size_t& resultCount) const {
         resultCount = 0;
-        if (!playing_ || activePattern_.eventCount == 0 ||
-            activePattern_.lengthBeats <= 0.0 || activePattern_.bpm <= 0.0)
-            return;
-
-        const double samplesPerBeat = sampleRate_ * 60.0 / activePattern_.bpm;
-        const double startBeat = static_cast<double>(blockStart - patternStartSample_) / samplesPerBeat;
-        const double endBeat = static_cast<double>(blockEnd - patternStartSample_) / samplesPerBeat;
-        const auto firstCycle = std::max<std::int64_t>(
-            0, static_cast<std::int64_t>(std::floor(startBeat / activePattern_.lengthBeats)) - 1);
-        const auto lastCycle = static_cast<std::int64_t>(
-            std::floor(endBeat / activePattern_.lengthBeats)) + 1;
-
-        auto append = [&](std::uint64_t sample, int note, int velocity, bool noteOn) {
-            if (sample < blockStart || sample >= blockEnd ||
-                resultCount >= result.size())
+        auto append = [&](std::uint64_t sample, int playerIndex, int note,
+                          int velocity, bool noteOn) {
+            if (sample < blockStart || sample >= blockEnd || resultCount >= result.size())
                 return;
-            result[resultCount++] = TimedMidiEvent{sample, note, velocity, noteOn};
+            result[resultCount++] = TimedMidiEvent{sample, playerIndex, note, velocity, noteOn};
         };
 
-        for (std::int64_t cycle = firstCycle; cycle <= lastCycle; ++cycle) {
-            const double cycleBeat = static_cast<double>(cycle) * activePattern_.lengthBeats;
-            for (std::size_t i = 0; i < activePattern_.eventCount; ++i) {
-                const auto& note = activePattern_.events[i];
-                const auto onSample = patternStartSample_ +
-                    static_cast<std::uint64_t>(std::llround((cycleBeat + note.beat) * samplesPerBeat));
-                const auto offSample = patternStartSample_ +
-                    static_cast<std::uint64_t>(std::llround(
-                        (cycleBeat + note.beat + note.durationBeats) * samplesPerBeat));
-                append(onSample, note.midiNote, note.velocity, true);
-                append(offSample, note.midiNote, 0, false);
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            const auto& pattern = activePatterns_[player];
+            if (!pattern.active || pattern.eventCount == 0 ||
+                pattern.lengthBeats <= 0.0 || pattern.bpm <= 0.0)
+                continue;
+            const auto patternStart = patternStartSamples_[player];
+            if (blockEnd <= patternStart)
+                continue;
+            const double samplesPerBeat = sampleRate_ * 60.0 / pattern.bpm;
+            const double startBeat = blockStart <= patternStart ? 0.0
+                : static_cast<double>(blockStart - patternStart) / samplesPerBeat;
+            const double endBeat = static_cast<double>(blockEnd - patternStart) / samplesPerBeat;
+            const auto firstCycle = std::max<std::int64_t>(
+                0, static_cast<std::int64_t>(std::floor(startBeat / pattern.lengthBeats)) - 1);
+            const auto lastCycle = static_cast<std::int64_t>(
+                std::floor(endBeat / pattern.lengthBeats)) + 1;
+            for (std::int64_t cycle = firstCycle; cycle <= lastCycle; ++cycle) {
+                const double cycleBeat = static_cast<double>(cycle) * pattern.lengthBeats;
+                for (std::size_t i = 0; i < pattern.eventCount; ++i) {
+                    const auto& note = pattern.events[i];
+                    const auto onSample = patternStart + static_cast<std::uint64_t>(
+                        std::llround((cycleBeat + note.beat) * samplesPerBeat));
+                    const auto offSample = patternStart + static_cast<std::uint64_t>(
+                        std::llround((cycleBeat + note.beat + note.durationBeats) * samplesPerBeat));
+                    append(onSample, static_cast<int>(player), note.midiNote, note.velocity, true);
+                    append(offSample, static_cast<int>(player), note.midiNote, 0, false);
+                }
             }
         }
 
         std::sort(result.begin(), result.begin() + resultCount,
                   [](const TimedMidiEvent& a, const TimedMidiEvent& b) {
-                      if (a.sample != b.sample)
-                          return a.sample < b.sample;
-                      return !a.noteOn && b.noteOn;
+                      if (a.sample != b.sample) return a.sample < b.sample;
+                      if (a.noteOn != b.noteOn) return !a.noteOn;
+                      return a.playerIndex < b.playerIndex;
                   });
     }
 
@@ -607,43 +648,60 @@ private:
                           events, count);
         for (std::size_t i = 0; i < count; ++i) {
             const auto& event = events[i];
-            addMidiNoteEvent(data.outputEvents,
-                             static_cast<int32>(event.sample - sampleClock_),
-                             event.midiNote, event.velocity, event.noteOn);
-            activeMidiNotes_[static_cast<std::size_t>(event.midiNote)] = event.noteOn;
+            const auto player = static_cast<std::size_t>(event.playerIndex);
+            const auto pitch = static_cast<std::size_t>(event.midiNote);
+            auto& active = activeMidiNotes_[player][pitch];
+            if (event.noteOn) {
+                if (!active) {
+                    addMidiNoteEvent(data.outputEvents,
+                                     static_cast<int32>(event.sample - sampleClock_),
+                                     event.midiNote, event.velocity, true, event.playerIndex);
+                    active = true;
+                }
+            } else if (active) {
+                addMidiNoteEvent(data.outputEvents,
+                                 static_cast<int32>(event.sample - sampleClock_),
+                                 event.midiNote, 0, false, event.playerIndex);
+                active = false;
+            }
         }
     }
 
     void updateSynthForBlock(std::uint64_t blockStart) {
-        std::array<ScheduledAudioNote, kMaxPolyphony> desired{};
+        std::array<ScheduledAudioNote, kAudioVoiceCount> desired{};
         std::size_t desiredCount = 0;
-        if (playing_ && activePattern_.eventCount > 0 &&
-            blockStart + kSCBlockSize / 2 >= patternStartSample_) {
-            const double samplesPerBeat = sampleRate_ * 60.0 / activePattern_.bpm;
-            const double beat = static_cast<double>(
-                blockStart + kSCBlockSize / 2 - patternStartSample_) / samplesPerBeat;
+        const auto midpoint = blockStart + kSCBlockSize / 2;
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            const auto& pattern = activePatterns_[player];
+            const auto patternStart = patternStartSamples_[player];
+            if (!pattern.active || pattern.eventCount == 0 ||
+                pattern.lengthBeats <= 0.0 || pattern.bpm <= 0.0 ||
+                midpoint < patternStart)
+                continue;
+            const double samplesPerBeat = sampleRate_ * 60.0 / pattern.bpm;
+            const double beat = static_cast<double>(midpoint - patternStart) / samplesPerBeat;
             const auto cycle = static_cast<std::int64_t>(
-                std::floor(beat / activePattern_.lengthBeats));
+                std::floor(beat / pattern.lengthBeats));
             const double loopPosition =
-                beat - static_cast<double>(cycle) * activePattern_.lengthBeats;
-            for (std::size_t i = 0; i < activePattern_.eventCount; ++i) {
-                const auto& event = activePattern_.events[i];
-                if (loopPosition >= event.beat &&
-                    loopPosition < event.beat + event.durationBeats) {
-                    if (desiredCount >= kMaxPolyphony)
-                        break;
-                    const double absoluteStartBeat =
-                        static_cast<double>(cycle) * activePattern_.lengthBeats + event.beat;
-                    const double absoluteEndBeat = absoluteStartBeat + event.durationBeats;
-                    desired[desiredCount] = ScheduledAudioNote{
-                        event.midiNote,
-                        event.velocity,
-                        patternStartSample_ + static_cast<std::uint64_t>(
-                                                  std::llround(absoluteStartBeat * samplesPerBeat)),
-                        patternStartSample_ + static_cast<std::uint64_t>(
-                                                  std::llround(absoluteEndBeat * samplesPerBeat))};
-                    ++desiredCount;
-                }
+                beat - static_cast<double>(cycle) * pattern.lengthBeats;
+            std::size_t playerVoices = 0;
+            for (std::size_t i = 0; i < pattern.eventCount; ++i) {
+                const auto& event = pattern.events[i];
+                if (loopPosition < event.beat ||
+                    loopPosition >= event.beat + event.durationBeats)
+                    continue;
+                if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
+                    break;
+                const double absoluteStartBeat =
+                    static_cast<double>(cycle) * pattern.lengthBeats + event.beat;
+                const double absoluteEndBeat = absoluteStartBeat + event.durationBeats;
+                desired[desiredCount++] = ScheduledAudioNote{
+                    static_cast<int>(player), event.midiNote, event.velocity,
+                    patternStart + static_cast<std::uint64_t>(
+                        std::llround(absoluteStartBeat * samplesPerBeat)),
+                    patternStart + static_cast<std::uint64_t>(
+                        std::llround(absoluteEndBeat * samplesPerBeat))};
+                ++playerVoices;
             }
         }
 
@@ -658,7 +716,8 @@ private:
             const auto& note = desired[i];
             auto found = std::find_if(audioVoices_.begin(), audioVoices_.end(),
                                       [&](const AudioVoice& voice) {
-                                          return voice.midiNote == note.midiNote &&
+                                          return voice.playerIndex == note.playerIndex &&
+                                                 voice.midiNote == note.midiNote &&
                                                  voice.startSample == note.startSample;
                                       });
             if (found == audioVoices_.end()) {
@@ -668,6 +727,7 @@ private:
                                      });
                 if (found == audioVoices_.end())
                     continue;
+                found->playerIndex = note.playerIndex;
                 found->midiNote = note.midiNote;
                 found->velocity = note.velocity;
                 found->startSample = note.startSample;
@@ -800,8 +860,11 @@ private:
             voice = {};
         cursor_ = kSCBlockSize;
         outputBlock_.fill(0.0f);
-        playing_ = false;
-        activeMidiNotes_.fill(false);
+        for (auto& pattern : activePatterns_)
+            pattern = {};
+        for (auto& playerNotes : activeMidiNotes_)
+            playerNotes.fill(false);
+        pendingPlayerMask_ = 0;
     }
 
     std::string scriptNamespace_;
@@ -812,20 +875,19 @@ private:
     std::array<float, kSCBlockSize> outputBlock_{};
     int cursor_ = kSCBlockSize;
     std::mutex patternMutex_;
-    PatternState activePattern_{};
-    PatternState pendingPattern_{};
-    bool pendingPatternReady_ = false;
-    bool playing_ = false;
-    std::uint64_t patternStartSample_ = 0;
+    std::array<PatternState, kPlayerCount> activePatterns_{};
+    std::array<PatternState, kPlayerCount> pendingPatterns_{};
+    std::uint8_t pendingPlayerMask_ = 0;
+    std::array<std::uint64_t, kPlayerCount> patternStartSamples_{};
     std::uint64_t sampleClock_ = 0;
-    std::array<bool, 128> activeMidiNotes_{};
+    std::array<std::array<bool, 128>, kPlayerCount> activeMidiNotes_{};
     std::atomic<bool> stopRequested_{false};
     std::mutex scriptThreadMutex_;
     std::thread scriptThread_;
     std::atomic<bool> scriptRunning_{false};
     std::atomic<std::uint64_t> scriptGeneration_{0};
     std::mutex statusMutex_;
-    std::string editorStatus_ = "Ready. Use tempo() and play().";
+    std::string editorStatus_ = "Ready. Use p1 >> sequence(...) or play().";
     std::mutex editorStateMutex_;
     std::string editorSource_ =
         "tempo(120)\r\nplay([60, 64, 67, 72], step=0.5, duration=0.45)\r\n";
@@ -842,7 +904,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.2.1",
+           "0.3.0",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

@@ -13,16 +13,16 @@ A Windows x64 VST3 prototype for Python-based live-coded music, using a small Fo
 
 ## Current prototype
 
-- Windows native editor with Run, Stop, Open, and Save. Six starter patterns are separate `.py` files in the `Portable` folder.
+- Windows native editor with Run, Stop, Open, and Save. Seven starter patterns are separate `.py` files in the `Portable` folder.
 - Open and Save As explicitly start in the `Portable` folder beside the VST3 bundle; ordinary Save writes back to the currently opened or saved script.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
-- `tempo(bpm)`, `scale(name="major", root=60)`, and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False)`. Pattern helpers include `reverse`, `rotate`, `repeat`, `transpose`, and `euclid`.
+- `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independently editable players (`p1`–`p8`) using `p1 >> sequence(...)`; `.stop()` stops one player without stopping the others. Pattern helpers include `reverse`, `rotate`, `repeat`, `transpose`, and `euclid`.
 - Raw MIDI pitches remain the default. With `degrees=True`, zero-based scale degrees map to pitches using major, minor, dorian, mixolydian, major/minor pentatonic, or blues scales; degrees wrap across octaves.
-- MIDI note numbers 0ÃÂ¢ÃÂÃÂ127, `None` rests, repeating patterns, and up to 8 simultaneous audio voices.
+- MIDI note numbers 0–127, `None` rests, repeating patterns, and up to eight simultaneous notes per player (up to 64 across eight players).
 - Chords can be written as nested lists, such as `play([[60, 64, 67], [62, 65, 69]])`; separate `play()` calls can layer parts.
 - Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20ÃÂ¢ÃÂÃÂ300 BPM.
 - Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
-- MIDI note events are emitted on a VST3 event output bus; the pattern supports up to 8 simultaneous notes, with extra audio voices reserved for short release tails.
+- MIDI note events are emitted on the VST3 event output bus, with each player assigned its own MIDI channel; the engine supports up to 64 simultaneous notes and eight extra short-release voices.
 - Internal audio applies MIDI velocity and a per-voice 5 ms attack / 12 ms release envelope, then normalizes the chord mix to keep level reasonably consistent.
 - The plugin display name and native editor branding read ÃÂ¢ÃÂÃÂDexter U.S FoxDotÃÂ¢ÃÂÃÂ; the VST3 manufacturer metadata remains Dexter U.S.
 - Dexter U.S. manufacturer metadata.

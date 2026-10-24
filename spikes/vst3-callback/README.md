@@ -1,6 +1,6 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 instrument. Its native editor evaluates a small Python pattern API, then passes bounded note events directly to the VST3 audio callback. The plugin renders up to eight simultaneous SuperCollider synth voices and emits matching MIDI note events. It does not launch `scsynth`, open an audio device, or use OSC.
+This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 instrument. Its native editor evaluates a small Python pattern API, then passes bounded note events directly to the VST3 audio callback. The plugin renders up to eight independently running players, with up to eight notes per player (64 total), and emits matching MIDI notes on a separate channel per player. It does not launch `scsynth`, open an audio device, or use OSC.
 
 ## What it proves
 
@@ -8,8 +8,8 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - The host owns the audio callback; each VST block is split into SuperCollider's fixed 64-sample blocks and buffered for variable host block sizes.
 - The three required UGen modules (`OscUGens`, `BinaryOpUGens`, and `IOUGens`) are copied into `Contents/Resources/SCPlugins`. The plugin locates that folder relative to its loaded module; no build-machine UGen path is compiled into the binary.
 - The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
-- The editor supports `tempo(bpm)`, `scale(name="major", root=60)`, and `play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False)`, plus `reverse`, `rotate`, `repeat`, `transpose`, and Euclidean rhythm generation with `euclid(hits, steps, note=60, rotation=0)`. Degree-based playback supports major, minor, dorian, mixolydian, major/minor pentatonic, and blues scales; raw MIDI notes remain the default.
-- The Windows editor can open and save UTF-8 Python scripts. Six starter patterns are separate `.py` files in the bundle's `Portable` folder, and Open/Save As explicitly start there rather than using Windows' previously visited directory; ordinary Save writes back to the current script path. The editor prompts before replacing unsaved edits. The footer shows the plugin version.
+- The editor supports `tempo(bpm)`, `scale(name="major", root=60)`, and `play(...)`, plus eight independent players (`p1`–`p8`) using `p1 >> sequence(...)`; calling `.stop()` stops only that player. Pattern helpers include `reverse`, `rotate`, `repeat`, `transpose`, and Euclidean rhythm generation with `euclid(hits, steps, note=60, rotation=0)`. Degree-based playback supports major, minor, dorian, mixolydian, major/minor pentatonic, and blues scales; raw MIDI notes remain the default.
+- The Windows editor can open and save UTF-8 Python scripts. Seven starter patterns are separate `.py` files in the bundle's `Portable` folder, and Open/Save As explicitly start there rather than using Windows' previously visited directory; ordinary Save writes back to the current script path. The editor prompts before replacing unsaved edits. The footer shows the plugin version.
 - VST3 project state stores the editor code. Loading a project restores the script in the editor but does not execute user code automatically.
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
 - A MIDI output event bus is exposed to the host.
@@ -17,9 +17,9 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 ## Prototype limits
 
 - SuperCollider is pinned at `ef5771bce3d1c9c780cafd58cf032ec4a3f36d10`; the VST3 SDK checkout is 3.8.1. The Windows script bundles CPython 3.12.10. GitHub Actions builds and validates the Windows VST3; audio, editor, and MIDI behavior still require testing in a real Windows DAW.
-  - The engine uses `WorldOptions::mRealTime = false` so SuperCollider does not initialize its own audio driver. Sixteen fixed SynthDef graphs allow eight active notes plus short release tails in the host callback; this is not a real-time-safety guarantee for arbitrary UGens or future code. Audit allocations, locks, and thread behavior before treating it as a production instrument.
+  - The engine uses `WorldOptions::mRealTime = false` so SuperCollider does not initialize its own audio driver. Seventy-two fixed SynthDef graphs allow 64 active notes plus eight short release tails in the host callback; this is not a real-time-safety guarantee for arbitrary UGens or future code. Audit allocations, locks, and thread behavior before treating it as a production instrument.
 - Audio pitch follows scheduled MIDI notes in 64-sample SuperCollider blocks, so audio onset is quantized to that block size; MIDI events retain sample offsets.
- - Patterns support chords and layered `play()` calls with at most eight simultaneous notes; overlapping instances of the same MIDI pitch are rejected. Independent FoxDot-style player objects, additional built-in synths, and per-player effects/controls remain the next engine work. There is no arbitrary SynthDef evaluation, and the plugin does not follow DAW transport. The editor is currently Windows-only.
+ - Each player supports up to eight simultaneous notes, and up to eight players can run independently. MIDI is emitted on a separate channel per player. Additional built-in synths and per-player effects/controls are still in progress. There is no arbitrary SynthDef evaluation, and the plugin does not follow DAW transport. The editor is currently Windows-only.
 - User code is intentionally constrained but not a security sandbox. Pattern evaluation has a two-second Python loop guard; avoid untrusted scripts.
 - SuperCollider is GPL-3.0, the Python runtime uses the PSF license, and the VST3 SDK is MIT-licensed. Package notices are included; binary distribution must comply with the relevant source and notice requirements. Review remaining transitive dependency terms before release.
 
