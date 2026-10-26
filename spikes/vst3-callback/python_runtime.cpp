@@ -306,6 +306,71 @@ class _FoxDotScaleNamespace:
 
 Scale = _FoxDotScaleNamespace()
 
+class _FoxDotFinitePattern(list):
+    def _gcd(self, a, b):
+        while b:
+            a, b = b, a % b
+        return a
+
+    def _laced_length(self, left, right):
+        return len(left) * len(right) // self._gcd(len(left), len(right))
+
+    def _apply(self, left, right, operation):
+        if left is None or right is None:
+            return None
+        left_group = isinstance(left, (list, tuple))
+        right_group = isinstance(right, (list, tuple))
+        if left_group and right_group:
+            if len(left) != len(right):
+                raise ValueError('chord groups must have matching sizes for P arithmetic')
+            result = [self._apply(a, b, operation) for a, b in zip(left, right)]
+            return tuple(result) if isinstance(left, tuple) else result
+        if left_group:
+            result = [self._apply(item, right, operation) for item in left]
+            return tuple(result) if isinstance(left, tuple) else result
+        if right_group:
+            result = [self._apply(left, item, operation) for item in right]
+            return tuple(result) if isinstance(right, tuple) else result
+        if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+            raise TypeError('P arithmetic supports numeric values, rests, and numeric chords')
+        value = operation(left, right)
+        if value != value or value in (float('inf'), float('-inf')):
+            raise ValueError('P arithmetic must produce finite values')
+        return value
+
+    def _binary(self, other, operation, reflected=False):
+        if not self:
+            return _FoxDotFinitePattern()
+        if isinstance(other, (list, tuple)):
+            if not other:
+                return _FoxDotFinitePattern()
+            length = self._laced_length(self, other)
+            if length > 256:
+                raise ValueError('P arithmetic is limited to 256 expanded items')
+            values = []
+            for index in range(length):
+                left, right = self[index % len(self)], other[index % len(other)]
+                values.append(self._apply(right, left, operation) if reflected else
+                              self._apply(left, right, operation))
+            return _FoxDotFinitePattern(values)
+        if not isinstance(other, (int, float)):
+            raise TypeError('P arithmetic supports a number or another finite pattern')
+        values = [self._apply(other, item, operation) if reflected else
+                  self._apply(item, other, operation) for item in self]
+        return _FoxDotFinitePattern(values)
+
+    def __add__(self, other):
+        return self._binary(other, lambda a, b: a + b)
+
+    def __radd__(self, other):
+        return self._binary(other, lambda a, b: a + b, True)
+
+    def __sub__(self, other):
+        return self._binary(other, lambda a, b: a - b)
+
+    def __rsub__(self, other):
+        return self._binary(other, lambda a, b: a - b, True)
+
 class _FoxDotPatternLiteral:
     def __getitem__(self, items):
         if isinstance(items, slice):
@@ -313,7 +378,7 @@ class _FoxDotPatternLiteral:
         values = list(items) if isinstance(items, tuple) else [items]
         if len(values) > 256:
             raise ValueError('P[...] is limited to 256 literal items')
-        return values
+        return _FoxDotFinitePattern(values)
 
 P = _FoxDotPatternLiteral()
 
