@@ -337,7 +337,12 @@ class _FoxDotFinitePattern(list):
             return tuple(result) if isinstance(right, tuple) else result
         if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
             raise TypeError('P arithmetic supports numeric values, rests, and numeric chords')
-        value = operation(left, right)
+        try:
+            value = operation(left, right)
+        except ZeroDivisionError:
+            value = 0
+        if not isinstance(value, (int, float)):
+            raise TypeError('P arithmetic must produce real numeric values')
         if value != value or value in (float('inf'), float('-inf')):
             raise ValueError('P arithmetic must produce finite values')
         return value
@@ -374,6 +379,47 @@ class _FoxDotFinitePattern(list):
 
     def __rsub__(self, other):
         return self._binary(other, lambda a, b: a - b, True)
+
+    def __mul__(self, other):
+        return self._binary(other, lambda a, b: a * b)
+
+    def __rmul__(self, other):
+        return self._binary(other, lambda a, b: a * b, True)
+
+    def __truediv__(self, other):
+        return self._binary(other, lambda a, b: a / b)
+
+    def __rtruediv__(self, other):
+        return self._binary(other, lambda a, b: a / b, True)
+
+    def __floordiv__(self, other):
+        return self._binary(other, lambda a, b: a // b)
+
+    def __rfloordiv__(self, other):
+        return self._binary(other, lambda a, b: a // b, True)
+
+    def __mod__(self, other):
+        return self._binary(other, lambda a, b: a % b)
+
+    def __rmod__(self, other):
+        return self._binary(other, lambda a, b: a % b, True)
+
+    def _power(self, base, exponent):
+        if abs(base) > 256 or abs(exponent) > 16:
+            raise ValueError('P exponents are limited to bases within 256 and exponents within 16')
+        return base ** exponent
+
+    def __pow__(self, other):
+        return self._binary(other, self._power)
+
+    def __rpow__(self, other):
+        return self._binary(other, self._power, True)
+
+    def __xor__(self, other):
+        return self.__pow__(other)
+
+    def __rxor__(self, other):
+        return self.__rpow__(other)
 
     def reverse(self):
         return _FoxDotFinitePattern(list(reversed(self)))

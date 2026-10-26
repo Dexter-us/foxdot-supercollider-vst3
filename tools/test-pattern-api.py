@@ -125,6 +125,23 @@ except ValueError as error:
     assert '256 expanded items' in str(error)
 else:
     raise AssertionError('expanded P patterns must stay within the event cap')
+assert namespace['P'][2, None, (3, 4)] * 3 == [6, None, (9, 12)]
+assert 2 * namespace['P'][1, None, (3, 4)] == [2, None, (6, 8)]
+assert namespace['P'][8, 9] / namespace['P'][2, 3] == [4, 3]
+assert 10 / namespace['P'][2, 4] == [5, 2.5]
+assert namespace['P'][8, 9] // 2 == [4, 4]
+assert namespace['P'][8, 9] % 3 == [2, 0]
+assert namespace['P'][2, 3] ** 2 == [4, 9]
+assert namespace['P'][2, 3] ^ 3 == [8, 27]
+assert namespace['P'][8, 9] / namespace['P'][2, 0] == [4, 0]
+assert namespace['P'][8, 9] % namespace['P'][3, 0] == [2, 0]
+try:
+    namespace['P'][2] ** 17
+except ValueError as error:
+    assert 'exponents are limited' in str(error)
+else:
+    raise AssertionError('P powers must enforce the exponent cap')
+
 try:
     namespace['P'][(1, 2),] + namespace['P'][(3, 4, 5),]
 except ValueError as error:
@@ -239,6 +256,9 @@ assert [row[5] for row in example13Rows] == ['8', '5', '4', '4', '4']
 example14Rows = run_example('14-pattern-composition.py')
 assert len(example14Rows) == 2 and all(len(row) == 12 for row in example14Rows)
 assert [row[5] for row in example14Rows] == ['5', '7']
+example15Rows = run_example('15-pattern-arithmetic-operators.py')
+assert len(example15Rows) == 4 and all(len(row) == 12 for row in example15Rows)
+assert [row[5] for row in example15Rows] == ['4', '2', '4', '4']
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
@@ -260,4 +280,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-14.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-15.')
