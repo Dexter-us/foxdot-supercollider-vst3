@@ -60,6 +60,7 @@ foreach ($tool in @("git", "cmake")) {
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $BuildRoot "deps") | Out-Null
 
+$pythonVersion = "3.12.10"
 $pythonArchive = Join-Path $BuildRoot "deps/python-3.12-embed-amd64.zip"
 if (-not (Test-Path (Join-Path $pythonRuntime "python312.dll"))) {
     New-Item -ItemType Directory -Force -Path $pythonRuntime | Out-Null
