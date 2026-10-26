@@ -99,16 +99,22 @@ def run_example(name):
     return run_script(open(example_path, encoding='utf-8').read())
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
-assert len(legacy) == 1 and legacy[0][5] == '2' and legacy[0][6] == '0'
+assert len(legacy) == 1 and len(legacy[0]) == 12
+assert legacy[0][5] == '2' and legacy[0][6] == '0'
 assert legacy[0][7] == '1.0' and legacy[0][8] == '0.0'
+assert legacy[0][10] == '0.0' and legacy[0][11] == '0.25'
 example7 = run_example('07-independent-players.py')
-assert len(example7) == 2 and example7[0][5] == '6' and example7[1][5] == '2'
+assert len(example7) == 2 and all(len(row) == 12 for row in example7)
+assert example7[0][5] == '6' and example7[1][5] == '2'
 assert example7[0][6] == '0' and example7[1][6] == '0'
+assert example7[0][10] == '0.0' and example7[0][11] == '0.25'
 example8 = run_example('08-synths-and-controls.py')
-assert len(example8) == 2
+assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
 assert p1[1] == '0' and p1[6] == '1' and abs(float(p1[7]) - 0.7) < 1e-6
 assert abs(float(p1[8]) + 0.4) < 1e-6 and p1[9] == '5000.0'
+assert p1[10] == '0.0' and p1[11] == '0.25'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
-assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[10] == '0.25'
-print('Smoke tests passed: wrapper execution, patterns, eight-player controls, four oscillator modes, stereo/filter/echo settings, and Example 08.')
+assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
+assert p2[10] == '0.25' and p2[11] == '0.24'
+print('Smoke tests passed: wrapper execution and complete player-record serialization, patterns, oscillator modes, audio controls, and Examples 07/08.')

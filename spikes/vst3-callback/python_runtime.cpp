@@ -341,7 +341,7 @@ p8 = Player(8)
             << "        _f.write('OK\\t{}\\n'.format(len(_updates)))\n"
             << "        for _player in sorted(_updates):\n"
             << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay = _updates[_player]\n"
-            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay))\n"
+            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay))\n"
             << "            for _e in _events:\n"
             << "                _f.write('N\\t{}\\t{}\\t{}\\t{}\\n'.format(*_e))\n"
             << "except BaseException:\n"

@@ -347,12 +347,13 @@ private:
                                         0, 0, 76, 26, window_,
                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSaveAsId)),
                                         moduleInstance(), nullptr);
-        status_ = CreateWindowExW(0, L"STATIC", L"Ready. Open a script or edit code.",
-                                  WS_CHILD | WS_VISIBLE | SS_LEFT,
+        status_ = CreateWindowExW(0, L"EDIT", L"Ready. Open a script or edit code.",
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER |
+                                      ES_READONLY | ES_AUTOHSCROLL | ES_NOHIDESEL,
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.0",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.1",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
