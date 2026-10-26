@@ -8,4 +8,5 @@ The editor status shows the .scx filenames it found, not a guarantee that each m
 Only add native modules from sources you trust. A .scx file is executable native code and must match
 this plugin's pinned SuperCollider API/build. Check its license and any required DLLs yourself;
 the loader cannot validate either. Duplicate modules or missing dependencies may prevent UGens from
-registering. The core bundle excludes DiskIO_UGens and does not include sample files.
+registering. The core bundle includes DiskIO_UGens and its LGPL-2.1 libsndfile runtime, plus UIUGens
+for global desktop mouse input. No sample files or Python FoxDot sample-player controls are included.
