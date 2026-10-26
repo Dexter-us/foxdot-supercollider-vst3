@@ -93,6 +93,31 @@ except ValueError as error:
     assert '256 expanded items' in str(error)
 else:
     raise AssertionError('pattern repeat must enforce the 256-item cap')
+left = namespace['P'][0, None, (2, 4)]
+right = namespace['P'][5, 7]
+assert left | right == [0, None, (2, 4), 5, 7]
+assert [9] | namespace['P'][1, 2] == [9, 1, 2]
+assert left & right == [(0, 5), 7, (2, 4, 5), (0, 7), 5, (2, 4, 7)]
+assert namespace['P'][None] & namespace['P'][None] == [None]
+try:
+    namespace['P'][*range(129)] | namespace['P'][*range(129)]
+except ValueError as error:
+    assert '256' in str(error)
+else:
+    raise AssertionError('P concatenation must enforce its size cap')
+try:
+    namespace['P'][*range(17)] & namespace['P'][*range(19)]
+except ValueError as error:
+    assert '256' in str(error)
+else:
+    raise AssertionError('P zipping must enforce its expansion cap')
+try:
+    namespace['P'][(1, 2, 3, 4, 5),] & namespace['P'][(6, 7, 8, 9),]
+except ValueError as error:
+    assert '8 notes' in str(error)
+else:
+    raise AssertionError('zipped chords must stay within 8 notes')
+
 
 try:
     namespace['P'][*range(17)] + namespace['P'][*range(19)]
@@ -211,6 +236,9 @@ assert example12Rows[0][5] == '5' and example12Rows[1][5] == '5'
 example13Rows = run_example('13-pattern-methods.py')
 assert len(example13Rows) == 5 and all(len(row) == 12 for row in example13Rows)
 assert [row[5] for row in example13Rows] == ['8', '5', '4', '4', '4']
+example14Rows = run_example('14-pattern-composition.py')
+assert len(example14Rows) == 2 and all(len(row) == 12 for row in example14Rows)
+assert [row[5] for row in example14Rows] == ['5', '7']
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
@@ -223,8 +251,8 @@ assert p2[10] == '0.25' and p2[11] == '0.24'
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
-unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\nP["x-o"]\nP[0:8]\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'room', 'Sample-string', 'String sample patterns', 'slice-based generation'):
+unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\nP["x-o"]\nP[0:8]\nP[0] | ["x-o"]\n')
+for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'room', 'Sample-string', 'String sample patterns', 'slice-based generation', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
@@ -232,4 +260,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-13.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-14.')

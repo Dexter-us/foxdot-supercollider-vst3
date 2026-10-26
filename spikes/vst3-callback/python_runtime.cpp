@@ -185,6 +185,10 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_BinOp(self, node):
+        if isinstance(node.op, (ast.BitOr, ast.BitAnd)) and any(
+                isinstance(item, ast.Constant) and isinstance(item.value, str)
+                for item in ast.walk(node)):
+            self.add(node.lineno, 'Pattern | and & do not accept sample strings; use numeric pitches, rests, and chords.')
         if isinstance(node.op, ast.RShift) and isinstance(node.left, ast.Name) and isinstance(node.right, ast.Call):
             player = node.left.id
             if not re.fullmatch(r'p[1-8]', player):
@@ -413,6 +417,71 @@ class _FoxDotFinitePattern(list):
         if len(self) * 2 > 256:
             raise ValueError('palindrome is limited to 256 expanded items')
         return _FoxDotFinitePattern(list(self) + list(reversed(self)))
+
+    def _composition_items(self, value):
+        items = list(value) if isinstance(value, (list, tuple)) else [value]
+        if any(self._contains_string(item) for item in items):
+            raise TypeError('P pattern composition supports numeric notes, rests, and chords; sample strings are deferred')
+        return items
+
+    def _contains_string(self, item):
+        if isinstance(item, str):
+            return True
+        if isinstance(item, (list, tuple)):
+            return any(self._contains_string(value) for value in item)
+        return False
+
+    def _append_chord_notes(self, item, notes):
+        if item is None:
+            return
+        if isinstance(item, (list, tuple)):
+            for value in item:
+                self._append_chord_notes(value, notes)
+            return
+        notes.append(item)
+
+    def _zip_item(self, left, right):
+        notes = []
+        self._append_chord_notes(left, notes)
+        self._append_chord_notes(right, notes)
+        if len(notes) > 8:
+            raise ValueError('zipped chords can contain at most 8 notes')
+        if not notes:
+            return None
+        return notes[0] if len(notes) == 1 else tuple(notes)
+
+    def _zip_with(self, other, reflected=False):
+        left = self._composition_items(other) if reflected else self._composition_items(self)
+        right = self._composition_items(self) if reflected else self._composition_items(other)
+        if not left or not right:
+            return _FoxDotFinitePattern()
+        length = self._laced_length(left, right)
+        if length > 256:
+            raise ValueError('P pattern zipping is limited to 256 expanded items')
+        return _FoxDotFinitePattern([
+            self._zip_item(left[index % len(left)], right[index % len(right)])
+            for index in range(length)
+        ])
+
+    def __or__(self, other):
+        left = self._composition_items(self)
+        right = self._composition_items(other)
+        if len(left) + len(right) > 256:
+            raise ValueError('P pattern concatenation is limited to 256 items')
+        return _FoxDotFinitePattern(left + right)
+
+    def __ror__(self, other):
+        left = self._composition_items(other)
+        right = self._composition_items(self)
+        if len(left) + len(right) > 256:
+            raise ValueError('P pattern concatenation is limited to 256 items')
+        return _FoxDotFinitePattern(left + right)
+
+    def __and__(self, other):
+        return self._zip_with(other)
+
+    def __rand__(self, other):
+        return self._zip_with(other, True)
 
 class _FoxDotPatternLiteral:
     def __getitem__(self, items):
