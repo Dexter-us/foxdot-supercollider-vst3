@@ -148,12 +148,28 @@ except ValueError as error:
     assert 'matching sizes' in str(error)
 else:
     raise AssertionError('mismatched chord groups must be rejected')
+assert namespace['P'][slice(0, 8)] == list(range(8))
+assert namespace['P'][slice(0, 8, 2)] == [0, 2, 4, 6]
+assert namespace['P'][slice(8, 0, -2)] == [8, 6, 4, 2]
+assert namespace['P'][slice(0, 8)][slice(2, 6)] + 1 == [3, 4, 5, 6]
 try:
-    namespace['P'][slice(0, 8)]
+    namespace['P'][slice(0, None)]
 except ValueError as error:
-    assert 'finite item lists' in str(error)
+    assert 'finite stop' in str(error)
 else:
-    raise AssertionError('P slice ranges must be rejected rather than guessed')
+    raise AssertionError('P generated ranges must require a finite stop')
+try:
+    namespace['P'][slice(0, 8, 0)]
+except ValueError as error:
+    assert 'cannot be zero' in str(error)
+else:
+    raise AssertionError('P generated ranges must reject a zero step')
+try:
+    namespace['P'][slice(0, 257)]
+except ValueError as error:
+    assert '256 generated items' in str(error)
+else:
+    raise AssertionError('P generated ranges must enforce the 256-item cap')
 namespace['play'](namespace['transpose']([60, None, [62, 65]], 12), step=0.5)
 assert len(namespace['_dexter_events']) == 3
 namespace['_dexter_updates'].clear()
@@ -259,6 +275,9 @@ assert [row[5] for row in example14Rows] == ['5', '7']
 example15Rows = run_example('15-pattern-arithmetic-operators.py')
 assert len(example15Rows) == 4 and all(len(row) == 12 for row in example15Rows)
 assert [row[5] for row in example15Rows] == ['4', '2', '4', '4']
+example16Rows = run_example('16-bounded-pattern-slices.py')
+assert len(example16Rows) == 3 and all(len(row) == 12 for row in example16Rows)
+assert [row[5] for row in example16Rows] == ['8', '4', '2']
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
@@ -268,11 +287,11 @@ assert p1[10] == '0.0' and p1[11] == '0.25'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
 assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
 assert p2[10] == '0.25' and p2[11] == '0.24'
-supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np1.stop()\n')
+supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np1 >> saw(P[0:8:2], dur=0.5)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
-unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\nP["x-o"]\nP[0:8]\nP[0] | ["x-o"]\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'room', 'Sample-string', 'String sample patterns', 'slice-based generation', 'Pattern | and & do not accept sample strings'):
+unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
+for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'room', 'Sample-string', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
@@ -280,4 +299,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-15.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-16.')

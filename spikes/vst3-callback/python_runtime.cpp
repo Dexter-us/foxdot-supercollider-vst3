@@ -179,7 +179,32 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
     def visit_Subscript(self, node):
         if isinstance(node.value, ast.Name) and node.value.id == 'P':
             if isinstance(node.slice, ast.Slice):
-                self.add(node.lineno, 'P[...] currently supports finite item lists only; slice-based generation is not supported.')
+                def integer_literal(bound):
+                    if bound is None:
+                        return True, None
+                    if isinstance(bound, ast.Constant) and isinstance(bound.value, int):
+                        return True, bound.value
+                    if (isinstance(bound, ast.UnaryOp) and
+                            isinstance(bound.op, (ast.USub, ast.UAdd)) and
+                            isinstance(bound.operand, ast.Constant) and
+                            isinstance(bound.operand.value, int)):
+                        value = bound.operand.value
+                        return True, -value if isinstance(bound.op, ast.USub) else value
+                    return False, None
+                bounds = (node.slice.lower, node.slice.upper, node.slice.step)
+                parsed = [integer_literal(bound) for bound in bounds]
+                if node.slice.upper is None:
+                    self.add(node.lineno, 'P range slices require a finite stop value.')
+                elif not all(value[0] for value in parsed):
+                    self.add(node.lineno, 'P range slices require integer-literal bounds and step values.')
+                else:
+                    start = 0 if parsed[0][1] is None else parsed[0][1]
+                    stop = parsed[1][1]
+                    step = 1 if parsed[2][1] is None else parsed[2][1]
+                    if step == 0:
+                        self.add(node.lineno, 'P range slice step cannot be zero.')
+                    elif len(range(start, stop, step)) > 256:
+                        self.add(node.lineno, 'P range slices are limited to 256 generated items.')
             elif any(isinstance(item, ast.Constant) and isinstance(item.value, str) for item in ast.walk(node.slice)):
                 self.add(node.lineno, 'String sample patterns are not included yet; sample support is deferred.')
         self.generic_visit(node)
@@ -421,6 +446,10 @@ class _FoxDotFinitePattern(list):
     def __rxor__(self, other):
         return self.__rpow__(other)
 
+    def __getitem__(self, key):
+        value = list.__getitem__(self, key)
+        return _FoxDotFinitePattern(value) if isinstance(key, slice) else value
+
     def reverse(self):
         return _FoxDotFinitePattern(list(reversed(self)))
 
@@ -532,7 +561,19 @@ class _FoxDotFinitePattern(list):
 class _FoxDotPatternLiteral:
     def __getitem__(self, items):
         if isinstance(items, slice):
-            raise ValueError('P[...] currently supports finite item lists, not slice ranges')
+            if items.stop is None:
+                raise ValueError('P range slices require a finite stop value')
+            for bound in (items.start, items.stop, items.step):
+                if bound is not None and not isinstance(bound, int):
+                    raise ValueError('P range slices require integer bounds and step values')
+            start = 0 if items.start is None else items.start
+            step = 1 if items.step is None else items.step
+            if step == 0:
+                raise ValueError('P range slice step cannot be zero')
+            values = range(start, items.stop, step)
+            if len(values) > 256:
+                raise ValueError('P range slices are limited to 256 generated items')
+            return _FoxDotFinitePattern(list(values))
         values = list(items) if isinstance(items, tuple) else [items]
         if len(values) > 256:
             raise ValueError('P[...] is limited to 256 literal items')
