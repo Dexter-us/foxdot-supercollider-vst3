@@ -231,6 +231,7 @@ Invoke-Checked "cmake" @(
     "-DSC_UGEN_PLUGIN_PATH=$ugenPluginPath",
     "-DPYTHON_RUNTIME_DIR=$pythonRuntime",
     "-DSNDFILE_LIBRARY=$(Join-Path $sndfileRoot 'lib/sndfile.lib')",
+    "-DSNDFILE_INCLUDE_DIR=$(Join-Path $sndfileRoot 'include')",
     "-DSNDFILE_DLL_PATH=$(Join-Path $sndfileRoot 'bin/sndfile.dll')"
 )
 Invoke-Checked "cmake" @(

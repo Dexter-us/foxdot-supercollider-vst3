@@ -7,6 +7,7 @@ set(SC_BUILD_DIR "" CACHE PATH "Path to configured SuperCollider build")
 set(SC_UGEN_PLUGIN_PATH "" CACHE PATH "Directory containing required SuperCollider UGen modules")
 set(PYTHON_RUNTIME_DIR "" CACHE PATH "Directory containing the portable CPython embeddable runtime")
 set(SNDFILE_LIBRARY "" CACHE FILEPATH "libsndfile import library used by the embedded SuperCollider build")
+set(SNDFILE_INCLUDE_DIR "" CACHE PATH "libsndfile headers used by the embedded SuperCollider build")
 set(SNDFILE_DLL_PATH "" CACHE FILEPATH "Bundled Windows libsndfile runtime DLL")
 if(NOT EXISTS "${VST3_SDK_ROOT}/CMakeLists.txt")
   message(FATAL_ERROR "Set VST3_SDK_ROOT")
@@ -25,6 +26,9 @@ if(NOT IS_DIRECTORY "${SC_UGEN_PLUGIN_PATH}")
 endif()
 if(NOT EXISTS "${SNDFILE_LIBRARY}")
   message(FATAL_ERROR "Set SNDFILE_LIBRARY to the libsndfile import library")
+endif()
+if(NOT EXISTS "${SNDFILE_INCLUDE_DIR}/sndfile.h")
+  message(FATAL_ERROR "Set SNDFILE_INCLUDE_DIR to the directory containing sndfile.h")
 endif()
 if(NOT EXISTS "${SNDFILE_DLL_PATH}")
   message(FATAL_ERROR "Set SNDFILE_DLL_PATH to the bundled sndfile.dll")
@@ -138,7 +142,7 @@ target_include_directories(dexter_sc_tone PRIVATE
   "${SC_SOURCE_DIR}/external_libraries/nova-simd" "${SC_SOURCE_DIR}/external_libraries/nova-tt"
   "${SC_SOURCE_DIR}/external_libraries/boost_sync/include" "${SC_SOURCE_DIR}/external_libraries/boost"
   "${SC_SOURCE_DIR}/external_libraries/TLSF-2.4.6/src" "${CMAKE_CURRENT_SOURCE_DIR}"
-  "${PYTHON_RUNTIME_DIR}")
+  "${PYTHON_RUNTIME_DIR}" "${SNDFILE_INCLUDE_DIR}")
 target_compile_definitions(dexter_sc_tone PRIVATE
   SC_AUDIO_API=SC_AUDIO_API_PORTAUDIO SC_MEMORY_ALIGNMENT=32 SC_FFT_GREEN NO_X11 NOVA_SIMD
   )
