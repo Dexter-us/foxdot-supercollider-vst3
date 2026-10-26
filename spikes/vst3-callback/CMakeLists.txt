@@ -126,7 +126,14 @@ smtg_target_add_plugin_resources(dexter_sc_tone
 smtg_target_add_plugin_resources(dexter_sc_tone
   OUTPUT_SUBDIRECTORY "SCPlugins"
   RESOURCES ${SC_UGEN_MODULE_FILES})
-smtg_target_add_plugin_resource(dexter_sc_tone "${SNDFILE_DLL_PATH}" "SCPlugins")
+get_filename_component(SNDFILE_RUNTIME_DIR "${SNDFILE_DLL_PATH}" DIRECTORY)
+file(GLOB SNDFILE_RUNTIME_DLLS CONFIGURE_DEPENDS "${SNDFILE_RUNTIME_DIR}/*.dll")
+if(NOT SNDFILE_RUNTIME_DLLS)
+  message(FATAL_ERROR "No libsndfile runtime DLLs were found in ${SNDFILE_RUNTIME_DIR}")
+endif()
+smtg_target_add_plugin_resources(dexter_sc_tone
+  OUTPUT_SUBDIRECTORY "SCPlugins"
+  RESOURCES ${SNDFILE_RUNTIME_DLLS})
 smtg_target_add_plugin_resource(dexter_sc_tone "${SC_SOURCE_DIR}/COPYING" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/libsndfile-LGPL-2.1.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/Boost-1.0.txt" "Licenses")
@@ -160,7 +167,7 @@ if(WIN32)
   add_custom_command(TARGET dexter_sc_tone PRE_LINK
     COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:dexter_sc_tone>"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      "${SNDFILE_DLL_PATH}"
+      ${SNDFILE_RUNTIME_DLLS}
       "$<TARGET_FILE_DIR:dexter_sc_tone>"
     COMMENT "Staging libsndfile beside the Windows VST3 binary"
     VERBATIM)
