@@ -67,6 +67,10 @@ assert namespace['reverse']([1, 2, 3]) == [3, 2, 1]
 assert namespace['rotate']([1, 2, 3], 1) == [3, 1, 2]
 assert namespace['rotate']([1, 2, 3], -1) == [2, 3, 1]
 assert namespace['repeat']([1, None], 3) == [1, None, 1, None, 1, None]
+assert namespace['palindrome']([1, 2, 3, 4]) == [1, 2, 3, 4, 3, 2]
+assert namespace['palindrome']([1, None, [3, 5]]) == [1, None, [3, 5], None]
+assert namespace['stutter']([1, None, [3, 5]], 2) == [1, 1, None, None, [3, 5], [3, 5]]
+assert namespace['interleave']([1, 2, 3], [None, 9], [4]) == [1, None, 4, 2, 9, 3]
 assert namespace['transpose']([60, None, [64, 67]], 12) == [72, None, [76, 79]]
 euclidean = namespace['euclid'](3, 8, 36, 1)
 assert len(euclidean) == 8 and euclidean.count(36) == 3
@@ -154,6 +158,10 @@ assert foxSaw[1] == '0' and foxSaw[3] == '96.0' and foxSaw[6] == '2'
 assert abs(float(foxSaw[7]) - 0.7) < 1e-6 and abs(float(foxSaw[8]) + 0.35) < 1e-6
 assert foxPulse[1] == '1' and foxPulse[3] == '96.0' and foxPulse[6] == '3'
 assert abs(float(foxPulse[7]) - 0.25) < 1e-6 and abs(float(foxPulse[8]) - 0.35) < 1e-6
+example10Rows = run_example('10-pattern-transformations.py')
+assert len(example10Rows) == 2 and all(len(row) == 12 for row in example10Rows)
+assert example10Rows[0][5] == '7' and example10Rows[0][6] == '2'
+assert example10Rows[1][5] == '4' and example10Rows[1][6] == '3'
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
@@ -175,4 +183,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-09.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-10.')

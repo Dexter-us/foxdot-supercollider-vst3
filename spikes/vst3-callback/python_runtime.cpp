@@ -94,7 +94,8 @@ _COMPAT_CALLS = {
     'float', 'int', 'isinstance', 'len', 'list', 'map', 'max', 'min',
     'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum',
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
-    'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'transpose', 'euclid',
+    'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
+    'interleave', 'transpose', 'euclid',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'Clock', 'Scale',
     'Player', 'PlayerPattern', '__build_class__'
 }
@@ -313,6 +314,35 @@ def repeat(pattern, count=2):
     if count < 1 or len(values) * count > 256:
         raise ValueError('repeat must produce between 1 and 256 steps')
     return values * count
+
+def palindrome(pattern):
+    values = list(pattern)
+    if len(values) <= 1:
+        return values
+    if len(values) * 2 - 2 > 256:
+        raise ValueError('palindrome must produce no more than 256 steps')
+    return values + values[-2:0:-1]
+
+def stutter(pattern, count=2):
+    values = list(pattern)
+    count = int(count)
+    if count < 1 or count > 16 or len(values) * count > 256:
+        raise ValueError('stutter count must be 1 to 16 and produce no more than 256 steps')
+    return [item for item in values for _ in range(count)]
+
+def interleave(*patterns):
+    if len(patterns) < 2:
+        raise ValueError('interleave requires at least two patterns')
+    values = [list(pattern) for pattern in patterns]
+    total = sum(len(pattern) for pattern in values)
+    if total > 256:
+        raise ValueError('interleave must produce no more than 256 steps')
+    result = []
+    for index in range(max((len(pattern) for pattern in values), default=0)):
+        for pattern in values:
+            if index < len(pattern):
+                result.append(pattern[index])
+    return result
 
 def transpose(pattern, interval=1):
     interval = int(interval)
