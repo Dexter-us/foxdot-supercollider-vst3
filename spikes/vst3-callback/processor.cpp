@@ -20,6 +20,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -68,6 +69,52 @@ std::filesystem::path bundledUGenPath() {
     if (binaryPath.empty())
         return {};
     return binaryPath.parent_path().parent_path() / "Resources" / "SCPlugins";
+}
+
+std::filesystem::path portableUGenPath() {
+    const auto binaryPath = pluginBinaryPath();
+    if (binaryPath.empty())
+        return {};
+    return binaryPath.parent_path().parent_path().parent_path() / "Portable" / "SCPlugins";
+}
+
+std::vector<std::string> discoverUGenModuleFiles() {
+    std::vector<std::string> modules;
+    for (const auto& directory : {bundledUGenPath(), portableUGenPath()}) {
+        std::error_code error;
+        if (!std::filesystem::is_directory(directory, error))
+            continue;
+        std::filesystem::directory_iterator iterator(directory, error);
+        const std::filesystem::directory_iterator end;
+        for (; !error && iterator != end; iterator.increment(error)) {
+            std::error_code fileError;
+            if (!iterator->is_regular_file(fileError) || fileError)
+                continue;
+            auto extension = iterator->path().extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (extension == ".scx")
+                modules.push_back(iterator->path().stem().u8string());
+        }
+    }
+    std::sort(modules.begin(), modules.end());
+    modules.erase(std::unique(modules.begin(), modules.end()), modules.end());
+    return modules;
+}
+
+std::string ugenModuleSearchPath() {
+    std::string path = bundledUGenPath().u8string();
+    const auto portablePath = portableUGenPath();
+    std::error_code error;
+    if (!portablePath.empty() && std::filesystem::is_directory(portablePath, error)) {
+#if defined(_WIN32)
+        path += ';';
+#else
+        path += ':';
+#endif
+        path += portablePath.u8string();
+    }
+    return path;
 }
 
 std::filesystem::path bundledPythonPath() {
@@ -830,7 +877,7 @@ private:
         std::error_code pathError;
         if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError))
             return false;
-        ugenPluginPath_ = ugenPath.u8string();
+        ugenPluginPath_ = ugenModuleSearchPath();
 
         try {
             echoBuffer_.assign(kPlayerCount * 2 * kMaxEchoBufferSamples, 0.0f);
@@ -853,6 +900,15 @@ private:
         world_ = World_New(&options);
         if (!world_)
             return false;
+        const auto moduleFiles = discoverUGenModuleFiles();
+        std::string moduleStatus = "UGen module files found (" + std::to_string(moduleFiles.size()) + "): ";
+        for (std::size_t index = 0; index < moduleFiles.size(); ++index) {
+            if (index != 0)
+                moduleStatus += ", ";
+            moduleStatus += moduleFiles[index];
+        }
+        moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
+        setEditorStatus(std::move(moduleStatus));
         World_SetSampleRate(world_, sampleRate_);
         World_Start(world_);
 

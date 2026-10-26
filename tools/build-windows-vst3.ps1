@@ -170,11 +170,11 @@ finally {
 Invoke-Checked "cmake" @(
     "--build", $scBuild,
     "--config", "Release",
-    "--target", "libscsynth", "OscUGens", "LFUGens", "BinaryOpUGens", "IOUGens",
+    "--target", "libscsynth", "BinaryOpUGens", "ChaosUGens", "DelayUGens", "DemandUGens", "DemoUGens", "DynNoiseUGens", "FilterUGens", "GendynUGens", "GrainUGens", "IOUGens", "LFUGens", "MulAddUGens", "NoiseUGens", "OscUGens", "PanUGens", "PhysicalModelingUGens", "ReverbUGens", "TestUGens", "TriggerUGens", "UnaryOpUGens", "UnpackFFTUGens", "FFT_UGens", "PV_ThirdParty", "ML_UGens",
     "--", "/m:$BuildJobs"
 )
 
-$requiredModules = @("OscUGens.scx", "LFUGens.scx", "BinaryOpUGens.scx", "IOUGens.scx")
+$requiredModules = @("BinaryOpUGens.scx", "ChaosUGens.scx", "DelayUGens.scx", "DemandUGens.scx", "DemoUGens.scx", "DynNoiseUGens.scx", "FilterUGens.scx", "GendynUGens.scx", "GrainUGens.scx", "IOUGens.scx", "LFUGens.scx", "MulAddUGens.scx", "NoiseUGens.scx", "OscUGens.scx", "PanUGens.scx", "PhysicalModelingUGens.scx", "ReverbUGens.scx", "TestUGens.scx", "TriggerUGens.scx", "UnaryOpUGens.scx", "UnpackFFTUGens.scx", "FFT_UGens.scx", "PV_ThirdParty.scx", "ML_UGens.scx")
 $moduleFiles = foreach ($module in $requiredModules) {
     $moduleCandidates = @(Get-ChildItem -Path $scBuild -Filter $module -File -Recurse)
     $releaseMatch = @($moduleCandidates | Where-Object { $_.FullName -match "[\\/]Release[\\/]" })
@@ -235,7 +235,7 @@ foreach ($module in $requiredModules) {
         throw "The VST3 bundle is missing UGen module $module"
     }
 }
-foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/PYTHON-LICENSE.txt",
+foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/Boost-1.0.txt", "Licenses/PYTHON-LICENSE.txt",
         "Licenses/FoxDot-CC-BY-SA-4.0.txt", "Licenses/FoxDot-ATTRIBUTION.txt")) {
     if (-not (Test-Path (Join-Path $resourceRoot $license))) {
         throw "The VST3 bundle is missing license file $license"
@@ -252,6 +252,14 @@ if (-not (Test-Path (Join-Path $resourceRoot "Licenses/PYTHON-LICENSE.txt"))) {
 }
 if (-not (Test-Path (Join-Path $portableDirectory "README.txt"))) {
     throw "The VST3 bundle is missing its Portable scripts folder"
+}
+$portableUgenDirectory = Join-Path $portableDirectory "SCPlugins"
+if (-not (Test-Path (Join-Path $portableUgenDirectory "README.txt"))) {
+    throw "The VST3 bundle is missing its Portable UGen module folder and loader instructions"
+}
+$bundledUgenCount = @(Get-ChildItem -Path (Join-Path $resourceRoot "SCPlugins") -Filter "*.scx" -File).Count
+if ($bundledUgenCount -ne $requiredModules.Count) {
+    throw "Expected $($requiredModules.Count) bundled UGen modules; found $bundledUgenCount."
 }
 $portableExamples = @(Get-ChildItem -Path $portableDirectory -Filter "*.py" -File)
 if ($portableExamples.Count -lt 9) {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.12)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.13)
 
 set(VST3_SDK_ROOT "" CACHE PATH "Path to Steinberg VST3 SDK checkout")
 set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")
@@ -23,10 +23,30 @@ if(NOT IS_DIRECTORY "${SC_UGEN_PLUGIN_PATH}")
 endif()
 
 set(SC_UGEN_MODULE_FILES
-  "${SC_UGEN_PLUGIN_PATH}/OscUGens.scx"
-  "${SC_UGEN_PLUGIN_PATH}/LFUGens.scx"
   "${SC_UGEN_PLUGIN_PATH}/BinaryOpUGens.scx"
-  "${SC_UGEN_PLUGIN_PATH}/IOUGens.scx")
+  "${SC_UGEN_PLUGIN_PATH}/ChaosUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/DelayUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/DemandUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/DemoUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/DynNoiseUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/FilterUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/GendynUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/GrainUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/IOUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/LFUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/MulAddUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/NoiseUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/OscUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/PanUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/PhysicalModelingUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/ReverbUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/TestUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/TriggerUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/UnaryOpUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/UnpackFFTUGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/FFT_UGens.scx"
+  "${SC_UGEN_PLUGIN_PATH}/PV_ThirdParty.scx"
+  "${SC_UGEN_PLUGIN_PATH}/ML_UGens.scx")
 foreach(SC_UGEN_MODULE_FILE IN LISTS SC_UGEN_MODULE_FILES)
   if(NOT EXISTS "${SC_UGEN_MODULE_FILE}")
     message(FATAL_ERROR "Required SuperCollider UGen module not found: ${SC_UGEN_MODULE_FILE}")
@@ -90,6 +110,7 @@ smtg_target_add_plugin_resources(dexter_sc_tone
   OUTPUT_SUBDIRECTORY "SCPlugins"
   RESOURCES ${SC_UGEN_MODULE_FILES})
 smtg_target_add_plugin_resource(dexter_sc_tone "${SC_SOURCE_DIR}/COPYING" "Licenses")
+smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/Boost-1.0.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${VST3_SDK_ROOT}/LICENSE.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${PYTHON_RUNTIME_DIR}/PYTHON-LICENSE.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/FoxDot-CC-BY-SA-4.0.txt" "Licenses")
