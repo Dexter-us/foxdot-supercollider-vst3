@@ -233,11 +233,12 @@ Invoke-Checked "cmake" @(
     "-DSNDFILE_LIBRARY=$(Join-Path $sndfileRoot 'lib/sndfile.lib')",
     "-DSNDFILE_INCLUDE_DIR=$(Join-Path $sndfileRoot 'include')",
     "-DSNDFILE_DLL_PATH=$(Join-Path $sndfileRoot 'bin/sndfile.dll')"
+    "-DSMTG_RUN_VST_VALIDATOR=OFF"
 )
 Invoke-Checked "cmake" @(
     "--build", $pluginBuild,
     "--config", "Release",
-    "--target", "dexter_sc_tone",
+    "--target", "dexter_sc_tone", "validator",
     "--", "/m:$BuildJobs"
 )
 
@@ -246,6 +247,16 @@ $bundle = Get-ChildItem -Path (Join-Path $pluginBuild "VST3") -Filter "dexter_sc
 if (-not $bundle) {
     throw "The VST3 bundle was not produced under $pluginBuild"
 }
+$pluginBinaryDirectory = Join-Path $bundle.FullName "Contents/x86_64-win"
+New-Item -ItemType Directory -Force -Path $pluginBinaryDirectory | Out-Null
+$sndfileRuntimeDlls = @(Get-ChildItem -Path (Join-Path $sndfileRoot "bin") -Filter "*.dll" -File)
+if (-not ($sndfileRuntimeDlls | Where-Object { $_.Name -ieq "sndfile.dll" })) {
+    throw "The pinned libsndfile package is missing sndfile.dll."
+}
+foreach ($runtimeDll in $sndfileRuntimeDlls) {
+    Copy-Item -Path $runtimeDll.FullName -Destination $pluginBinaryDirectory -Force
+}
+Write-Host "Staged $($sndfileRuntimeDlls.Count) libsndfile runtime DLL(s) beside the VST3 binary."
 
 $portableDirectory = Join-Path $bundle.FullName "Portable"
 New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null

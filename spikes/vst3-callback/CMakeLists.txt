@@ -97,6 +97,7 @@ set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)
 set(SMTG_CREATE_BUNDLE_FOR_WINDOWS ON CACHE BOOL "" FORCE)
+set(SMTG_RUN_VST_VALIDATOR OFF CACHE BOOL "" FORCE)
 add_subdirectory("${VST3_SDK_ROOT}" "${CMAKE_BINARY_DIR}/vst3sdk")
 set(SDK_ROOT "${VST3_SDK_ROOT}")
 set(public_sdk_SOURCE_DIR "${VST3_SDK_ROOT}/public.sdk")
@@ -160,17 +161,6 @@ if(WIN32)
 elseif(UNIX AND NOT APPLE)
   target_link_libraries(dexter_sc_tone PRIVATE m rt pthread)
 endif()
-if(WIN32)
-  # libscsynth is linked into the VST3, and its libsndfile import must be
-  # resolvable when the DAW first loads the plugin. Resources/SCPlugins is
-  # loaded later by plugin code, so stage sndfile.dll beside the VST3 binary.
-  add_custom_command(TARGET dexter_sc_tone PRE_LINK
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:dexter_sc_tone>"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-      ${SNDFILE_RUNTIME_DLLS}
-      "$<TARGET_FILE_DIR:dexter_sc_tone>"
-    COMMENT "Staging libsndfile beside the Windows VST3 binary"
-    VERBATIM)
-endif()
+
 
 smtg_target_configure_version_file(dexter_sc_tone)
