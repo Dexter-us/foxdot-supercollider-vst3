@@ -22,6 +22,8 @@ struct PythonPlayerUpdate {
     double cutoffHz = 20000.0;
     double echoMix = 0.0;
     double echoDelaySeconds = 0.25;
+    bool mousePan = false;
+    bool mouseCutoff = false;
     std::vector<PythonNoteEvent> events;
 };
 

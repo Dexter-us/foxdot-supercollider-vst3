@@ -97,7 +97,7 @@ _COMPAT_CALLS = {
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'Clock', 'Scale',
-    'Player', 'PlayerPattern', '__build_class__'
+    'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle'}
 _COMPAT_WAVE_KEYWORDS = {
@@ -731,6 +731,16 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
     _dexter_slots += len(notes)
     _dexter_length = max(_dexter_length, offset + totalBeats)
 
+class _DexterMouseControl:
+    def __init__(self, axis):
+        self.axis = axis
+
+def MouseX():
+    return _DexterMouseControl('x')
+
+def MouseY():
+    return _DexterMouseControl('y')
+
 class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
@@ -746,8 +756,20 @@ class PlayerPattern:
         self.synth = synth
         self.scaleName = scaleName
         self.amp = float(amp)
-        self.pan = float(pan)
-        self.cutoff = float(cutoff)
+        self.mousePan = isinstance(pan, _DexterMouseControl)
+        if self.mousePan:
+            if pan.axis != 'x':
+                raise ValueError('pan supports MouseX() only')
+            self.pan = 0.0
+        else:
+            self.pan = float(pan)
+        self.mouseCutoff = isinstance(cutoff, _DexterMouseControl)
+        if self.mouseCutoff:
+            if cutoff.axis != 'y':
+                raise ValueError('cutoff supports MouseY() only')
+            self.cutoff = 4100.0
+        else:
+            self.cutoff = float(cutoff)
         self.echo = float(echo)
         self.delay = float(delay)
         if self.amp != self.amp or not 0.0 <= self.amp <= 1.0:
@@ -846,14 +868,14 @@ class Player:
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echo,
-                                        pattern.delay)
+                                        pattern.delay, pattern.mousePan, pattern.mouseCutoff)
         if playerIndex == 0:
             _dexter_default_touched = False
         return self
 
     def stop(self):
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.25)
+                                             0.0, 20000.0, 0.0, 0.25, False, False)
 
 p1 = Player(1)
 p2 = Player(2)
@@ -895,12 +917,12 @@ p8 = Player(8)
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25)\n"
+            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _f.write('OK\\t{}\\n'.format(len(_updates)))\n"
             << "        for _player in sorted(_updates):\n"
-            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay = _updates[_player]\n"
-            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay))\n"
+            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff = _updates[_player]\n"
+            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff)))\n"
             << "            for _e in _events:\n"
             << "                _f.write('N\\t{}\\t{}\\t{}\\t{}\\n'.format(*_e))\n"
             << "except BaseException:\n"
@@ -940,9 +962,12 @@ bool parseResult(const std::filesystem::path& resultPath,
         int stopped = 0;
         std::size_t eventCount = 0;
         PythonPlayerUpdate update;
+        int mousePan = 0;
+        int mouseCutoff = 0;
         if (!(input >> record >> update.playerIndex >> stopped >> update.bpm >>
               update.lengthBeats >> eventCount >> update.synthIndex >> update.amplitude >>
-              update.pan >> update.cutoffHz >> update.echoMix >> update.echoDelaySeconds) ||
+              update.pan >> update.cutoffHz >> update.echoMix >> update.echoDelaySeconds >>
+              mousePan >> mouseCutoff) ||
             record != 'P' || update.playerIndex < 0 || update.playerIndex >= 8 ||
             stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
@@ -955,12 +980,15 @@ bool parseResult(const std::filesystem::path& resultPath,
             update.cutoffHz > 20000.0 || !std::isfinite(update.echoMix) ||
             update.echoMix < 0.0 || update.echoMix > 0.75 ||
             !std::isfinite(update.echoDelaySeconds) || update.echoDelaySeconds < 0.05 ||
-            update.echoDelaySeconds > 1.0) {
+            update.echoDelaySeconds > 1.0 || mousePan < 0 || mousePan > 1 ||
+            mouseCutoff < 0 || mouseCutoff > 1) {
             error = "Python returned a malformed player update.";
             return false;
         }
         seenPlayers[static_cast<std::size_t>(update.playerIndex)] = true;
         update.stopped = stopped != 0;
+        update.mousePan = mousePan != 0;
+        update.mouseCutoff = mouseCutoff != 0;
         update.events.reserve(eventCount);
         for (std::size_t i = 0; i < eventCount; ++i) {
             char noteRecord = 0;

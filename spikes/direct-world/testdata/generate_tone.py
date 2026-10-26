@@ -43,7 +43,7 @@ data.extend(b"SCgf")
 i32(1)  # SynthDef version
 u16(1)  # one SynthDef
 string("DexterTone")
-constants = (0.0, 0.1, 0.0, 0.5)
+constants = (0.0, 0.1, 0.0, 0.5, 1.0, 0.2)
 u16(len(constants))
 for value in constants:
     f32(value)
@@ -58,7 +58,7 @@ for name, index in parameter_names:
     string(name)
     u16(index)
 
-u16(14)  # Control, four oscillators, four gates, three sums, output gain, Out
+u16(16)  # Control, oscillators, selectors, MouseX, MouseY, and Out
 ugen("Control", 1, [], [1, 1, 1, 1, 1, 1])
 ugen("SinOsc", 2, [(0, 1), (-1, 2)], [2])
 ugen("LFTri", 2, [(0, 1), (-1, 2)], [2])
@@ -72,7 +72,10 @@ ugen("BinaryOpUGen", 2, [(5, 0), (6, 0)], [2], 0)
 ugen("BinaryOpUGen", 2, [(9, 0), (7, 0)], [2], 0)
 ugen("BinaryOpUGen", 2, [(10, 0), (8, 0)], [2], 0)
 ugen("BinaryOpUGen", 2, [(11, 0), (-1, 1)], [2], 2)
-ugen("Out", 2, [(0, 0), (12, 0)], [])
+# Mouse UI UGens write normalized cursor positions to auxiliary audio buses.
+ugen("MouseX", 1, [(-1, 0), (-1, 4), (-1, 2), (-1, 5)], [1])
+ugen("MouseY", 1, [(-1, 0), (-1, 4), (-1, 2), (-1, 5)], [1])
+ugen("Out", 2, [(0, 0), (12, 0), (13, 0), (14, 0)], [])
 u16(0)  # no variants
 out_path.parent.mkdir(parents=True, exist_ok=True)
 out_path.write_bytes(data)

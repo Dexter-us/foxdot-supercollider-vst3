@@ -27,3 +27,5 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 17-live-player-edits.py demonstrates updating just p1 while p2 continues. Run both assignments once; then edit p1, comment out p2's assignment, and press Run. Unmentioned players keep playing; run p2.stop() alone to stop p2.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
+
+18-ui-mouse-controls.py is a Dexter-specific extension: MouseX() pans a player left/right, while MouseY() sweeps another player's cutoff. These wrappers use SuperCollider's UIUGens module; they are not standard FoxDot player controls.

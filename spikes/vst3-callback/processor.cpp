@@ -399,6 +399,8 @@ public:
                         next.amplitude = static_cast<float>(player.amplitude);
                         next.pan = static_cast<float>(player.pan);
                         next.cutoffHz = static_cast<float>(player.cutoffHz);
+                        next.mousePan = player.mousePan;
+                        next.mouseCutoff = player.mouseCutoff;
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoDelaySeconds = player.echoDelaySeconds;
                         next.eventCount = player.events.size();
@@ -470,15 +472,16 @@ private:
     static constexpr std::size_t kMaxPolyphony = 8;
     static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
     static constexpr int kFirstAudioBus = 2;
-    static constexpr int kNumAudioBusChannels = 128;
+    static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
+    static constexpr int kNumAudioBusChannels = 256;
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kMixSmoothingSeconds = 0.010;
     static constexpr std::size_t kMaxEchoBufferSamples = 96000;
     static constexpr float kEchoFeedback = 0.35f;
     static constexpr double kPi = 3.14159265358979323846;
-    static_assert(kFirstAudioBus + kAudioVoiceCount <= kNumAudioBusChannels,
-                  "The SuperCollider world needs one private audio bus per synth voice.");
+    static_assert(kFirstAudioBus + kAudioVoiceCount * kAudioBusStride <= kNumAudioBusChannels,
+                  "The SuperCollider world needs three private buses per synth voice.");
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
     static constexpr std::size_t kMaxEditorSourceBytes = 256 * 1024;
 
@@ -530,6 +533,8 @@ private:
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
+        bool mousePan = false;
+        bool mouseCutoff = false;
         float echoMix = 0.0f;
         double echoDelaySeconds = 0.25;
         bool active = false;
@@ -557,6 +562,8 @@ private:
         float frequencyHz = 440.0f;
         float filterState = 0.0f;
         float filterCoefficient = 1.0f;
+        bool mousePan = false;
+        bool mouseCutoff = false;
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
         bool releasing = false;
@@ -573,6 +580,8 @@ private:
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
+        bool mousePan = false;
+        bool mouseCutoff = false;
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
     };
@@ -814,6 +823,7 @@ private:
                 desired[desiredCount++] = ScheduledAudioNote{
                     static_cast<int>(player), event.midiNote, event.velocity,
                     pattern.synthIndex, pattern.amplitude, pattern.pan, pattern.cutoffHz,
+                    pattern.mousePan, pattern.mouseCutoff,
                     patternStart + static_cast<std::uint64_t>(
                         std::llround(absoluteStartBeat * samplesPerBeat)),
                     patternStart + static_cast<std::uint64_t>(
@@ -849,9 +859,11 @@ private:
                 found->velocity = note.velocity;
                 found->synthIndex = note.synthIndex;
                 found->amplitude = note.amplitude;
-                found->pan = note.pan;
-                found->leftGain = std::sqrt(std::max(0.0f, (1.0f - note.pan) * 0.5f));
-                found->rightGain = std::sqrt(std::max(0.0f, (1.0f + note.pan) * 0.5f));
+                found->mousePan = note.mousePan;
+                found->mouseCutoff = note.mouseCutoff;
+                found->pan = note.mousePan ? 0.0f : note.pan;
+                found->leftGain = std::sqrt(std::max(0.0f, (1.0f - found->pan) * 0.5f));
+                found->rightGain = std::sqrt(std::max(0.0f, (1.0f + found->pan) * 0.5f));
                 found->cutoffHz = note.cutoffHz;
                 found->filterState = 0.0f;
                 const double maxCutoff = sampleRate_ * 0.45;
@@ -942,7 +954,8 @@ private:
                 discardPartialWorld();
                 return false;
             }
-            const auto outputBus = kFirstAudioBus + static_cast<int>(voiceIndex);
+            const auto outputBus = kFirstAudioBus +
+                                   kAudioBusStride * static_cast<int>(voiceIndex);
             Graph_SetControl(voice.synth, 0, static_cast<float>(outputBus));
             Group_AddTail(root, &voice.synth->mNode);
             Node_SetRun(&voice.synth->mNode, 0);
@@ -970,6 +983,7 @@ private:
         World_Run(world_);
         const float mixSmoothing = std::exp(
             -1.0f / static_cast<float>(sampleRate_ * kMixSmoothingSeconds));
+        const float mouseSmoothing = 1.0f - mixSmoothing;
         for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
             const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
             std::array<float, kPlayerCount> playerLeft{};
@@ -982,10 +996,32 @@ private:
                 if (envelope <= 0.0f || voice.velocity <= 0 || voice.playerIndex < 0 ||
                     voice.playerIndex >= static_cast<int>(kPlayerCount))
                     continue;
-                const auto bus = static_cast<std::size_t>(kFirstAudioBus) + voiceIndex;
-                const auto offset = bus * static_cast<std::size_t>(world_->mBufLength) +
-                                    static_cast<std::size_t>(sampleIndex);
+                const auto bus = static_cast<std::size_t>(kFirstAudioBus) +
+                                 voiceIndex * static_cast<std::size_t>(kAudioBusStride);
+                const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+                const auto offset = bus * busLength + static_cast<std::size_t>(sampleIndex);
                 const float source = world_->mAudioBus[offset];
+                if (voice.mousePan) {
+                    const float mouseX = std::clamp(
+                        world_->mAudioBus[(bus + 1) * busLength + static_cast<std::size_t>(sampleIndex)],
+                        0.0f, 1.0f);
+                    const float targetPan = mouseX * 2.0f - 1.0f;
+                    voice.pan += mouseSmoothing * (targetPan - voice.pan);
+                    voice.leftGain = std::sqrt(std::max(0.0f, (1.0f - voice.pan) * 0.5f));
+                    voice.rightGain = std::sqrt(std::max(0.0f, (1.0f + voice.pan) * 0.5f));
+                }
+                if (voice.mouseCutoff) {
+                    const float mouseY = std::clamp(
+                        world_->mAudioBus[(bus + 2) * busLength + static_cast<std::size_t>(sampleIndex)],
+                        0.0f, 1.0f);
+                    const float targetCutoff = 200.0f + mouseY * 7800.0f;
+                    voice.cutoffHz += mouseSmoothing * (targetCutoff - voice.cutoffHz);
+                    const double maxCutoff = sampleRate_ * 0.45;
+                    const double clampedCutoff = std::min<double>(voice.cutoffHz, maxCutoff);
+                    voice.filterCoefficient = clampedCutoff >= maxCutoff
+                        ? 1.0f
+                        : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
+                }
                 voice.filterState += voice.filterCoefficient * (source - voice.filterState);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
                 const float amplitude = voice.filterState * envelope * velocity * voice.amplitude;
@@ -1116,7 +1152,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.3",
+           "0.4.15",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
