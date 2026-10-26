@@ -19,6 +19,22 @@ jobs:
       - name: Check out the project
         uses: actions/checkout@v4
 
+      - name: Detect Visual Studio generator for cache key
+        id: vs_generator
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $version = (& $vswhere -latest -products '*' -property installationVersion).Trim()
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^(?<major>\d+)\.') { throw 'Could not determine Visual Studio version for the cache key.' }
+          $major = [int]$Matches['major']
+          if ($major -notin @(17, 18)) { throw "Unsupported Visual Studio major version $major." }
+          "major=$major" >> $env:GITHUB_OUTPUT
+
+      - name: Restore SuperCollider build cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\dexter-windows-vst3\supercollider-build
+          key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
       - name: Build SuperCollider and the VST3, then validate
         shell: pwsh
         run: |
