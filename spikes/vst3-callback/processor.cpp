@@ -1,3 +1,7 @@
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
+
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/main/moduleinit.h"
@@ -31,7 +35,6 @@
 #include <vector>
 
 #if defined(_WIN32)
-#define NOMINMAX
 #include <windows.h>
 #else
 #include <dlfcn.h>
