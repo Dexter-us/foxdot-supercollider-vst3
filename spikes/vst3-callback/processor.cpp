@@ -401,6 +401,8 @@ public:
                         next.cutoffHz = static_cast<float>(player.cutoffHz);
                         next.mousePan = player.mousePan;
                         next.mouseCutoff = player.mouseCutoff;
+                        next.attackSeconds = player.attackSeconds;
+                        next.releaseSeconds = player.releaseSeconds;
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoDelaySeconds = player.echoDelaySeconds;
                         next.eventCount = player.events.size();
@@ -535,6 +537,8 @@ private:
         float cutoffHz = 20000.0f;
         bool mousePan = false;
         bool mouseCutoff = false;
+        double attackSeconds = kAttackSeconds;
+        double releaseSeconds = kReleaseSeconds;
         float echoMix = 0.0f;
         double echoDelaySeconds = 0.25;
         bool active = false;
@@ -564,6 +568,8 @@ private:
         float filterCoefficient = 1.0f;
         bool mousePan = false;
         bool mouseCutoff = false;
+        double attackSeconds = kAttackSeconds;
+        double releaseSeconds = kReleaseSeconds;
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
         bool releasing = false;
@@ -582,6 +588,8 @@ private:
         float cutoffHz = 20000.0f;
         bool mousePan = false;
         bool mouseCutoff = false;
+        double attackSeconds = kAttackSeconds;
+        double releaseSeconds = kReleaseSeconds;
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
     };
@@ -671,8 +679,9 @@ private:
             return 0.0f;
 
         const auto duration = voice.endSample - voice.startSample;
-        const auto attack = std::min(envelopeSamples(kAttackSeconds), duration / 2);
-        const auto release = std::min(envelopeSamples(kReleaseSeconds), duration / 2);
+        const auto attack = std::min(envelopeSamples(voice.attackSeconds), duration / 2);
+        const auto releaseSeconds = std::max(0.005, voice.releaseSeconds);
+        const auto release = std::min(envelopeSamples(releaseSeconds), duration / 2);
         float gain = 1.0f;
         if (attack > 0 && sample < voice.startSample + attack) {
             const double progress = static_cast<double>(sample - voice.startSample) /
@@ -711,7 +720,7 @@ private:
             }
             voice.releasing = true;
             voice.releaseStartSample = now;
-            voice.releaseEndSample = now + envelopeSamples(kReleaseSeconds);
+            voice.releaseEndSample = now + envelopeSamples(std::max(0.005, voice.releaseSeconds));
             voice.releaseStartGain = gain;
             voice.midiNote = -1;
         }
@@ -824,6 +833,7 @@ private:
                     static_cast<int>(player), event.midiNote, event.velocity,
                     pattern.synthIndex, pattern.amplitude, pattern.pan, pattern.cutoffHz,
                     pattern.mousePan, pattern.mouseCutoff,
+                    pattern.attackSeconds, pattern.releaseSeconds,
                     patternStart + static_cast<std::uint64_t>(
                         std::llround(absoluteStartBeat * samplesPerBeat)),
                     patternStart + static_cast<std::uint64_t>(
@@ -861,6 +871,8 @@ private:
                 found->amplitude = note.amplitude;
                 found->mousePan = note.mousePan;
                 found->mouseCutoff = note.mouseCutoff;
+                found->attackSeconds = note.attackSeconds;
+                found->releaseSeconds = note.releaseSeconds;
                 found->pan = note.mousePan ? 0.0f : note.pan;
                 found->leftGain = std::sqrt(std::max(0.0f, (1.0f - found->pan) * 0.5f));
                 found->rightGain = std::sqrt(std::max(0.0f, (1.0f + found->pan) * 0.5f));
@@ -1152,7 +1164,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.15",
+           "0.4.16",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

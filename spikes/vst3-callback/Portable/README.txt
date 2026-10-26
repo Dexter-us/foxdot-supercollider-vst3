@@ -29,3 +29,5 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 
 18-ui-mouse-controls.py is a Dexter-specific extension: MouseX() pans a player left/right, while MouseY() sweeps another player's cutoff. These wrappers use SuperCollider's UIUGens module; they are not standard FoxDot player controls.
+
+19-envelope-controls.py demonstrates FoxDot-style atk/rel per-voice envelope controls in seconds. The release has a 5 ms minimum in the audio renderer to avoid hard note endings.

@@ -24,6 +24,8 @@ struct PythonPlayerUpdate {
     double echoDelaySeconds = 0.25;
     bool mousePan = false;
     bool mouseCutoff = false;
+    double attackSeconds = 0.01;
+    double releaseSeconds = 0.04;
     std::vector<PythonNoteEvent> events;
 };
 

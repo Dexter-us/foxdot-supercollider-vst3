@@ -102,11 +102,11 @@ _COMPAT_CALLS = {
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle'}
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'amp', 'pan', 'cutoff', 'echo',
-    'delay', 'velocity', 'rate'
+    'delay', 'velocity', 'rate', 'atk', 'rel'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
-    'amp', 'pan', 'cutoff', 'echo', 'delay'
+    'amp', 'pan', 'cutoff', 'echo', 'delay', 'atk', 'rel'
 }
 _COMPAT_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees'}
 _COMPAT_SCALE_NAMES = {
@@ -744,7 +744,8 @@ def MouseY():
 class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
-                 cutoff=20000.0, echo=0.0, delay=0.25, scaleName=None):
+                 cutoff=20000.0, echo=0.0, delay=0.25, scaleName=None,
+                 atk=0.01, rel=0.04):
         self.notes = notes
         self.step = step
         self.duration = duration
@@ -772,6 +773,8 @@ class PlayerPattern:
             self.cutoff = float(cutoff)
         self.echo = float(echo)
         self.delay = float(delay)
+        self.attackSeconds = float(atk)
+        self.releaseSeconds = float(rel)
         if self.amp != self.amp or not 0.0 <= self.amp <= 1.0:
             raise ValueError('amp must be between 0 and 1')
         if self.pan != self.pan or not -1.0 <= self.pan <= 1.0:
@@ -780,18 +783,22 @@ class PlayerPattern:
             raise ValueError('cutoff must be between 20 and 20000 Hz')
         if self.echo != self.echo or not 0.0 <= self.echo <= 0.75:
             raise ValueError('echo must be between 0 and 0.75')
+        if self.attackSeconds != self.attackSeconds or not 0.0 <= self.attackSeconds <= 3.0:
+            raise ValueError('atk must be between 0 and 3 seconds')
+        if self.releaseSeconds != self.releaseSeconds or not 0.0 <= self.releaseSeconds <= 3.0:
+            raise ValueError('rel must be between 0 and 3 seconds')
         if self.delay != self.delay or not 0.05 <= self.delay <= 1.0:
             raise ValueError('delay must be between 0.05 and 1 second')
 
 def sequence(notes, step=1.0, duration=None, velocity=100,
              offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
-             cutoff=20000.0, echo=0.0, delay=0.25):
+             cutoff=20000.0, echo=0.0, delay=0.25, atk=0.01, rel=0.04):
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
-                        synth, amp, pan, cutoff, echo, delay)
+                        synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel)
 
 def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
               amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25,
-              velocity=100, rate=0.0):
+              velocity=100, rate=0.0, atk=0.01, rel=0.04):
     oct = int(oct)
     if not 0 <= oct <= 10:
         raise ValueError('oct must be from 0 to 10 in the embedded FoxDot subset')
@@ -813,27 +820,27 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     notes = [shift_note(note) for note in notes]
     return PlayerPattern(notes, dur, dur if sus is None else sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
-                         scaleName)
+                         scaleName, atk, rel)
 
 def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
-        pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0):
+        pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
     return _fox_wave('saw', notes, dur, oct, sus, scale, amp, pan, cutoff,
-                     echo, delay, velocity, rate)
+                     echo, delay, velocity, rate, atk, rel)
 
 def pulse(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
-          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0):
+          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
     return _fox_wave('square', notes, dur, oct, sus, scale, amp, pan, cutoff,
-                     echo, delay, velocity, rate)
+                     echo, delay, velocity, rate, atk, rel)
 
 def sine(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
-         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0):
+         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
     return _fox_wave('sine', notes, dur, oct, sus, scale, amp, pan, cutoff,
-                     echo, delay, velocity, rate)
+                     echo, delay, velocity, rate, atk, rel)
 
 def triangle(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
-             pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0):
+             pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
     return _fox_wave('triangle', notes, dur, oct, sus, scale, amp, pan, cutoff,
-                     echo, delay, velocity, rate)
+                     echo, delay, velocity, rate, atk, rel)
 
 class Player:
     def __init__(self, number):
@@ -868,14 +875,15 @@ class Player:
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echo,
-                                        pattern.delay, pattern.mousePan, pattern.mouseCutoff)
+                                        pattern.delay, pattern.mousePan, pattern.mouseCutoff,
+                                        pattern.attackSeconds, pattern.releaseSeconds)
         if playerIndex == 0:
             _dexter_default_touched = False
         return self
 
     def stop(self):
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.25, False, False)
+                                             0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04)
 
 p1 = Player(1)
 p2 = Player(2)
@@ -917,12 +925,12 @@ p8 = Player(8)
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False)\n"
+            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _f.write('OK\\t{}\\n'.format(len(_updates)))\n"
             << "        for _player in sorted(_updates):\n"
-            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff = _updates[_player]\n"
-            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff)))\n"
+            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release = _updates[_player]\n"
+            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release))\n"
             << "            for _e in _events:\n"
             << "                _f.write('N\\t{}\\t{}\\t{}\\t{}\\n'.format(*_e))\n"
             << "except BaseException:\n"
@@ -967,7 +975,7 @@ bool parseResult(const std::filesystem::path& resultPath,
         if (!(input >> record >> update.playerIndex >> stopped >> update.bpm >>
               update.lengthBeats >> eventCount >> update.synthIndex >> update.amplitude >>
               update.pan >> update.cutoffHz >> update.echoMix >> update.echoDelaySeconds >>
-              mousePan >> mouseCutoff) ||
+              mousePan >> mouseCutoff >> update.attackSeconds >> update.releaseSeconds) ||
             record != 'P' || update.playerIndex < 0 || update.playerIndex >= 8 ||
             stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
@@ -981,7 +989,10 @@ bool parseResult(const std::filesystem::path& resultPath,
             update.echoMix < 0.0 || update.echoMix > 0.75 ||
             !std::isfinite(update.echoDelaySeconds) || update.echoDelaySeconds < 0.05 ||
             update.echoDelaySeconds > 1.0 || mousePan < 0 || mousePan > 1 ||
-            mouseCutoff < 0 || mouseCutoff > 1) {
+            mouseCutoff < 0 || mouseCutoff > 1 ||
+            !std::isfinite(update.attackSeconds) || update.attackSeconds < 0.0 ||
+            update.attackSeconds > 3.0 || !std::isfinite(update.releaseSeconds) ||
+            update.releaseSeconds < 0.0 || update.releaseSeconds > 3.0) {
             error = "Python returned a malformed player update.";
             return false;
         }
