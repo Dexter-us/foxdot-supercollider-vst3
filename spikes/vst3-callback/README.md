@@ -6,7 +6,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 
 - The SuperCollider sine voice and a small set of plugin-side oscillator shapes render inside the VST3 module; no server process is launched.
 - The host owns the audio callback; each VST block is split into SuperCollider's fixed 64-sample blocks and buffered for variable host block sizes.
-- The three required UGen modules (`OscUGens`, `BinaryOpUGens`, and `IOUGens`) are copied into `Contents/Resources/SCPlugins`. The plugin locates that folder relative to its loaded module; no build-machine UGen path is compiled into the binary.
+- The four required UGen modules (`OscUGens`, `LFUGens`, `BinaryOpUGens`, and `IOUGens`) are copied into `Contents/Resources/SCPlugins`. The plugin locates that folder relative to its loaded module; no build-machine UGen path is compiled into the binary.
 - The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
 - The editor supports `tempo(bpm)`, `scale(name="major", root=60)`, and `play(...)`, plus eight independent players (`p1`â`p8`) using `p1 >> sequence(...)`; calling `.stop()` stops only that player. It now also accepts an initial FoxDot-style subset directly: `Clock.bpm`, `Scale.default.set(...)`, `p1 >> saw(...)` and `p2 >> pulse(...)`, including cyclic `dur` patterns, scalar `oct`, and `sus` values that fit within their steps. The source text stays unchanged; the embedded Python API maps it to the internal event stream, with no OSC or external server. Pattern helpers include `reverse`, `rotate`, `repeat`, `transpose`, and Euclidean rhythm generation with `euclid(hits, steps, note=60, rotation=0)`. Degree-based playback supports major, minor, dorian, mixolydian, major/minor pentatonic, and blues scales; raw MIDI notes remain the default.
 - The Windows editor has visible Open, Save, and Save As controls for UTF-8 Python scripts. Its read-only status field is selectable; click it and press Ctrl+C to copy an error. Nine starter patterns are separate `.py` files in the bundle's `Portable` folder, and Open/Save As explicitly start there rather than using Windows' previously visited directory; ordinary Save writes back to the current script path. The editor prompts before replacing unsaved edits. The footer shows the plugin version.
@@ -27,7 +27,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 
 Use a SuperCollider source checkout at the pinned revision, a configured PIC-enabled SC build, the resulting `libscsynth` and UGen modules, the CPython 3.12.10 embeddable runtime, and a VST3 SDK checkout with its required submodules.
 
-Configure the SuperCollider build with `CMAKE_POSITION_INDEPENDENT_CODE=ON`, `LIBSCSYNTH=OFF`, and `STATIC_PLUGINS=OFF`, then build `libscsynth`, `OscUGens`, `BinaryOpUGens`, and `IOUGens`. The engine archive must be PIC because it is linked into a shared VST3 module.
+Configure the SuperCollider build with `CMAKE_POSITION_INDEPENDENT_CODE=ON`, `LIBSCSYNTH=OFF`, and `STATIC_PLUGINS=OFF`, then build `libscsynth`, `OscUGens`, `LFUGens`, `BinaryOpUGens`, and `IOUGens`. The engine archive must be PIC because it is linked into a shared VST3 module.
 
 ```sh
 cmake -S spikes/vst3-callback -B build/vst3-callback -G Ninja \

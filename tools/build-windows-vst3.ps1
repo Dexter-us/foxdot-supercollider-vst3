@@ -170,11 +170,11 @@ finally {
 Invoke-Checked "cmake" @(
     "--build", $scBuild,
     "--config", "Release",
-    "--target", "libscsynth", "OscUGens", "BinaryOpUGens", "IOUGens",
+    "--target", "libscsynth", "OscUGens", "LFUGens", "BinaryOpUGens", "IOUGens",
     "--", "/m:$BuildJobs"
 )
 
-$requiredModules = @("OscUGens.scx", "BinaryOpUGens.scx", "IOUGens.scx")
+$requiredModules = @("OscUGens.scx", "LFUGens.scx", "BinaryOpUGens.scx", "IOUGens.scx")
 $moduleFiles = foreach ($module in $requiredModules) {
     $moduleCandidates = @(Get-ChildItem -Path $scBuild -Filter $module -File -Recurse)
     $releaseMatch = @($moduleCandidates | Where-Object { $_.FullName -match "[\\/]Release[\\/]" })
