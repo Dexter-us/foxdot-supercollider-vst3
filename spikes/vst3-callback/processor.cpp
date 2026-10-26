@@ -266,6 +266,25 @@ public:
         return kResultOk;
     }
 
+    std::string checkCompatibility(const std::string& source) override {
+        if (source.size() > kMaxEditorSourceBytes)
+            return "Code is limited to 64 KB in this prototype.";
+        std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
+        if (scriptRunning_.load(std::memory_order_acquire))
+            return "Python is evaluating another script; wait for it to finish, then check again.";
+        if (scriptThread_.joinable())
+            scriptThread_.join();
+
+        std::string report;
+        std::string error;
+        if (!PortablePython::instance().checkCompatibility(bundledPythonPath(), source,
+                                                          report, error)) {
+            return error.empty() ? "FoxDot compatibility check failed." : error;
+        }
+        setEditorStatus("Static compatibility check complete; the script was not run.");
+        return report;
+    }
+
     void submitCode(const std::string& source) override {
         std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
         if (scriptRunning_.load(std::memory_order_acquire)) {

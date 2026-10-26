@@ -33,6 +33,11 @@ class PortablePython {
 public:
     static PortablePython& instance();
 
+    bool checkCompatibility(const std::filesystem::path& runtimeDirectory,
+                            const std::string& source,
+                            std::string& report,
+                            std::string& error);
+
     bool evaluate(const std::filesystem::path& runtimeDirectory,
                   const std::string& namespaceName,
                   const std::string& source,

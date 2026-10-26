@@ -19,6 +19,15 @@ end = source.find(end_marker, start)
 if end < 0:
     raise SystemExit('Could not find the end of the embedded Python API')
 api = source[start:end]
+checker_start_marker = 'static constexpr char compatibilityChecker[] = R"PY(' + chr(10)
+checker_start = source.find(checker_start_marker)
+if checker_start < 0:
+    raise SystemExit('Could not find the embedded FoxDot compatibility checker')
+checker_start += len(checker_start_marker)
+checker_end = source.find(')PY";', checker_start)
+if checker_end < 0:
+    raise SystemExit('Could not find the end of the compatibility checker')
+compatibility_checker = source[checker_start:checker_end]
 
 # Reconstruct and compile the exact streamed Python wrapper used by C++.
 wrapper_start = source.find('std::string makeEvaluationScript(')
@@ -99,6 +108,16 @@ def run_example(name):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read())
 
+def run_compatibility_check(script_text):
+    with tempfile.TemporaryDirectory() as directory:
+        source_path = os.path.join(directory, 'source.py')
+        report_path = os.path.join(directory, 'report.txt')
+        with open(source_path, 'w', encoding='utf-8') as target:
+            target.write(script_text)
+        namespace = {'_compat_source_path': source_path, '_compat_report_path': report_path}
+        exec(compile(compatibility_checker, '<embedded compatibility checker>', 'exec'), namespace, namespace)
+        return open(report_path, encoding='utf-8').read()
+
 def test_embedded_synthdef():
     plugin_dir = os.path.dirname(os.path.abspath(sys.argv[1]))
     repo_root = os.path.abspath(os.path.join(plugin_dir, '..', '..'))
@@ -144,4 +163,16 @@ assert p1[10] == '0.0' and p1[11] == '0.25'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
 assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
 assert p2[10] == '0.25' and p2[11] == '0.24'
-print('Smoke tests passed: wrapper execution, FoxDot Clock/Scale/player syntax, dur patterns, SC oscillator modes, audio controls, and Examples 07/08/09.')
+supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np1.stop()\n')
+assert 'No unsupported constructs detected' in supported_report, supported_report
+assert 'script was not executed' in supported_report, supported_report
+unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\n')
+for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'room', 'Sample-string'):
+    assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
+syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
+assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
+for filename in os.listdir(sys.argv[2]):
+    if filename.endswith('.py'):
+        example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
+        assert 'No unsupported constructs detected' in example_report, (filename, example_report)
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-09.')

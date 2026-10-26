@@ -28,6 +28,7 @@ constexpr int kOpenId = 106;
 constexpr int kSaveId = 107;
 constexpr int kSaveAsId = 108;
 constexpr int kBrandId = 109;
+constexpr int kCheckId = 110;
 constexpr int kViewWidth = 720;
 constexpr int kViewHeight = 480;
 constexpr int kMargin = 10;
@@ -137,7 +138,7 @@ public:
             DestroyWindow(window_);
             window_ = nullptr;
             editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ = saveAsButton_ =
-                status_ = brand_ = nullptr;
+                checkButton_ = status_ = brand_ = nullptr;
         }
         return Steinberg::kResultOk;
     }
@@ -269,6 +270,10 @@ private:
             return 1;
         }
         case WM_COMMAND:
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kCheckId) {
+                view->checkSource();
+                return 0;
+            }
             if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kRunId) {
                 view->runSource();
                 return 0;
@@ -347,13 +352,18 @@ private:
                                         0, 0, 76, 26, window_,
                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSaveAsId)),
                                         moduleInstance(), nullptr);
+        checkButton_ = CreateWindowExW(0, L"BUTTON", L"Check",
+                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                       0, 0, 66, 26, window_,
+                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCheckId)),
+                                       moduleInstance(), nullptr);
         status_ = CreateWindowExW(0, L"EDIT", L"Ready. Open a script or edit code.",
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER |
                                       ES_READONLY | ES_AUTOHSCROLL | ES_NOHIDESEL,
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.3",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.4",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -393,7 +403,8 @@ private:
         MoveWindow(openButton_, kMargin + 120, buttonY, 56, kToolbarHeight - 4, TRUE);
         MoveWindow(saveButton_, kMargin + 180, buttonY, 62, kToolbarHeight - 4, TRUE);
         MoveWindow(saveAsButton_, kMargin + 250, buttonY, 76, kToolbarHeight - 4, TRUE);
-        MoveWindow(status_, kMargin + 330, buttonY, std::max(100, width - 350),
+        MoveWindow(checkButton_, kMargin + 330, buttonY, 66, kToolbarHeight - 4, TRUE);
+        MoveWindow(status_, kMargin + 405, buttonY, std::max(100, width - 425),
                    kToolbarHeight - 4, TRUE);
         const int editorTop = kMargin + kToolbarHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
@@ -642,6 +653,16 @@ private:
         return true;
     }
 
+    void checkSource() {
+        if (!editor_ || !host_)
+            return;
+        const auto report = host_->checkCompatibility(toUtf8(editorSource()));
+        const auto message = fromUtf8(report);
+        MessageBoxW(window_, message.empty() ? L"The compatibility checker returned no report." : message.c_str(),
+                    L"FoxDot compatibility check", MB_OK | MB_ICONINFORMATION);
+        SetWindowTextW(status_, L"Static report shown; Ctrl+C copies it. Script was not run.");
+    }
+
     void runSource() {
         if (!editor_ || !host_)
             return;
@@ -671,6 +692,7 @@ private:
     HWND openButton_ = nullptr;
     HWND saveButton_ = nullptr;
     HWND saveAsButton_ = nullptr;
+    HWND checkButton_ = nullptr;
     HWND status_ = nullptr;
     HWND brand_ = nullptr;
     std::wstring currentFilePath_;

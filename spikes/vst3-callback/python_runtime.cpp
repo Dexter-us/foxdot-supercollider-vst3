@@ -83,6 +83,149 @@ std::string pathAsUtf8(const std::filesystem::path& path) {
 #endif
 }
 
+std::string makeCompatibilityScript(const std::string& sourcePath,
+                                    const std::string& reportPath) {
+    static constexpr char compatibilityChecker[] = R"PY(
+import ast
+import re
+
+_COMPAT_CALLS = {
+    'abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter',
+    'float', 'int', 'isinstance', 'len', 'list', 'map', 'max', 'min',
+    'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum',
+    'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
+    'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'transpose', 'euclid',
+    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'Clock', 'Scale',
+    'Player', 'PlayerPattern', '__build_class__'
+}
+_COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle'}
+_COMPAT_WAVE_KEYWORDS = {
+    'notes', 'dur', 'oct', 'sus', 'scale', 'amp', 'pan', 'cutoff', 'echo',
+    'delay', 'velocity', 'rate'
+}
+_COMPAT_SEQUENCE_KEYWORDS = {
+    'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
+    'amp', 'pan', 'cutoff', 'echo', 'delay'
+}
+_COMPAT_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees'}
+_COMPAT_SCALE_NAMES = {
+    'major', 'minor', 'natural_minor', 'aeolian', 'dorian', 'mixolydian',
+    'major_pentatonic', 'minor_pentatonic', 'blues'
+}
+
+class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
+    def __init__(self, tree):
+        self.diagnostics = []
+        self._seen = set()
+        self.defined = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                self.defined.add(node.name)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+                        self.defined.add(arg.arg)
+                    if node.args.vararg:
+                        self.defined.add(node.args.vararg.arg)
+                    if node.args.kwarg:
+                        self.defined.add(node.args.kwarg.arg)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                self.defined.add(node.id)
+
+    def add(self, line, message):
+        item = (int(line or 1), message)
+        if item not in self._seen:
+            self._seen.add(item)
+            self.diagnostics.append(item)
+
+    def visit_Import(self, node):
+        self.add(node.lineno, 'Python imports are disabled in the portable editor; use the built-in API.')
+
+    def visit_ImportFrom(self, node):
+        self.add(node.lineno, 'Python imports are disabled in the portable editor; use the built-in API.')
+
+    def visit_Call(self, node):
+        name = node.func.id if isinstance(node.func, ast.Name) else None
+        if name and name not in _COMPAT_CALLS and name not in self.defined:
+            self.add(node.lineno, "Call '" + name + "()' is not in the embedded API (often an unsupported FoxDot synth or pattern helper).")
+        keyword_names = None
+        if name in _COMPAT_WAVES:
+            keyword_names = _COMPAT_WAVE_KEYWORDS
+        elif name == 'sequence':
+            keyword_names = _COMPAT_SEQUENCE_KEYWORDS
+        elif name == 'play':
+            keyword_names = _COMPAT_PLAY_KEYWORDS
+        if keyword_names is not None:
+            for keyword in node.keywords:
+                if keyword.arg is None:
+                    self.add(node.lineno, 'Dynamic keyword expansion cannot be checked; use explicit supported controls.')
+                elif keyword.arg not in keyword_names:
+                    self.add(keyword.lineno or node.lineno, "Control '" + keyword.arg + "' is not supported by " + name + '() in this build.')
+        if name in _COMPAT_WAVES.union({'play'}) and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            self.add(node.lineno, 'Sample-string playback is not included yet; sample support is deferred.')
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id == 'Clock' and node.attr not in {'bpm', 'meter'}:
+            self.add(node.lineno, "Clock." + node.attr + ' is not supported; only Clock.bpm and fixed 4/4 Clock.meter are available.')
+        if isinstance(node.value, ast.Name) and node.value.id == 'Scale' and node.attr not in _COMPAT_SCALE_NAMES.union({'default'}):
+            self.add(node.lineno, 'Scale.' + node.attr + ' is not available in the embedded scale set.')
+        if isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == 'Scale' and node.value.attr == 'default' and node.attr != 'set':
+            self.add(node.lineno, 'Scale.default only supports .set(name, root=...).')
+        if isinstance(node.value, ast.Name) and re.fullmatch(r'p[0-9]+', node.value.id) and node.attr != 'stop':
+            self.add(node.lineno, "Player " + node.value.id + ' only supports .stop() in this build.')
+        self.generic_visit(node)
+
+    def visit_BinOp(self, node):
+        if isinstance(node.op, ast.RShift) and isinstance(node.left, ast.Name) and isinstance(node.right, ast.Call):
+            player = node.left.id
+            if not re.fullmatch(r'p[1-8]', player):
+                self.add(node.lineno, 'Use one of the supported player names p1 through p8; aliases and extra players are not available yet.')
+        self.generic_visit(node)
+
+def _dexter_run_compatibility_check():
+    try:
+        with open(_compat_source_path, 'r', encoding='utf-8') as source_file:
+            source_text = source_file.read()
+        try:
+            tree = ast.parse(source_text, filename='<FoxDot script>')
+        except SyntaxError as exc:
+            line = exc.lineno or 1
+            column = exc.offset or 1
+            diagnostics = [(line, 'Python syntax error at column ' + str(column) + ': ' + (exc.msg or 'invalid syntax'))]
+            tree = None
+        if tree is not None:
+            visitor = _DexterFoxDotCompatibilityVisitor(tree)
+            visitor.visit(tree)
+            diagnostics = sorted(visitor.diagnostics)
+        if not diagnostics:
+            if source_text.strip():
+                report_text = ('No unsupported constructs detected in the embedded API subset.\n'
+                               'Static check only: the script was not executed; runtime values can still fail.')
+            else:
+                report_text = 'The editor is empty. Static check only: no code was executed.'
+        else:
+            shown = diagnostics[:20]
+            lines = ['Compatibility check found ' + str(len(diagnostics)) + ' item(s); the script was not executed:']
+            lines.extend('Line ' + str(line) + ': ' + message for line, message in shown)
+            if len(diagnostics) > len(shown):
+                lines.append('...and ' + str(len(diagnostics) - len(shown)) + ' more item(s).')
+            lines.append('Supported synth calls: sine, triangle, saw, pulse. Samples and the wider FoxDot synth/effect library are deferred.')
+            report_text = '\n'.join(lines)
+    except BaseException as exc:
+        report_text = 'Compatibility check could not complete: ' + str(exc)
+    with open(_compat_report_path, 'w', encoding='utf-8') as report_file:
+        report_file.write(report_text)
+
+_dexter_run_compatibility_check()
+)PY";
+    std::ostringstream script;
+    script << "_compat_source_path = " << pythonLiteral(sourcePath) << "\n"
+           << "_compat_report_path = " << pythonLiteral(reportPath) << "\n"
+           << "exec(compile(" << pythonLiteral(compatibilityChecker)
+           << ", '<Dexter compatibility checker>', 'exec'), globals(), globals())\n";
+    return script.str();
+}
+
 std::string makeEvaluationScript(const std::string& sourcePath,
                                 const std::string& resultPath,
                                 const std::string& namespaceName) {
@@ -665,6 +808,70 @@ bool PortablePython::evaluate(const std::filesystem::path& runtimeDirectory,
     (void)namespaceName;
     (void)source;
     (void)pattern;
+    return false;
+#endif
+}
+
+bool PortablePython::checkCompatibility(const std::filesystem::path& runtimeDirectory,
+                                       const std::string& source,
+                                       std::string& report,
+                                       std::string& error) {
+    if (source.size() > 64 * 1024) {
+        error = "Code is limited to 64 KB in this prototype.";
+        return false;
+    }
+    if (!initialize(runtimeDirectory, error))
+        return false;
+
+#if defined(_WIN32)
+    const auto number = gScriptNumber.fetch_add(1, std::memory_order_relaxed);
+    const auto base = std::filesystem::temp_directory_path() /
+                      (L"dexter-check-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                       std::to_wstring(number));
+    const auto sourcePath = base.wstring() + L".py";
+    const auto reportPath = base.wstring() + L".txt";
+    {
+        std::ofstream sourceFile(sourcePath, std::ios::binary);
+        if (!sourceFile) {
+            error = "Could not create a temporary Python source file for compatibility checking.";
+            return false;
+        }
+        sourceFile.write(source.data(), static_cast<std::streamsize>(source.size()));
+    }
+
+    const auto script = makeCompatibilityScript(pathAsUtf8(sourcePath),
+                                                pathAsUtf8(reportPath));
+    int result = -1;
+    {
+        std::lock_guard<std::mutex> lock(gPythonMutex);
+        const int gil = gPython.gilStateEnsure();
+        result = gPython.runSimpleStringFlags(script.c_str(), nullptr);
+        gPython.gilStateRelease(gil);
+    }
+
+    bool success = false;
+    if (result == 0) {
+        std::ifstream reportFile(reportPath, std::ios::binary);
+        if (reportFile) {
+            std::ostringstream output;
+            output << reportFile.rdbuf();
+            report = output.str();
+            success = !report.empty();
+        }
+        if (!success)
+            error = "The compatibility checker did not produce a report.";
+    } else {
+        error = "The embedded Python compatibility checker could not run.";
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove(sourcePath, ignored);
+    std::filesystem::remove(reportPath, ignored);
+    return success;
+#else
+    (void)source;
+    (void)report;
+    error = "The portable embedded Python runtime is currently packaged for Windows.";
     return false;
 #endif
 }
