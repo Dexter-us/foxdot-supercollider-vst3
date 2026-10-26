@@ -581,9 +581,10 @@ private:
             if (sample >= voice.releaseEndSample)
                 return 0.0f;
             const auto releaseLength = voice.releaseEndSample - voice.releaseStartSample;
-            const float remaining = static_cast<float>(voice.releaseEndSample - sample);
-            return voice.releaseStartGain * remaining /
-                   static_cast<float>(releaseLength);
+            const double progress = static_cast<double>(sample - voice.releaseStartSample) /
+                                    static_cast<double>(releaseLength);
+            const float fade = static_cast<float>(0.5 * (1.0 + std::cos(kPi * progress)));
+            return voice.releaseStartGain * fade;
         }
         if (voice.midiNote < 0 || sample < voice.startSample ||
             sample >= voice.endSample)
@@ -594,12 +595,16 @@ private:
         const auto release = std::min(envelopeSamples(kReleaseSeconds), duration / 2);
         float gain = 1.0f;
         if (attack > 0 && sample < voice.startSample + attack) {
-            gain = std::min(gain, static_cast<float>(sample - voice.startSample) /
-                                      static_cast<float>(attack));
+            const double progress = static_cast<double>(sample - voice.startSample) /
+                                    static_cast<double>(attack);
+            const float fadeIn = static_cast<float>(0.5 * (1.0 - std::cos(kPi * progress)));
+            gain = std::min(gain, fadeIn);
         }
         if (release > 0 && sample >= voice.endSample - release) {
-            gain = std::min(gain, static_cast<float>(voice.endSample - sample) /
-                                      static_cast<float>(release));
+            const double progress = static_cast<double>(sample - (voice.endSample - release)) /
+                                    static_cast<double>(release);
+            const float fadeOut = static_cast<float>(0.5 * (1.0 + std::cos(kPi * progress)));
+            gain = std::min(gain, fadeOut);
         }
         return gain;
     }
@@ -1059,7 +1064,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.1",
+           "0.4.2",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
