@@ -371,6 +371,49 @@ class _FoxDotFinitePattern(list):
     def __rsub__(self, other):
         return self._binary(other, lambda a, b: a - b, True)
 
+    def reverse(self):
+        return _FoxDotFinitePattern(list(reversed(self)))
+
+    def rotate(self, amount=1):
+        values = list(self)
+        if not values:
+            return _FoxDotFinitePattern()
+        amount = int(amount) % len(values)
+        return _FoxDotFinitePattern(values[amount:] + values[:amount])
+
+    def repeat(self, count=2):
+        count = int(count)
+        if count < 1 or len(self) * count > 256:
+            raise ValueError('repeat is limited to 256 expanded items and requires a positive count')
+        return _FoxDotFinitePattern(list(self) * count)
+
+    def stutter(self, count=2):
+        counts = list(count) if isinstance(count, (list, tuple)) else [count]
+        if not counts:
+            raise ValueError('stutter requires at least one repeat count')
+        if not self:
+            return _FoxDotFinitePattern()
+        length = self._laced_length(self, counts)
+        if length > 256:
+            raise ValueError('stutter is limited to 256 expanded items')
+        values = []
+        for index in range(length):
+            repetitions = counts[index % len(counts)]
+            if not isinstance(repetitions, (int, float)):
+                raise ValueError('stutter counts must be whole numbers from 0 to 16')
+            repeat_count = int(repetitions)
+            if repeat_count != repetitions or repeat_count < 0 or repeat_count > 16:
+                raise ValueError('stutter counts must be whole numbers from 0 to 16')
+            if len(values) + repeat_count > 256:
+                raise ValueError('stutter is limited to 256 expanded items')
+            values.extend([self[index % len(self)]] * repeat_count)
+        return _FoxDotFinitePattern(values)
+
+    def palindrome(self):
+        if len(self) * 2 > 256:
+            raise ValueError('palindrome is limited to 256 expanded items')
+        return _FoxDotFinitePattern(list(self) + list(reversed(self)))
+
 class _FoxDotPatternLiteral:
     def __getitem__(self, items):
         if isinstance(items, slice):

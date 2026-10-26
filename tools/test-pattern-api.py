@@ -80,6 +80,20 @@ assert fox_literal + 2 == [2, 4, None, (5, 7), 9]
 assert 2 + namespace['P'][1, None, (3, 5)] == [3, None, (5, 7)]
 assert namespace['P'][4, 8] - namespace['P'][1, 2, 3] == [3, 6, 1, 7, 2, 5]
 assert 10 - namespace['P'][1, None, (2, 4)] == [9, None, (8, 6)]
+pattern = namespace['P'][1, None, (3, 5), 4]
+assert pattern.reverse() == [4, (3, 5), None, 1]
+assert pattern.rotate(1) == [None, (3, 5), 4, 1]
+assert pattern.rotate(-1) == [4, 1, None, (3, 5)]
+assert namespace['P'][0, 1, 2, 3].stutter([1, 3]) == [0, 1, 1, 1, 2, 3, 3, 3]
+assert namespace['P'][1, None, 3].repeat(2) == [1, None, 3, 1, None, 3]
+assert namespace['P'][1, 2, 3].palindrome() == [1, 2, 3, 3, 2, 1]
+try:
+    namespace['P'][*range(129)].repeat(2)
+except ValueError as error:
+    assert '256 expanded items' in str(error)
+else:
+    raise AssertionError('pattern repeat must enforce the 256-item cap')
+
 try:
     namespace['P'][*range(17)] + namespace['P'][*range(19)]
 except ValueError as error:
@@ -129,7 +143,7 @@ def run_script(script_text):
         wrapper_globals = {'__name__': '__main__'}
         exec(wrapper, wrapper_globals, wrapper_globals)
         lines = open(result_path, encoding='utf-8').read().splitlines()
-        assert lines[0] == 'OK\t2' or lines[0] == 'OK\t1', lines[0]
+        assert lines[0].startswith('OK\t') and 1 <= int(lines[0].split('\t')[1]) <= 8, lines[0]
         return [line.split('\t') for line in lines if line.startswith('P\t')]
 
 def run_example(name):
@@ -194,6 +208,9 @@ assert example11Rows[0][5] == '7' and example11Rows[1][5] == '2'
 example12Rows = run_example('12-pattern-arithmetic.py')
 assert len(example12Rows) == 2 and all(len(row) == 12 for row in example12Rows)
 assert example12Rows[0][5] == '5' and example12Rows[1][5] == '5'
+example13Rows = run_example('13-pattern-methods.py')
+assert len(example13Rows) == 5 and all(len(row) == 12 for row in example13Rows)
+assert [row[5] for row in example13Rows] == ['8', '5', '4', '4', '4']
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
@@ -215,4 +232,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-12.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-13.')
