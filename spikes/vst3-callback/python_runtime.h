@@ -12,6 +12,9 @@ struct PythonNoteEvent {
 };
 
 struct PythonPlayerUpdate {
+    std::string ampControlToken = "-";
+    std::string panControlToken = "-";
+    std::string cutoffControlToken = "-";
     int playerIndex = 0;
     bool stopped = false;
     double bpm = 120.0;

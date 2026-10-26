@@ -30,6 +30,8 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <sstream>
+#include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <vector>
@@ -403,6 +405,10 @@ public:
                         next.mouseCutoff = player.mouseCutoff;
                         next.attackSeconds = player.attackSeconds;
                         next.releaseSeconds = player.releaseSeconds;
+                        if (!parseTimeVarControl(player.ampControlToken, 0.0, 1.0, next.ampControl) ||
+                            !parseTimeVarControl(player.panControlToken, -1.0, 1.0, next.panControl) ||
+                            !parseTimeVarControl(player.cutoffControlToken, 20.0, 20000.0, next.cutoffControl))
+                            throw std::runtime_error("Invalid var/linvar control from Python.");
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoDelaySeconds = player.echoDelaySeconds;
                         next.eventCount = player.events.size();
@@ -526,6 +532,14 @@ private:
         return true;
     }
 
+    struct TimeVarControl {
+        bool active = false;
+        bool linear = false;
+        std::size_t count = 0;
+        std::array<double, 8> values{};
+        std::array<double, 8> durations{};
+    };
+
     struct PatternState {
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
         std::size_t eventCount = 0;
@@ -539,6 +553,9 @@ private:
         bool mouseCutoff = false;
         double attackSeconds = kAttackSeconds;
         double releaseSeconds = kReleaseSeconds;
+        TimeVarControl ampControl;
+        TimeVarControl panControl;
+        TimeVarControl cutoffControl;
         float echoMix = 0.0f;
         double echoDelaySeconds = 0.25;
         bool active = false;
@@ -593,6 +610,83 @@ private:
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
     };
+
+    static bool parseTimeVarControl(const std::string& token, double minimum,
+                                    double maximum, TimeVarControl& result) {
+        result = {};
+        if (token == "-")
+            return true;
+        if (token.size() > 256 || token.size() < 5 || token[1] != ':' ||
+            (token[0] != 'v' && token[0] != 'l'))
+            return false;
+        const auto middle = token.find(':', 2);
+        if (middle == std::string::npos || middle == 2 || middle + 1 >= token.size())
+            return false;
+        auto parseList = [](const std::string& text, std::array<double, 8>& values,
+                            std::size_t& count, double low, double high, bool positive) {
+            std::istringstream parts(text);
+            std::string part;
+            count = 0;
+            while (std::getline(parts, part, ',')) {
+                if (part.empty() || count >= values.size())
+                    return false;
+                try {
+                    std::size_t used = 0;
+                    const double value = std::stod(part, &used);
+                    if (used != part.size() || !std::isfinite(value) ||
+                        (positive ? value <= 0.0 || value > high
+                                  : value < low || value > high))
+                        return false;
+                    values[count++] = value;
+                } catch (...) {
+                    return false;
+                }
+            }
+            return count > 0;
+        };
+        std::array<double, 8> values{};
+        std::array<double, 8> durations{};
+        std::size_t valueCount = 0;
+        std::size_t durationCount = 0;
+        if (!parseList(token.substr(2, middle - 2), values, valueCount,
+                       minimum, maximum, false) ||
+            !parseList(token.substr(middle + 1), durations, durationCount,
+                       0.0, 4096.0, true) ||
+            (durationCount != 1 && durationCount != valueCount))
+            return false;
+        result.active = true;
+        result.linear = token[0] == 'l';
+        result.count = valueCount;
+        result.values = values;
+        for (std::size_t i = 0; i < valueCount; ++i)
+            result.durations[i] = durations[durationCount == 1 ? 0 : i];
+        return true;
+    }
+
+    static float evaluateTimeVar(const TimeVarControl& control, double beat,
+                                 float fallback) {
+        if (!control.active || control.count == 0)
+            return fallback;
+        double cycle = 0.0;
+        for (std::size_t i = 0; i < control.count; ++i)
+            cycle += control.durations[i];
+        if (cycle <= 0.0)
+            return fallback;
+        double position = std::fmod(std::max(0.0, beat), cycle);
+        for (std::size_t i = 0; i < control.count; ++i) {
+            const double duration = control.durations[i];
+            if (position < duration || i + 1 == control.count) {
+                if (!control.linear || control.count == 1)
+                    return static_cast<float>(control.values[i]);
+                const double progress = std::clamp(position / duration, 0.0, 1.0);
+                const double next = control.values[(i + 1) % control.count];
+                return static_cast<float>(control.values[i] +
+                                          (next - control.values[i]) * progress);
+            }
+            position -= duration;
+        }
+        return static_cast<float>(control.values[control.count - 1]);
+    }
 
     void setEditorStatus(std::string status) {
         std::lock_guard<std::mutex> lock(statusMutex_);
@@ -1013,6 +1107,21 @@ private:
                 const auto busLength = static_cast<std::size_t>(world_->mBufLength);
                 const auto offset = bus * busLength + static_cast<std::size_t>(sampleIndex);
                 const float source = world_->mAudioBus[offset];
+                const auto controlPlayerIndex = static_cast<std::size_t>(voice.playerIndex);
+                const auto& livePattern = activePatterns_[controlPlayerIndex];
+                const auto patternStart = patternStartSamples_[controlPlayerIndex];
+                const double beat = livePattern.bpm > 0.0 && absoluteSample >= patternStart
+                    ? static_cast<double>(absoluteSample - patternStart) * livePattern.bpm /
+                          (60.0 * sampleRate_)
+                    : 0.0;
+                if (livePattern.ampControl.active) {
+                    const float targetAmp = evaluateTimeVar(livePattern.ampControl, beat,
+                                                            livePattern.amplitude);
+                    if (livePattern.ampControl.linear)
+                        voice.amplitude = targetAmp;
+                    else
+                        voice.amplitude += mouseSmoothing * (targetAmp - voice.amplitude);
+                }
                 if (voice.mousePan) {
                     const float mouseX = std::clamp(
                         world_->mAudioBus[(bus + 1) * busLength + static_cast<std::size_t>(sampleIndex)],
@@ -1021,13 +1130,33 @@ private:
                     voice.pan += mouseSmoothing * (targetPan - voice.pan);
                     voice.leftGain = std::sqrt(std::max(0.0f, (1.0f - voice.pan) * 0.5f));
                     voice.rightGain = std::sqrt(std::max(0.0f, (1.0f + voice.pan) * 0.5f));
+                } else if (livePattern.panControl.active) {
+                    const float targetPan = evaluateTimeVar(livePattern.panControl, beat,
+                                                            livePattern.pan);
+                    if (livePattern.panControl.linear)
+                        voice.pan = targetPan;
+                    else
+                        voice.pan += mouseSmoothing * (targetPan - voice.pan);
+                    voice.leftGain = std::sqrt(std::max(0.0f, (1.0f - voice.pan) * 0.5f));
+                    voice.rightGain = std::sqrt(std::max(0.0f, (1.0f + voice.pan) * 0.5f));
                 }
+                bool dynamicCutoff = voice.mouseCutoff;
+                float targetCutoff = voice.cutoffHz;
                 if (voice.mouseCutoff) {
                     const float mouseY = std::clamp(
                         world_->mAudioBus[(bus + 2) * busLength + static_cast<std::size_t>(sampleIndex)],
                         0.0f, 1.0f);
-                    const float targetCutoff = 200.0f + mouseY * 7800.0f;
-                    voice.cutoffHz += mouseSmoothing * (targetCutoff - voice.cutoffHz);
+                    targetCutoff = 200.0f + mouseY * 7800.0f;
+                } else if (livePattern.cutoffControl.active) {
+                    targetCutoff = evaluateTimeVar(livePattern.cutoffControl, beat,
+                                                   livePattern.cutoffHz);
+                    dynamicCutoff = true;
+                }
+                if (dynamicCutoff) {
+                    if (!livePattern.cutoffControl.linear || voice.mouseCutoff)
+                        voice.cutoffHz += mouseSmoothing * (targetCutoff - voice.cutoffHz);
+                    else
+                        voice.cutoffHz = targetCutoff;
                     const double maxCutoff = sampleRate_ * 0.45;
                     const double clampedCutoff = std::min<double>(voice.cutoffHz, maxCutoff);
                     voice.filterCoefficient = clampedCutoff >= maxCutoff
@@ -1164,7 +1293,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.16",
+           "0.4.17",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

@@ -74,6 +74,12 @@ assert namespace['interleave']([1, 2, 3], [None, 9], [4]) == [1, None, 4, 2, 9, 
 assert namespace['transpose']([60, None, [64, 67]], 12) == [72, None, [76, 79]]
 euclidean = namespace['euclid'](3, 8, 36, 1)
 assert len(euclidean) == 8 and euclidean.count(36) == 3
+stepVar = namespace['var']([0.2, 0.8], [2, 2])
+linearVar = namespace['linvar']([-1, 1], 4)
+assert stepVar.wire() == 'v:0.2,0.8:2.0,2.0'
+assert linearVar.wire() == 'l:-1.0,1.0:4.0,4.0'
+defaultVar = namespace['var']([1, 0])
+assert defaultVar.durations == [4.0, 4.0]
 fox_literal = namespace['P'][0, 2, None, (3, 5), 7]
 assert fox_literal == [0, 2, None, (3, 5), 7]
 assert fox_literal + 2 == [2, 4, None, (5, 7), 9]
@@ -247,7 +253,7 @@ def test_embedded_synthdef():
 test_embedded_synthdef()
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
-assert len(legacy) == 1 and len(legacy[0]) == 16
+assert len(legacy) == 1 and len(legacy[0]) == 19
 fox_literal_rows = run_script('p1 >> saw(P[0, 2, None, (3, 5), 7], dur=0.5, oct=5, sus=0.4)\n')
 assert len(fox_literal_rows) == 1 and fox_literal_rows[0][5] == '5', fox_literal_rows
 assert legacy[0][5] == '2' and legacy[0][6] == '0'
@@ -255,52 +261,58 @@ assert legacy[0][7] == '1.0' and legacy[0][8] == '0.0'
 assert legacy[0][10] == '0.0' and legacy[0][11] == '0.25'
 assert legacy[0][12] == '0' and legacy[0][13] == '0'
 assert legacy[0][14] == '0.01' and legacy[0][15] == '0.04'
+assert legacy[0][16] == '-' and legacy[0][17] == '-' and legacy[0][18] == '-'
 example7 = run_example('07-independent-players.py')
-assert len(example7) == 2 and all(len(row) == 16 for row in example7)
+assert len(example7) == 2 and all(len(row) == 19 for row in example7)
 assert example7[0][5] == '6' and example7[1][5] == '2'
 assert example7[0][6] == '0' and example7[1][6] == '0'
 assert example7[0][10] == '0.0' and example7[0][11] == '0.25'
 example9 = run_example('09-foxdot-core.py')
-assert len(example9) == 2 and all(len(row) == 16 for row in example9)
+assert len(example9) == 2 and all(len(row) == 19 for row in example9)
 foxSaw, foxPulse = example9
 assert foxSaw[1] == '0' and foxSaw[3] == '96.0' and foxSaw[6] == '2'
 assert abs(float(foxSaw[7]) - 0.7) < 1e-6 and abs(float(foxSaw[8]) + 0.35) < 1e-6
 assert foxPulse[1] == '1' and foxPulse[3] == '96.0' and foxPulse[6] == '3'
 assert abs(float(foxPulse[7]) - 0.25) < 1e-6 and abs(float(foxPulse[8]) - 0.35) < 1e-6
 example10Rows = run_example('10-pattern-transformations.py')
-assert len(example10Rows) == 2 and all(len(row) == 16 for row in example10Rows)
+assert len(example10Rows) == 2 and all(len(row) == 19 for row in example10Rows)
 assert example10Rows[0][5] == '7' and example10Rows[0][6] == '2'
 assert example10Rows[1][5] == '4' and example10Rows[1][6] == '3'
 example11Rows = run_example('11-foxdot-pattern-literals.py')
-assert len(example11Rows) == 2 and all(len(row) == 16 for row in example11Rows)
+assert len(example11Rows) == 2 and all(len(row) == 19 for row in example11Rows)
 assert example11Rows[0][5] == '7' and example11Rows[1][5] == '2'
 example12Rows = run_example('12-pattern-arithmetic.py')
-assert len(example12Rows) == 2 and all(len(row) == 16 for row in example12Rows)
+assert len(example12Rows) == 2 and all(len(row) == 19 for row in example12Rows)
 assert example12Rows[0][5] == '5' and example12Rows[1][5] == '5'
 example13Rows = run_example('13-pattern-methods.py')
-assert len(example13Rows) == 5 and all(len(row) == 16 for row in example13Rows)
+assert len(example13Rows) == 5 and all(len(row) == 19 for row in example13Rows)
 assert [row[5] for row in example13Rows] == ['8', '5', '4', '4', '4']
 example14Rows = run_example('14-pattern-composition.py')
-assert len(example14Rows) == 2 and all(len(row) == 16 for row in example14Rows)
+assert len(example14Rows) == 2 and all(len(row) == 19 for row in example14Rows)
 assert [row[5] for row in example14Rows] == ['5', '7']
 example15Rows = run_example('15-pattern-arithmetic-operators.py')
-assert len(example15Rows) == 4 and all(len(row) == 16 for row in example15Rows)
+assert len(example15Rows) == 4 and all(len(row) == 19 for row in example15Rows)
 assert [row[5] for row in example15Rows] == ['4', '2', '4', '4']
 example16Rows = run_example('16-bounded-pattern-slices.py')
-assert len(example16Rows) == 3 and all(len(row) == 16 for row in example16Rows)
+assert len(example16Rows) == 3 and all(len(row) == 19 for row in example16Rows)
 assert [row[5] for row in example16Rows] == ['8', '4', '2']
 example17Rows = run_example('17-live-player-edits.py')
 assert len(example17Rows) == 2 and [row[1] for row in example17Rows] == ['0', '1']
 example18Rows = run_example('18-ui-mouse-controls.py')
-assert len(example18Rows) == 2 and all(len(row) == 16 for row in example18Rows)
+assert len(example18Rows) == 2 and all(len(row) == 19 for row in example18Rows)
 assert example18Rows[0][12] == '1' and example18Rows[0][13] == '0'
 assert example18Rows[1][12] == '0' and example18Rows[1][13] == '1'
 envelopeRows = run_example('19-envelope-controls.py')
-assert len(envelopeRows) == 2 and all(len(row) == 16 for row in envelopeRows)
+assert len(envelopeRows) == 2 and all(len(row) == 19 for row in envelopeRows)
 assert float(envelopeRows[0][14]) == 0.005 and float(envelopeRows[0][15]) == 0.2
 assert float(envelopeRows[1][14]) == 0.04 and float(envelopeRows[1][15]) == 0.1
+timevarRows = run_example('20-timevar-controls.py')
+assert len(timevarRows) == 2 and all(len(row) == 19 for row in timevarRows)
+assert timevarRows[0][16] == 'v:0.15,0.45:4.0,4.0'
+assert timevarRows[1][17] == 'l:-0.8,0.8:8.0,8.0'
+assert timevarRows[1][18] == 'l:400.0,5000.0:8.0,8.0'
 example8 = run_example('08-synths-and-controls.py')
-assert len(example8) == 2 and all(len(row) == 16 for row in example8)
+assert len(example8) == 2 and all(len(row) == 19 for row in example8)
 p1, p2 = example8
 assert p1[1] == '0' and p1[6] == '1' and abs(float(p1[7]) - 0.7) < 1e-6
 assert abs(float(p1[8]) + 0.4) < 1e-6 and p1[9] == '5000.0'
@@ -308,7 +320,7 @@ assert p1[10] == '0.0' and p1[11] == '0.25'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
 assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
 assert p2[10] == '0.25' and p2[11] == '0.24'
-supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np1 >> saw(P[0:8:2], dur=0.5)\np1.stop()\n')
+supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
@@ -320,4 +332,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-19.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-20.')

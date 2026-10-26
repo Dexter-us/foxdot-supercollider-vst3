@@ -96,7 +96,7 @@ _COMPAT_CALLS = {
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid',
-    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'Clock', 'Scale',
+    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'var', 'linvar', 'Clock', 'Scale',
     'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle'}
@@ -741,6 +741,45 @@ def MouseX():
 def MouseY():
     return _DexterMouseControl('y')
 
+class _DexterTimeVar:
+    def __init__(self, values, durations, linear=False):
+        self.values = [float(value) for value in (values if isinstance(values, (list, tuple)) else [values])]
+        self.durations = [float(value) for value in (durations if isinstance(durations, (list, tuple)) else [durations])]
+        if not self.values or len(self.values) > 8:
+            raise ValueError('var/linvar supports 1..8 values')
+        if len(self.durations) == 1 and len(self.values) > 1:
+            self.durations = self.durations * len(self.values)
+        if len(self.durations) != len(self.values):
+            raise ValueError('var/linvar durations must be one value or match the values')
+        if any(value != value or value <= 0.0 or value > 4096.0 for value in self.durations):
+            raise ValueError('var/linvar durations must be between 0 and 4096 beats')
+        if any(value != value for value in self.values):
+            raise ValueError('var/linvar values must be finite numbers')
+        self.linear = bool(linear)
+
+    def wire(self):
+        mode = 'l' if self.linear else 'v'
+        token = mode + ':' + ','.join(str(value) for value in self.values) + ':' + ','.join(str(value) for value in self.durations)
+        if len(token) > 256:
+            raise ValueError('var/linvar control data exceeds the supported size')
+        return token
+
+def var(values, durations=4.0):
+    return _DexterTimeVar(values, durations, False)
+
+def linvar(values, durations=4.0):
+    return _DexterTimeVar(values, durations, True)
+
+def _control_value(value, name, lower, upper):
+    if isinstance(value, _DexterTimeVar):
+        if any(item < lower or item > upper for item in value.values):
+            raise ValueError(name + ' time-var values are outside the supported range')
+        return value.values[0], value.wire()
+    result = float(value)
+    if result != result or result < lower or result > upper:
+        raise ValueError(name + ' is outside the supported range')
+    return result, '-'
+
 class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
@@ -756,31 +795,25 @@ class PlayerPattern:
             raise ValueError('synth must be sine, triangle, saw, or square')
         self.synth = synth
         self.scaleName = scaleName
-        self.amp = float(amp)
+        self.amp, self.ampControl = _control_value(amp, 'amp', 0.0, 1.0)
         self.mousePan = isinstance(pan, _DexterMouseControl)
         if self.mousePan:
             if pan.axis != 'x':
                 raise ValueError('pan supports MouseX() only')
-            self.pan = 0.0
+            self.pan, self.panControl = 0.0, '-'
         else:
-            self.pan = float(pan)
+            self.pan, self.panControl = _control_value(pan, 'pan', -1.0, 1.0)
         self.mouseCutoff = isinstance(cutoff, _DexterMouseControl)
         if self.mouseCutoff:
             if cutoff.axis != 'y':
                 raise ValueError('cutoff supports MouseY() only')
-            self.cutoff = 4100.0
+            self.cutoff, self.cutoffControl = 4100.0, '-'
         else:
-            self.cutoff = float(cutoff)
+            self.cutoff, self.cutoffControl = _control_value(cutoff, 'cutoff', 20.0, 20000.0)
         self.echo = float(echo)
         self.delay = float(delay)
         self.attackSeconds = float(atk)
         self.releaseSeconds = float(rel)
-        if self.amp != self.amp or not 0.0 <= self.amp <= 1.0:
-            raise ValueError('amp must be between 0 and 1')
-        if self.pan != self.pan or not -1.0 <= self.pan <= 1.0:
-            raise ValueError('pan must be between -1 and 1')
-        if self.cutoff != self.cutoff or not 20.0 <= self.cutoff <= 20000.0:
-            raise ValueError('cutoff must be between 20 and 20000 Hz')
         if self.echo != self.echo or not 0.0 <= self.echo <= 0.75:
             raise ValueError('echo must be between 0 and 0.75')
         if self.attackSeconds != self.attackSeconds or not 0.0 <= self.attackSeconds <= 3.0:
@@ -876,14 +909,15 @@ class Player:
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echo,
                                         pattern.delay, pattern.mousePan, pattern.mouseCutoff,
-                                        pattern.attackSeconds, pattern.releaseSeconds)
+                                        pattern.attackSeconds, pattern.releaseSeconds, pattern.ampControl,
+                                        pattern.panControl, pattern.cutoffControl)
         if playerIndex == 0:
             _dexter_default_touched = False
         return self
 
     def stop(self):
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04)
+                                             0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-')
 
 p1 = Player(1)
 p2 = Player(2)
@@ -925,12 +959,12 @@ p8 = Player(8)
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04)\n"
+            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-')\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _f.write('OK\\t{}\\n'.format(len(_updates)))\n"
             << "        for _player in sorted(_updates):\n"
-            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release = _updates[_player]\n"
-            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release))\n"
+            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control = _updates[_player]\n"
+            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control))\n"
             << "            for _e in _events:\n"
             << "                _f.write('N\\t{}\\t{}\\t{}\\t{}\\n'.format(*_e))\n"
             << "except BaseException:\n"
@@ -975,7 +1009,8 @@ bool parseResult(const std::filesystem::path& resultPath,
         if (!(input >> record >> update.playerIndex >> stopped >> update.bpm >>
               update.lengthBeats >> eventCount >> update.synthIndex >> update.amplitude >>
               update.pan >> update.cutoffHz >> update.echoMix >> update.echoDelaySeconds >>
-              mousePan >> mouseCutoff >> update.attackSeconds >> update.releaseSeconds) ||
+              mousePan >> mouseCutoff >> update.attackSeconds >> update.releaseSeconds >>
+              update.ampControlToken >> update.panControlToken >> update.cutoffControlToken) ||
             record != 'P' || update.playerIndex < 0 || update.playerIndex >= 8 ||
             stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
