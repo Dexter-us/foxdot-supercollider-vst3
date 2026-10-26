@@ -176,6 +176,14 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self.add(node.lineno, "Player " + node.value.id + ' only supports .stop() in this build.')
         self.generic_visit(node)
 
+    def visit_Subscript(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id == 'P':
+            if isinstance(node.slice, ast.Slice):
+                self.add(node.lineno, 'P[...] currently supports finite item lists only; slice-based generation is not supported.')
+            elif any(isinstance(item, ast.Constant) and isinstance(item.value, str) for item in ast.walk(node.slice)):
+                self.add(node.lineno, 'String sample patterns are not included yet; sample support is deferred.')
+        self.generic_visit(node)
+
     def visit_BinOp(self, node):
         if isinstance(node.op, ast.RShift) and isinstance(node.left, ast.Name) and isinstance(node.right, ast.Call):
             player = node.left.id
@@ -297,6 +305,17 @@ class _FoxDotScaleNamespace:
         self.blues = 'blues'
 
 Scale = _FoxDotScaleNamespace()
+
+class _FoxDotPatternLiteral:
+    def __getitem__(self, items):
+        if isinstance(items, slice):
+            raise ValueError('P[...] currently supports finite item lists, not slice ranges')
+        values = list(items) if isinstance(items, tuple) else [items]
+        if len(values) > 256:
+            raise ValueError('P[...] is limited to 256 literal items')
+        return values
+
+P = _FoxDotPatternLiteral()
 
 def reverse(pattern):
     return list(reversed(pattern))

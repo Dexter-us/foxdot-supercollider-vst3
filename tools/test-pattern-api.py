@@ -74,6 +74,14 @@ assert namespace['interleave']([1, 2, 3], [None, 9], [4]) == [1, None, 4, 2, 9, 
 assert namespace['transpose']([60, None, [64, 67]], 12) == [72, None, [76, 79]]
 euclidean = namespace['euclid'](3, 8, 36, 1)
 assert len(euclidean) == 8 and euclidean.count(36) == 3
+fox_literal = namespace['P'][0, 2, None, (3, 5), 7]
+assert fox_literal == [0, 2, None, (3, 5), 7]
+try:
+    namespace['P'][slice(0, 8)]
+except ValueError as error:
+    assert 'finite item lists' in str(error)
+else:
+    raise AssertionError('P slice ranges must be rejected rather than guessed')
 namespace['play'](namespace['transpose']([60, None, [62, 65]], 12), step=0.5)
 assert len(namespace['_dexter_events']) == 3
 namespace['_dexter_updates'].clear()
@@ -143,6 +151,8 @@ test_embedded_synthdef()
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
 assert len(legacy) == 1 and len(legacy[0]) == 12
+fox_literal_rows = run_script('p1 >> saw(P[0, 2, None, (3, 5), 7], dur=0.5, oct=5, sus=0.4)\n')
+assert len(fox_literal_rows) == 1 and fox_literal_rows[0][5] == '5', fox_literal_rows
 assert legacy[0][5] == '2' and legacy[0][6] == '0'
 assert legacy[0][7] == '1.0' and legacy[0][8] == '0.0'
 assert legacy[0][10] == '0.0' and legacy[0][11] == '0.25'
@@ -162,6 +172,9 @@ example10Rows = run_example('10-pattern-transformations.py')
 assert len(example10Rows) == 2 and all(len(row) == 12 for row in example10Rows)
 assert example10Rows[0][5] == '7' and example10Rows[0][6] == '2'
 assert example10Rows[1][5] == '4' and example10Rows[1][6] == '3'
+example11Rows = run_example('11-foxdot-pattern-literals.py')
+assert len(example11Rows) == 2 and all(len(row) == 12 for row in example11Rows)
+assert example11Rows[0][5] == '7' and example11Rows[1][5] == '2'
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
@@ -171,11 +184,11 @@ assert p1[10] == '0.0' and p1[11] == '0.25'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
 assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
 assert p2[10] == '0.25' and p2[11] == '0.24'
-supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np1.stop()\n')
+supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
-unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'room', 'Sample-string'):
+unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\nP["x-o"]\nP[0:8]\n')
+for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'room', 'Sample-string', 'String sample patterns', 'slice-based generation'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
@@ -183,4 +196,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-10.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-11.')
