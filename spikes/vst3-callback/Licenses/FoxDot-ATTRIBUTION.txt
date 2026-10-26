@@ -1,0 +1,7 @@
+FoxDot compatibility attribution
+
+This plugin includes an initial compatibility layer based on the FoxDot live-coding interface and sound definitions. FoxDot is available at https://github.com/Qirky/FoxDot.
+
+FoxDot-derived adaptation in this plugin is distributed under the Creative Commons Attribution-ShareAlike 4.0 International license (CC BY-SA 4.0). The complete license text is included as FoxDot-CC-BY-SA-4.0.txt.
+
+This plugin does not bundle FoxDot's OSC server, external clock thread, or sample library. The compatibility layer translates supported player/tempo expressions to the plugin's embedded SuperCollider engine.

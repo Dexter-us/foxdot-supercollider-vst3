@@ -6,3 +6,6 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 07-independent-players.py shows separate p1 and p2 parts; edit or stop one without replacing the other.
 
 08-synths-and-controls.py demonstrates oscillator choices and per-player amp, pan, cutoff, and echo settings. These settings shape the plugin's internal stereo audio; MIDI output remains note events.
+
+
+09-foxdot-core.py demonstrates the initial direct-compatibility subset: Clock.bpm, Scale.default.set(...), p1 >> saw(...), p2 >> pulse(...), cyclic dur values, and per-player oct/sus controls. It uses embedded SuperCollider oscillator UGens and does not start the FoxDot server clock or send OSC. FoxDot sample strings and the wider synth library are not included yet.

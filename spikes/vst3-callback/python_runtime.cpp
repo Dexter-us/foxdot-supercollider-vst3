@@ -94,27 +94,65 @@ def tempo(bpm):
         raise ValueError('tempo must be from 20 to 300 BPM')
     _dexter_bpm = bpm
 
+class _FoxDotClock:
+    def __getattr__(self, name):
+        if name == 'bpm':
+            return _dexter_bpm
+        if name == 'meter':
+            return (4, 4)
+        raise ValueError('Clock.' + str(name) + ' is not supported in the embedded clock')
+    def __setattr__(self, name, value):
+        if name == 'bpm':
+            tempo(value)
+            return
+        if name == 'meter' and tuple(value) == (4, 4):
+            return
+        raise AttributeError('Clock.' + str(name) + ' is not supported in the embedded clock')
+
+Clock = _FoxDotClock()
+
+_SCALES = {
+    'major': (0, 2, 4, 5, 7, 9, 11),
+    'minor': (0, 2, 3, 5, 7, 8, 10),
+    'natural_minor': (0, 2, 3, 5, 7, 8, 10),
+    'aeolian': (0, 2, 3, 5, 7, 8, 10),
+    'dorian': (0, 2, 3, 5, 7, 9, 10),
+    'mixolydian': (0, 2, 4, 5, 7, 9, 10),
+    'major_pentatonic': (0, 2, 4, 7, 9),
+    'minor_pentatonic': (0, 3, 5, 7, 10),
+    'blues': (0, 3, 5, 6, 7, 10),
+}
+
+def _normalize_scale_name(name):
+    return str(name).strip().lower().replace(' ', '_').replace('-', '_')
+
 def scale(name='major', root=60):
     global _dexter_scale, _dexter_root
-    name = str(name).strip().lower().replace(' ', '_').replace('-', '_')
-    scales = {
-        'major': (0, 2, 4, 5, 7, 9, 11),
-        'minor': (0, 2, 3, 5, 7, 8, 10),
-        'natural_minor': (0, 2, 3, 5, 7, 8, 10),
-        'aeolian': (0, 2, 3, 5, 7, 8, 10),
-        'dorian': (0, 2, 3, 5, 7, 9, 10),
-        'mixolydian': (0, 2, 4, 5, 7, 9, 10),
-        'major_pentatonic': (0, 2, 4, 7, 9),
-        'minor_pentatonic': (0, 3, 5, 7, 10),
-        'blues': (0, 3, 5, 6, 7, 10),
-    }
-    if name not in scales:
+    name = _normalize_scale_name(name)
+    if name not in _SCALES:
         raise ValueError('unknown scale; choose major, minor, dorian, mixolydian, major_pentatonic, minor_pentatonic, or blues')
     root = int(root)
     if not 0 <= root <= 127:
         raise ValueError('scale root must be a MIDI note from 0 to 127')
-    _dexter_scale = scales[name]
+    _dexter_scale = _SCALES[name]
     _dexter_root = root
+
+class _FoxDotScaleDefault:
+    def set(self, name, root=None):
+        scale(name, _dexter_root if root is None else root)
+
+class _FoxDotScaleNamespace:
+    def __init__(self):
+        self.default = _FoxDotScaleDefault()
+        self.major = 'major'
+        self.minor = 'minor'
+        self.dorian = 'dorian'
+        self.mixolydian = 'mixolydian'
+        self.major_pentatonic = 'major_pentatonic'
+        self.minor_pentatonic = 'minor_pentatonic'
+        self.blues = 'blues'
+
+Scale = _FoxDotScaleNamespace()
 
 def reverse(pattern):
     return list(reversed(pattern))
@@ -164,34 +202,48 @@ def euclid(hits, steps, note=60, rotation=0):
             values.append(None)
     return rotate(values, rotation)
 
+def _timing_pattern(value, count, name):
+    if count == 0:
+        return []
+    values = [value] if isinstance(value, (int, float)) else list(value)
+    if not values:
+        raise ValueError(name + ' pattern cannot be empty')
+    return [float(values[index % len(values)]) for index in range(count)]
+
 def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
     if isinstance(notes, (int, float)):
         notes = [notes]
+    if isinstance(notes, str):
+        raise ValueError('FoxDot sample strings are not included yet; sample support is deferred')
     notes = list(notes)
-    step = float(step)
-    duration = step if duration is None else float(duration)
+    steps = _timing_pattern(step, len(notes), 'dur')
+    durations = _timing_pattern(step if duration is None else duration, len(notes), 'sus')
     offset = float(offset)
     velocity = int(velocity)
-    if step != step or duration != duration or offset != offset:
-        raise ValueError('step, duration, and offset must be finite numbers')
-    if step < 0.1 or step > 4096 or duration < 0.02 or duration > step:
-        raise ValueError('step must be at least 0.1 beats; duration must be 0.02 beats or longer and fit within the step')
-    if offset < 0.0 or offset > 4096 or offset + len(notes) * step > 4096:
+    if offset != offset or offset < 0.0 or offset > 4096:
+        raise ValueError('offset must be between 0 and 4096 beats')
+    if any(value != value or value < 0.1 or value > 4096.0 for value in steps):
+        raise ValueError('dur values must be between 0.1 and 4096 beats')
+    if any(value != value or value < 0.02 or value > stepValue + 1e-9 for value, stepValue in zip(durations, steps)):
+        raise ValueError('this embedded first pass requires each sus value to fit within its dur value')
+    totalBeats = sum(steps)
+    if offset + totalBeats > 4096:
         raise ValueError('offset and pattern length must fit within 4096 beats')
     if not 1 <= velocity <= 127:
         raise ValueError('velocity must be 1..127')
     if _dexter_slots + len(notes) > 256:
         raise ValueError('a pattern is limited to 256 step slots')
     additions = []
+    start = offset
     for i, item in enumerate(notes):
         if item is None:
+            start += steps[i]
             continue
         chord = list(item) if isinstance(item, (list, tuple)) else [item]
         if len(chord) > 8:
             raise ValueError('a chord can contain at most 8 notes')
-        start = offset + i * step
         for note in chord:
             note = int(note)
             if degrees:
@@ -199,12 +251,13 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
                 note = _dexter_root + octave * 12 + _dexter_scale[degree]
             if not 0 <= note <= 127:
                 raise ValueError('notes must resolve to MIDI pitches 0..127')
-            additions.append((start, duration, note, velocity))
+            additions.append((start, durations[i], note, velocity))
+        start += steps[i]
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
-    points = sorted([(start, 1, note) for start, dur, note, _ in candidate] +
-                    [(start + dur, -1, note) for start, dur, note, _ in candidate])
+    points = sorted([(beat, 1, note) for beat, dur, note, _ in candidate] +
+                    [(beat + dur, -1, note) for beat, dur, note, _ in candidate])
     active = 0
     active_pitches = set()
     for beat, delta, note in points:
@@ -220,12 +273,12 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
             active_pitches.add(note)
     _dexter_events.extend(additions)
     _dexter_slots += len(notes)
-    _dexter_length = max(_dexter_length, offset + len(notes) * step)
+    _dexter_length = max(_dexter_length, offset + totalBeats)
 
 class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
-                 cutoff=20000.0, echo=0.0, delay=0.25):
+                 cutoff=20000.0, echo=0.0, delay=0.25, scaleName=None):
         self.notes = notes
         self.step = step
         self.duration = duration
@@ -235,6 +288,7 @@ class PlayerPattern:
         if synth not in ('sine', 'triangle', 'saw', 'square'):
             raise ValueError('synth must be sine, triangle, saw, or square')
         self.synth = synth
+        self.scaleName = scaleName
         self.amp = float(amp)
         self.pan = float(pan)
         self.cutoff = float(cutoff)
@@ -257,29 +311,78 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
                         synth, amp, pan, cutoff, echo, delay)
 
+def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
+              amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25,
+              velocity=100, rate=0.0):
+    oct = int(oct)
+    if not 0 <= oct <= 10:
+        raise ValueError('oct must be from 0 to 10 in the embedded FoxDot subset')
+    scaleName = None if scale is None else _normalize_scale_name(scale)
+    if scaleName is not None and scaleName not in _SCALES:
+        raise ValueError('unsupported FoxDot scale: ' + str(scale))
+    degreesPerOctave = len(_SCALES[scaleName]) if scaleName is not None else len(_dexter_scale)
+    shift = (oct - 5) * degreesPerOctave
+    def shift_note(note):
+        if note is None:
+            return None
+        if isinstance(note, (list, tuple)):
+            return [shift_note(value) for value in note]
+        return int(note) + shift
+    if isinstance(notes, (int, float)):
+        notes = [notes]
+    if isinstance(notes, str):
+        raise ValueError('FoxDot sample strings are not included yet; sample support is deferred')
+    notes = [shift_note(note) for note in notes]
+    return PlayerPattern(notes, dur, dur if sus is None else sus, velocity,
+                         0.0, True, synthName, amp, pan, cutoff, echo, delay,
+                         scaleName)
+
+def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
+        pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0):
+    return _fox_wave('saw', notes, dur, oct, sus, scale, amp, pan, cutoff,
+                     echo, delay, velocity, rate)
+
+def pulse(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
+          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0):
+    return _fox_wave('square', notes, dur, oct, sus, scale, amp, pan, cutoff,
+                     echo, delay, velocity, rate)
+
+def sine(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
+         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0):
+    return _fox_wave('sine', notes, dur, oct, sus, scale, amp, pan, cutoff,
+                     echo, delay, velocity, rate)
+
+def triangle(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
+             pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0):
+    return _fox_wave('triangle', notes, dur, oct, sus, scale, amp, pan, cutoff,
+                     echo, delay, velocity, rate)
+
 class Player:
     def __init__(self, number):
         self.number = number
 
     def __rshift__(self, pattern):
         global _dexter_events, _dexter_length, _dexter_slots
-        global _dexter_default_touched
+        global _dexter_default_touched, _dexter_scale, _dexter_root
         if not isinstance(pattern, PlayerPattern):
             raise TypeError('assign sequence(...) to a player using >>')
         saved = (_dexter_events, _dexter_length, _dexter_slots,
-                 _dexter_default_touched)
+                 _dexter_default_touched, _dexter_scale, _dexter_root)
         _dexter_events = []
         _dexter_length = 1.0
         _dexter_slots = 0
         _dexter_default_touched = False
         try:
+            if pattern.scaleName is not None:
+                scale(pattern.scaleName, _dexter_root)
             play(pattern.notes, step=pattern.step, duration=pattern.duration,
                  velocity=pattern.velocity, offset=pattern.offset,
                  degrees=pattern.degrees)
             compiledLength = _dexter_length
             compiledEvents = list(_dexter_events)
         finally:
-            _dexter_events, _dexter_length, _dexter_slots, _dexter_default_touched = saved
+            _dexter_events, _dexter_length, _dexter_slots, _dexter_default_touched = saved[:4]
+            _dexter_scale, _dexter_root = saved[4], saved[5]
         playerIndex = self.number - 1
         if not 0 <= playerIndex < 8:
             raise ValueError('player number must be 1..8')

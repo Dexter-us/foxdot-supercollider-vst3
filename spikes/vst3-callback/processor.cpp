@@ -795,7 +795,10 @@ private:
                 found->releasing = false;
                 if (found->synth) {
                     Graph_SetControl(found->synth, 1, found->frequencyHz);
-                    Node_SetRun(&found->synth->mNode, note.synthIndex == 0 ? 1 : 0);
+                    for (int mode = 0; mode < 4; ++mode)
+                        Graph_SetControl(found->synth, 2 + mode,
+                                         note.synthIndex == mode ? 1.0f : 0.0f);
+                    Node_SetRun(&found->synth->mNode, 1);
                 }
             }
             found->velocity = note.velocity;
@@ -878,35 +881,6 @@ private:
             voice = {};
     }
 
-    static float polyBlep(double phase, double step) {
-        if (phase < step) {
-            phase /= step;
-            return static_cast<float>(phase + phase - phase * phase - 1.0);
-        }
-        if (phase > 1.0 - step) {
-            phase = (phase - 1.0) / step;
-            return static_cast<float>(phase * phase + phase + phase + 1.0);
-        }
-        return 0.0f;
-    }
-
-    float alternateOscillatorSample(const AudioVoice& voice, std::uint64_t sample) const {
-        const double cycles = std::fmod(
-            static_cast<double>(sample - voice.startSample) * voice.frequencyHz / sampleRate_,
-            1.0);
-        const double phase = cycles < 0.0 ? cycles + 1.0 : cycles;
-        const double step = std::min(0.49, static_cast<double>(voice.frequencyHz) / sampleRate_);
-        if (voice.synthIndex == 1)
-            return static_cast<float>(2.0 * std::asin(std::sin(2.0 * kPi * phase)) / kPi);
-        if (voice.synthIndex == 2)
-            return static_cast<float>(2.0 * phase - 1.0 - polyBlep(phase, step));
-        double halfCycle = phase + 0.5;
-        if (halfCycle >= 1.0)
-            halfCycle -= 1.0;
-        const double square = phase < 0.5 ? 1.0 : -1.0;
-        return static_cast<float>(square + polyBlep(phase, step) - polyBlep(halfCycle, step));
-    }
-
     static std::size_t echoOffset(std::size_t player, std::size_t channel,
                                   std::size_t sample) {
         return (player * 2 + channel) * kMaxEchoBufferSamples + sample;
@@ -931,9 +905,7 @@ private:
                 const auto bus = static_cast<std::size_t>(kFirstAudioBus) + voiceIndex;
                 const auto offset = bus * static_cast<std::size_t>(world_->mBufLength) +
                                     static_cast<std::size_t>(sampleIndex);
-                const float source = voice.synthIndex == 0
-                    ? world_->mAudioBus[offset]
-                    : alternateOscillatorSample(voice, absoluteSample);
+                const float source = world_->mAudioBus[offset];
                 voice.filterState += voice.filterCoefficient * (source - voice.filterState);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
                 const float amplitude = voice.filterState * envelope * velocity * voice.amplitude;
@@ -1064,7 +1036,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.2",
+           "0.4.3",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

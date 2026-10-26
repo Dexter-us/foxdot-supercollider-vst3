@@ -235,7 +235,8 @@ foreach ($module in $requiredModules) {
         throw "The VST3 bundle is missing UGen module $module"
     }
 }
-foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt")) {
+foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/PYTHON-LICENSE.txt",
+        "Licenses/FoxDot-CC-BY-SA-4.0.txt", "Licenses/FoxDot-ATTRIBUTION.txt")) {
     if (-not (Test-Path (Join-Path $resourceRoot $license))) {
         throw "The VST3 bundle is missing license file $license"
     }
@@ -253,8 +254,8 @@ if (-not (Test-Path (Join-Path $portableDirectory "README.txt"))) {
     throw "The VST3 bundle is missing its Portable scripts folder"
 }
 $portableExamples = @(Get-ChildItem -Path $portableDirectory -Filter "*.py" -File)
-if ($portableExamples.Count -lt 8) {
-    throw "Expected at least eight packaged starter Python scripts in Portable; found $($portableExamples.Count)."
+if ($portableExamples.Count -lt 9) {
+    throw "Expected at least nine packaged starter Python scripts in Portable; found $($portableExamples.Count)."
 }
 
 $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |

@@ -2,6 +2,7 @@ import ast
 import builtins
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -98,6 +99,25 @@ def run_example(name):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read())
 
+def test_embedded_synthdef():
+    plugin_dir = os.path.dirname(os.path.abspath(sys.argv[1]))
+    repo_root = os.path.abspath(os.path.join(plugin_dir, '..', '..'))
+    generator = os.path.join(repo_root, 'spikes', 'direct-world', 'testdata', 'generate_tone.py')
+    header = os.path.join(plugin_dir, 'tone_synthdef.h')
+    with tempfile.TemporaryDirectory() as directory:
+        generated = os.path.join(directory, 'tone.scsyndef')
+        subprocess.run([sys.executable, generator, generated], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        generated_bytes = open(generated, 'rb').read()
+        header_text = open(header, encoding='utf-8').read()
+        embedded_bytes = bytes(int(value, 16) for value in
+                               re.findall(r'0x([0-9a-fA-F]{2})', header_text))
+        assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
+    for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse'):
+        assert ugen_name in generated_bytes, 'missing SuperCollider oscillator ' + repr(ugen_name)
+
+test_embedded_synthdef()
+
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
 assert len(legacy) == 1 and len(legacy[0]) == 12
 assert legacy[0][5] == '2' and legacy[0][6] == '0'
@@ -108,6 +128,13 @@ assert len(example7) == 2 and all(len(row) == 12 for row in example7)
 assert example7[0][5] == '6' and example7[1][5] == '2'
 assert example7[0][6] == '0' and example7[1][6] == '0'
 assert example7[0][10] == '0.0' and example7[0][11] == '0.25'
+example9 = run_example('09-foxdot-core.py')
+assert len(example9) == 2 and all(len(row) == 12 for row in example9)
+foxSaw, foxPulse = example9
+assert foxSaw[1] == '0' and foxSaw[3] == '96.0' and foxSaw[6] == '2'
+assert abs(float(foxSaw[7]) - 0.7) < 1e-6 and abs(float(foxSaw[8]) + 0.35) < 1e-6
+assert foxPulse[1] == '1' and foxPulse[3] == '96.0' and foxPulse[6] == '3'
+assert abs(float(foxPulse[7]) - 0.25) < 1e-6 and abs(float(foxPulse[8]) - 0.35) < 1e-6
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
@@ -117,4 +144,4 @@ assert p1[10] == '0.0' and p1[11] == '0.25'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
 assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
 assert p2[10] == '0.25' and p2[11] == '0.24'
-print('Smoke tests passed: wrapper execution and complete player-record serialization, patterns, oscillator modes, audio controls, and Examples 07/08.')
+print('Smoke tests passed: wrapper execution, FoxDot Clock/Scale/player syntax, dur patterns, SC oscillator modes, audio controls, and Examples 07/08/09.')
