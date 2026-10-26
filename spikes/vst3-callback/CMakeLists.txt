@@ -127,7 +127,7 @@ target_include_directories(dexter_sc_tone PRIVATE
   "${SC_SOURCE_DIR}/external_libraries/TLSF-2.4.6/src" "${CMAKE_CURRENT_SOURCE_DIR}"
   "${PYTHON_RUNTIME_DIR}" )
 target_compile_definitions(dexter_sc_tone PRIVATE
-  SC_AUDIO_API=SC_AUDIO_API_PORTAUDIO SC_MEMORY_ALIGNMENT=32 SC_FFT_GREEN NO_X11 NOVA_SIMD
+  SC_AUDIO_API=SC_AUDIO_API_PORTAUDIO SC_MEMORY_ALIGNMENT=32 SC_FFT_GREEN NO_X11 NOVA_SIMD NO_LIBSNDFILE
   )
 target_link_libraries(dexter_sc_tone PRIVATE sdk "${SC_LIBSCSYNTH}" "${SC_TLSF}" "${SC_PORTAUDIO}"
   ${CMAKE_DL_LIBS})
