@@ -36,8 +36,6 @@ $scSource = Join-Path $BuildRoot "deps/supercollider"
 $scBuild = Join-Path $BuildRoot "supercollider-build"
 $vst3Sdk = Join-Path $BuildRoot "deps/vst3sdk"
 $pythonRuntime = Join-Path $BuildRoot "deps/python-3.12-embed"
-$sndfileRoot = Join-Path $BuildRoot "deps/libsndfile-1.2.2-win64"
-$sndfileArchive = Join-Path $BuildRoot "deps/libsndfile-1.2.2-win64.zip"
 $pluginBuild = Join-Path $BuildRoot "plugin-build"
 
 function Invoke-Checked {
@@ -62,26 +60,6 @@ foreach ($tool in @("git", "cmake")) {
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $BuildRoot "deps") | Out-Null
 
-$sndfileUrl = "https://github.com/libsndfile/libsndfile/releases/download/1.2.2/libsndfile-1.2.2-win64.zip"
-$sndfileSha256 = "2173935c0c1ed13cf627951d34483f9d405ead2eb473190461c42ba220643a3f"
-if (-not (Test-Path $sndfileArchive)) {
-    Invoke-WebRequest -Uri $sndfileUrl -OutFile $sndfileArchive
-}
-$actualSndfileSha256 = (Get-FileHash -Path $sndfileArchive -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($actualSndfileSha256 -ne $sndfileSha256) {
-    throw "The downloaded libsndfile 1.2.2 Windows archive failed its SHA-256 check."
-}
-if (-not (Test-Path (Join-Path $sndfileRoot "bin/sndfile.dll"))) {
-    Expand-Archive -Path $sndfileArchive -DestinationPath (Join-Path $BuildRoot "deps") -Force
-}
-foreach ($sndfileRequiredFile in @("bin/sndfile.dll", "include/sndfile.h", "lib/sndfile.lib")) {
-    if (-not (Test-Path (Join-Path $sndfileRoot $sndfileRequiredFile))) {
-        throw "The pinned libsndfile package is missing $sndfileRequiredFile."
-    }
-}
-Write-Host "Prepared pinned libsndfile 1.2.2 runtime and import library."
-
-$pythonVersion = "3.12.10"
 $pythonArchive = Join-Path $BuildRoot "deps/python-3.12-embed-amd64.zip"
 if (-not (Test-Path (Join-Path $pythonRuntime "python312.dll"))) {
     New-Item -ItemType Directory -Force -Path $pythonRuntime | Out-Null
@@ -169,10 +147,7 @@ try {
         "-DSC_QT=OFF",
         "-DSC_IDE=OFF",
         "-DSC_DOC_RENDER=OFF",
-        "-DNO_LIBSNDFILE=OFF",
-        "-DSNDFILE_INCLUDE_DIR=$(Join-Path $sndfileRoot 'include')",
-        "-DSNDFILE_LIBRARY=$(Join-Path $sndfileRoot 'lib/sndfile.lib')",
-        "-DSNDFILE_LIBRARY_DIR=$(Join-Path $sndfileRoot 'bin')",
+        "-DNO_LIBSNDFILE=ON",
         "-DFFT_GREEN=ON",
         "-DLIBSCSYNTH=OFF",
         "-DSTATIC_PLUGINS=OFF",
@@ -194,11 +169,11 @@ finally {
 Invoke-Checked "cmake" @(
     "--build", $scBuild,
     "--config", "Release",
-    "--target", "libscsynth", "BinaryOpUGens", "ChaosUGens", "DelayUGens", "DiskIO_UGens", "DemandUGens", "DemoUGens", "DynNoiseUGens", "FilterUGens", "GendynUGens", "GrainUGens", "IOUGens", "LFUGens", "MulAddUGens", "NoiseUGens", "OscUGens", "PanUGens", "PhysicalModelingUGens", "ReverbUGens", "TestUGens", "TriggerUGens", "UIUGens", "UnaryOpUGens", "UnpackFFTUGens", "FFT_UGens", "PV_ThirdParty", "ML_UGens",
+    "--target", "libscsynth", "BinaryOpUGens", "ChaosUGens", "DelayUGens", "DemandUGens", "DemoUGens", "DynNoiseUGens", "FilterUGens", "GendynUGens", "GrainUGens", "IOUGens", "LFUGens", "MulAddUGens", "NoiseUGens", "OscUGens", "PanUGens", "PhysicalModelingUGens", "ReverbUGens", "TestUGens", "TriggerUGens", "UIUGens", "UnaryOpUGens", "UnpackFFTUGens", "FFT_UGens", "PV_ThirdParty", "ML_UGens",
     "--", "/m:$BuildJobs"
 )
 
-$requiredModules = @("BinaryOpUGens.scx", "ChaosUGens.scx", "DelayUGens.scx", "DiskIO_UGens.scx", "DemandUGens.scx", "DemoUGens.scx", "DynNoiseUGens.scx", "FilterUGens.scx", "GendynUGens.scx", "GrainUGens.scx", "IOUGens.scx", "LFUGens.scx", "MulAddUGens.scx", "NoiseUGens.scx", "OscUGens.scx", "PanUGens.scx", "PhysicalModelingUGens.scx", "ReverbUGens.scx", "TestUGens.scx", "TriggerUGens.scx", "UIUGens.scx", "UnaryOpUGens.scx", "UnpackFFTUGens.scx", "FFT_UGens.scx", "PV_ThirdParty.scx", "ML_UGens.scx")
+$requiredModules = @("BinaryOpUGens.scx", "ChaosUGens.scx", "DelayUGens.scx", "DemandUGens.scx", "DemoUGens.scx", "DynNoiseUGens.scx", "FilterUGens.scx", "GendynUGens.scx", "GrainUGens.scx", "IOUGens.scx", "LFUGens.scx", "MulAddUGens.scx", "NoiseUGens.scx", "OscUGens.scx", "PanUGens.scx", "PhysicalModelingUGens.scx", "ReverbUGens.scx", "TestUGens.scx", "TriggerUGens.scx", "UIUGens.scx", "UnaryOpUGens.scx", "UnpackFFTUGens.scx", "FFT_UGens.scx", "PV_ThirdParty.scx", "ML_UGens.scx")
 $moduleFiles = foreach ($module in $requiredModules) {
     $moduleCandidates = @(Get-ChildItem -Path $scBuild -Filter $module -File -Recurse)
     $releaseMatch = @($moduleCandidates | Where-Object { $_.FullName -match "[\\/]Release[\\/]" })
@@ -230,9 +205,6 @@ Invoke-Checked "cmake" @(
     "-DSC_BUILD_DIR=$scBuild",
     "-DSC_UGEN_PLUGIN_PATH=$ugenPluginPath",
     "-DPYTHON_RUNTIME_DIR=$pythonRuntime",
-    "-DSNDFILE_LIBRARY=$(Join-Path $sndfileRoot 'lib/sndfile.lib')",
-    "-DSNDFILE_INCLUDE_DIR=$(Join-Path $sndfileRoot 'include')",
-    "-DSNDFILE_DLL_PATH=$(Join-Path $sndfileRoot 'bin/sndfile.dll')"
     "-DSMTG_RUN_VST_VALIDATOR=OFF"
 )
 Invoke-Checked "cmake" @(
@@ -247,16 +219,6 @@ $bundle = Get-ChildItem -Path (Join-Path $pluginBuild "VST3") -Filter "dexter_sc
 if (-not $bundle) {
     throw "The VST3 bundle was not produced under $pluginBuild"
 }
-$pluginBinaryDirectory = Join-Path $bundle.FullName "Contents/x86_64-win"
-New-Item -ItemType Directory -Force -Path $pluginBinaryDirectory | Out-Null
-$sndfileRuntimeDlls = @(Get-ChildItem -Path (Join-Path $sndfileRoot "bin") -Filter "*.dll" -File)
-if (-not ($sndfileRuntimeDlls | Where-Object { $_.Name -ieq "sndfile.dll" })) {
-    throw "The pinned libsndfile package is missing sndfile.dll."
-}
-foreach ($runtimeDll in $sndfileRuntimeDlls) {
-    Copy-Item -Path $runtimeDll.FullName -Destination $pluginBinaryDirectory -Force
-}
-Write-Host "Staged $($sndfileRuntimeDlls.Count) libsndfile runtime DLL(s) beside the VST3 binary."
 
 $portableDirectory = Join-Path $bundle.FullName "Portable"
 New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null
@@ -273,7 +235,7 @@ foreach ($module in $requiredModules) {
         throw "The VST3 bundle is missing UGen module $module"
     }
 }
-foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/libsndfile-LGPL-2.1.txt", "Licenses/Boost-1.0.txt", "Licenses/PYTHON-LICENSE.txt",
+foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/Boost-1.0.txt", "Licenses/PYTHON-LICENSE.txt",
         "Licenses/FoxDot-CC-BY-SA-4.0.txt", "Licenses/FoxDot-ATTRIBUTION.txt")) {
     if (-not (Test-Path (Join-Path $resourceRoot $license))) {
         throw "The VST3 bundle is missing license file $license"
@@ -284,9 +246,6 @@ foreach ($pythonFile in @("Python/python312.dll", "Python/python3.dll", "Python/
     if (-not (Test-Path (Join-Path $resourceRoot $pythonFile))) {
         throw "The VST3 bundle is missing portable Python runtime file $pythonFile"
     }
-}
-if (-not (Test-Path (Join-Path $resourceRoot "SCPlugins/sndfile.dll"))) {
-    throw "The VST3 bundle is missing libsndfile's runtime DLL."
 }
 if (-not (Test-Path (Join-Path $resourceRoot "Licenses/PYTHON-LICENSE.txt"))) {
     throw "The VST3 bundle is missing Python's license file"

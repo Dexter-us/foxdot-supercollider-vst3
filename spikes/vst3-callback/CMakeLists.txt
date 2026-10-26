@@ -6,9 +6,6 @@ set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")
 set(SC_BUILD_DIR "" CACHE PATH "Path to configured SuperCollider build")
 set(SC_UGEN_PLUGIN_PATH "" CACHE PATH "Directory containing required SuperCollider UGen modules")
 set(PYTHON_RUNTIME_DIR "" CACHE PATH "Directory containing the portable CPython embeddable runtime")
-set(SNDFILE_LIBRARY "" CACHE FILEPATH "libsndfile import library used by the embedded SuperCollider build")
-set(SNDFILE_INCLUDE_DIR "" CACHE PATH "libsndfile headers used by the embedded SuperCollider build")
-set(SNDFILE_DLL_PATH "" CACHE FILEPATH "Bundled Windows libsndfile runtime DLL")
 if(NOT EXISTS "${VST3_SDK_ROOT}/CMakeLists.txt")
   message(FATAL_ERROR "Set VST3_SDK_ROOT")
 endif()
@@ -24,21 +21,11 @@ endif()
 if(NOT IS_DIRECTORY "${SC_UGEN_PLUGIN_PATH}")
   message(FATAL_ERROR "Set SC_UGEN_PLUGIN_PATH to the built SuperCollider UGen modules directory")
 endif()
-if(NOT EXISTS "${SNDFILE_LIBRARY}")
-  message(FATAL_ERROR "Set SNDFILE_LIBRARY to the libsndfile import library")
-endif()
-if(NOT EXISTS "${SNDFILE_INCLUDE_DIR}/sndfile.h")
-  message(FATAL_ERROR "Set SNDFILE_INCLUDE_DIR to the directory containing sndfile.h")
-endif()
-if(NOT EXISTS "${SNDFILE_DLL_PATH}")
-  message(FATAL_ERROR "Set SNDFILE_DLL_PATH to the bundled sndfile.dll")
-endif()
 
 set(SC_UGEN_MODULE_FILES
   "${SC_UGEN_PLUGIN_PATH}/BinaryOpUGens.scx"
   "${SC_UGEN_PLUGIN_PATH}/ChaosUGens.scx"
   "${SC_UGEN_PLUGIN_PATH}/DelayUGens.scx"
-  "${SC_UGEN_PLUGIN_PATH}/DiskIO_UGens.scx"
   "${SC_UGEN_PLUGIN_PATH}/DemandUGens.scx"
   "${SC_UGEN_PLUGIN_PATH}/DemoUGens.scx"
   "${SC_UGEN_PLUGIN_PATH}/DynNoiseUGens.scx"
@@ -68,9 +55,6 @@ foreach(SC_UGEN_MODULE_FILE IN LISTS SC_UGEN_MODULE_FILES)
 endforeach()
 if(NOT EXISTS "${SC_SOURCE_DIR}/COPYING")
   message(FATAL_ERROR "SuperCollider COPYING license file not found in SC_SOURCE_DIR")
-endif()
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/libsndfile-LGPL-2.1.txt")
-  message(FATAL_ERROR "libsndfile LGPL license file is missing")
 endif()
 if(NOT IS_DIRECTORY "${PYTHON_RUNTIME_DIR}")
   message(FATAL_ERROR "Set PYTHON_RUNTIME_DIR to the extracted Windows CPython 3.12 embeddable runtime")
@@ -127,16 +111,7 @@ smtg_target_add_plugin_resources(dexter_sc_tone
 smtg_target_add_plugin_resources(dexter_sc_tone
   OUTPUT_SUBDIRECTORY "SCPlugins"
   RESOURCES ${SC_UGEN_MODULE_FILES})
-get_filename_component(SNDFILE_RUNTIME_DIR "${SNDFILE_DLL_PATH}" DIRECTORY)
-file(GLOB SNDFILE_RUNTIME_DLLS CONFIGURE_DEPENDS "${SNDFILE_RUNTIME_DIR}/*.dll")
-if(NOT SNDFILE_RUNTIME_DLLS)
-  message(FATAL_ERROR "No libsndfile runtime DLLs were found in ${SNDFILE_RUNTIME_DIR}")
-endif()
-smtg_target_add_plugin_resources(dexter_sc_tone
-  OUTPUT_SUBDIRECTORY "SCPlugins"
-  RESOURCES ${SNDFILE_RUNTIME_DLLS})
 smtg_target_add_plugin_resource(dexter_sc_tone "${SC_SOURCE_DIR}/COPYING" "Licenses")
-smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/libsndfile-LGPL-2.1.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/Boost-1.0.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${VST3_SDK_ROOT}/LICENSE.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${PYTHON_RUNTIME_DIR}/PYTHON-LICENSE.txt" "Licenses")
@@ -150,12 +125,12 @@ target_include_directories(dexter_sc_tone PRIVATE
   "${SC_SOURCE_DIR}/external_libraries/nova-simd" "${SC_SOURCE_DIR}/external_libraries/nova-tt"
   "${SC_SOURCE_DIR}/external_libraries/boost_sync/include" "${SC_SOURCE_DIR}/external_libraries/boost"
   "${SC_SOURCE_DIR}/external_libraries/TLSF-2.4.6/src" "${CMAKE_CURRENT_SOURCE_DIR}"
-  "${PYTHON_RUNTIME_DIR}" "${SNDFILE_INCLUDE_DIR}")
+  "${PYTHON_RUNTIME_DIR}" )
 target_compile_definitions(dexter_sc_tone PRIVATE
   SC_AUDIO_API=SC_AUDIO_API_PORTAUDIO SC_MEMORY_ALIGNMENT=32 SC_FFT_GREEN NO_X11 NOVA_SIMD
   )
 target_link_libraries(dexter_sc_tone PRIVATE sdk "${SC_LIBSCSYNTH}" "${SC_TLSF}" "${SC_PORTAUDIO}"
-  "${SNDFILE_LIBRARY}" ${CMAKE_DL_LIBS})
+  ${CMAKE_DL_LIBS})
 if(WIN32)
   target_link_libraries(dexter_sc_tone PRIVATE shell32 comdlg32 winmm ole32 uuid ws2_32)
 elseif(UNIX AND NOT APPLE)

@@ -43,17 +43,8 @@
 namespace {
 std::mutex scLibraryLifecycleMutex;
 std::atomic<unsigned long long> nextScriptNamespace{1};
-#if defined(_WIN32)
-HMODULE sndfileModuleHandle = nullptr;
-#endif
 Steinberg::ModuleTerminator cleanupSuperCollider([] {
     deinitialize_library();
-#if defined(_WIN32)
-    if (sndfileModuleHandle) {
-        FreeLibrary(sndfileModuleHandle);
-        sndfileModuleHandle = nullptr;
-    }
-#endif
 });
 
 std::filesystem::path pluginBinaryPath() {
@@ -891,17 +882,6 @@ private:
         std::error_code pathError;
         if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError))
             return false;
-#if defined(_WIN32)
-        if (!sndfileModuleHandle) {
-            const auto sndfilePath = ugenPath / L"sndfile.dll";
-            sndfileModuleHandle = LoadLibraryW(sndfilePath.c_str());
-            if (!sndfileModuleHandle) {
-                setEditorStatus("Could not load bundled libsndfile (Windows error " +
-                                std::to_string(GetLastError()) + ").");
-                return false;
-            }
-        }
-#endif
         ugenPluginPath_ = ugenModuleSearchPath();
 
         try {
