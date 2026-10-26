@@ -208,6 +208,13 @@ def run_example(name):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read())
 
+initial_live_run = run_script('p1 >> saw([0, 2, 4], dur=0.5)\np2 >> pulse([0, None, 3], dur=0.25)\n')
+assert [row[1] for row in initial_live_run] == ['0', '1']
+edit_one_player = run_script('p1 >> saw([0, 4, 2], dur=0.5)\n')
+assert [row[1] for row in edit_one_player] == ['0']
+stop_one_player = run_script('p2.stop()\n')
+assert [row[1] for row in stop_one_player] == ['1'] and stop_one_player[0][2] == '1'
+
 def run_compatibility_check(script_text):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
@@ -278,6 +285,8 @@ assert [row[5] for row in example15Rows] == ['4', '2', '4', '4']
 example16Rows = run_example('16-bounded-pattern-slices.py')
 assert len(example16Rows) == 3 and all(len(row) == 12 for row in example16Rows)
 assert [row[5] for row in example16Rows] == ['8', '4', '2']
+example17Rows = run_example('17-live-player-edits.py')
+assert len(example17Rows) == 2 and [row[1] for row in example17Rows] == ['0', '1']
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 12 for row in example8)
 p1, p2 = example8
@@ -299,4 +308,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-16.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-17.')
