@@ -190,7 +190,8 @@ namespace['p1'] >> namespace['sequence']([60, None, 64], step=0.5, duration=0.4,
 update = namespace['_dexter_updates'][0]
 assert update[0] is False and len(update[3]) == 2
 assert update[4] == 3 and update[5] == 0.6 and update[6] == -0.25
-assert update[7] == 3200.0 and update[8] == 0.3 and update[9] == 0.2
+assert update[7] == 3200.0 and update[8] == 0.3 and update[9] == 0.0
+assert abs(update[3][0][6] - 0.2) < 1e-9
 assert update[19:25] == (3, 0.4, 0.8, 0.25, 4.0, 22.0)
 assert update[10] is False and update[11] is False
 assert update[12] == 0.01 and update[13] == 0.04
@@ -200,7 +201,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -219,8 +220,11 @@ def run_script(script_text, include_events=False, include_effects=False, include
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
+        decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
         if include_filters:
             return player_rows, filter_rows
+        if include_decay:
+            return player_rows, decay_rows
         if include_effects:
             return player_rows, effect_rows
         return (player_rows, event_rows) if include_events else player_rows
@@ -284,7 +288,7 @@ fox_literal_rows = run_script('p1 >> saw(P[0, 2, None, (3, 5), 7], dur=0.5, oct=
 assert len(fox_literal_rows) == 1 and fox_literal_rows[0][5] == '5', fox_literal_rows
 assert legacy[0][5] == '2' and legacy[0][6] == '0'
 assert legacy[0][7] == '1.0' and legacy[0][8] == '0.0'
-assert legacy[0][10] == '0.0' and legacy[0][11] == '0.25'
+assert legacy[0][10] == '0.0' and legacy[0][11] == '0.0'
 assert legacy[0][12] == '0' and legacy[0][13] == '0'
 assert legacy[0][14] == '0.01' and legacy[0][15] == '0.04'
 assert legacy[0][16] == '-' and legacy[0][17] == '-' and legacy[0][18] == '-'
@@ -293,7 +297,7 @@ example7 = run_example('07-independent-players.py')
 assert len(example7) == 2 and all(len(row) == 21 for row in example7)
 assert example7[0][5] == '6' and example7[1][5] == '2'
 assert example7[0][6] == '0' and example7[1][6] == '0'
-assert example7[0][10] == '0.0' and example7[0][11] == '0.25'
+assert example7[0][10] == '0.0' and example7[0][11] == '0.0'
 example9 = run_example('09-foxdot-core.py')
 assert len(example9) == 2 and all(len(row) == 21 for row in example9)
 foxSaw, foxPulse = example9
@@ -353,10 +357,20 @@ assert abs(float(linNoteEvents[1][1]) - 0.25) < 1e-9
 assert abs(float(linNoteEvents[2][1]) - 0.5625) < 1e-9
 assert abs(float(linNoteEvents[2][2]) - 0.2125) < 1e-9
 assert int(linNoteEvents[2][3]) == 67 and int(linNoteEvents[2][4]) == 89
-effectRows, effectEvents = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=var([0.1, 0.5], [1, 1]), delay=linvar([0.1, 0.5], [1, 1]), atk=var([0.01, 0.03], [1, 1]), rel=linvar([0.02, 0.1], [1, 1]))\n', include_events=True)
+effectRows, effectEvents = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=var([0.1, 0.5], [1, 1]), delay=linvar([0.0, 0.5], [1, 1]), delaytime=linvar([0.1, 0.5], [1, 1]), echomix=var([0.1, 0.5], [1, 1]), feedback=var([0.25, 0.45], [1, 1]), atk=var([0.01, 0.03], [1, 1]), rel=linvar([0.02, 0.1], [1, 1]))\n', include_events=True)
+foxdotEchoRows, foxdotDecayRows = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=0.5, decay=0.75, echomix=0.4, feedback=0.5)\n', include_decay=True)
+assert foxdotDecayRows[0][0] == 'E' and float(foxdotDecayRows[0][2]) == 0.75 and foxdotDecayRows[0][3] == '-'
+assert abs(float(foxdotEchoRows[0][10]) - 0.5) < 1e-9
+assert abs(float(foxdotDecayRows[0][4]) - 0.4) < 1e-9 and float(foxdotDecayRows[0][6]) == 0.5 and foxdotDecayRows[0][8] == '-'
+_, varDecayRows = run_script('p1 >> saw([0, 2], echo=0.5, decay=var([0.5, 1.5], [1, 1]), delay=linvar([0.1, 0.4], [1, 1]))\n', include_decay=True)
+assert varDecayRows[0][3] == 'v:0.5,1.5:1.0,1.0' and len(varDecayRows[0]) == 9
+assert varDecayRows[0][8] == 'l:0.1,0.4:1.0,1.0'
 assert len(effectRows) == 1 and len(effectRows[0]) == 21 and len(effectEvents) == 4
 assert effectRows[0][19] == 'v:0.1,0.5:1.0,1.0'
 assert effectRows[0][20] == 'l:0.1,0.5:1.0,1.0'
+assert abs(float(effectEvents[0][7]) - 0.0) < 1e-9
+assert abs(float(effectEvents[1][7])) < 1e-9
+assert abs(float(effectEvents[2][7])) < 1e-9
 assert abs(float(effectEvents[0][5]) - 0.01) < 1e-9 and abs(float(effectEvents[0][6]) - 0.02) < 1e-9
 assert abs(float(effectEvents[1][5]) - 0.01) < 1e-9 and abs(float(effectEvents[1][6]) - 0.06) < 1e-9
 assert abs(float(effectEvents[2][5]) - 0.03) < 1e-9 and abs(float(effectEvents[2][6]) - 0.1) < 1e-9
@@ -376,6 +390,8 @@ assert filterControls[0][8] == 'l:300.0,3000.0:2.0,2.0'
 assert filterControls[0][9] == 'v:0.35,0.7:2.0,2.0'
 assert filterControls[0][12] == 'l:500.0,1200.0:2.0,2.0'
 filterExampleRows, filterExampleControls = run_script(open(os.path.join(sys.argv[2], '24-foxdot-filters.py'), encoding='utf-8').read(), include_filters=True)
+legacyEchoExample = run_example('25-echo-decay-compat.py')
+assert len(legacyEchoExample) == 1 and legacyEchoExample[0][1] == '0'
 assert len(filterExampleRows) == 3 and [row[1] for row in filterExampleRows] == ['0', '1', '2']
 assert len(filterExampleControls) == 3 and all(len(row) == 14 for row in filterExampleControls)
 assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
@@ -387,11 +403,11 @@ assert len(example8) == 2 and all(len(row) == 21 for row in example8)
 p1, p2 = example8
 assert p1[1] == '0' and p1[6] == '1' and abs(float(p1[7]) - 0.7) < 1e-6
 assert abs(float(p1[8]) + 0.4) < 1e-6 and p1[9] == '5000.0'
-assert p1[10] == '0.0' and p1[11] == '0.25'
+assert p1[10] == '0.0' and p1[11] == '0.0'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
 assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
 assert p2[10] == '0.25' and p2[11] == '0.24'
-supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35)\np1.stop()\n')
+supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
@@ -403,4 +419,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-24.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-25.')
