@@ -1710,7 +1710,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.31",
+           "0.4.32",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

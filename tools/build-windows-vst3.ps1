@@ -237,7 +237,8 @@ foreach ($module in $requiredModules) {
     }
 }
 foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/Boost-1.0.txt", "Licenses/PYTHON-LICENSE.txt",
-        "Licenses/FoxDot-CC-BY-SA-4.0.txt", "Licenses/FoxDot-ATTRIBUTION.txt")) {
+        "Licenses/FoxDot-CC-BY-SA-4.0.txt", "Licenses/FoxDot-ATTRIBUTION.txt",
+        "Licenses/Scintilla-Lexilla-License.txt")) {
     if (-not (Test-Path (Join-Path $resourceRoot $license))) {
         throw "The VST3 bundle is missing license file $license"
     }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.31)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.32)
 
 set(VST3_SDK_ROOT "" CACHE PATH "Path to Steinberg VST3 SDK checkout")
 set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")
@@ -100,6 +100,42 @@ find_library(SC_PORTAUDIO NAMES portaudio portaudio_static
   PATH_SUFFIXES Release RelWithDebInfo Debug
   NO_DEFAULT_PATH REQUIRED)
 
+if(WIN32)
+  include(FetchContent)
+  FetchContent_Declare(scintilla
+    GIT_REPOSITORY https://github.com/mirror/scintilla.git
+    GIT_TAG a1c86144eed9e3d2187e3a8b391d11ca909f00d2)
+  FetchContent_Declare(lexilla
+    GIT_REPOSITORY https://github.com/ScintillaOrg/lexilla.git
+    GIT_TAG 3e6f317eed854bc312b4c4453206189d381c7ae7)
+  FetchContent_MakeAvailable(scintilla lexilla)
+
+  file(GLOB SCINTILLA_CORE_SOURCES CONFIGURE_DEPENDS
+    "${scintilla_SOURCE_DIR}/src/*.cxx")
+  list(APPEND SCINTILLA_CORE_SOURCES
+    "${scintilla_SOURCE_DIR}/win32/HanjaDic.cxx"
+    "${scintilla_SOURCE_DIR}/win32/PlatWin.cxx"
+    "${scintilla_SOURCE_DIR}/win32/ScintillaWin.cxx")
+  add_library(dexter_scintilla STATIC ${SCINTILLA_CORE_SOURCES})
+  target_include_directories(dexter_scintilla PUBLIC
+    "${scintilla_SOURCE_DIR}/include"
+    PRIVATE "${scintilla_SOURCE_DIR}/src" "${scintilla_SOURCE_DIR}/win32")
+  target_compile_features(dexter_scintilla PUBLIC cxx_std_17)
+  target_compile_definitions(dexter_scintilla PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
+  file(GLOB LEXILLA_LEXER_SOURCES CONFIGURE_DEPENDS
+    "${lexilla_SOURCE_DIR}/lexers/*.cxx"
+    "${lexilla_SOURCE_DIR}/lexlib/*.cxx")
+  list(APPEND LEXILLA_LEXER_SOURCES "${lexilla_SOURCE_DIR}/src/Lexilla.cxx")
+  add_library(dexter_sc_lexilla STATIC ${LEXILLA_LEXER_SOURCES})
+  target_include_directories(dexter_sc_lexilla PUBLIC
+    "${lexilla_SOURCE_DIR}/include"
+    "${scintilla_SOURCE_DIR}/include"
+    PRIVATE "${lexilla_SOURCE_DIR}/lexlib")
+  target_compile_features(dexter_sc_lexilla PUBLIC cxx_std_17)
+  target_compile_definitions(dexter_sc_lexilla PRIVATE _CRT_SECURE_NO_DEPRECATE)
+endif()
+
 smtg_add_vst3plugin(dexter_sc_tone
   processor.cpp
   python_runtime.cpp
@@ -117,6 +153,7 @@ smtg_target_add_plugin_resource(dexter_sc_tone "${VST3_SDK_ROOT}/LICENSE.txt" "L
 smtg_target_add_plugin_resource(dexter_sc_tone "${PYTHON_RUNTIME_DIR}/PYTHON-LICENSE.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/FoxDot-CC-BY-SA-4.0.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/FoxDot-ATTRIBUTION.txt" "Licenses")
+smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/Scintilla-Lexilla-License.txt" "Licenses")
 target_compile_features(dexter_sc_tone PRIVATE cxx_std_17)
 target_include_directories(dexter_sc_tone PRIVATE
   "${SC_SOURCE_DIR}/include/common" "${SC_SOURCE_DIR}/common"
@@ -132,7 +169,10 @@ target_compile_definitions(dexter_sc_tone PRIVATE
 target_link_libraries(dexter_sc_tone PRIVATE sdk "${SC_LIBSCSYNTH}" "${SC_TLSF}" "${SC_PORTAUDIO}"
   ${CMAKE_DL_LIBS})
 if(WIN32)
-  target_link_libraries(dexter_sc_tone PRIVATE shell32 comdlg32 winmm ole32 uuid ws2_32)
+  target_include_directories(dexter_sc_tone PRIVATE
+    "${scintilla_SOURCE_DIR}/include" "${lexilla_SOURCE_DIR}/include")
+  target_link_libraries(dexter_sc_tone PRIVATE dexter_scintilla dexter_sc_lexilla
+    shell32 comdlg32 winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
 elseif(UNIX AND NOT APPLE)
   target_link_libraries(dexter_sc_tone PRIVATE m rt pthread)
 endif()
