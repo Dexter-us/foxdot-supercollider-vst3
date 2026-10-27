@@ -52,13 +52,14 @@ constexpr char kPythonKeywords[] =
     "while with yield False None True";
 constexpr char kFoxDotApiKeywords[] =
     "Clock Scale Root Player P PGroup var linvar play stop sine triangle saw pulse bass varsaw dirt jbass noise "
-    "dub growl soprano crunch lazer rave "
+    "dub growl soprano crunch lazer rave bell gong marimba pluck twang donk squish "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
     "echo delay mute unmute rate";
 constexpr char kFoxDotCompletions[] =
     "Clock P PGroup Player Root Scale amp cutoff delay dur echo linvar mute oct pan "
     "play p1 p2 p3 p4 p5 p6 p7 p8 pulse reverb resonance room saw sine stop strum "
-    "sus triangle unmute var bass varsaw dirt jbass noise dub growl soprano crunch lazer rave rate";
+    "sus triangle unmute var bass varsaw dirt jbass noise dub growl soprano crunch lazer rave "
+    "bell gong marimba pluck twang donk squish rate";
 
 std::mutex gScintillaMutex;
 std::size_t gScintillaViewCount = 0;
@@ -431,7 +432,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.34",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.35",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -589,6 +590,20 @@ private:
                 callTip = "lazer(notes, dur=1, oct=5, sus=1, rate=0, amp=1, pan=0)\nFoxDot VarSaw/LFSaw/Pulse patch";
             else if (name == "rave")
                 callTip = "rave(notes, dur=1, oct=5, sus=1, rate=0, amp=1, pan=0)\nGendy1 uses source rate minus 1 for ampdist";
+            else if (name == "bell")
+                callTip = "bell(notes, dur=1, oct=5, sus=1, rate=1, amp=1, pan=0)\nKlank resonator bank with a triggered strike";
+            else if (name == "gong")
+                callTip = "gong(notes, dur=1, oct=5, sus=1, amp=1, pan=0)\nDetuned Klank gong with a high-pass";
+            else if (name == "marimba")
+                callTip = "marimba(notes, dur=1, oct=5, sus=1, amp=1, pan=0)\nPink-noise strike into a four-partial Klank";
+            else if (name == "pluck")
+                callTip = "pluck(notes, dur=1, oct=5, sus=1, amp=1, pan=0)\nDetuned sine pair with a triggered decay";
+            else if (name == "twang")
+                callTip = "twang(notes, dur=1, oct=5, sus=1, rate=0, amp=1, pan=0)\nTriggered low-pass comb resonator";
+            else if (name == "donk")
+                callTip = "donk(notes, dur=1, oct=5, sus=1, rate=0, amp=1, pan=0)\nTriggered pair of Ringz resonators";
+            else if (name == "squish")
+                callTip = "squish(notes, dur=1, oct=5, sus=1, rate=0, amp=1, pan=0)\nPulse-fed Ringz resonator";
             else if (name == "var")
                 callTip = "var(values, durations=4)\nCycle values using FoxDot-style beat durations";
             else if (name == "linvar")

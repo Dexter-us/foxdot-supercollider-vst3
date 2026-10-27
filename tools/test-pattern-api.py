@@ -237,6 +237,10 @@ newSynthRows = run_script('p1 >> bass([0, 3, 5], dur=0.5)\np2 >> varsaw([0, 4], 
 assert len(newSynthRows) == 6
 assert [int(row[6]) for row in newSynthRows] == [4, 5, 5, 6, 7, 8]
 assert [float(row[21]) for row in newSynthRows] == [0.0, 0.25, 0.0, 0.0, 0.0, 0.0]
+resonatorSynthRows = run_script('p1 >> bell([0], rate=1)\np2 >> gong([0])\np3 >> marimba([0])\np4 >> pluck([0])\np5 >> twang([0], rate=1)\np6 >> donk([0])\np7 >> squish([0], rate=1)\n')
+assert len(resonatorSynthRows) == 7
+assert [int(row[6]) for row in resonatorSynthRows] == [15, 16, 17, 18, 19, 20, 21]
+assert [float(row[21]) for row in resonatorSynthRows] == [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0]
 
 def run_error_script(script_text):
     with tempfile.TemporaryDirectory() as directory:
@@ -329,7 +333,14 @@ def read_synthdef_manifest(data):
             input_count = read('>H')
             output_count = read('>H')
             read('>h')
-            offset += input_count * 4 + output_count
+            for _ in range(input_count):
+                source_index = read('>h')
+                read('>h')
+                assert source_index >= -1 and (source_index == -1 or source_index < len(ugens)), (
+                    'SynthDef UGen input refers to an invalid or forward graph node: ' +
+                    name + '/' + ugen_name)
+            for _ in range(output_count):
+                read('>B')
             ugens.append((ugen_name, input_count, rate))
         assert read('>H') == 0, 'unexpected SynthDef variants'
         graphs[name] = ugens
@@ -352,19 +363,31 @@ def test_embedded_synthdef():
                                re.findall(r'0x([0-9a-fA-F]{2})', header_text))
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
-    assert synthdef_version == 1 and len(graphs) == 12
+    assert synthdef_version == 1 and len(graphs) == 19
     assert ('LFSaw', 2, 2) in graphs['DexterDirt']
     assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
     assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
     assert ('Crackle', 1, 1) in graphs['DexterCrunch']
     assert ('Pulse', 2, 2) in graphs['DexterLazer']
     assert ('Gendy1', 10, 2) in graphs['DexterRave']
+    assert ('Klank', 49, 2) in graphs['DexterBell']
+    assert ('Klank', 49, 2) in graphs['DexterGong']
+    assert ('Klank', 16, 2) in graphs['DexterMarimba']
+    assert ('Trig1', 2, 2) in graphs['DexterBell']
+    assert ('PinkNoise', 0, 2) in graphs['DexterMarimba']
+    assert ('Decay', 2, 2) in graphs['DexterPluck']
+    assert ('CombL', 4, 2) in graphs['DexterTwang']
+    assert ('Ringz', 3, 2) in graphs['DexterDonk']
     for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse',
                       b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag',
                       b'DexterBass', b'DexterVarsaw', b'DexterDirt',
                       b'DexterJBass', b'DexterNoise', b'VarSaw',
                       b'DexterDub', b'DexterGrowl', b'DexterSoprano',
                       b'DexterCrunch', b'DexterLazer', b'DexterRave',
+                      b'DexterBell', b'DexterGong', b'DexterMarimba',
+                      b'DexterPluck', b'DexterTwang', b'DexterDonk',
+                      b'DexterSquish', b'Klank', b'Trig1', b'PinkNoise',
+                      b'Decay', b'CombL', b'Ringz',
                       b'LFSaw', b'LFNoise0', b'Vibrato', b'Crackle', b'Gendy1'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
     generator_text = open(generator, encoding='utf-8').read()
@@ -527,7 +550,7 @@ parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 14' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 21' in parse_source
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
 muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
 assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
@@ -565,9 +588,11 @@ example31 = run_example('31-bass-varsaw-synths.py')
 assert len(example31) == 2
 assert [int(row[6]) for row in example31] == [4, 5]
 assert [float(row[21]) for row in example31] == [8.0, 0.42]
+assert [float(row[14]) for row in example31] == [0.02, 0.02]
+assert [float(row[15]) for row in example31] == [0.14, 0.14]
 example32 = run_example('32-dirt-jbass-noise.py')
 assert len(example32) == 3
-assert [int(row[6]) for row in example32] == [6, 7, 8]
+assert [int(row[6]) for row in example32] == [7, 6, 8]
 example33 = run_example('33-dub-growl-soprano.py')
 assert len(example33) == 3
 assert [int(row[6]) for row in example33] == [9, 10, 11]
@@ -576,6 +601,10 @@ example34 = run_example('34-crunch-lazer-rave.py')
 assert len(example34) == 3
 assert [int(row[6]) for row in example34] == [12, 13, 14]
 assert [float(row[21]) for row in example34] == [0.0, 2.5, 2.0]
+example35 = run_example('35-resonant-bells.py')
+assert len(example35) == 3 and [int(row[6]) for row in example35] == [15, 17, 16]
+example36 = run_example('36-plucked-resonators.py')
+assert len(example36) == 4 and [int(row[6]) for row in example36] == [18, 19, 20, 21]
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
@@ -591,4 +620,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-34.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-36.')

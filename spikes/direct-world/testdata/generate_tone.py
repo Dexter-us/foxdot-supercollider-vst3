@@ -41,7 +41,7 @@ def ugen(name, rate, inputs, output_rates, special_index=0):
 
 data.extend(b"SCgf")
 i32(1)  # SynthDef version
-u16(12)  # DexterTone plus eleven embedded FoxDot patches
+u16(19)  # DexterTone plus eighteen embedded FoxDot patches
 string("DexterTone")
 constants = (0.0, 0.1, 0.0, 0.5, 1.0, 0.2, 0.005)
 u16(len(constants))
@@ -90,15 +90,21 @@ parameter_names = (("out", 0), ("freq", 1), ("sine", 2),
 parameters = (0.0, 440.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20000.0)
 constants = (0.0, 0.005, 0.1, 0.5, 1.0, 0.2, 0.005, 1.005, 0.0025, 0.004,
              0.25, 0.8, 0.85, 2.0, 1.95, 32.0, 4.0, 3.0, 20.0, 15.0,
-             1.5, 0.02, 0.04, 0.125, 12.0, 0.0625)
+             1.5, 0.02, 0.04, 0.125, 12.0, 0.0625, 0.001, 0.002, 0.008,
+             0.01, 0.03, 0.05, 0.07, 0.14, 0.7, 0.9, 1.2, 2.002, 2.49,
+             2.571, 3.05, 6.242, 9.6, 11.0, 12.49, 13.0, 16.0, 24.0, 0.8,
+             2.5, 8.0, 10.0, 0.015625, 0.000001, 0.3, 0.09, 1.002,
+             440.0, 4000.0, 0.007, 0.501, 0.004, 0.02, 0.04, 0.5,
+             4.0, 9.0)
 
-def begin_patch(name, patch_parameter_names=parameter_names):
+def begin_patch(name, patch_parameter_names=parameter_names,
+                patch_parameters=parameters):
     string(name)
     u16(len(constants))
     for value in constants:
         f32(value)
-    u16(len(parameters))
-    for value in parameters:
+    u16(len(patch_parameters))
+    for value in patch_parameters:
         f32(value)
     u16(len(patch_parameter_names))
     for parameter_name, index in patch_parameter_names:
@@ -127,6 +133,22 @@ def mouse_and_reverb(audio_ugen):
     send = out + 3
     ugen("BinaryOpUGen", 2, [(lowpass, 0), (lag, 0)], [2], 2)
     ugen("Out", 2, [(0, 6), (send, 0), (send, 0)], [])
+
+def const_input(value):
+    return (-1, constants.index(float(value)))
+
+def begin_trigger_patch(name):
+    trigger_parameters = (("out", 0), ("freq", 1), ("rate", 2),
+                          ("sus", 3), ("unused4", 4), ("unused5", 5),
+                          ("wetbus", 6), ("wetgain", 7), ("wetcutoff", 8),
+                          ("trigger", 9))
+    begin_patch(name, trigger_parameters, parameters + (0.0,))
+
+def klank_inputs(excitation, freqscale, freqoffset, decayscale, partials):
+    inputs = [(excitation, 0), freqscale, freqoffset, decayscale]
+    for ratio, level, ring_time in partials:
+        inputs.extend((const_input(ratio), const_input(level), const_input(ring_time)))
+    return inputs
 
 begin_patch("DexterBass", (("out", 0), ("freq", 1), ("rate", 2),
                            ("unused3", 3), ("unused4", 4), ("unused5", 5),
@@ -286,6 +308,113 @@ ugen("Gendy1", 2, [(1, 0), (-1, 4), (-1, 4), (-1, 4),
                    (-1, 24), (-1, 24)], [2])
 ugen("BinaryOpUGen", 2, [(3, 0), (-1, 3)], [2], 2)  # Gendy mul=amp/2
 mouse_and_reverb(4)
+finish_patch()
+
+begin_trigger_patch("DexterBell")
+bell_partials = list(zip(
+    (0.501, 1.0, 0.7, 2.002, 3.0, 9.6, 2.49, 11.0, 2.571, 3.05,
+     6.242, 12.49, 13.0, 16.0, 24.0),
+    (0.002, 0.1, 0.001, 0.008, 0.02, 0.004, 0.02, 0.04, 0.02, 0.005,
+     0.05, 0.05, 0.02, 0.03, 0.04),
+    (1.2, 0.9, 0.25, 0.14, 0.07) * 3))
+u16(13)
+ugen("Control", 1, [], [1] * 10)
+ugen("Trig1", 2, [(0, 9), const_input(0.001)], [2])
+ugen("BinaryOpUGen", 2, [(0, 2), const_input(4.0)], [2], 2)
+ugen("Klank", 2, klank_inputs(1, (0, 1), const_input(0.0), (2, 0),
+                               bell_partials), [2])
+ugen("BinaryOpUGen", 2, [(3, 0), const_input(4.0)], [2], 2)
+mouse_and_reverb(4)
+finish_patch()
+
+begin_trigger_patch("DexterGong")
+gong_partials = list(zip(
+    (0.501, 1.0, 0.8, 2.002, 3.0, 9.6, 2.49, 11.0, 2.571, 3.05,
+     6.242, 12.49, 13.0, 16.0, 24.0),
+    (0.002, 0.02, 0.001, 0.008, 0.02, 0.004, 0.02, 0.04, 0.02, 0.005,
+     0.05, 0.05, 0.02, 0.03, 0.04),
+    (1.2, 1.2, 1.2, 0.9, 0.9, 0.9, 0.25, 0.25, 0.25, 0.14,
+     0.14, 0.14, 0.07, 0.07, 0.07)))
+u16(17)
+ugen("Control", 1, [], [1] * 10)
+ugen("Trig1", 2, [(0, 9), const_input(0.001)], [2])
+ugen("SinOscFB", 2, [const_input(20.0), const_input(0.0)], [2])
+ugen("BinaryOpUGen", 2, [(2, 0), (1, 0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(4, 0), (0, 2)], [2], 2)
+ugen("Klank", 2, klank_inputs(3, (4, 0), (5, 0), const_input(4.0),
+                               gong_partials), [2])
+ugen("HPF", 2, [(6, 0), const_input(440.0)], [2])
+ugen("BinaryOpUGen", 2, [(7, 0), const_input(2.5)], [2], 2)
+mouse_and_reverb(8)
+finish_patch()
+
+begin_trigger_patch("DexterMarimba")
+marimba_partials = ((0.5, 0.5, 1.0), (1.0, 1.0, 1.0),
+                    (4.0, 1.0, 1.0), (9.0, 1.0, 1.0))
+u16(14)
+ugen("Control", 1, [], [1] * 10)
+ugen("Trig1", 2, [(0, 9), const_input(0.001)], [2])
+ugen("PinkNoise", 2, [], [2])
+ugen("BinaryOpUGen", 2, [(2, 0), (1, 0)], [2], 2)
+ugen("Klank", 2, klank_inputs(3, (0, 1), const_input(0.0),
+                               const_input(1.0), marimba_partials), [2])
+ugen("BinaryOpUGen", 2, [(4, 0), const_input(0.007)], [2], 2)
+mouse_and_reverb(5)
+finish_patch()
+
+begin_trigger_patch("DexterPluck")
+u16(19)
+ugen("Control", 1, [], [1] * 10)
+ugen("Trig1", 2, [(0, 9), const_input(0.001)], [2])
+ugen("BinaryOpUGen", 1, [(0, 3), const_input(4.0)], [1], 2)
+ugen("Decay", 2, [(1, 0), (2, 0)], [2])
+ugen("VarSaw", 2, [(0, 1), const_input(0.0), const_input(0.2)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(1.002)], [2], 2)
+ugen("SinOsc", 2, [(5, 0), (4, 0)], [2])
+ugen("SinOsc", 2, [(0, 1), (4, 0)], [2])
+ugen("BinaryOpUGen", 2, [(6, 0), (7, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(8, 0), const_input(0.09)], [2], 2)
+ugen("BinaryOpUGen", 2, [(9, 0), (3, 0)], [2], 2)
+mouse_and_reverb(10)
+finish_patch()
+
+begin_trigger_patch("DexterTwang")
+u16(14)
+ugen("Control", 1, [], [1] * 10)
+ugen("Trig1", 2, [(0, 9), const_input(0.001)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(8.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(0, 2), (2, 0)], [2], 4)
+ugen("LPF", 2, [(1, 0), const_input(4000.0)], [2])
+ugen("CombL", 2, [(4, 0), const_input(0.25), (3, 0), (0, 3)], [2])
+mouse_and_reverb(5)
+finish_patch()
+
+begin_trigger_patch("DexterDonk")
+u16(16)
+ugen("Control", 1, [], [1] * 10)
+ugen("Trig1", 2, [(0, 9), const_input(0.001)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(2.0)], [2], 3)
+ugen("BinaryOpUGen", 2, [(2, 0), const_input(2.0)], [2], 0)
+ugen("Ringz", 2, [(1, 0), (2, 0), (0, 3)], [2])
+ugen("Ringz", 2, [(1, 0), (3, 0), (0, 3)], [2])
+ugen("BinaryOpUGen", 2, [(4, 0), (5, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(6, 0), const_input(0.8)], [2], 2)
+mouse_and_reverb(7)
+finish_patch()
+
+begin_trigger_patch("DexterSquish")
+u16(17)
+ugen("Control", 1, [], [1] * 10)
+ugen("Trig1", 2, [(0, 9), const_input(0.001)], [2])
+ugen("BinaryOpUGen", 2, [(0, 2), const_input(4.0)], [2], 2)
+ugen("Pulse", 2, [(2, 0), const_input(0.5)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(0.25)], [2], 2)
+ugen("Ringz", 2, [(3, 0), (4, 0), (0, 3)], [2])
+ugen("Decay", 2, [(1, 0), (0, 3)], [2])
+ugen("BinaryOpUGen", 2, [(5, 0), (6, 0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(7, 0), const_input(4.0)], [2], 2)
+mouse_and_reverb(8)
 finish_patch()
 
 out_path.parent.mkdir(parents=True, exist_ok=True)

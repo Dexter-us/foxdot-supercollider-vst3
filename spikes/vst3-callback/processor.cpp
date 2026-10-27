@@ -696,7 +696,7 @@ private:
     };
 
     struct AudioVoice {
-        std::array<Graph*, 12> synthGraphs{};
+        std::array<Graph*, 19> synthGraphs{};
         Graph* activeSynth = nullptr;
         int playerIndex = -1;
         int midiNote = -1;
@@ -729,6 +729,7 @@ private:
         std::uint64_t releaseStartSample = 0;
         std::uint64_t releaseEndSample = 0;
         float releaseStartGain = 0.0f;
+        bool triggerControlPendingReset = false;
     };
 
     struct ScheduledAudioNote {
@@ -946,7 +947,7 @@ private:
     static Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
         if (synthIndex >= 0 && synthIndex <= 3)
             return voice.synthGraphs[0];
-        if (synthIndex >= 4 && synthIndex <= 14)
+        if (synthIndex >= 4 && synthIndex <= 21)
             return voice.synthGraphs[static_cast<std::size_t>(synthIndex - 3)];
         return nullptr;
     }
@@ -1184,6 +1185,14 @@ private:
                                 static_cast<float>(static_cast<double>(sustainSamples) /
                                                    sampleRate_));
                         }
+                        if (note.synthIndex >= 15) {
+                            const auto sustainSamples = note.endSample - note.startSample;
+                            Graph_SetControl(found->activeSynth, 3,
+                                static_cast<float>(static_cast<double>(sustainSamples) /
+                                                   sampleRate_));
+                            Graph_SetControl(found->activeSynth, 9, 1.0f);
+                            found->triggerControlPendingReset = true;
+                        }
                     }
                     Node_SetRun(&found->activeSynth->mNode, 1);
                 }
@@ -1331,10 +1340,12 @@ private:
         }
         GraphDef_Define(world_, defs);
 
-        constexpr std::array<const char*, 12> synthNames{{
+        constexpr std::array<const char*, 19> synthNames{{
             "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
             "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
-            "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave"}};
+            "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
+            "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
+            "DexterTwang", "DexterDonk", "DexterSquish"}};
         std::array<GraphDef*, synthNames.size()> synthDefinitions{};
         for (std::size_t index = 0; index < synthNames.size(); ++index) {
             int32 synthName[4]{};
@@ -1368,6 +1379,8 @@ private:
                 Graph_SetControl(graph, 6, static_cast<float>(kReverbBaseBus));
                 Graph_SetControl(graph, 7, 0.0f);
                 Graph_SetControl(graph, 8, 20000.0f);
+                if (synthIndex >= 12)
+                    Graph_SetControl(graph, 9, 0.0f);
                 if (synthIndex == 1)
                     Graph_SetControl(graph, 2, 8.0f);
                 else if (synthIndex == 2)
@@ -1453,6 +1466,12 @@ private:
             Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
         }
         World_Run(world_);
+        for (auto& voice : audioVoices_) {
+            if (voice.triggerControlPendingReset && voice.activeSynth) {
+                Graph_SetControl(voice.activeSynth, 9, 0.0f);
+                voice.triggerControlPendingReset = false;
+            }
+        }
         const float mixSmoothing = std::exp(
             -1.0f / static_cast<float>(sampleRate_ * kMixSmoothingSeconds));
         const float mouseSmoothing = 1.0f - mixSmoothing;
@@ -1759,7 +1778,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.34",
+           "0.4.35",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
