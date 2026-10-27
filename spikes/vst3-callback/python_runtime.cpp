@@ -96,7 +96,7 @@ _COMPAT_CALLS = {
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid',
-    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'var', 'linvar', 'Clock', 'Scale', 'Root',
+    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle'}
@@ -711,6 +711,35 @@ class _FoxDotPatternLiteral:
             raise ValueError('P[...] is limited to 256 literal items')
         return _FoxDotFinitePattern(values)
 
+class _FoxDotChord(tuple):
+    def __new__(cls, *notes):
+        if len(notes) == 1 and isinstance(notes[0], (list, tuple)):
+            notes = tuple(notes[0])
+        if not 1 <= len(notes) <= 8:
+            raise ValueError('a PGroup chord must contain 1..8 notes')
+        for note in notes:
+            if isinstance(note, bool) or not isinstance(note, (int, float)) or note != note:
+                raise ValueError('PGroup chords accept numeric scale degrees only')
+        return tuple.__new__(cls, notes)
+
+def PGroup(*notes):
+    return _FoxDotChord(*notes)
+
+I = PGroup(0, 2, 4)
+II = PGroup(1, 3, 5)
+III = PGroup(2, 4, -1)
+IV = PGroup(3, 5, 0)
+V = PGroup(4, -1, 1)
+VI = PGroup(5, 0, 2)
+VII = PGroup(-1, 1, 3)
+I7 = PGroup(0, 2, 4, 6)
+II7 = PGroup(1, 3, 5, 7)
+III7 = PGroup(2, 4, -1, 8)
+IV7 = PGroup(3, 5, 0, 9)
+V7 = PGroup(4, -1, 1, 10)
+VI7 = PGroup(5, 0, 2, 11)
+VII7 = PGroup(-1, 1, 3, 12)
+
 P = _FoxDotPatternLiteral()
 
 def reverse(pattern):
@@ -804,7 +833,9 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
          _attack_default=0.01, _release_default=0.04):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
-    if isinstance(notes, (int, float)):
+    if isinstance(notes, _FoxDotChord):
+        notes = [notes]
+    elif isinstance(notes, (int, float)):
         notes = [notes]
     if isinstance(notes, str):
         raise ValueError('FoxDot sample strings are not included yet; sample support is deferred')
@@ -1054,6 +1085,8 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
              cutoff=20000.0, echo=0.0, delay=0.0, atk=0.01, rel=0.04,
              reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
                   lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None):
+    if isinstance(notes, _FoxDotChord):
+        notes = [notes]
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
                         synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
                         reverb=reverb, room=room, mix=mix, damp=damp,
@@ -1079,10 +1112,14 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     def shift_note(note):
         if note is None:
             return None
+        if isinstance(note, _FoxDotChord):
+            return _FoxDotChord(*[shift_note(value) for value in note])
         if isinstance(note, (list, tuple)): 
             return [shift_note(value) for value in note]
         return int(note) + shift
-    if isinstance(notes, (int, float)):
+    if isinstance(notes, _FoxDotChord):
+        notes = [notes]
+    elif isinstance(notes, (int, float)):
         notes = [notes]
     if isinstance(notes, str):
         raise ValueError('FoxDot sample strings are not included yet; sample support is deferred')
