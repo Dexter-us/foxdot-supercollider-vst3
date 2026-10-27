@@ -9,12 +9,16 @@ struct PythonNoteEvent {
     double durationBeats = 1.0;
     int midiNote = 60;
     int velocity = 100;
+    double attackSeconds = 0.01;
+    double releaseSeconds = 0.04;
 };
 
 struct PythonPlayerUpdate {
     std::string ampControlToken = "-";
     std::string panControlToken = "-";
     std::string cutoffControlToken = "-";
+    std::string echoControlToken = "-";
+    std::string delayControlToken = "-";
     int playerIndex = 0;
     bool stopped = false;
     double bpm = 120.0;

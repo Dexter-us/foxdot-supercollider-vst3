@@ -667,7 +667,9 @@ def _timing_pattern(value, count, name):
     return [float(values[index % len(values)]) for index in range(count)]
 
 def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False,
-         _octave_control=None, _base_octave=5, _degrees_per_octave=7):
+         _octave_control=None, _base_octave=5, _degrees_per_octave=7,
+         _attack_control=None, _release_control=None,
+         _attack_default=0.01, _release_default=0.04):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
     if isinstance(notes, (int, float)):
@@ -689,6 +691,10 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
         raise ValueError('sus values must be between 0.02 and 4096 beats')
     if _octave_control is not None and any(value < 0.0 or value > 10.0 for value in _octave_control.values):
         raise ValueError('oct values must be from 0 to 10')
+    if _attack_control is not None and any(value < 0.0 or value > 3.0 for value in _attack_control.values):
+        raise ValueError('atk values must be from 0 to 3 seconds')
+    if _release_control is not None and any(value < 0.0 or value > 3.0 for value in _release_control.values):
+        raise ValueError('rel values must be from 0 to 3 seconds')
     velocityIsVar = isinstance(velocity, _DexterTimeVar)
     if velocityIsVar:
         if any(value < 1.0 or value > 127.0 for value in velocity.values):
@@ -738,12 +744,18 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
                 note = _dexter_root + octave * 12 + _dexter_scale[degree]
             if not 0 <= note <= 127:
                 raise ValueError('notes must resolve to MIDI pitches 0..127')
-            additions.append((start, durationValues[i], note, noteVelocity))
+            attackValue = _attack_control.at(start) if _attack_control is not None else float(_attack_default)
+            releaseValue = _release_control.at(start) if _release_control is not None else float(_release_default)
+            if attackValue != attackValue or not 0.0 <= attackValue <= 3.0:
+                raise ValueError('atk must be between 0 and 3 seconds')
+            if releaseValue != releaseValue or not 0.0 <= releaseValue <= 3.0:
+                raise ValueError('rel must be between 0 and 3 seconds')
+            additions.append((start, durationValues[i], note, noteVelocity, attackValue, releaseValue))
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
-    points = sorted([(beat, 1, note) for beat, dur, note, _ in candidate] +
-                    [(beat + dur, -1, note) for beat, dur, note, _ in candidate])
+    points = sorted([(event[0], 1, event[2]) for event in candidate] +
+                    [(event[0] + event[1], -1, event[2]) for event in candidate])
     active = 0
     active_pitches = set()
     for beat, delta, note in points:
@@ -822,6 +834,16 @@ def _control_value(value, name, lower, upper):
         raise ValueError(name + ' is outside the supported range')
     return result, '-'
 
+def _event_control(value, name, lower, upper):
+    if isinstance(value, _DexterTimeVar):
+        if any(item < lower or item > upper for item in value.values):
+            raise ValueError(name + ' time-var values are outside the supported range')
+        return value.values[0], value
+    result = float(value)
+    if result != result or result < lower or result > upper:
+        raise ValueError(name + ' is outside the supported range')
+    return result, None
+
 class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
@@ -852,10 +874,10 @@ class PlayerPattern:
             self.cutoff, self.cutoffControl = 4100.0, '-'
         else:
             self.cutoff, self.cutoffControl = _control_value(cutoff, 'cutoff', 20.0, 20000.0)
-        self.echo = float(echo)
-        self.delay = float(delay)
-        self.attackSeconds = float(atk)
-        self.releaseSeconds = float(rel)
+        self.echo, self.echoControl = _control_value(echo, 'echo', 0.0, 0.75)
+        self.delay, self.delayControl = _control_value(delay, 'delay', 0.05, 1.0)
+        self.attackSeconds, self.attackControl = _event_control(atk, 'atk', 0.0, 3.0)
+        self.releaseSeconds, self.releaseControl = _event_control(rel, 'rel', 0.0, 3.0)
         self.octaveControl = octaveControl
         self.baseOctave = baseOctave
         self.degreesPerOctave = degreesPerOctave
@@ -947,7 +969,11 @@ class Player:
                  velocity=pattern.velocity, offset=pattern.offset,
                  degrees=pattern.degrees, _octave_control=pattern.octaveControl,
                  _base_octave=pattern.baseOctave,
-                 _degrees_per_octave=pattern.degreesPerOctave)
+                 _degrees_per_octave=pattern.degreesPerOctave,
+                 _attack_control=pattern.attackControl,
+                 _release_control=pattern.releaseControl,
+                 _attack_default=pattern.attackSeconds,
+                 _release_default=pattern.releaseSeconds)
             compiledLength = _dexter_length
             compiledEvents = list(_dexter_events)
         finally:
@@ -962,14 +988,15 @@ class Player:
                                         pattern.pan, pattern.cutoff, pattern.echo,
                                         pattern.delay, pattern.mousePan, pattern.mouseCutoff,
                                         pattern.attackSeconds, pattern.releaseSeconds, pattern.ampControl,
-                                        pattern.panControl, pattern.cutoffControl)
+                                        pattern.panControl, pattern.cutoffControl,
+                                        pattern.echoControl, pattern.delayControl)
         if playerIndex == 0:
             _dexter_default_touched = False
         return self
 
     def stop(self):
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-')
+                                             0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-', '-', '-')
 
 p1 = Player(1)
 p2 = Player(2)
@@ -1011,14 +1038,14 @@ p8 = Player(8)
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-')\n"
+            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-', '-', '-')\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _f.write('OK\\t{}\\n'.format(len(_updates)))\n"
             << "        for _player in sorted(_updates):\n"
-            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control = _updates[_player]\n"
-            << "            _f.write('P\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control))\n"
+            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control = _updates[_player]\n"
+            << "            _f.write('P\\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control))\n"
             << "            for _e in _events:\n"
-            << "                _f.write('N\\t{}\\t{}\\t{}\\t{}\\n'.format(*_e))\n"
+            << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(*_e))\n"
             << "except BaseException:\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
            << "        _f.write('ERROR\\n' + traceback.format_exc())\n";
@@ -1062,7 +1089,8 @@ bool parseResult(const std::filesystem::path& resultPath,
               update.lengthBeats >> eventCount >> update.synthIndex >> update.amplitude >>
               update.pan >> update.cutoffHz >> update.echoMix >> update.echoDelaySeconds >>
               mousePan >> mouseCutoff >> update.attackSeconds >> update.releaseSeconds >>
-              update.ampControlToken >> update.panControlToken >> update.cutoffControlToken) ||
+              update.ampControlToken >> update.panControlToken >> update.cutoffControlToken >>
+              update.echoControlToken >> update.delayControlToken) ||
             record != 'P' || update.playerIndex < 0 || update.playerIndex >= 8 ||
             stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
@@ -1092,13 +1120,17 @@ bool parseResult(const std::filesystem::path& resultPath,
             char noteRecord = 0;
             PythonNoteEvent event;
             if (!(input >> noteRecord >> event.beat >> event.durationBeats >>
-                  event.midiNote >> event.velocity) || noteRecord != 'N' ||
+                  event.midiNote >> event.velocity >> event.attackSeconds >> event.releaseSeconds) ||
+                noteRecord != 'N' ||
                 !std::isfinite(event.beat) || !std::isfinite(event.durationBeats) ||
                 event.beat < 0.0 || event.beat > update.lengthBeats ||
                 event.durationBeats < 0.02 ||
                 event.beat + event.durationBeats > update.lengthBeats + 1e-9 ||
                 event.midiNote < 0 || event.midiNote > 127 ||
-                event.velocity < 1 || event.velocity > 127) {
+                event.velocity < 1 || event.velocity > 127 ||
+                !std::isfinite(event.attackSeconds) || event.attackSeconds < 0.0 ||
+                event.attackSeconds > 3.0 || !std::isfinite(event.releaseSeconds) ||
+                event.releaseSeconds < 0.0 || event.releaseSeconds > 3.0) {
                 error = "Python returned a malformed note event.";
                 return false;
             }

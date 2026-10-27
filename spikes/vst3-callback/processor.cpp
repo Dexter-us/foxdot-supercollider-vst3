@@ -281,6 +281,8 @@ public:
                     if (!activePatterns_[player].active) {
                         activePatterns_[player].echoMix = previous.echoMix;
                         activePatterns_[player].echoDelaySeconds = previous.echoDelaySeconds;
+                        activePatterns_[player].echoControl = previous.echoControl;
+                        activePatterns_[player].delayControl = previous.delayControl;
                     }
                     patternStartSamples_[player] = newStart;
                 }
@@ -407,7 +409,9 @@ public:
                         next.releaseSeconds = player.releaseSeconds;
                         if (!parseTimeVarControl(player.ampControlToken, 0.0, 1.0, next.ampControl) ||
                             !parseTimeVarControl(player.panControlToken, -1.0, 1.0, next.panControl) ||
-                            !parseTimeVarControl(player.cutoffControlToken, 20.0, 20000.0, next.cutoffControl))
+                            !parseTimeVarControl(player.cutoffControlToken, 20.0, 20000.0, next.cutoffControl) ||
+                            !parseTimeVarControl(player.echoControlToken, 0.0, 0.75, next.echoControl) ||
+                            !parseTimeVarControl(player.delayControlToken, 0.05, 1.0, next.delayControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoDelaySeconds = player.echoDelaySeconds;
@@ -556,6 +560,8 @@ private:
         TimeVarControl ampControl;
         TimeVarControl panControl;
         TimeVarControl cutoffControl;
+        TimeVarControl echoControl;
+        TimeVarControl delayControl;
         float echoMix = 0.0f;
         double echoDelaySeconds = 0.25;
         bool active = false;
@@ -927,7 +933,7 @@ private:
                     static_cast<int>(player), event.midiNote, event.velocity,
                     pattern.synthIndex, pattern.amplitude, pattern.pan, pattern.cutoffHz,
                     pattern.mousePan, pattern.mouseCutoff,
-                    pattern.attackSeconds, pattern.releaseSeconds,
+                    event.attackSeconds, event.releaseSeconds,
                     patternStart + static_cast<std::uint64_t>(
                         std::llround(absoluteStartBeat * samplesPerBeat)),
                     patternStart + static_cast<std::uint64_t>(
@@ -1181,10 +1187,21 @@ private:
                 const auto& pattern = activePatterns_[player];
                 const float dryLeft = playerLeft[player];
                 const float dryRight = playerRight[player];
+                const auto patternStart = patternStartSamples_[player];
+                const double playerBeat = pattern.bpm > 0.0 && absoluteSample >= patternStart
+                    ? static_cast<double>(absoluteSample - patternStart) * pattern.bpm /
+                          (60.0 * sampleRate_)
+                    : 0.0;
                 auto& echoMix = echoMixSmoothed_[player];
-                echoMix += (pattern.echoMix - echoMix) * mixSmoothing;
+                const float targetEchoMix = evaluateTimeVar(pattern.echoControl, playerBeat,
+                                                            pattern.echoMix);
+                echoMix += (targetEchoMix - echoMix) * mixSmoothing;
+                auto& delaySeconds = echoDelaySmoothed_[player];
+                const float targetDelaySeconds = evaluateTimeVar(pattern.delayControl, playerBeat,
+                                                                 static_cast<float>(pattern.echoDelaySeconds));
+                delaySeconds += (targetDelaySeconds - delaySeconds) * mixSmoothing;
                 if (echoMix > 1e-5f && !echoBuffer_.empty()) {
-                    const auto requestedDelay = std::round(pattern.echoDelaySeconds * sampleRate_);
+                    const auto requestedDelay = std::round(delaySeconds * sampleRate_);
                     const auto delaySamples = static_cast<std::size_t>(
                         std::max(1.0, std::min<double>(kMaxEchoBufferSamples - 1,
                                                        requestedDelay)));
@@ -1261,6 +1278,11 @@ private:
     std::array<std::array<float, kSCBlockSize>, 2> outputBlock_{};
     std::vector<float> echoBuffer_;
     std::array<float, kPlayerCount> echoMixSmoothed_{};
+    std::array<float, kPlayerCount> echoDelaySmoothed_ = [] {
+        std::array<float, kPlayerCount> initial{};
+        initial.fill(0.25f);
+        return initial;
+    }();
     float mixGain_ = 0.0f;
     int cursor_ = kSCBlockSize;
     std::mutex patternMutex_;
@@ -1293,7 +1315,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.18",
+           "0.4.19",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
