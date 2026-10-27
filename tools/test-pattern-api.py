@@ -191,7 +191,7 @@ update = namespace['_dexter_updates'][0]
 assert update[0] is False and len(update[3]) == 2
 assert update[4] == 3 and update[5] == 0.6 and update[6] == -0.25
 assert update[7] == 3200.0 and update[8] == 0.3 and update[9] == 0.2
-assert update[-6:] == (3, 0.4, 0.8, 0.25, 4.0, 22.0)
+assert update[19:25] == (3, 0.4, 0.8, 0.25, 4.0, 22.0)
 assert update[10] is False and update[11] is False
 assert update[12] == 0.01 and update[13] == 0.04
 namespace['p2'] >> namespace['sequence']([0, 2, 4], step=1.0, degrees=True)
@@ -200,7 +200,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -218,6 +218,9 @@ def run_script(script_text, include_events=False, include_effects=False):
         player_rows = [line.split('\t') for line in lines if line.startswith('P\t')]
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
+        filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
+        if include_filters:
+            return player_rows, filter_rows
         if include_effects:
             return player_rows, effect_rows
         return (player_rows, event_rows) if include_events else player_rows
@@ -365,6 +368,20 @@ assert [int(row[2]) for row in reverbEffects] == [1, 2, 3]
 assert [float(row[4]) for row in reverbEffects] == [0.65, 0.75, 0.8]
 assert [float(row[7]) for row in reverbEffects] == [15.0, 15.0, 25.0]
 assert all(abs(float(row[3]) - expected) < 1e-6 for row, expected in zip(reverbEffects, [0.2, 0.3, 0.25]))
+filterRows, filterControls = run_script('p1 >> saw([0, 2, 4, 6], lpf=linvar([300, 3000], [2, 2]), lpr=var([0.35, 0.7], [2, 2]), hpf=var([0, 150], [2, 2]), hpr=0.8, bpf=linvar([500, 1200], [2, 2]), bpr=0.5)\n', include_filters=True)
+assert len(filterRows) == 1 and len(filterRows[0]) == 21
+assert len(filterControls) == 1 and len(filterControls[0]) == 14
+assert filterControls[0][0:2] == ['F', '0']
+assert filterControls[0][8] == 'l:300.0,3000.0:2.0,2.0'
+assert filterControls[0][9] == 'v:0.35,0.7:2.0,2.0'
+assert filterControls[0][12] == 'l:500.0,1200.0:2.0,2.0'
+filterExampleRows, filterExampleControls = run_script(open(os.path.join(sys.argv[2], '24-foxdot-filters.py'), encoding='utf-8').read(), include_filters=True)
+assert len(filterExampleRows) == 3 and [row[1] for row in filterExampleRows] == ['0', '1', '2']
+assert len(filterExampleControls) == 3 and all(len(row) == 14 for row in filterExampleControls)
+assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
+assert [row[8] for row in filterExampleControls] == ['l:300.0,1800.0:4.0,4.0', '-', '-']
+assert [row[10] for row in filterExampleControls] == ['-', 'v:150.0,900.0:4.0,4.0', '-']
+assert [row[12] for row in filterExampleControls] == ['-', '-', 'l:350.0,1200.0:4.0,4.0']
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 21 for row in example8)
 p1, p2 = example8
@@ -374,7 +391,7 @@ assert p1[10] == '0.0' and p1[11] == '0.25'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
 assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
 assert p2[10] == '0.25' and p2[11] == '0.24'
-supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np1.stop()\n')
+supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
@@ -386,4 +403,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-23.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-24.')

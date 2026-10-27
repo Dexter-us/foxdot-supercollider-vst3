@@ -290,6 +290,18 @@ public:
                         activePatterns_[player].reverbDamp = previous.reverbDamp;
                         activePatterns_[player].reverbTime = previous.reverbTime;
                         activePatterns_[player].reverbSpread = previous.reverbSpread;
+                        activePatterns_[player].lpfHz = previous.lpfHz;
+                        activePatterns_[player].lpr = previous.lpr;
+                        activePatterns_[player].hpfHz = previous.hpfHz;
+                        activePatterns_[player].hpr = previous.hpr;
+                        activePatterns_[player].bpfHz = previous.bpfHz;
+                        activePatterns_[player].bpr = previous.bpr;
+                        activePatterns_[player].lpfControl = previous.lpfControl;
+                        activePatterns_[player].lprControl = previous.lprControl;
+                        activePatterns_[player].hpfControl = previous.hpfControl;
+                        activePatterns_[player].hprControl = previous.hprControl;
+                        activePatterns_[player].bpfControl = previous.bpfControl;
+                        activePatterns_[player].bprControl = previous.bprControl;
                     }
                     patternStartSamples_[player] = newStart;
                     updatePlayerReverb(player);
@@ -419,7 +431,13 @@ public:
                             !parseTimeVarControl(player.panControlToken, -1.0, 1.0, next.panControl) ||
                             !parseTimeVarControl(player.cutoffControlToken, 20.0, 20000.0, next.cutoffControl) ||
                             !parseTimeVarControl(player.echoControlToken, 0.0, 0.75, next.echoControl) ||
-                            !parseTimeVarControl(player.delayControlToken, 0.05, 1.0, next.delayControl))
+                            !parseTimeVarControl(player.delayControlToken, 0.05, 1.0, next.delayControl) ||
+                            !parseTimeVarControl(player.lpfControlToken, 0.0, 20000.0, next.lpfControl) ||
+                            !parseTimeVarControl(player.lprControlToken, 0.05, 1.0, next.lprControl) ||
+                            !parseTimeVarControl(player.hpfControlToken, 0.0, 20000.0, next.hpfControl) ||
+                            !parseTimeVarControl(player.hprControlToken, 0.05, 1.0, next.hprControl) ||
+                            !parseTimeVarControl(player.bpfControlToken, 0.0, 20000.0, next.bpfControl) ||
+                            !parseTimeVarControl(player.bprControlToken, 0.05, 1.0, next.bprControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoDelaySeconds = player.echoDelaySeconds;
@@ -429,6 +447,12 @@ public:
                         next.reverbDamp = static_cast<float>(player.reverbDamp);
                         next.reverbTime = static_cast<float>(player.reverbTime);
                         next.reverbSpread = static_cast<float>(player.reverbSpread);
+                        next.lpfHz = static_cast<float>(player.lpfHz);
+                        next.lpr = static_cast<float>(player.lpr);
+                        next.hpfHz = static_cast<float>(player.hpfHz);
+                        next.hpr = static_cast<float>(player.hpr);
+                        next.bpfHz = static_cast<float>(player.bpfHz);
+                        next.bpr = static_cast<float>(player.bpr);
                         next.eventCount = player.events.size();
                         std::copy(player.events.begin(), player.events.end(), next.events.begin());
                         totalNotes += player.events.size();
@@ -578,6 +602,12 @@ private:
         TimeVarControl ampControl;
         TimeVarControl panControl;
         TimeVarControl cutoffControl;
+        TimeVarControl lpfControl;
+        TimeVarControl lprControl;
+        TimeVarControl hpfControl;
+        TimeVarControl hprControl;
+        TimeVarControl bpfControl;
+        TimeVarControl bprControl;
         TimeVarControl echoControl;
         TimeVarControl delayControl;
         float echoMix = 0.0f;
@@ -588,6 +618,12 @@ private:
         float reverbDamp = 0.5f;
         float reverbTime = 3.0f;
         float reverbSpread = 15.0f;
+        float lpfHz = 0.0f;
+        float lpr = 1.0f;
+        float hpfHz = 0.0f;
+        float hpr = 1.0f;
+        float bpfHz = 0.0f;
+        float bpr = 1.0f;
         bool active = false;
     };
 
@@ -597,6 +633,21 @@ private:
         int midiNote = 60;
         int velocity = 100;
         bool noteOn = false;
+    };
+
+    struct BiquadState {
+        float b0 = 1.0f;
+        float b1 = 0.0f;
+        float b2 = 0.0f;
+        float a1 = 0.0f;
+        float a2 = 0.0f;
+        float z1 = 0.0f;
+        float z2 = 0.0f;
+        float cutoffHz = -1.0f;
+        float rq = -1.0f;
+        int mode = -1;
+        bool enabled = false;
+        float wet = 0.0f;
     };
 
     struct AudioVoice {
@@ -613,6 +664,15 @@ private:
         float frequencyHz = 440.0f;
         float filterState = 0.0f;
         float filterCoefficient = 1.0f;
+        float lpfHz = 0.0f;
+        float lpr = 1.0f;
+        float hpfHz = 0.0f;
+        float hpr = 1.0f;
+        float bpfHz = 0.0f;
+        float bpr = 1.0f;
+        BiquadState lpfState;
+        BiquadState hpfState;
+        BiquadState bpfState;
         bool mousePan = false;
         bool mouseCutoff = false;
         double attackSeconds = kAttackSeconds;
@@ -633,6 +693,12 @@ private:
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
+        float lpfHz = 0.0f;
+        float lpr = 1.0f;
+        float hpfHz = 0.0f;
+        float hpr = 1.0f;
+        float bpfHz = 0.0f;
+        float bpr = 1.0f;
         bool mousePan = false;
         bool mouseCutoff = false;
         double attackSeconds = kAttackSeconds;
@@ -956,6 +1022,7 @@ private:
                 desired[desiredCount++] = ScheduledAudioNote{
                     static_cast<int>(player), event.midiNote, event.velocity,
                     pattern.synthIndex, pattern.amplitude, pattern.pan, pattern.cutoffHz,
+                    pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
                     pattern.mousePan, pattern.mouseCutoff,
                     event.attackSeconds, event.releaseSeconds,
                     patternStart + static_cast<std::uint64_t>(
@@ -1001,7 +1068,16 @@ private:
                 found->leftGain = std::sqrt(std::max(0.0f, (1.0f - found->pan) * 0.5f));
                 found->rightGain = std::sqrt(std::max(0.0f, (1.0f + found->pan) * 0.5f));
                 found->cutoffHz = note.cutoffHz;
+                found->lpfHz = static_cast<float>(note.lpfHz);
+                found->lpr = static_cast<float>(note.lpr);
+                found->hpfHz = static_cast<float>(note.hpfHz);
+                found->hpr = static_cast<float>(note.hpr);
+                found->bpfHz = static_cast<float>(note.bpfHz);
+                found->bpr = static_cast<float>(note.bpr);
                 found->filterState = 0.0f;
+                found->lpfState = {};
+                found->hpfState = {};
+                found->bpfState = {};
                 const double maxCutoff = sampleRate_ * 0.45;
                 const double clampedCutoff = std::min<double>(note.cutoffHz, maxCutoff);
                 found->filterCoefficient = clampedCutoff >= maxCutoff
@@ -1026,6 +1102,59 @@ private:
             }
             found->velocity = note.velocity;
         }
+    }
+
+    void configureBiquad(BiquadState& filter, float cutoffHz, float rq, int mode) {
+        const bool enabled = cutoffHz > 0.0f;
+        if (!enabled) {
+            filter.enabled = false;
+            return;
+        }
+        const float maxHz = static_cast<float>(sampleRate_ * 0.45);
+        const float frequency = std::clamp(cutoffHz, 20.0f, maxHz);
+        const float resonance = std::clamp(rq, 0.05f, 1.0f);
+        if (filter.enabled && filter.cutoffHz == frequency && filter.rq == resonance &&
+            filter.mode == mode)
+            return;
+        const double omega = 2.0 * kPi * frequency / sampleRate_;
+        const double cosine = std::cos(omega);
+        const double sine = std::sin(omega);
+        const double q = 1.0 / resonance;
+        const double alpha = sine / (2.0 * q);
+        double b0 = 1.0, b1 = 0.0, b2 = 0.0;
+        if (mode == 0) {
+            b0 = (1.0 - cosine) * 0.5; b1 = 1.0 - cosine; b2 = b0;
+        } else if (mode == 1) {
+            b0 = (1.0 + cosine) * 0.5; b1 = -(1.0 + cosine); b2 = b0;
+        } else {
+            b0 = alpha; b1 = 0.0; b2 = -alpha;
+        }
+        const double a0 = 1.0 + alpha;
+        filter.b0 = static_cast<float>(b0 / a0);
+        filter.b1 = static_cast<float>(b1 / a0);
+        filter.b2 = static_cast<float>(b2 / a0);
+        filter.a1 = static_cast<float>(-2.0 * cosine / a0);
+        filter.a2 = static_cast<float>((1.0 - alpha) / a0);
+        filter.cutoffHz = frequency;
+        filter.rq = resonance;
+        filter.mode = mode;
+        filter.enabled = true;
+    }
+
+    static float processBiquad(BiquadState& filter, float input) {
+        float filtered = input;
+        if (filter.enabled) {
+            filtered = filter.b0 * input + filter.z1;
+            filter.z1 = filter.b1 * input - filter.a1 * filtered + filter.z2;
+            filter.z2 = filter.b2 * input - filter.a2 * filtered;
+            if (!std::isfinite(filtered)) {
+                filter.z1 = 0.0f;
+                filter.z2 = 0.0f;
+                filtered = 0.0f;
+            }
+        }
+        filter.wet += 0.0025f * ((filter.enabled ? 1.0f : 0.0f) - filter.wet);
+        return input + (filtered - input) * filter.wet;
     }
 
     static bool reverbEnabled(const PatternState& pattern) {
@@ -1295,7 +1424,27 @@ private:
                 }
                 voice.filterState += voice.filterCoefficient * (source - voice.filterState);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
-                const float amplitude = voice.filterState * envelope * velocity * voice.amplitude;
+                auto updateFilterControl = [&](float& current, const TimeVarControl& control, float fallback) {
+                    if (!control.active) return;
+                    const float target = evaluateTimeVar(control, beat, fallback);
+                    if (control.linear) current = target;
+                    else current += mouseSmoothing * (target - current);
+                };
+                updateFilterControl(voice.lpfHz, livePattern.lpfControl, livePattern.lpfHz);
+                updateFilterControl(voice.lpr, livePattern.lprControl, livePattern.lpr);
+                updateFilterControl(voice.hpfHz, livePattern.hpfControl, livePattern.hpfHz);
+                updateFilterControl(voice.hpr, livePattern.hprControl, livePattern.hpr);
+                updateFilterControl(voice.bpfHz, livePattern.bpfControl, livePattern.bpfHz);
+                updateFilterControl(voice.bpr, livePattern.bprControl, livePattern.bpr);
+                if (sampleIndex == 0) {
+                    configureBiquad(voice.lpfState, voice.lpfHz, voice.lpr, 0);
+                    configureBiquad(voice.hpfState, voice.hpfHz, voice.hpr, 1);
+                    configureBiquad(voice.bpfState, voice.bpfHz, voice.bpr, 2);
+                }
+                float shaped = processBiquad(voice.lpfState, voice.filterState);
+                shaped = processBiquad(voice.hpfState, shaped);
+                shaped = processBiquad(voice.bpfState, shaped);
+                const float amplitude = shaped * envelope * velocity * voice.amplitude;
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
                 playerLeft[player] += amplitude * voice.leftGain;
                 playerRight[player] += amplitude * voice.rightGain;
