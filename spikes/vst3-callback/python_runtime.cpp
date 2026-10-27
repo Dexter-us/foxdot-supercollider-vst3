@@ -110,8 +110,20 @@ _COMPAT_SEQUENCE_KEYWORDS = {
 }
 _COMPAT_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees'}
 _COMPAT_SCALE_NAMES = {
-    'major', 'minor', 'natural_minor', 'aeolian', 'dorian', 'mixolydian',
-    'major_pentatonic', 'minor_pentatonic', 'blues'
+    'chromatic', 'major', 'minor', 'natural_minor', 'aeolian', 'dorian',
+    'dorian2', 'mixolydian', 'major_pentatonic', 'majorPentatonic',
+    'minor_pentatonic', 'minorPentatonic', 'melodic_minor', 'melodicMinor',
+    'melodic_major', 'melodicMajor', 'harmonic_minor', 'harmonicMinor',
+    'harmonic_major', 'harmonicMajor', 'diminished', 'egyptian', 'yu', 'zhi',
+    'phrygian', 'prometheus', 'indian', 'locrian', 'locrian_major',
+    'locrianMajor', 'lydian', 'lydian_minor', 'lydianMinor', 'custom',
+    'hungarian_minor', 'hungarianMinor', 'romanian_minor', 'romanianMinor',
+    'chinese', 'whole_tone', 'wholeTone', 'half_whole', 'halfWhole',
+    'whole_half', 'wholeHalf', 'bebop_maj', 'bebopMaj', 'bebop_dorian',
+    'bebopDorian', 'bebop_dom', 'bebopDom', 'bebop_mel_min', 'bebopMelMin',
+    'blues', 'min_maj', 'minMaj', 'susb9', 'lydian_aug', 'lydianAug',
+    'lydian_dom', 'lydianDom', 'mel_min5th', 'melMin5th', 'half_dim',
+    'halfDim', 'altered'
 }
 
 class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
@@ -293,29 +305,112 @@ class _FoxDotClock:
 Clock = _FoxDotClock()
 
 _SCALES = {
+    'chromatic': tuple(range(12)),
     'major': (0, 2, 4, 5, 7, 9, 11),
     'minor': (0, 2, 3, 5, 7, 8, 10),
     'natural_minor': (0, 2, 3, 5, 7, 8, 10),
     'aeolian': (0, 2, 3, 5, 7, 8, 10),
     'dorian': (0, 2, 3, 5, 7, 9, 10),
+    'dorian2': (0, 1, 3, 5, 6, 8, 9, 11),
     'mixolydian': (0, 2, 4, 5, 7, 9, 10),
     'major_pentatonic': (0, 2, 4, 7, 9),
     'minor_pentatonic': (0, 3, 5, 7, 10),
+    'melodic_minor': (0, 2, 3, 5, 7, 9, 11),
+    'melodic_major': (0, 2, 4, 5, 7, 8, 11),
+    'harmonic_minor': (0, 2, 3, 5, 7, 8, 11),
+    'harmonic_major': (0, 2, 4, 5, 7, 8, 11),
+    'diminished': (0, 1, 3, 4, 6, 7, 9, 10),
+    'egyptian': (0, 2, 5, 7, 10),
+    'yu': (0, 3, 5, 7, 10),
+    'zhi': (0, 2, 5, 7, 9),
+    'phrygian': (0, 1, 3, 5, 7, 8, 10),
+    'prometheus': (0, 2, 4, 6, 11),
+    'indian': (0, 4, 5, 7, 10),
+    'locrian': (0, 1, 3, 5, 6, 8, 10),
+    'locrian_major': (0, 2, 4, 5, 6, 8, 10),
+    'lydian': (0, 2, 4, 6, 7, 9, 11),
+    'lydian_minor': (0, 2, 4, 6, 7, 8, 10),
+    'custom': (0, 2, 3, 5, 6, 9, 10),
+    'hungarian_minor': (0, 2, 3, 6, 7, 8, 11),
+    'romanian_minor': (0, 2, 3, 6, 7, 9, 10),
+    'chinese': (0, 4, 6, 7, 11),
+    'whole_tone': (0, 2, 4, 6, 8, 10),
+    'half_whole': (0, 1, 3, 4, 6, 7, 9, 10),
+    'whole_half': (0, 2, 3, 5, 6, 8, 9, 11),
+    'bebop_maj': (0, 2, 4, 5, 7, 8, 9, 11),
+    'bebop_dorian': (0, 2, 3, 4, 5, 9, 10),
+    'bebop_dom': (0, 2, 4, 5, 7, 9, 10, 11),
+    'bebop_mel_min': (0, 2, 3, 5, 7, 8, 9, 11),
     'blues': (0, 3, 5, 6, 7, 10),
+    'min_maj': (0, 2, 3, 5, 7, 9, 11),
+    'susb9': (0, 1, 3, 5, 7, 9, 10),
+    'lydian_aug': (0, 2, 4, 6, 8, 9, 11),
+    'lydian_dom': (0, 2, 4, 6, 7, 9, 10),
+    'mel_min5th': (0, 2, 4, 5, 7, 8, 10),
+    'half_dim': (0, 2, 3, 5, 6, 8, 10),
+    'altered': (0, 1, 3, 4, 6, 8, 10),
+}
+
+_SCALE_ATTRIBUTES = {
+    'majorPentatonic': 'major_pentatonic',
+    'minorPentatonic': 'minor_pentatonic',
+    'melodicMinor': 'melodic_minor',
+    'melodicMajor': 'melodic_major',
+    'harmonicMinor': 'harmonic_minor',
+    'harmonicMajor': 'harmonic_major',
+    'locrianMajor': 'locrian_major',
+    'lydianMinor': 'lydian_minor',
+    'hungarianMinor': 'hungarian_minor',
+    'romanianMinor': 'romanian_minor',
+    'wholeTone': 'whole_tone',
+    'halfWhole': 'half_whole',
+    'wholeHalf': 'whole_half',
+    'bebopMaj': 'bebop_maj',
+    'bebopDorian': 'bebop_dorian',
+    'bebopDom': 'bebop_dom',
+    'bebopMelMin': 'bebop_mel_min',
+    'minMaj': 'min_maj',
+    'lydianAug': 'lydian_aug',
+    'lydianDom': 'lydian_dom',
+    'melMin5th': 'mel_min5th',
+    'halfDim': 'half_dim',
 }
 
 def _normalize_scale_name(name):
-    return str(name).strip().lower().replace(' ', '_').replace('-', '_')
+    name = str(name).strip().lower().replace(' ', '_').replace('-', '_')
+    compact = name.replace('_', '')
+    for attribute, canonical in _SCALE_ATTRIBUTES.items():
+        if attribute.lower() == compact:
+            return canonical
+    return name
+
+def _scale_intervals(name):
+    if isinstance(name, (list, tuple)):
+        values = []
+        for value in name:
+            if isinstance(value, bool):
+                raise ValueError('custom scale intervals must be whole semitones from 0 to 11')
+            try:
+                interval = int(value)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError('custom scale intervals must be whole semitones from 0 to 11')
+            if interval != value or interval < 0 or interval > 11:
+                raise ValueError('custom scale intervals must be whole semitones from 0 to 11')
+            values.append(interval)
+        if not values or len(values) > 12 or values[0] != 0 or values != sorted(set(values)):
+            raise ValueError('custom scales must start at 0 and contain 1..12 ascending unique intervals')
+        return tuple(values)
+    name = _normalize_scale_name(name)
+    if name not in _SCALES:
+        raise ValueError('unknown scale; use a supported Scale name or custom ascending semitone intervals')
+    return _SCALES[name]
 
 def scale(name='major', root=60):
     global _dexter_scale, _dexter_root
-    name = _normalize_scale_name(name)
-    if name not in _SCALES:
-        raise ValueError('unknown scale; choose major, minor, dorian, mixolydian, major_pentatonic, minor_pentatonic, or blues')
     root = int(root)
     if not 0 <= root <= 127:
         raise ValueError('scale root must be a MIDI note from 0 to 127')
-    _dexter_scale = _SCALES[name]
+    _dexter_scale = _scale_intervals(name)
     _dexter_root = root
 
 class _FoxDotScaleDefault:
@@ -325,13 +420,10 @@ class _FoxDotScaleDefault:
 class _FoxDotScaleNamespace:
     def __init__(self):
         self.default = _FoxDotScaleDefault()
-        self.major = 'major'
-        self.minor = 'minor'
-        self.dorian = 'dorian'
-        self.mixolydian = 'mixolydian'
-        self.major_pentatonic = 'major_pentatonic'
-        self.minor_pentatonic = 'minor_pentatonic'
-        self.blues = 'blues'
+        for name in _SCALES:
+            self.__dict__[name] = name
+        for attribute, canonical in _SCALE_ATTRIBUTES.items():
+            self.__dict__[attribute] = canonical
 
 Scale = _FoxDotScaleNamespace()
 
@@ -940,10 +1032,8 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
         baseOctave = int(oct)
     if not 0 <= baseOctave <= 10:
         raise ValueError('oct must be from 0 to 10 in the embedded FoxDot subset')
-    scaleName = None if scale is None else _normalize_scale_name(scale)
-    if scaleName is not None and scaleName not in _SCALES:
-        raise ValueError('unsupported FoxDot scale: ' + str(scale))
-    degreesPerOctave = len(_SCALES[scaleName]) if scaleName is not None else len(_dexter_scale)
+    scaleName = None if scale is None else _scale_intervals(scale)
+    degreesPerOctave = len(scaleName) if scaleName is not None else len(_dexter_scale)
     shift = (baseOctave - 5) * degreesPerOctave
     def shift_note(note):
         if note is None:

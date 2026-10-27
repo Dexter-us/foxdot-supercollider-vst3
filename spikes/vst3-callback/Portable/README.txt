@@ -43,3 +43,5 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 24-foxdot-filters.py demonstrates the FoxDot-style resonant low-pass (lpf/lpr), high-pass (hpf/hpr), and band-pass (bpf/bpr) filters, with var/linvar sweeps. bpnoise and the separate swell effect are not included yet.
 
 25-echo-decay-compat.py demonstrates FoxDot-style echo spacing and echo-tail decay, both measured in beats; echomix is shown as a separate plugin extension.
+
+26-scales-and-chords.py demonstrates the expanded equal-tempered FoxDot scale bank, custom ascending semitone scales, and chord note groups. Just-intonation and frequency scales are not included.
