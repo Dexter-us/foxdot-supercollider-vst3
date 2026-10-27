@@ -434,6 +434,7 @@ public:
                         next.bpm = player.bpm;
                         next.lengthBeats = player.lengthBeats;
                         next.synthIndex = player.synthIndex;
+                        next.synthRate = static_cast<float>(player.synthRate);
                         next.amplitude = static_cast<float>(player.amplitude);
                         next.pan = static_cast<float>(player.pan);
                         next.cutoffHz = static_cast<float>(player.cutoffHz);
@@ -628,6 +629,7 @@ private:
         double bpm = 120.0;
         double lengthBeats = 1.0;
         int synthIndex = 0;
+        float synthRate = 0.0f;
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -694,7 +696,8 @@ private:
     };
 
     struct AudioVoice {
-        Graph* synth = nullptr;
+        std::array<Graph*, 6> synthGraphs{};
+        Graph* activeSynth = nullptr;
         int playerIndex = -1;
         int midiNote = -1;
         int velocity = 0;
@@ -733,6 +736,7 @@ private:
         int midiNote = -1;
         int velocity = 0;
         int synthIndex = 0;
+        float synthRate = 0.0f;
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -932,11 +936,27 @@ private:
     }
 
     void deactivateAudioVoice(AudioVoice& voice) {
-        if (voice.synth)
-            Node_SetRun(&voice.synth->mNode, 0);
-        auto* synth = voice.synth;
+        if (voice.activeSynth)
+            Node_SetRun(&voice.activeSynth->mNode, 0);
+        const auto synthGraphs = voice.synthGraphs;
         voice = {};
-        voice.synth = synth;
+        voice.synthGraphs = synthGraphs;
+    }
+
+    static Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
+        if (synthIndex >= 0 && synthIndex <= 3)
+            return voice.synthGraphs[0];
+        if (synthIndex == 4)
+            return voice.synthGraphs[1];
+        if (synthIndex == 5)
+            return voice.synthGraphs[2];
+        if (synthIndex == 6)
+            return voice.synthGraphs[3];
+        if (synthIndex == 7)
+            return voice.synthGraphs[4];
+        if (synthIndex == 8)
+            return voice.synthGraphs[5];
+        return nullptr;
     }
 
     void stopAudioVoices(int playerIndex = -1) {
@@ -1080,7 +1100,8 @@ private:
                         break;
                     desired[desiredCount++] = ScheduledAudioNote{
                         static_cast<int>(player), event.midiNote, event.velocity,
-                        pattern.synthIndex, pattern.amplitude, pattern.pan, pattern.cutoffHz,
+                        pattern.synthIndex, pattern.synthRate,
+                        pattern.amplitude, pattern.pan, pattern.cutoffHz,
                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
                         pattern.mousePan, pattern.mouseCutoff,
                         event.attackSeconds, event.releaseSeconds,
@@ -1148,16 +1169,24 @@ private:
                 found->startSample = note.startSample;
                 found->endSample = note.endSample;
                 found->releasing = false;
-                if (found->synth) {
-                    Graph_SetControl(found->synth, 1, found->frequencyHz);
+                auto* selectedSynth = graphForSynthIndex(*found, note.synthIndex);
+                if (found->activeSynth && found->activeSynth != selectedSynth)
+                    Node_SetRun(&found->activeSynth->mNode, 0);
+                found->activeSynth = selectedSynth;
+                if (found->activeSynth) {
+                    Graph_SetControl(found->activeSynth, 1, found->frequencyHz);
                     const auto playerBus = kReverbBaseBus + note.playerIndex * kReverbBusStride;
-                    Graph_SetControl(found->synth, 6, static_cast<float>(playerBus));
-                    Graph_SetControl(found->synth, 7, reverbEnabled(activePatterns_[static_cast<std::size_t>(note.playerIndex)]) ? 1.0f : 0.0f);
-                    Graph_SetControl(found->synth, 8, found->cutoffHz);
-                    for (int mode = 0; mode < 4; ++mode)
-                        Graph_SetControl(found->synth, 2 + mode,
+                    Graph_SetControl(found->activeSynth, 6, static_cast<float>(playerBus));
+                    Graph_SetControl(found->activeSynth, 7, reverbEnabled(activePatterns_[static_cast<std::size_t>(note.playerIndex)]) ? 1.0f : 0.0f);
+                    Graph_SetControl(found->activeSynth, 8, found->cutoffHz);
+                    if (note.synthIndex <= 3) {
+                        for (int mode = 0; mode < 4; ++mode)
+                            Graph_SetControl(found->activeSynth, 2 + mode,
                                          note.synthIndex == mode ? 1.0f : 0.0f);
-                    Node_SetRun(&found->synth->mNode, 1);
+                    } else {
+                        Graph_SetControl(found->activeSynth, 2, note.synthRate);
+                    }
+                    Node_SetRun(&found->activeSynth->mNode, 1);
                 }
             }
             found->velocity = note.velocity;
@@ -1246,10 +1275,10 @@ private:
             Node_SetRun(&graph->mNode, enabled && type == pattern.reverbIndex - 1 ? 1 : 0);
         }
         for (auto& voice : audioVoices_) {
-            if (voice.synth && voice.playerIndex == static_cast<int>(player)) {
-                Graph_SetControl(voice.synth, 6, static_cast<float>(bus));
-                Graph_SetControl(voice.synth, 7, enabled ? 1.0f : 0.0f);
-                Graph_SetControl(voice.synth, 8, voice.cutoffHz);
+            if (voice.activeSynth && voice.playerIndex == static_cast<int>(player)) {
+                Graph_SetControl(voice.activeSynth, 6, static_cast<float>(bus));
+                Graph_SetControl(voice.activeSynth, 7, enabled ? 1.0f : 0.0f);
+                Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
             }
         }
     }
@@ -1303,31 +1332,49 @@ private:
         }
         GraphDef_Define(world_, defs);
 
-        int32 synthName[4]{};
-        std::memcpy(synthName, "DexterTone", 10);
-        auto* definition = World_GetGraphDef(world_, synthName);
+        constexpr std::array<const char*, 6> synthNames{{
+            "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
+            "DexterJBass", "DexterNoise"}};
+        std::array<GraphDef*, synthNames.size()> synthDefinitions{};
+        for (std::size_t index = 0; index < synthNames.size(); ++index) {
+            int32 synthName[4]{};
+            std::memcpy(synthName, synthNames[index],
+                        std::min<std::size_t>(std::strlen(synthNames[index]),
+                                              sizeof(synthName)));
+            synthDefinitions[index] = World_GetGraphDef(world_, synthName);
+        }
         auto* root = World_GetGroup(world_, 0);
-        if (!definition || !root) {
+        if (std::any_of(synthDefinitions.begin(), synthDefinitions.end(),
+                        [](const auto* definition) { return definition == nullptr; }) ||
+            !root) {
             discardPartialWorld();
             return false;
         }
         int32 nodeId = 100;
         std::size_t voiceIndex = 0;
         for (auto& voice : audioVoices_) {
-            sc_msg_iter noControls(0, "");
-            if (Graph_New(world_, definition, nodeId++, &noControls,
-                          &voice.synth, true) != 0 || !voice.synth) {
-                discardPartialWorld();
-                return false;
-            }
             const auto outputBus = kFirstAudioBus +
                                    kAudioBusStride * static_cast<int>(voiceIndex);
-            Graph_SetControl(voice.synth, 0, static_cast<float>(outputBus));
-            Graph_SetControl(voice.synth, 6, static_cast<float>(kReverbBaseBus));
-            Graph_SetControl(voice.synth, 7, 0.0f);
-            Graph_SetControl(voice.synth, 8, 20000.0f);
-            Group_AddTail(root, &voice.synth->mNode);
-            Node_SetRun(&voice.synth->mNode, 0);
+            for (std::size_t synthIndex = 0;
+                 synthIndex < synthDefinitions.size(); ++synthIndex) {
+                sc_msg_iter noControls(0, "");
+                auto*& graph = voice.synthGraphs[synthIndex];
+                if (Graph_New(world_, synthDefinitions[synthIndex], nodeId++,
+                              &noControls, &graph, true) != 0 || !graph) {
+                    discardPartialWorld();
+                    return false;
+                }
+                Graph_SetControl(graph, 0, static_cast<float>(outputBus));
+                Graph_SetControl(graph, 6, static_cast<float>(kReverbBaseBus));
+                Graph_SetControl(graph, 7, 0.0f);
+                Graph_SetControl(graph, 8, 20000.0f);
+                if (synthIndex == 1)
+                    Graph_SetControl(graph, 2, 8.0f);
+                else if (synthIndex == 2)
+                    Graph_SetControl(graph, 2, 0.0f);
+                Group_AddTail(root, &graph->mNode);
+                Node_SetRun(&graph->mNode, 0);
+            }
             ++voiceIndex;
         }
         auto* reverbDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kReverbSynthDef),
@@ -1393,7 +1440,7 @@ private:
 
     void renderSCBlock(std::uint64_t blockStart) {
         for (auto& voice : audioVoices_) {
-            if (!voice.synth || voice.midiNote < 0 || voice.playerIndex < 0 ||
+            if (!voice.activeSynth || voice.midiNote < 0 || voice.playerIndex < 0 ||
                 voice.playerIndex >= static_cast<int>(kPlayerCount))
                 continue;
             const auto player = static_cast<std::size_t>(voice.playerIndex);
@@ -1402,8 +1449,8 @@ private:
                 ? voiceEnvelopeAt(voice, blockStart) *
                       (static_cast<float>(voice.velocity) / 127.0f) * voice.amplitude
                 : 0.0f;
-            Graph_SetControl(voice.synth, 7, level);
-            Graph_SetControl(voice.synth, 8, voice.cutoffHz);
+            Graph_SetControl(voice.activeSynth, 7, level);
+            Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
         }
         World_Run(world_);
         const float mixSmoothing = std::exp(
@@ -1710,7 +1757,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.32",
+           "0.4.33",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

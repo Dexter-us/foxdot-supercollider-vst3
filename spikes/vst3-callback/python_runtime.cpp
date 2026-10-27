@@ -96,17 +96,19 @@ _COMPAT_CALLS = {
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid',
-    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
+    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
+    'dirt', 'jbass', 'noise',
+    'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
-_COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle'}
+_COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt', 'jbass', 'noise'}
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'strum'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
-    'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'root', 'strum'
+    'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'root', 'strum', 'rate'
 }
 _COMPAT_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum'}
 _COMPAT_SCALE_NAMES = {
@@ -266,7 +268,7 @@ def _dexter_run_compatibility_check():
             lines.extend('Line ' + str(line) + ': ' + message for line, message in shown)
             if len(diagnostics) > len(shown):
                 lines.append('...and ' + str(len(diagnostics) - len(shown)) + ' more item(s).')
-            lines.append('Supported synth calls: sine, triangle, saw, pulse. Samples and the wider FoxDot synth/effect library are deferred.')
+            lines.append('Supported synth calls: sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise. Samples and other FoxDot synths remain deferred.')
             report_text = '\n'.join(lines)
     except BaseException as exc:
         report_text = 'Compatibility check could not complete: ' + str(exc)
@@ -1026,7 +1028,7 @@ class PlayerPattern:
                  cutoff=20000.0, echo=0.0, delay=0.0, scaleName=None,
                  atk=0.01, rel=0.04, octaveControl=None, baseOctave=5, degreesPerOctave=7,
                  reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, synthRate=None):
         self.notes = notes
         self.step = step
         self.duration = duration
@@ -1034,9 +1036,19 @@ class PlayerPattern:
         self.offset = offset
         self.degrees = degrees
         self.rootMidi = None if root is None else _root_midi(root)
-        if synth not in ('sine', 'triangle', 'saw', 'square'):
-            raise ValueError('synth must be sine, triangle, saw, or square')
+        if synth not in ('sine', 'triangle', 'saw', 'square', 'bass', 'varsaw', 'dirt', 'jbass', 'noise'):
+            raise ValueError('synth must be sine, triangle, saw, square, bass, varsaw, dirt, jbass, or noise')
         self.synth = synth
+        if synthRate is None:
+            synthRate = 8.0 if synth == 'bass' else 0.0
+        try:
+            self.synthRate = float(synthRate)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError('rate must be a finite number for the embedded synths')
+        if self.synthRate != self.synthRate or not 0.0 <= self.synthRate <= 10.0:
+            raise ValueError('rate must be between 0 and 10 for the embedded synths')
+        if synth == 'varsaw' and self.synthRate > 1.0:
+            raise ValueError('varsaw rate is pulse width and must be between 0 and 1')
         self.scaleName = scaleName
         self.amp, self.ampControl = _control_value(amp, 'amp', 0.0, 1.0)
         self.mousePan = isinstance(pan, _DexterMouseControl)
@@ -1098,13 +1110,15 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
              offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
              cutoff=20000.0, echo=0.0, delay=0.0, atk=0.01, rel=0.04,
              reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                   lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0):
+                    lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, rate=None):
     if isinstance(notes, _FoxDotChord):
         notes = [notes]
+    if rate is None:
+        rate = 8.0 if synth == 'bass' else 0.0
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
                         synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
                         reverb=reverb, room=room, mix=mix, damp=damp,
-                          revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum)
+                          revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate)
 
 def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
               amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0,
@@ -1141,7 +1155,7 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     return PlayerPattern(notes, dur, dur if sus is None else sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
                          scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave,
-                           reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum)
+                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate)
 def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
@@ -1173,6 +1187,18 @@ def triangle(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
     return _fox_wave('triangle', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
                        reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum)
+
+def _make_named_synth(name, defaultRate):
+    def synth(notes=0, **kwargs):
+        kwargs.setdefault('rate', defaultRate)
+        return _fox_wave(name, notes, **kwargs)
+    return synth
+
+bass = _make_named_synth('bass', 8.0)
+varsaw = _make_named_synth('varsaw', 0.0)
+dirt = _make_named_synth('dirt', 0.0)
+jbass = _make_named_synth('jbass', 0.0)
+noise = _make_named_synth('noise', 0.0)
 
 class Player:
     def __init__(self, number):
@@ -1212,7 +1238,8 @@ class Player:
         playerIndex = self.number - 1
         if not 0 <= playerIndex < 8:
             raise ValueError('player number must be 1..8')
-        synthIndex = ('sine', 'triangle', 'saw', 'square').index(pattern.synth)
+        synthIndex = ('sine', 'triangle', 'saw', 'square', 'bass', 'varsaw',
+                      'dirt', 'jbass', 'noise').index(pattern.synth)
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echoBeats,
@@ -1227,14 +1254,14 @@ class Player:
                                          pattern.lpfControl, pattern.lprControl,
                                          pattern.hpfControl, pattern.hprControl,
                                          pattern.bpfControl, pattern.bprControl, pattern.echoDecayBeats, pattern.echoDecayControl,
-                                        pattern.echoMix, pattern.echoMixControl, pattern.feedback, pattern.feedbackControl, pattern.delayControl)
+                                         pattern.echoMix, pattern.echoMixControl, pattern.feedback, pattern.feedbackControl, pattern.delayControl, pattern.synthRate)
         if playerIndex == 0:
             _dexter_default_touched = False
         return self
 
     def stop(self):
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-')
+                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0)
 
     def mute(self):
         _dexter_mutes[self.number - 1] = True
@@ -1284,13 +1311,13 @@ p8 = Player(8)
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-')\n"
+             << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _mutes = _dexter_scope['_dexter_mutes']\n"
             << "        _f.write('OK\\t{}\\t{}\\n'.format(len(_updates), len(_mutes)))\n"
             << "        for _player in sorted(_updates):\n"
-            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control = _updates[_player]\n"
-            << "            _f.write('P\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control))\n"
+             << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate = _updates[_player]\n"
+             << "            _f.write('P\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _synth_rate))\n"
             << "            _f.write('R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _reverb, _mix, _room, _damp, _revtime, _spread))\n"
              << "            _f.write('E\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _decay, _decay_control.wire() if _decay_control is not None else '-', _echo_mix, _echo_mix_control, _feedback, _feedback_control if _feedback_control is not None else '-', _note_delay_control.wire() if hasattr(_note_delay_control, 'wire') else (_note_delay_control if _note_delay_control is not None else '-')))\n"
               << "            _controls = (_lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control)\n"
@@ -1350,13 +1377,16 @@ bool parseResult(const std::filesystem::path& resultPath,
               update.pan >> update.cutoffHz >> update.echoBeats >> update.delayTimeSeconds >>
               mousePan >> mouseCutoff >> update.attackSeconds >> update.releaseSeconds >>
               update.ampControlToken >> update.panControlToken >> update.cutoffControlToken >>
-              update.echoControlToken >> update.delayTimeControlToken) ||
+              update.echoControlToken >> update.delayTimeControlToken >> update.synthRate) ||
             record != 'P' || update.playerIndex < 0 || update.playerIndex >= 8 ||
             stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
             !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
-            update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 3 ||
+             update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 8 ||
+             !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
+             update.synthRate > 10.0 ||
+             (update.synthIndex == 5 && update.synthRate > 1.0) ||
             !std::isfinite(update.amplitude) || update.amplitude < 0.0 || update.amplitude > 1.0 ||
             !std::isfinite(update.pan) || update.pan < -1.0 || update.pan > 1.0 ||
             !std::isfinite(update.cutoffHz) || update.cutoffHz < 20.0 ||

@@ -51,13 +51,13 @@ constexpr char kPythonKeywords[] =
     "for from global if import in is lambda nonlocal not or pass raise return try "
     "while with yield False None True";
 constexpr char kFoxDotApiKeywords[] =
-    "Clock Scale Root Player P PGroup var linvar play stop sine triangle saw pulse "
+    "Clock Scale Root Player P PGroup var linvar play stop sine triangle saw pulse bass varsaw dirt jbass noise "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
-    "echo delay mute unmute";
+    "echo delay mute unmute rate";
 constexpr char kFoxDotCompletions[] =
     "Clock P PGroup Player Root Scale amp cutoff delay dur echo linvar mute oct pan "
     "play p1 p2 p3 p4 p5 p6 p7 p8 pulse reverb resonance room saw sine stop strum "
-    "sus triangle unmute var";
+    "sus triangle unmute var bass varsaw dirt jbass noise rate";
 
 std::mutex gScintillaMutex;
 std::size_t gScintillaViewCount = 0;
@@ -430,7 +430,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.32",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.33",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -566,6 +566,16 @@ private:
                 callTip = "saw(notes, dur=1, oct=5, sus=1, amp=1, pan=0, cutoff=20000, resonance=0.2, strum=0)";
             else if (name == "pulse")
                 callTip = "pulse(notes, dur=1, oct=5, sus=1, amp=1, pan=0, width=0.5, strum=0)";
+            else if (name == "bass")
+                callTip = "bass(notes, dur=1, oct=5, sus=1, rate=8, amp=1, pan=0)\nEmbedded FoxDot bass SynthDef";
+            else if (name == "varsaw")
+                callTip = "varsaw(notes, dur=1, oct=5, sus=1, rate=0, amp=1, pan=0)\nrate sets pulse width from 0 to 1";
+            else if (name == "dirt")
+                callTip = "dirt(notes, dur=1, oct=5, sus=1, amp=1, pan=0)\nFoxDot dirt oscillator blend";
+            else if (name == "jbass")
+                callTip = "jbass(notes, dur=1, oct=5, sus=1, amp=1, pan=0)\nFoxDot sub-bass triangle";
+            else if (name == "noise")
+                callTip = "noise(notes, dur=1, oct=5, sus=1, amp=1, pan=0)\nPitched LFNoise0 voice";
             else if (name == "var")
                 callTip = "var(values, durations=4)\nCycle values using FoxDot-style beat durations";
             else if (name == "linvar")

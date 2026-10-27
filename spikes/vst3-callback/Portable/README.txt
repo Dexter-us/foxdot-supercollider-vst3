@@ -8,7 +8,7 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 08-synths-and-controls.py demonstrates oscillator choices, per-player amp/pan/cutoff, beat-based echo spacing, and beat-offset delay. MIDI output remains note events.
 
 
-09-foxdot-core.py demonstrates the initial direct-compatibility subset: Clock.bpm, Scale.default.set(...), p1 >> saw(...), p2 >> pulse(...), cyclic dur values, and per-player oct/sus controls. It uses embedded SuperCollider oscillator UGens and does not start the FoxDot server clock or send OSC. FoxDot sample strings and the wider synth library are not included yet.
+09-foxdot-core.py demonstrates the initial direct-compatibility subset: Clock.bpm, Scale.default.set(...), p1 >> saw(...), p2 >> pulse(...), cyclic dur values, and per-player oct/sus controls. It uses embedded SuperCollider oscillator UGens and does not start the FoxDot server clock or send OSC. FoxDot sample strings and most of the synth library are still not included.
 
 10-pattern-transformations.py demonstrates palindrome, stutter, and interleave pattern tools with rests and per-player FoxDot-style saw/pulse syntax.
 
@@ -53,4 +53,7 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 29-strummed-chords.py demonstrates chord-note staggering with strum in beats, including a time-varying strum value. Its sus=1.8 setting prevents each chord tail from overlapping the next chord's repeated pitches.
 
 29-strummed-chords.py uses a moderate 0.04-beat spread at 84 BPM, with a softer second layer whose strum varies over time. Strum is spacing per chord tone; high values with long sus can overlap a repeated MIDI pitch, so keep the total spread shorter than the gap between chords.
+
+31-bass-varsaw-synths.py tests the embedded FoxDot bass and variable-width saw patches with scalar rate controls; no sample files or separate server are used.
+32-dirt-jbass-noise.py tests three more embedded FoxDot patches: dirt, jbass, and pitched noise. All use already-bundled SuperCollider UGens.
 30-player-mute-controls.py shows p2.mute() and p2.unmute(); the comment markers are at column one so uncommenting a command does not introduce Python indentation.

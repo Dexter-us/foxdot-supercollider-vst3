@@ -35,6 +35,7 @@ struct PythonPlayerUpdate {
     double bpm = 120.0;
     double lengthBeats = 1.0;
     int synthIndex = 0;
+    double synthRate = 0.0;
     double amplitude = 1.0;
     double pan = 0.0;
     double cutoffHz = 20000.0;
