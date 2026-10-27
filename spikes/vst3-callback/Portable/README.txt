@@ -37,3 +37,7 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 21-timevar-note-controls.py demonstrates var()/linvar() on dur, oct, sus, and velocity. These are evaluated at each note start; dur changes event spacing, and oct is rounded to an integer octave per note. Event controls are sampled at note boundaries, while amp/pan/cutoff remain audio-rate controls.
 
 22-timevar-effects-envelopes.py demonstrates var()/linvar() on echo, delay, atk, and rel. Echo mix and delay are smoothed in the audio path; attack and release are evaluated for each note event.
+
+23-reverb-algorithms.py compares FoxDot-compatible FreeVerb using room/mix with the optional FreeVerb2 and GVerb selectors. Each player has its own reverb path; GVerb also exposes revtime and spread.
+
+23-reverb-algorithms.py keeps FoxDot room/mix syntax on FreeVerb and compares the optional FreeVerb2 and GVerb selectors. GVerb adds revtime and spread controls. Each player owns a separate reverb path.

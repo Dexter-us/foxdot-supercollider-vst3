@@ -102,11 +102,11 @@ _COMPAT_CALLS = {
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle'}
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'amp', 'pan', 'cutoff', 'echo',
-    'delay', 'velocity', 'rate', 'atk', 'rel'
+    'delay', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
-    'amp', 'pan', 'cutoff', 'echo', 'delay', 'atk', 'rel'
+    'amp', 'pan', 'cutoff', 'echo', 'delay', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread'
 }
 _COMPAT_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees'}
 _COMPAT_SCALE_NAMES = {
@@ -848,7 +848,8 @@ class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
                  cutoff=20000.0, echo=0.0, delay=0.25, scaleName=None,
-                 atk=0.01, rel=0.04, octaveControl=None, baseOctave=5, degreesPerOctave=7):
+                 atk=0.01, rel=0.04, octaveControl=None, baseOctave=5, degreesPerOctave=7,
+                 reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0):
         self.notes = notes
         self.step = step
         self.duration = duration
@@ -876,6 +877,23 @@ class PlayerPattern:
             self.cutoff, self.cutoffControl = _control_value(cutoff, 'cutoff', 20.0, 20000.0)
         self.echo, self.echoControl = _control_value(echo, 'echo', 0.0, 0.75)
         self.delay, self.delayControl = _control_value(delay, 'delay', 0.05, 1.0)
+        if reverb not in ('freeverb', 'freeverb2', 'gverb', 'none'):
+            raise ValueError('reverb must be freeverb, freeverb2, gverb, or none')
+        self.reverb = reverb
+        self.reverbIndex = ('none', 'freeverb', 'freeverb2', 'gverb').index(reverb)
+        self.room = float(room)
+        self.mix = float(mix)
+        self.damp = float(damp)
+        self.revtime = float(revtime)
+        self.spread = float(spread)
+        if any(value != value for value in (self.room, self.mix, self.damp, self.revtime, self.spread)):
+            raise ValueError('reverb controls must be finite numbers')
+        if not 0.0 <= self.room <= 1.0 or not 0.0 <= self.mix <= 1.0 or not 0.0 <= self.damp <= 1.0:
+            raise ValueError('room, mix, and damp must be between 0 and 1')
+        if not 0.1 <= self.revtime <= 10.0:
+            raise ValueError('revtime must be between 0.1 and 10 seconds')
+        if not 0.0 <= self.spread <= 100.0:
+            raise ValueError('spread must be between 0 and 100')
         self.attackSeconds, self.attackControl = _event_control(atk, 'atk', 0.0, 3.0)
         self.releaseSeconds, self.releaseControl = _event_control(rel, 'rel', 0.0, 3.0)
         self.octaveControl = octaveControl
@@ -892,13 +910,17 @@ class PlayerPattern:
 
 def sequence(notes, step=1.0, duration=None, velocity=100,
              offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
-             cutoff=20000.0, echo=0.0, delay=0.25, atk=0.01, rel=0.04):
+             cutoff=20000.0, echo=0.0, delay=0.25, atk=0.01, rel=0.04,
+             reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0):
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
-                        synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel)
+                        synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
+                        reverb=reverb, room=room, mix=mix, damp=damp,
+                        revtime=revtime, spread=spread)
 
 def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
               amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25,
-              velocity=100, rate=0.0, atk=0.01, rel=0.04):
+              velocity=100, rate=0.0, atk=0.01, rel=0.04,
+              reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0):
     octaveControl = oct if isinstance(oct, _DexterTimeVar) else None
     if octaveControl is not None:
         if any(value < 0.0 or value > 10.0 for value in octaveControl.values):
@@ -926,26 +948,35 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     notes = [shift_note(note) for note in notes]
     return PlayerPattern(notes, dur, dur if sus is None else sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
-                         scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave)
+                         scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave,
+                         reverb, room, mix, damp, revtime, spread)
 def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
-        pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
+        pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04,
+        reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0):
     return _fox_wave('saw', notes, dur, oct, sus, scale, amp, pan, cutoff,
-                     echo, delay, velocity, rate, atk, rel)
+                     echo, delay, velocity, rate, atk, rel,
+                     reverb, room, mix, damp, revtime, spread)
 
 def pulse(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
-          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
+          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04,
+        reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0):
     return _fox_wave('square', notes, dur, oct, sus, scale, amp, pan, cutoff,
-                     echo, delay, velocity, rate, atk, rel)
+                     echo, delay, velocity, rate, atk, rel,
+                     reverb, room, mix, damp, revtime, spread)
 
 def sine(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
-         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
+         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04,
+        reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0):
     return _fox_wave('sine', notes, dur, oct, sus, scale, amp, pan, cutoff,
-                     echo, delay, velocity, rate, atk, rel)
+                     echo, delay, velocity, rate, atk, rel,
+                     reverb, room, mix, damp, revtime, spread)
 
 def triangle(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
-             pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
+             pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04,
+        reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0):
     return _fox_wave('triangle', notes, dur, oct, sus, scale, amp, pan, cutoff,
-                     echo, delay, velocity, rate, atk, rel)
+                     echo, delay, velocity, rate, atk, rel,
+                     reverb, room, mix, damp, revtime, spread)
 
 class Player:
     def __init__(self, number):
@@ -989,14 +1020,16 @@ class Player:
                                         pattern.delay, pattern.mousePan, pattern.mouseCutoff,
                                         pattern.attackSeconds, pattern.releaseSeconds, pattern.ampControl,
                                         pattern.panControl, pattern.cutoffControl,
-                                        pattern.echoControl, pattern.delayControl)
+                                        pattern.echoControl, pattern.delayControl,
+                                        pattern.reverbIndex, pattern.mix, pattern.room, pattern.damp,
+                                        pattern.revtime, pattern.spread)
         if playerIndex == 0:
             _dexter_default_touched = False
         return self
 
     def stop(self):
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-', '-', '-')
+                                             0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0)
 
 p1 = Player(1)
 p2 = Player(2)
@@ -1038,12 +1071,13 @@ p8 = Player(8)
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-', '-', '-')\n"
+            << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.25, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _f.write('OK\\t{}\\n'.format(len(_updates)))\n"
             << "        for _player in sorted(_updates):\n"
-            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control = _updates[_player]\n"
-            << "            _f.write('P\\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control))\n"
+            << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread = _updates[_player]\n"
+            << "            _f.write('P\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control))\n"
+            << "            _f.write('R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _reverb, _mix, _room, _damp, _revtime, _spread))\n"
             << "            for _e in _events:\n"
             << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(*_e))\n"
             << "except BaseException:\n"
@@ -1109,6 +1143,21 @@ bool parseResult(const std::filesystem::path& resultPath,
             update.attackSeconds > 3.0 || !std::isfinite(update.releaseSeconds) ||
             update.releaseSeconds < 0.0 || update.releaseSeconds > 3.0) {
             error = "Python returned a malformed player update.";
+            return false;
+        }
+        char effectRecord = 0;
+        int effectPlayer = -1;
+        if (!(input >> effectRecord >> effectPlayer >> update.reverbIndex >> update.reverbMix >>
+              update.reverbRoom >> update.reverbDamp >> update.reverbTime >>
+              update.reverbSpread) ||
+            effectRecord != 'R' || effectPlayer != update.playerIndex ||
+            update.reverbIndex < 0 || update.reverbIndex > 3 ||
+            !std::isfinite(update.reverbMix) || update.reverbMix < 0.0 || update.reverbMix > 1.0 ||
+            !std::isfinite(update.reverbRoom) || update.reverbRoom < 0.0 || update.reverbRoom > 1.0 ||
+            !std::isfinite(update.reverbDamp) || update.reverbDamp < 0.0 || update.reverbDamp > 1.0 ||
+            !std::isfinite(update.reverbTime) || update.reverbTime < 0.1 || update.reverbTime > 10.0 ||
+            !std::isfinite(update.reverbSpread) || update.reverbSpread < 0.0 || update.reverbSpread > 100.0) {
+            error = "Python returned malformed reverb controls.";
             return false;
         }
         seenPlayers[static_cast<std::size_t>(update.playerIndex)] = true;

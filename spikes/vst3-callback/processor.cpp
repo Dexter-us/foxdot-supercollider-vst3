@@ -17,6 +17,7 @@
 #include "SC_Graph.h"
 #include "SC_Lib_Cintf.h"
 #include "tone_synthdef.h"
+#include "reverb_synthdef.h"
 #include "python_runtime.h"
 #include "win32_code_editor.h"
 
@@ -283,8 +284,15 @@ public:
                         activePatterns_[player].echoDelaySeconds = previous.echoDelaySeconds;
                         activePatterns_[player].echoControl = previous.echoControl;
                         activePatterns_[player].delayControl = previous.delayControl;
+                        activePatterns_[player].reverbIndex = previous.reverbIndex;
+                        activePatterns_[player].reverbMix = previous.reverbMix;
+                        activePatterns_[player].reverbRoom = previous.reverbRoom;
+                        activePatterns_[player].reverbDamp = previous.reverbDamp;
+                        activePatterns_[player].reverbTime = previous.reverbTime;
+                        activePatterns_[player].reverbSpread = previous.reverbSpread;
                     }
                     patternStartSamples_[player] = newStart;
+                    updatePlayerReverb(player);
                 }
                 pendingPlayerMask_ = 0;
             }
@@ -415,6 +423,12 @@ public:
                             throw std::runtime_error("Invalid var/linvar control from Python.");
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoDelaySeconds = player.echoDelaySeconds;
+                        next.reverbIndex = player.reverbIndex;
+                        next.reverbMix = static_cast<float>(player.reverbMix);
+                        next.reverbRoom = static_cast<float>(player.reverbRoom);
+                        next.reverbDamp = static_cast<float>(player.reverbDamp);
+                        next.reverbTime = static_cast<float>(player.reverbTime);
+                        next.reverbSpread = static_cast<float>(player.reverbSpread);
                         next.eventCount = player.events.size();
                         std::copy(player.events.begin(), player.events.end(), next.events.begin());
                         totalNotes += player.events.size();
@@ -485,6 +499,8 @@ private:
     static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
+    static constexpr int kReverbBusStride = 4; // stereo send, stereo return
+    static constexpr int kReverbBaseBus = kFirstAudioBus + static_cast<int>(kAudioVoiceCount) * kAudioBusStride;
     static constexpr int kNumAudioBusChannels = 256;
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
@@ -494,6 +510,8 @@ private:
     static constexpr double kPi = 3.14159265358979323846;
     static_assert(kFirstAudioBus + kAudioVoiceCount * kAudioBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per synth voice.");
+    static_assert(kReverbBaseBus + kPlayerCount * kReverbBusStride <= kNumAudioBusChannels,
+                  "The SuperCollider world needs three private buses per player reverb.");
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
     static constexpr std::size_t kMaxEditorSourceBytes = 256 * 1024;
 
@@ -564,6 +582,12 @@ private:
         TimeVarControl delayControl;
         float echoMix = 0.0f;
         double echoDelaySeconds = 0.25;
+        int reverbIndex = 1;
+        float reverbMix = 0.1f;
+        float reverbRoom = 0.0f;
+        float reverbDamp = 0.5f;
+        float reverbTime = 3.0f;
+        float reverbSpread = 15.0f;
         bool active = false;
     };
 
@@ -990,6 +1014,10 @@ private:
                 found->releasing = false;
                 if (found->synth) {
                     Graph_SetControl(found->synth, 1, found->frequencyHz);
+                    const auto playerBus = kReverbBaseBus + note.playerIndex * kReverbBusStride;
+                    Graph_SetControl(found->synth, 6, static_cast<float>(playerBus));
+                    Graph_SetControl(found->synth, 7, reverbEnabled(activePatterns_[static_cast<std::size_t>(note.playerIndex)]) ? 1.0f : 0.0f);
+                    Graph_SetControl(found->synth, 8, found->cutoffHz);
                     for (int mode = 0; mode < 4; ++mode)
                         Graph_SetControl(found->synth, 2 + mode,
                                          note.synthIndex == mode ? 1.0f : 0.0f);
@@ -997,6 +1025,43 @@ private:
                 }
             }
             found->velocity = note.velocity;
+        }
+    }
+
+    static bool reverbEnabled(const PatternState& pattern) {
+        return pattern.reverbIndex >= 1 && pattern.reverbIndex <= 3 &&
+               pattern.reverbRoom > 0.0f && pattern.reverbMix > 0.0f;
+    }
+
+    void updatePlayerReverb(std::size_t player) {
+        if (player >= kPlayerCount)
+            return;
+        const auto& pattern = activePatterns_[player];
+        const bool enabled = reverbEnabled(pattern);
+        const auto bus = kReverbBaseBus + static_cast<int>(player) * kReverbBusStride;
+        for (int type = 0; type < 3; ++type) {
+            auto* graph = reverbGraphs_[player][static_cast<std::size_t>(type)];
+            if (!graph)
+                continue;
+            Graph_SetControl(graph, 0, static_cast<float>(bus));
+            Graph_SetControl(graph, 1, static_cast<float>(bus + 2));
+            if (type < 2) {
+                Graph_SetControl(graph, 2, pattern.reverbRoom);
+                Graph_SetControl(graph, 3, pattern.reverbDamp);
+            } else {
+                Graph_SetControl(graph, 2, 1.0f + pattern.reverbRoom * 99.0f);
+                Graph_SetControl(graph, 3, pattern.reverbTime);
+                Graph_SetControl(graph, 4, pattern.reverbDamp);
+                Graph_SetControl(graph, 5, pattern.reverbSpread);
+            }
+            Node_SetRun(&graph->mNode, enabled && type == pattern.reverbIndex - 1 ? 1 : 0);
+        }
+        for (auto& voice : audioVoices_) {
+            if (voice.synth && voice.playerIndex == static_cast<int>(player)) {
+                Graph_SetControl(voice.synth, 6, static_cast<float>(bus));
+                Graph_SetControl(voice.synth, 7, enabled ? 1.0f : 0.0f);
+                Graph_SetControl(voice.synth, 8, voice.cutoffHz);
+            }
         }
     }
 
@@ -1069,9 +1134,53 @@ private:
             const auto outputBus = kFirstAudioBus +
                                    kAudioBusStride * static_cast<int>(voiceIndex);
             Graph_SetControl(voice.synth, 0, static_cast<float>(outputBus));
+            Graph_SetControl(voice.synth, 6, static_cast<float>(kReverbBaseBus));
+            Graph_SetControl(voice.synth, 7, 0.0f);
+            Graph_SetControl(voice.synth, 8, 20000.0f);
             Group_AddTail(root, &voice.synth->mNode);
             Node_SetRun(&voice.synth->mNode, 0);
             ++voiceIndex;
+        }
+        auto* reverbDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kReverbSynthDef),
+                                         sizeof(kReverbSynthDef), nullptr);
+        if (!reverbDefs) {
+            discardPartialWorld();
+            return false;
+        }
+        GraphDef_Define(world_, reverbDefs);
+        const std::array<const char*, 3> reverbNames{{"DexRevFree", "DexRevFree2", "DexRevGverb"}};
+        int32 reverbNodeId = 1000;
+        for (std::size_t type = 0; type < reverbNames.size(); ++type) {
+            int32 reverbName[4]{};
+            std::memcpy(reverbName, reverbNames[type], std::strlen(reverbNames[type]));
+            auto* reverbDefinition = World_GetGraphDef(world_, reverbName);
+            if (!reverbDefinition) {
+                discardPartialWorld();
+                return false;
+            }
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                auto*& graph = reverbGraphs_[player][type];
+                sc_msg_iter noControls(0, "");
+                if (Graph_New(world_, reverbDefinition, reverbNodeId++, &noControls,
+                              &graph, true) != 0 || !graph) {
+                    discardPartialWorld();
+                    return false;
+                }
+                const auto bus = kReverbBaseBus + static_cast<int>(player) * kReverbBusStride;
+                Graph_SetControl(graph, 0, static_cast<float>(bus));
+                Graph_SetControl(graph, 1, static_cast<float>(bus + 2));
+                if (type < 2) {
+                    Graph_SetControl(graph, 2, 0.5f);
+                    Graph_SetControl(graph, 3, 0.5f);
+                } else {
+                    Graph_SetControl(graph, 2, 50.0f);
+                    Graph_SetControl(graph, 3, 3.0f);
+                    Graph_SetControl(graph, 4, 0.5f);
+                    Graph_SetControl(graph, 5, 15.0f);
+                }
+                Group_AddTail(root, &graph->mNode);
+                Node_SetRun(&graph->mNode, 0);
+            }
         }
         cursor_ = kSCBlockSize;
         return true;
@@ -1084,6 +1193,8 @@ private:
         }
         for (auto& voice : audioVoices_)
             voice = {};
+        for (auto& player : reverbGraphs_)
+            player.fill(nullptr);
     }
 
     static std::size_t echoOffset(std::size_t player, std::size_t channel,
@@ -1092,6 +1203,19 @@ private:
     }
 
     void renderSCBlock(std::uint64_t blockStart) {
+        for (auto& voice : audioVoices_) {
+            if (!voice.synth || voice.midiNote < 0 || voice.playerIndex < 0 ||
+                voice.playerIndex >= static_cast<int>(kPlayerCount))
+                continue;
+            const auto player = static_cast<std::size_t>(voice.playerIndex);
+            const auto& pattern = activePatterns_[player];
+            const float level = reverbEnabled(pattern)
+                ? voiceEnvelopeAt(voice, blockStart) *
+                      (static_cast<float>(voice.velocity) / 127.0f) * voice.amplitude
+                : 0.0f;
+            Graph_SetControl(voice.synth, 7, level);
+            Graph_SetControl(voice.synth, 8, voice.cutoffHz);
+        }
         World_Run(world_);
         const float mixSmoothing = std::exp(
             -1.0f / static_cast<float>(sampleRate_ * kMixSmoothingSeconds));
@@ -1183,10 +1307,25 @@ private:
             float rightMixed = 0.0f;
             const auto writeIndex = static_cast<std::size_t>(absoluteSample % kMaxEchoBufferSamples);
             std::size_t echoTailPlayers = 0;
+            std::size_t reverbTailPlayers = 0;
+            const auto busLength = static_cast<std::size_t>(world_->mBufLength);
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 const auto& pattern = activePatterns_[player];
                 const float dryLeft = playerLeft[player];
                 const float dryRight = playerRight[player];
+                const float targetReverbMix = reverbEnabled(pattern) ? pattern.reverbMix : 0.0f;
+                auto& reverbMix = reverbMixSmoothed_[player];
+                reverbMix += (targetReverbMix - reverbMix) * mixSmoothing;
+                const auto reverbBus = static_cast<std::size_t>(kReverbBaseBus) +
+                                       player * static_cast<std::size_t>(kReverbBusStride);
+                const auto reverbOffset = static_cast<std::size_t>(sampleIndex);
+                const float wetLeft = world_->mAudioBus[(reverbBus + 2) * busLength + reverbOffset];
+                const float wetRight = world_->mAudioBus[(reverbBus + 3) * busLength + reverbOffset];
+                if (!playerHasVoice[player] && reverbMix > 1e-5f &&
+                    (std::abs(wetLeft) > 1e-6f || std::abs(wetRight) > 1e-6f))
+                    ++reverbTailPlayers;
+                const float reverbedLeft = dryLeft * (1.0f - reverbMix) + wetLeft * reverbMix;
+                const float reverbedRight = dryRight * (1.0f - reverbMix) + wetRight * reverbMix;
                 const auto patternStart = patternStartSamples_[player];
                 const double playerBeat = pattern.bpm > 0.0 && absoluteSample >= patternStart
                     ? static_cast<double>(absoluteSample - patternStart) * pattern.bpm /
@@ -1214,21 +1353,21 @@ private:
                     if (!playerHasVoice[player] &&
                         (std::abs(delayedLeft) > 1e-6f || std::abs(delayedRight) > 1e-6f))
                         ++echoTailPlayers;
-                    leftMixed += dryLeft + delayedLeft * echoMix;
-                    rightMixed += dryRight + delayedRight * echoMix;
+                    leftMixed += reverbedLeft + delayedLeft * echoMix;
+                    rightMixed += reverbedRight + delayedRight * echoMix;
                     echoBuffer_[echoOffset(player, 0, writeIndex)] =
-                        dryLeft + delayedLeft * kEchoFeedback;
+                        reverbedLeft + delayedLeft * kEchoFeedback;
                     echoBuffer_[echoOffset(player, 1, writeIndex)] =
-                        dryRight + delayedRight * kEchoFeedback;
+                        reverbedRight + delayedRight * kEchoFeedback;
                 } else {
-                    leftMixed += dryLeft;
-                    rightMixed += dryRight;
+                    leftMixed += reverbedLeft;
+                    rightMixed += reverbedRight;
                     echoBuffer_[echoOffset(player, 0, writeIndex)] = 0.0f;
                     echoBuffer_[echoOffset(player, 1, writeIndex)] = 0.0f;
                 }
             }
 
-            const auto mixContributors = contributingVoices + echoTailPlayers;
+            const auto mixContributors = contributingVoices + echoTailPlayers + reverbTailPlayers;
             const float targetMixGain = mixContributors == 0
                                             ? 1.0f
                                             : 1.0f / static_cast<float>(mixContributors);
@@ -1257,11 +1396,14 @@ private:
         }
         for (auto& voice : audioVoices_)
             voice = {};
+        for (auto& player : reverbGraphs_)
+            player.fill(nullptr);
         cursor_ = kSCBlockSize;
         for (auto& channel : outputBlock_)
             channel.fill(0.0f);
         std::fill(echoBuffer_.begin(), echoBuffer_.end(), 0.0f);
         echoMixSmoothed_.fill(0.0f);
+        reverbMixSmoothed_.fill(0.0f);
         mixGain_ = 0.0f;
         for (auto& pattern : activePatterns_)
             pattern = {};
@@ -1274,10 +1416,12 @@ private:
     double sampleRate_ = 48000.0;
     World* world_ = nullptr;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
+    std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
     std::string ugenPluginPath_;
     std::array<std::array<float, kSCBlockSize>, 2> outputBlock_{};
     std::vector<float> echoBuffer_;
     std::array<float, kPlayerCount> echoMixSmoothed_{};
+    std::array<float, kPlayerCount> reverbMixSmoothed_{};
     std::array<float, kPlayerCount> echoDelaySmoothed_ = [] {
         std::array<float, kPlayerCount> initial{};
         initial.fill(0.25f);

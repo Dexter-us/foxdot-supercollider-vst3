@@ -184,11 +184,14 @@ namespace['_dexter_updates'].clear()
 namespace['_dexter_default_touched'] = False
 namespace['p1'] >> namespace['sequence']([60, None, 64], step=0.5, duration=0.4,
                                        synth='square', amp=0.6, pan=-0.25,
-                                       cutoff=3200, echo=0.3, delay=0.2)
+                                       cutoff=3200, echo=0.3, delay=0.2,
+                                       reverb='gverb', room=0.8, mix=0.4,
+                                       damp=0.25, revtime=4.0, spread=22)
 update = namespace['_dexter_updates'][0]
 assert update[0] is False and len(update[3]) == 2
 assert update[4] == 3 and update[5] == 0.6 and update[6] == -0.25
 assert update[7] == 3200.0 and update[8] == 0.3 and update[9] == 0.2
+assert update[-6:] == (3, 0.4, 0.8, 0.25, 4.0, 22.0)
 assert update[10] is False and update[11] is False
 assert update[12] == 0.01 and update[13] == 0.04
 namespace['p2'] >> namespace['sequence']([0, 2, 4], step=1.0, degrees=True)
@@ -197,7 +200,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False):
+def run_script(script_text, include_events=False, include_effects=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -214,6 +217,9 @@ def run_script(script_text, include_events=False):
         assert lines[0].startswith('OK\t') and 1 <= int(lines[0].split('\t')[1]) <= 8, lines[0]
         player_rows = [line.split('\t') for line in lines if line.startswith('P\t')]
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
+        effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
+        if include_effects:
+            return player_rows, effect_rows
         return (player_rows, event_rows) if include_events else player_rows
 
 def run_example(name):
@@ -251,8 +257,21 @@ def test_embedded_synthdef():
         embedded_bytes = bytes(int(value, 16) for value in
                                re.findall(r'0x([0-9a-fA-F]{2})', header_text))
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
-    for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse', b'\x06MouseX', b'\x06MouseY'):
-        assert ugen_name in generated_bytes, 'missing SuperCollider oscillator ' + repr(ugen_name)
+    for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse', b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag'):
+        assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
+    reverb_generator = os.path.join(repo_root, 'spikes', 'direct-world', 'testdata', 'generate_reverb.py')
+    reverb_header = os.path.join(plugin_dir, 'reverb_synthdef.h')
+    with tempfile.TemporaryDirectory() as directory:
+        generated_reverbs = os.path.join(directory, 'reverb.scsyndef')
+        subprocess.run([sys.executable, reverb_generator, generated_reverbs], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        generated_bytes = open(generated_reverbs, 'rb').read()
+        header_text = open(reverb_header, encoding='utf-8').read()
+        embedded_bytes = bytes(int(value, 16) for value in
+                               re.findall(r'0x([0-9a-fA-F]{2})', header_text))
+        assert generated_bytes == embedded_bytes, 'embedded reverb SynthDefs differ from their generator'
+        for ugen_name in (b'FreeVerb', b'FreeVerb2', b'GVerb'):
+            assert ugen_name in generated_bytes, 'missing SuperCollider reverb UGen ' + repr(ugen_name)
 
 test_embedded_synthdef()
 
@@ -340,6 +359,12 @@ assert abs(float(effectEvents[1][5]) - 0.01) < 1e-9 and abs(float(effectEvents[1
 assert abs(float(effectEvents[2][5]) - 0.03) < 1e-9 and abs(float(effectEvents[2][6]) - 0.1) < 1e-9
 effectExample = run_example('22-timevar-effects-envelopes.py')
 assert len(effectExample) == 2 and all(len(row) == 21 for row in effectExample)
+reverbRows, reverbEffects = run_script(open(os.path.join(sys.argv[2], '23-reverb-algorithms.py'), encoding='utf-8').read(), include_effects=True)
+assert len(reverbRows) == 3 and len(reverbEffects) == 3
+assert [int(row[2]) for row in reverbEffects] == [1, 2, 3]
+assert [float(row[4]) for row in reverbEffects] == [0.65, 0.75, 0.8]
+assert [float(row[7]) for row in reverbEffects] == [15.0, 15.0, 25.0]
+assert all(abs(float(row[3]) - expected) < 1e-6 for row, expected in zip(reverbEffects, [0.2, 0.3, 0.25]))
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 21 for row in example8)
 p1, p2 = example8
@@ -352,8 +377,8 @@ assert p2[10] == '0.25' and p2[11] == '0.24'
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
-unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\np1 >> saw([0], dur=1, room=0.4)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'room', 'Sample-string', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
+unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
+for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'bass()', 'Sample-string', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
@@ -361,4 +386,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-22.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-23.')

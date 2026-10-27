@@ -29,6 +29,12 @@ struct PythonPlayerUpdate {
     double cutoffHz = 20000.0;
     double echoMix = 0.0;
     double echoDelaySeconds = 0.25;
+    int reverbIndex = 1;
+    double reverbMix = 0.1;
+    double reverbRoom = 0.0;
+    double reverbDamp = 0.5;
+    double reverbTime = 3.0;
+    double reverbSpread = 15.0;
     bool mousePan = false;
     bool mouseCutoff = false;
     double attackSeconds = 0.01;

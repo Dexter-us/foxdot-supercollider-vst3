@@ -43,23 +43,24 @@ data.extend(b"SCgf")
 i32(1)  # SynthDef version
 u16(1)  # one SynthDef
 string("DexterTone")
-constants = (0.0, 0.1, 0.0, 0.5, 1.0, 0.2)
+constants = (0.0, 0.1, 0.0, 0.5, 1.0, 0.2, 0.005)
 u16(len(constants))
 for value in constants:
     f32(value)
-parameters = (0.0, 440.0, 1.0, 0.0, 0.0, 0.0)
+parameters = (0.0, 440.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20000.0)
 u16(len(parameters))
 for value in parameters:
     f32(value)
 parameter_names = (("out", 0), ("freq", 1), ("sine", 2),
-                   ("triangle", 3), ("saw", 4), ("pulse", 5))
+                   ("triangle", 3), ("saw", 4), ("pulse", 5),
+                   ("wetbus", 6), ("wetgain", 7), ("wetcutoff", 8))
 u16(len(parameter_names))
 for name, index in parameter_names:
     string(name)
     u16(index)
 
-u16(16)  # Control, oscillators, selectors, MouseX, MouseY, and Out
-ugen("Control", 1, [], [1, 1, 1, 1, 1, 1])
+u16(20)  # Controls, oscillators, selectors, Mouse UI, and reverb send
+ugen("Control", 1, [], [1, 1, 1, 1, 1, 1, 1, 1, 1])
 ugen("SinOsc", 2, [(0, 1), (-1, 2)], [2])
 ugen("LFTri", 2, [(0, 1), (-1, 2)], [2])
 ugen("Saw", 2, [(0, 1)], [2])
@@ -76,6 +77,11 @@ ugen("BinaryOpUGen", 2, [(11, 0), (-1, 1)], [2], 2)
 ugen("MouseX", 1, [(-1, 0), (-1, 4), (-1, 2), (-1, 5)], [1])
 ugen("MouseY", 1, [(-1, 0), (-1, 4), (-1, 2), (-1, 5)], [1])
 ugen("Out", 2, [(0, 0), (12, 0), (13, 0), (14, 0)], [])
+# A separately enveloped, low-pass-filtered send feeds the persistent player reverb graph.
+ugen("LPF", 2, [(12, 0), (0, 8)], [2])
+ugen("Lag", 2, [(0, 7), (-1, 6)], [2])
+ugen("BinaryOpUGen", 2, [(16, 0), (17, 0)], [2], 2)
+ugen("Out", 2, [(0, 6), (18, 0), (18, 0)], [])
 u16(0)  # no variants
 out_path.parent.mkdir(parents=True, exist_ok=True)
 out_path.write_bytes(data)
