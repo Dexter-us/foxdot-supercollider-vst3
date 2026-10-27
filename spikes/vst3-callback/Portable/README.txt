@@ -52,5 +52,5 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 
 29-strummed-chords.py demonstrates chord-note staggering with strum in beats, including a time-varying strum value. Its sus=1.8 setting prevents each chord tail from overlapping the next chord's repeated pitches.
 
-29-strummed-chords.py uses a moderate 0.04-beat spread at 84 BPM, with a softer second layer whose strum varies over time.
+29-strummed-chords.py uses a moderate 0.04-beat spread at 84 BPM, with a softer second layer whose strum varies over time. Strum is spacing per chord tone; high values with long sus can overlap a repeated MIDI pitch, so keep the total spread shorter than the gap between chords.
 30-player-mute-controls.py shows p2.mute() and p2.unmute(); the comment markers are at column one so uncommenting a command does not introduce Python indentation.

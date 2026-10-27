@@ -6,6 +6,8 @@ Root.default.set("C")
 # 0.04 beats is about 29 ms per chord tone at 84 BPM.
 p1 >> triangle(P[I, V7, IV, I7], dur=2, sus=1.75, oct=3, strum=0.04, amp=0.28, pan=-0.15)
 
+# strum is the spacing between chord tones; the last tone starts 3x later.
+# Keep the total spread short enough that sustained repeated pitches do not overlap.
 # The brighter layer varies gently from about 14 to 36 ms between notes.
 p2 >> sine(P[V7, I7, IV7, V7], dur=2, sus=1.75, oct=4,
           strum=var([0.02, 0.05], 2), amp=0.16, pan=0.2)

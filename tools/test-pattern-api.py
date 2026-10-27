@@ -232,6 +232,16 @@ def run_script(script_text, include_events=False, include_effects=False, include
             return player_rows, effect_rows
         return (player_rows, event_rows) if include_events else player_rows
 
+def run_error_script(script_text):
+    with tempfile.TemporaryDirectory() as directory:
+        source_path = os.path.join(directory, 'source.py')
+        result_path = os.path.join(directory, 'result.out')
+        with open(source_path, 'w', encoding='utf-8') as target:
+            target.write(script_text)
+        wrapper_globals = {'__name__': '__main__'}
+        exec(make_wrapper(source_path, result_path), wrapper_globals, wrapper_globals)
+        return open(result_path, encoding='utf-8').read()
+
 def run_example(name):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read())
@@ -440,6 +450,12 @@ assert [round(float(event[7]), 6) for event in strumEvents[14:]] == [0.0, 0.02, 
 assert all(abs(float(event[2]) - 1.75) < 1e-9 for event in strumEvents)
 assert_player_polyphony_ok(strumRows[0], strumEvents[:14])
 assert_player_polyphony_ok(strumRows[1], strumEvents[14:])
+unsafeStrumError = run_error_script('Clock.bpm = 70\nScale.default = Scale.major\nRoot.default.set(\"C\")\np1 >> triangle(P[I, V7, IV, I7], dur=2, sus=1.8, oct=2, strum=0.5, amp=0.32)\np2 >> saw(P[V7, I7, IV7, V7], dur=2, sus=1.8, oct=3, strum=var([0.02, 0.15], 2), amp=0.18, pan=0.25)\n')
+assert unsafeStrumError.startswith('ERROR\n') and 'MIDI pitch' in unsafeStrumError and 'overlaps itself' in unsafeStrumError, unsafeStrumError
+parse_start = source.find('bool parseResult(')
+parse_end = source.find('\n}', parse_start)
+parse_source = source[parse_start:parse_end]
+assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
 muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
 assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]

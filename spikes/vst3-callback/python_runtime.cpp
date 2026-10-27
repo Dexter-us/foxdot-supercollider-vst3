@@ -1315,6 +1315,9 @@ bool parseResult(const std::filesystem::path& resultPath,
     }
     std::string header;
     std::getline(input, header);
+    // Python opens text files with CRLF on Windows; std::getline removes LF only.
+    if (!header.empty() && header.back() == '\r')
+        header.pop_back();
     if (header == "ERROR") {
         std::ostringstream message;
         message << input.rdbuf();
