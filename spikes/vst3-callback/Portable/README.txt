@@ -41,3 +41,5 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 23-reverb-algorithms.py keeps FoxDot room/mix syntax on FreeVerb and compares the optional FreeVerb2 and GVerb selectors. GVerb adds revtime and spread controls. Each player owns a separate reverb path.
 
 24-foxdot-filters.py demonstrates the FoxDot-style resonant low-pass (lpf/lpr), high-pass (hpf/hpr), and band-pass (bpf/bpr) filters, with var/linvar sweeps. bpnoise and the separate swell effect are not included yet.
+
+25-echo-decay-compat.py checks that the FoxDot-style `decay` keyword is accepted and controls echo-tail feedback in beats. Echo/delay semantics remain a subset under compatibility review.

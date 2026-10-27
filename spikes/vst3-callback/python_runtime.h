@@ -19,6 +19,7 @@ struct PythonPlayerUpdate {
     std::string cutoffControlToken = "-";
     std::string echoControlToken = "-";
     std::string delayControlToken = "-";
+    std::string echoDecayControlToken = "-";
     std::string lpfControlToken = "-";
     std::string lprControlToken = "-";
     std::string hpfControlToken = "-";
@@ -35,6 +36,7 @@ struct PythonPlayerUpdate {
     double cutoffHz = 20000.0;
     double echoMix = 0.0;
     double echoDelaySeconds = 0.25;
+    double echoDecayBeats = 1.0;
     int reverbIndex = 1;
     double reverbMix = 0.1;
     double reverbRoom = 0.0;

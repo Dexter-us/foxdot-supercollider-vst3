@@ -284,6 +284,8 @@ public:
                         activePatterns_[player].echoDelaySeconds = previous.echoDelaySeconds;
                         activePatterns_[player].echoControl = previous.echoControl;
                         activePatterns_[player].delayControl = previous.delayControl;
+                        activePatterns_[player].echoDecayControl = previous.echoDecayControl;
+                        activePatterns_[player].echoDecayBeats = previous.echoDecayBeats;
                         activePatterns_[player].reverbIndex = previous.reverbIndex;
                         activePatterns_[player].reverbMix = previous.reverbMix;
                         activePatterns_[player].reverbRoom = previous.reverbRoom;
@@ -432,6 +434,7 @@ public:
                             !parseTimeVarControl(player.cutoffControlToken, 20.0, 20000.0, next.cutoffControl) ||
                             !parseTimeVarControl(player.echoControlToken, 0.0, 0.75, next.echoControl) ||
                             !parseTimeVarControl(player.delayControlToken, 0.05, 1.0, next.delayControl) ||
+                             !parseTimeVarControl(player.echoDecayControlToken, 0.0, 64.0, next.echoDecayControl) ||
                             !parseTimeVarControl(player.lpfControlToken, 0.0, 20000.0, next.lpfControl) ||
                             !parseTimeVarControl(player.lprControlToken, 0.05, 1.0, next.lprControl) ||
                             !parseTimeVarControl(player.hpfControlToken, 0.0, 20000.0, next.hpfControl) ||
@@ -441,6 +444,7 @@ public:
                             throw std::runtime_error("Invalid var/linvar control from Python.");
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoDelaySeconds = player.echoDelaySeconds;
+                        next.echoDecayBeats = player.echoDecayBeats;
                         next.reverbIndex = player.reverbIndex;
                         next.reverbMix = static_cast<float>(player.reverbMix);
                         next.reverbRoom = static_cast<float>(player.reverbRoom);
@@ -530,7 +534,6 @@ private:
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kMixSmoothingSeconds = 0.010;
     static constexpr std::size_t kMaxEchoBufferSamples = 96000;
-    static constexpr float kEchoFeedback = 0.35f;
     static constexpr double kPi = 3.14159265358979323846;
     static_assert(kFirstAudioBus + kAudioVoiceCount * kAudioBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per synth voice.");
@@ -610,8 +613,10 @@ private:
         TimeVarControl bprControl;
         TimeVarControl echoControl;
         TimeVarControl delayControl;
+        TimeVarControl echoDecayControl;
         float echoMix = 0.0f;
         double echoDelaySeconds = 0.25;
+        double echoDecayBeats = 1.0;
         int reverbIndex = 1;
         float reverbMix = 0.1f;
         float reverbRoom = 0.0f;
@@ -1488,6 +1493,17 @@ private:
                 const float targetDelaySeconds = evaluateTimeVar(pattern.delayControl, playerBeat,
                                                                  static_cast<float>(pattern.echoDelaySeconds));
                 delaySeconds += (targetDelaySeconds - delaySeconds) * mixSmoothing;
+                if (sampleIndex % kSCBlockSize == 0) {
+                    const float decayBeats = evaluateTimeVar(pattern.echoDecayControl, playerBeat,
+                                                            static_cast<float>(pattern.echoDecayBeats));
+                    const double decaySeconds = pattern.bpm > 0.0
+                        ? static_cast<double>(decayBeats) * 60.0 / pattern.bpm : 0.0;
+                    echoFeedbackTarget_[player] = decaySeconds > 0.0
+                        ? std::pow(0.001f, static_cast<float>(delaySeconds / decaySeconds))
+                        : 0.0f;
+                }
+                auto& feedback = echoFeedbackSmoothed_[player];
+                feedback += (echoFeedbackTarget_[player] - feedback) * mixSmoothing;
                 if (echoMix > 1e-5f && !echoBuffer_.empty()) {
                     const auto requestedDelay = std::round(delaySeconds * sampleRate_);
                     const auto delaySamples = static_cast<std::size_t>(
@@ -1505,9 +1521,9 @@ private:
                     leftMixed += reverbedLeft + delayedLeft * echoMix;
                     rightMixed += reverbedRight + delayedRight * echoMix;
                     echoBuffer_[echoOffset(player, 0, writeIndex)] =
-                        reverbedLeft + delayedLeft * kEchoFeedback;
+                        reverbedLeft + delayedLeft * feedback;
                     echoBuffer_[echoOffset(player, 1, writeIndex)] =
-                        reverbedRight + delayedRight * kEchoFeedback;
+                        reverbedRight + delayedRight * feedback;
                 } else {
                     leftMixed += reverbedLeft;
                     rightMixed += reverbedRight;
@@ -1552,6 +1568,8 @@ private:
             channel.fill(0.0f);
         std::fill(echoBuffer_.begin(), echoBuffer_.end(), 0.0f);
         echoMixSmoothed_.fill(0.0f);
+        echoFeedbackTarget_.fill(0.0f);
+        echoFeedbackSmoothed_.fill(0.0f);
         reverbMixSmoothed_.fill(0.0f);
         mixGain_ = 0.0f;
         for (auto& pattern : activePatterns_)
@@ -1570,6 +1588,8 @@ private:
     std::array<std::array<float, kSCBlockSize>, 2> outputBlock_{};
     std::vector<float> echoBuffer_;
     std::array<float, kPlayerCount> echoMixSmoothed_{};
+    std::array<float, kPlayerCount> echoFeedbackTarget_{};
+    std::array<float, kPlayerCount> echoFeedbackSmoothed_{};
     std::array<float, kPlayerCount> reverbMixSmoothed_{};
     std::array<float, kPlayerCount> echoDelaySmoothed_ = [] {
         std::array<float, kPlayerCount> initial{};
