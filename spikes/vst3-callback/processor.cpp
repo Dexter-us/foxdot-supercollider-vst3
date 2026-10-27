@@ -1320,6 +1320,9 @@ private:
         options.mPreferredSampleRate = sampleRate_;
         options.mBufLength = kSCBlockSize;
         options.mMaxNodes = kWorldNodeCapacity;
+        // The preallocated graph bank exceeds SuperCollider's small default
+        // pool once every synth is instantiated for every polyphonic voice.
+        options.mRealTimeMemorySize = 32768;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
         options.mNumAudioBusChannels = kNumAudioBusChannels;
