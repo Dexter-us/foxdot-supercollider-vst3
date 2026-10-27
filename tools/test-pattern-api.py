@@ -190,7 +190,7 @@ namespace['p1'] >> namespace['sequence']([60, None, 64], step=0.5, duration=0.4,
 update = namespace['_dexter_updates'][0]
 assert update[0] is False and len(update[3]) == 2
 assert update[4] == 3 and update[5] == 0.6 and update[6] == -0.25
-assert update[7] == 3200.0 and update[8] == 0.3 and update[9] == 0.0
+assert abs(update[7] - 3200.0) < 1e-9 and abs(update[8] - 0.3) < 1e-9 and abs(update[9]) < 1e-9, repr(update[7:10])
 assert abs(update[3][0][6] - 0.2) < 1e-9
 assert update[19:25] == (3, 0.4, 0.8, 0.25, 4.0, 22.0)
 assert update[10] is False and update[11] is False
