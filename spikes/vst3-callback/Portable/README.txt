@@ -49,3 +49,5 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 27-root-and-scale-controls.py demonstrates FoxDot-style Scale.default assignment, Root.default.set(...) using pitch classes or note names, and per-player root overrides.
 
 28-roman-numeral-chords.py demonstrates FoxDot's I–VII triad and seventh-chord names, plus custom chords made with PGroup(...).
+
+29-strummed-chords.py demonstrates chord-note staggering with strum in beats, including a time-varying strum value.

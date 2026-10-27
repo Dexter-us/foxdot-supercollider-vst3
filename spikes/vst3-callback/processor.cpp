@@ -963,7 +963,7 @@ private:
                 const auto& note = pattern.events[i];
                 const auto firstCycle = std::max<std::int64_t>(
                     0, static_cast<std::int64_t>(std::floor(
-                           (startBeat - note.beat - 8.0 - note.durationBeats) /
+                           (startBeat - note.beat - 15.0 - note.durationBeats) /
                            pattern.lengthBeats)) - 1);
                 const auto lastCycle = static_cast<std::int64_t>(
                     std::ceil((endBeat - note.beat) / pattern.lengthBeats)) + 1;
@@ -1038,7 +1038,7 @@ private:
                     break;
                 const auto firstCycle = std::max<std::int64_t>(
                     0, static_cast<std::int64_t>(std::floor(
-                           (beat - event.beat - 8.0 - event.durationBeats) /
+                           (beat - event.beat - 15.0 - event.durationBeats) /
                            pattern.lengthBeats)) - 1);
                 const auto lastCycle = static_cast<std::int64_t>(
                     std::floor((beat - event.beat) / pattern.lengthBeats));

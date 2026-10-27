@@ -409,6 +409,11 @@ assert len(chordRows) == 2 and [row[1] for row in chordRows] == ['0', '1']
 assert [int(event[3]) for event in chordEvents[:14]] == [48, 52, 55, 53, 57, 48, 55, 47, 50, 65, 48, 52, 55, 59]
 assert [int(event[3]) for event in chordEvents[14:]] == [69, 72, 76, 81]
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, IV, V7, I7])\np2 >> saw(PGroup(0, 2, 4))\n')
+strumRows, strumEvents = run_script(open(os.path.join(sys.argv[2], '29-strummed-chords.py'), encoding='utf-8').read(), include_events=True)
+assert len(strumRows) == 2 and [row[1] for row in strumRows] == ['0', '1']
+assert [round(float(event[7]), 6) for event in strumEvents[:14]] == [0.0, 0.06, 0.12, 0.0, 0.06, 0.12, 0.18, 0.0, 0.06, 0.12, 0.0, 0.06, 0.12, 0.18]
+assert [round(float(event[7]), 6) for event in strumEvents[14:]] == [0.0, 0.02, 0.04, 0.06, 0.0, 0.05, 0.1, 0.15, 0.0, 0.02, 0.04, 0.06, 0.0, 0.05, 0.1, 0.15]
+assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\n')
 assert len(filterExampleRows) == 3 and [row[1] for row in filterExampleRows] == ['0', '1', '2']
 assert len(filterExampleControls) == 3 and all(len(row) == 14 for row in filterExampleControls)
 assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
@@ -439,4 +444,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-28.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-29.')
