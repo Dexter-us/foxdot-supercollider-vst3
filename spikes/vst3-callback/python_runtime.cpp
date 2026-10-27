@@ -927,8 +927,8 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
-    points = sorted([(event[0], 1, event[2]) for event in candidate] +
-                    [(event[0] + event[1], -1, event[2]) for event in candidate])
+    points = sorted([(event[0] + event[6], 1, event[2]) for event in candidate] +
+                    [(event[0] + event[6] + event[1], -1, event[2]) for event in candidate])
     active = 0
     active_pitches = set()
     for beat, delta, note in points:
@@ -936,10 +936,10 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
             active -= 1
             active_pitches.discard(note)
         else:
-            if active >= 8:
-                raise ValueError('a pattern can have at most 8 simultaneous notes')
             if note in active_pitches:
-                raise ValueError('the same MIDI pitch cannot overlap itself')
+                raise ValueError('MIDI pitch ' + str(note) + ' overlaps itself near beat ' + str(round(beat, 3)) + '; shorten sus or adjust strum/delay')
+            if active >= 8:
+                raise ValueError('pattern exceeds 8-note polyphony near beat ' + str(round(beat, 3)) + '; reduce chord size or shorten sus')
             active += 1
             active_pitches.add(note)
     _dexter_events.extend(additions)
@@ -1454,8 +1454,21 @@ bool parseResult(const std::filesystem::path& resultPath,
                 activePitches[static_cast<std::size_t>(boundary.note)] = false;
             } else {
                 const auto pitch = static_cast<std::size_t>(boundary.note);
-                if (activeNotes >= 8 || activePitches[pitch]) {
-                    error = "Player pattern exceeds polyphony or overlaps a repeated pitch.";
+                if (activePitches[pitch]) {
+                    std::ostringstream message;
+                    message << "Player " << (update.playerIndex + 1)
+                            << " overlaps MIDI pitch " << boundary.note
+                            << " near beat " << boundary.beat
+                            << "; shorten sus or adjust strum/delay.";
+                    error = message.str();
+                    return false;
+                }
+                if (activeNotes >= 8) {
+                    std::ostringstream message;
+                    message << "Player " << (update.playerIndex + 1)
+                            << " exceeds 8-note polyphony near beat " << boundary.beat
+                            << "; reduce chord size or shorten sus.";
+                    error = message.str();
                     return false;
                 }
                 ++activeNotes;

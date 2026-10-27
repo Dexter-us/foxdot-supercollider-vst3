@@ -233,6 +233,27 @@ def run_example(name):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read())
 
+def assert_player_polyphony_ok(player_row, event_rows):
+    length = float(player_row[4])
+    boundaries = []
+    for event in event_rows:
+        start = (float(event[1]) + float(event[7])) % length
+        end = start + float(event[2])
+        note = int(event[3])
+        if end <= length:
+            boundaries.extend(((start, 1, note), (end, -1, note)))
+        else:
+            boundaries.extend(((0.0, 1, note), (end - length, -1, note),
+                               (start, 1, note), (length, -1, note)))
+    active = set()
+    for beat, delta, note in sorted(boundaries, key=lambda item: (item[0], item[1])):
+        if delta < 0:
+            active.remove(note)
+        else:
+            assert note not in active, ('overlapping repeated MIDI pitch', note, beat)
+            assert len(active) < 8, ('player exceeds eight-note polyphony', beat)
+            active.add(note)
+
 initial_live_run = run_script('p1 >> saw([0, 2, 4], dur=0.5)\np2 >> pulse([0, None, 3], dur=0.25)\n')
 assert [row[1] for row in initial_live_run] == ['0', '1']
 edit_one_player = run_script('p1 >> saw([0, 4, 2], dur=0.5)\n')
@@ -413,7 +434,19 @@ strumRows, strumEvents = run_script(open(os.path.join(sys.argv[2], '29-strummed-
 assert len(strumRows) == 2 and [row[1] for row in strumRows] == ['0', '1']
 assert [round(float(event[7]), 6) for event in strumEvents[:14]] == [0.0, 0.06, 0.12, 0.0, 0.06, 0.12, 0.18, 0.0, 0.06, 0.12, 0.0, 0.06, 0.12, 0.18]
 assert [round(float(event[7]), 6) for event in strumEvents[14:]] == [0.0, 0.02, 0.04, 0.06, 0.0, 0.05, 0.1, 0.15, 0.0, 0.02, 0.04, 0.06, 0.0, 0.05, 0.1, 0.15]
+assert all(abs(float(event[2]) - 1.8) < 1e-9 for event in strumEvents)
+assert_player_polyphony_ok(strumRows[0], strumEvents[:14])
+assert_player_polyphony_ok(strumRows[1], strumEvents[14:])
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\n')
+namespace['_dexter_events'] = []
+namespace['_dexter_length'] = 1.0
+namespace['_dexter_slots'] = 0
+try:
+    namespace['play']([(60, 64), (64, 67)], step=1, duration=1, strum=0.2)
+except ValueError as error:
+    assert 'MIDI pitch 64 overlaps itself' in str(error) and 'adjust strum/delay' in str(error)
+else:
+    raise AssertionError('the pattern API must report repeated-pitch strum overlap clearly')
 assert len(filterExampleRows) == 3 and [row[1] for row in filterExampleRows] == ['0', '1', '2']
 assert len(filterExampleControls) == 3 and all(len(row) == 14 for row in filterExampleControls)
 assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
