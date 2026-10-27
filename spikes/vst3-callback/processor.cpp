@@ -560,6 +560,9 @@ private:
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
     static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
+    static constexpr std::size_t kSynthGraphCount = 19;
+    static constexpr std::size_t kReverbGraphCount = 3;
+    static constexpr uint32 kWorldNodeCapacity = 2048;
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
@@ -574,6 +577,9 @@ private:
                   "The SuperCollider world needs three private buses per synth voice.");
     static_assert(kReverbBaseBus + kPlayerCount * kReverbBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per player reverb.");
+    static_assert(kAudioVoiceCount * kSynthGraphCount +
+                      kPlayerCount * kReverbGraphCount + 1 <= kWorldNodeCapacity,
+                  "The SuperCollider world needs a node slot for every voice and reverb graph.");
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
     static constexpr std::size_t kMaxEditorSourceBytes = 256 * 1024;
 
@@ -697,7 +703,7 @@ private:
     };
 
     struct AudioVoice {
-        std::array<Graph*, 19> synthGraphs{};
+        std::array<Graph*, kSynthGraphCount> synthGraphs{};
         Graph* activeSynth = nullptr;
         int playerIndex = -1;
         int midiNote = -1;
@@ -1313,6 +1319,7 @@ private:
         options.mRealTime = false;
         options.mPreferredSampleRate = sampleRate_;
         options.mBufLength = kSCBlockSize;
+        options.mMaxNodes = kWorldNodeCapacity;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
         options.mNumAudioBusChannels = kNumAudioBusChannels;
@@ -1347,13 +1354,13 @@ private:
         }
         GraphDef_Define(world_, defs);
 
-        constexpr std::array<const char*, 19> synthNames{{
+        constexpr std::array<const char*, kSynthGraphCount> synthNames{{
             "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
             "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
             "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
             "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
             "DexterTwang", "DexterDonk", "DexterSquish"}};
-        std::array<GraphDef*, synthNames.size()> synthDefinitions{};
+        std::array<GraphDef*, kSynthGraphCount> synthDefinitions{};
         for (std::size_t index = 0; index < synthNames.size(); ++index) {
             int32 synthName[4]{};
             std::memcpy(synthName, synthNames[index],
@@ -1415,7 +1422,8 @@ private:
             return false;
         }
         GraphDef_Define(world_, reverbDefs);
-        const std::array<const char*, 3> reverbNames{{"DexRevFree", "DexRevFree2", "DexRevGverb"}};
+        const std::array<const char*, kReverbGraphCount> reverbNames{{
+            "DexRevFree", "DexRevFree2", "DexRevGverb"}};
         int32 reverbNodeId = 1000;
         for (std::size_t type = 0; type < reverbNames.size(); ++type) {
             int32 reverbName[4]{};
