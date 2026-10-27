@@ -80,6 +80,8 @@ assert stepVar.wire() == 'v:0.2,0.8:2.0,2.0'
 assert linearVar.wire() == 'l:-1.0,1.0:4.0,4.0'
 defaultVar = namespace['var']([1, 0])
 assert defaultVar.durations == [4.0, 4.0]
+assert stepVar.at(0) == 0.2 and stepVar.at(2) == 0.8
+assert abs(linearVar.at(2)) < 1e-9 and linearVar.at(4) == 1.0
 fox_literal = namespace['P'][0, 2, None, (3, 5), 7]
 assert fox_literal == [0, 2, None, (3, 5), 7]
 assert fox_literal + 2 == [2, 4, None, (5, 7), 9]
@@ -195,7 +197,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text):
+def run_script(script_text, include_events=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -210,7 +212,9 @@ def run_script(script_text):
         exec(wrapper, wrapper_globals, wrapper_globals)
         lines = open(result_path, encoding='utf-8').read().splitlines()
         assert lines[0].startswith('OK\t') and 1 <= int(lines[0].split('\t')[1]) <= 8, lines[0]
-        return [line.split('\t') for line in lines if line.startswith('P\t')]
+        player_rows = [line.split('\t') for line in lines if line.startswith('P\t')]
+        event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
+        return (player_rows, event_rows) if include_events else player_rows
 
 def run_example(name):
     example_path = os.path.join(sys.argv[2], name)
@@ -311,6 +315,20 @@ assert len(timevarRows) == 2 and all(len(row) == 19 for row in timevarRows)
 assert timevarRows[0][16] == 'v:0.15,0.45:4.0,4.0'
 assert timevarRows[1][17] == 'l:-0.8,0.8:8.0,8.0'
 assert timevarRows[1][18] == 'l:400.0,5000.0:8.0,8.0'
+timevarNoteRows, timevarNoteEvents = run_script('Scale.default.set("minor")\np1 >> triangle(P[0, 1, 2, 3, 4, 5, 6, 0, 0, 1, 2, 3, 4, 5, 6, 0], dur=var([0.25, 0.5], [2, 2]), oct=var([4, 5], [2, 2]), sus=var([0.2, 0.4], [2, 2]), velocity=var([60, 110], [2, 2]))\n', include_events=True)
+assert len(timevarNoteRows) == 1 and len(timevarNoteEvents) == 16
+assert float(timevarNoteEvents[0][1]) == 0.0 and abs(float(timevarNoteEvents[0][2]) - 0.2) < 1e-9
+assert int(timevarNoteEvents[0][3]) == 48 and int(timevarNoteEvents[0][4]) == 60
+assert abs(float(timevarNoteEvents[8][1]) - 2.0) < 1e-9
+assert abs(float(timevarNoteEvents[8][2]) - 0.4) < 1e-9
+assert int(timevarNoteEvents[8][3]) == 60 and int(timevarNoteEvents[8][4]) == 110
+linNoteRows, linNoteEvents = run_script('Scale.default.set("minor")\np1 >> saw([0, 2, 4, 6, 0, 2, 4, 6], dur=linvar([0.25, 0.5], [1, 1]), oct=linvar([4, 5], [1, 1]), sus=linvar([0.1, 0.3], [1, 1]), velocity=linvar([55, 115], [1, 1]))\n', include_events=True)
+assert len(linNoteRows) == 1 and len(linNoteEvents) == 8
+assert abs(float(linNoteEvents[0][2]) - 0.1) < 1e-9 and int(linNoteEvents[0][3]) == 48
+assert abs(float(linNoteEvents[1][1]) - 0.25) < 1e-9
+assert abs(float(linNoteEvents[2][1]) - 0.5625) < 1e-9
+assert abs(float(linNoteEvents[2][2]) - 0.2125) < 1e-9
+assert int(linNoteEvents[2][3]) == 67 and int(linNoteEvents[2][4]) == 89
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 19 for row in example8)
 p1, p2 = example8
@@ -332,4 +350,4 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-20.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-21.')

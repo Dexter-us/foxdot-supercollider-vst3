@@ -666,7 +666,8 @@ def _timing_pattern(value, count, name):
         raise ValueError(name + ' pattern cannot be empty')
     return [float(values[index % len(values)]) for index in range(count)]
 
-def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False):
+def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False,
+         _octave_control=None, _base_octave=5, _degrees_per_octave=7):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
     if isinstance(notes, (int, float)):
@@ -674,41 +675,70 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
     if isinstance(notes, str):
         raise ValueError('FoxDot sample strings are not included yet; sample support is deferred')
     notes = list(notes)
-    steps = _timing_pattern(step, len(notes), 'dur')
-    durations = _timing_pattern(step if duration is None else duration, len(notes), 'sus')
+    stepIsVar = isinstance(step, _DexterTimeVar)
+    steps = None if stepIsVar else _timing_pattern(step, len(notes), 'dur')
+    durationSource = step if duration is None else duration
+    durationIsVar = isinstance(durationSource, _DexterTimeVar)
+    durations = None if durationIsVar else _timing_pattern(durationSource, len(notes), 'sus')
     offset = float(offset)
-    velocity = int(velocity)
-    if offset != offset or offset < 0.0 or offset > 4096:
+    if offset != offset or offset < 0.0 or offset > 4096.0:
         raise ValueError('offset must be between 0 and 4096 beats')
-    if any(value != value or value < 0.1 or value > 4096.0 for value in steps):
+    if stepIsVar and any(value < 0.1 or value > 4096.0 for value in step.values):
         raise ValueError('dur values must be between 0.1 and 4096 beats')
-    if any(value != value or value < 0.02 or value > stepValue + 1e-9 for value, stepValue in zip(durations, steps)):
-        raise ValueError('this embedded first pass requires each sus value to fit within its dur value')
-    totalBeats = sum(steps)
-    if offset + totalBeats > 4096:
-        raise ValueError('offset and pattern length must fit within 4096 beats')
-    if not 1 <= velocity <= 127:
-        raise ValueError('velocity must be 1..127')
+    if durationIsVar and any(value < 0.02 or value > 4096.0 for value in durationSource.values):
+        raise ValueError('sus values must be between 0.02 and 4096 beats')
+    if _octave_control is not None and any(value < 0.0 or value > 10.0 for value in _octave_control.values):
+        raise ValueError('oct values must be from 0 to 10')
+    velocityIsVar = isinstance(velocity, _DexterTimeVar)
+    if velocityIsVar:
+        if any(value < 1.0 or value > 127.0 for value in velocity.values):
+            raise ValueError('velocity values must be from 1 to 127')
+    else:
+        velocity = int(velocity)
+        if not 1 <= velocity <= 127:
+            raise ValueError('velocity must be 1..127')
     if _dexter_slots + len(notes) > 256:
         raise ValueError('a pattern is limited to 256 step slots')
-    additions = []
+    starts = []
+    stepValues = []
+    durationValues = []
     start = offset
+    for i in range(len(notes)):
+        stepValue = step.at(start) if stepIsVar else steps[i]
+        durationValue = durationSource.at(start) if durationIsVar else durations[i]
+        if stepValue != stepValue or stepValue < 0.1 or stepValue > 4096.0:
+            raise ValueError('dur values must be between 0.1 and 4096 beats')
+        if durationValue != durationValue or durationValue < 0.02 or durationValue > stepValue + 1e-9:
+            raise ValueError('each sus value must be at least 0.02 beats and fit within dur')
+        starts.append(start)
+        stepValues.append(stepValue)
+        durationValues.append(durationValue)
+        start += stepValue
+    totalBeats = sum(stepValues)
+    if offset + totalBeats > 4096.0:
+        raise ValueError('offset and pattern length must fit within 4096 beats')
+    additions = []
     for i, item in enumerate(notes):
+        start = starts[i]
+        noteVelocity = int(round(velocity.at(start))) if velocityIsVar else velocity
+        if not 1 <= noteVelocity <= 127:
+            raise ValueError('velocity values must be from 1 to 127')
         if item is None:
-            start += steps[i]
             continue
         chord = list(item) if isinstance(item, (list, tuple)) else [item]
         if len(chord) > 8:
             raise ValueError('a chord can contain at most 8 notes')
         for note in chord:
             note = int(note)
+            if _octave_control is not None:
+                octave = int(round(_octave_control.at(start)))
+                note += (octave - _base_octave) * _degrees_per_octave
             if degrees:
                 octave, degree = divmod(note, len(_dexter_scale))
                 note = _dexter_root + octave * 12 + _dexter_scale[degree]
             if not 0 <= note <= 127:
                 raise ValueError('notes must resolve to MIDI pitches 0..127')
-            additions.append((start, durations[i], note, velocity))
-        start += steps[i]
+            additions.append((start, durationValues[i], note, noteVelocity))
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
@@ -730,7 +760,6 @@ def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False
     _dexter_events.extend(additions)
     _dexter_slots += len(notes)
     _dexter_length = max(_dexter_length, offset + totalBeats)
-
 class _DexterMouseControl:
     def __init__(self, axis):
         self.axis = axis
@@ -764,6 +793,19 @@ class _DexterTimeVar:
             raise ValueError('var/linvar control data exceeds the supported size')
         return token
 
+    def at(self, beat):
+        cycle = sum(self.durations)
+        position = max(0.0, float(beat)) % cycle
+        for index, duration in enumerate(self.durations):
+            if position < duration or index + 1 == len(self.durations):
+                if not self.linear or len(self.values) == 1:
+                    return self.values[index]
+                progress = position / duration
+                following = self.values[(index + 1) % len(self.values)]
+                return self.values[index] + (following - self.values[index]) * progress
+            position -= duration
+        return self.values[-1]
+
 def var(values, durations=4.0):
     return _DexterTimeVar(values, durations, False)
 
@@ -784,7 +826,7 @@ class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
                  cutoff=20000.0, echo=0.0, delay=0.25, scaleName=None,
-                 atk=0.01, rel=0.04):
+                 atk=0.01, rel=0.04, octaveControl=None, baseOctave=5, degreesPerOctave=7):
         self.notes = notes
         self.step = step
         self.duration = duration
@@ -814,6 +856,9 @@ class PlayerPattern:
         self.delay = float(delay)
         self.attackSeconds = float(atk)
         self.releaseSeconds = float(rel)
+        self.octaveControl = octaveControl
+        self.baseOctave = baseOctave
+        self.degreesPerOctave = degreesPerOctave
         if self.echo != self.echo or not 0.0 <= self.echo <= 0.75:
             raise ValueError('echo must be between 0 and 0.75')
         if self.attackSeconds != self.attackSeconds or not 0.0 <= self.attackSeconds <= 3.0:
@@ -832,18 +877,24 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
 def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
               amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25,
               velocity=100, rate=0.0, atk=0.01, rel=0.04):
-    oct = int(oct)
-    if not 0 <= oct <= 10:
+    octaveControl = oct if isinstance(oct, _DexterTimeVar) else None
+    if octaveControl is not None:
+        if any(value < 0.0 or value > 10.0 for value in octaveControl.values):
+            raise ValueError('oct values must be from 0 to 10')
+        baseOctave = int(round(octaveControl.values[0]))
+    else:
+        baseOctave = int(oct)
+    if not 0 <= baseOctave <= 10:
         raise ValueError('oct must be from 0 to 10 in the embedded FoxDot subset')
     scaleName = None if scale is None else _normalize_scale_name(scale)
     if scaleName is not None and scaleName not in _SCALES:
         raise ValueError('unsupported FoxDot scale: ' + str(scale))
     degreesPerOctave = len(_SCALES[scaleName]) if scaleName is not None else len(_dexter_scale)
-    shift = (oct - 5) * degreesPerOctave
+    shift = (baseOctave - 5) * degreesPerOctave
     def shift_note(note):
         if note is None:
             return None
-        if isinstance(note, (list, tuple)):
+        if isinstance(note, (list, tuple)): 
             return [shift_note(value) for value in note]
         return int(note) + shift
     if isinstance(notes, (int, float)):
@@ -853,8 +904,7 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     notes = [shift_note(note) for note in notes]
     return PlayerPattern(notes, dur, dur if sus is None else sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
-                         scaleName, atk, rel)
-
+                         scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave)
 def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.25, velocity=100, rate=0.0, atk=0.01, rel=0.04):
     return _fox_wave('saw', notes, dur, oct, sus, scale, amp, pan, cutoff,
@@ -895,7 +945,9 @@ class Player:
                 scale(pattern.scaleName, _dexter_root)
             play(pattern.notes, step=pattern.step, duration=pattern.duration,
                  velocity=pattern.velocity, offset=pattern.offset,
-                 degrees=pattern.degrees)
+                 degrees=pattern.degrees, _octave_control=pattern.octaveControl,
+                 _base_octave=pattern.baseOctave,
+                 _degrees_per_octave=pattern.degreesPerOctave)
             compiledLength = _dexter_length
             compiledEvents = list(_dexter_events)
         finally:

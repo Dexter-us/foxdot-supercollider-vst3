@@ -649,9 +649,12 @@ private:
         const auto report = host_->checkCompatibility(source);
         if (report.rfind("No unsupported constructs detected", 0) != 0) {
             const auto message = fromUtf8(report);
-            MessageBoxW(window_, message.empty() ? L"Compatibility check failed; script was not run." : message.c_str(),
-                        L"FoxDot compatibility check", MB_OK | MB_ICONWARNING);
-            SetWindowTextW(status_, L"Compatibility items found; script was not run. Ctrl+C copies the report.");
+            const auto dialogText = message.empty()
+                ? std::wstring(L"Compatibility check failed; script was not run.\n\nPress Ctrl+C while this dialog is open to copy the report.")
+                : message + L"\n\nPress Ctrl+C while this dialog is open to copy the report.";
+            MessageBoxW(window_, dialogText.c_str(), L"FoxDot compatibility check",
+                        MB_OK | MB_ICONWARNING);
+            SetWindowTextW(status_, L"Compatibility items found; script was not run. Ctrl+C copies the popup report.");
             return;
         }
         host_->submitCode(source);
