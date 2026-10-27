@@ -28,6 +28,8 @@ constexpr int kOpenId = 106;
 constexpr int kSaveId = 107;
 constexpr int kSaveAsId = 108;
 constexpr int kBrandId = 109;
+constexpr int kCopyErrorId = 110;
+constexpr int kFileNameId = 111;
 constexpr int kViewWidth = 720;
 constexpr int kViewHeight = 480;
 constexpr int kMargin = 10;
@@ -137,7 +139,7 @@ public:
             DestroyWindow(window_);
             window_ = nullptr;
             editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ = saveAsButton_ =
-                status_ = brand_ = nullptr;
+                status_ = brand_ = fileName_ = copyErrorButton_ = nullptr;
         }
         return Steinberg::kResultOk;
     }
@@ -291,9 +293,17 @@ private:
                 view->saveSourceAs();
                 return 0;
             }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kCopyErrorId) {
+                view->copyLastError();
+                return 0;
+            }
             if (LOWORD(wParam) == kEditorId && HIWORD(wParam) == EN_CHANGE) {
                 if (!view->updatingEditor_) {
                     view->documentDirty_ = true;
+                    view->copyDiagnosticPinned_ = false;
+                    view->lastDiagnostic_.clear();
+                    if (view->copyErrorButton_)
+                        EnableWindow(view->copyErrorButton_, FALSE);
                     view->updateSaveButton();
                     if (view->host_)
                         view->host_->setEditorSource(toUtf8(view->editorSource()));
@@ -315,7 +325,7 @@ private:
             view->window_ = nullptr;
             view->editor_ = view->runButton_ = view->stopButton_ =
                 view->openButton_ = view->saveButton_ = view->saveAsButton_ =
-                    view->status_ = view->brand_ = nullptr;
+                    view->status_ = view->brand_ = view->fileName_ = view->copyErrorButton_ = nullptr;
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
@@ -347,17 +357,27 @@ private:
                                         0, 0, 76, 26, window_,
                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSaveAsId)),
                                         moduleInstance(), nullptr);
+        copyErrorButton_ = CreateWindowExW(0, L"BUTTON", L"Copy Error",
+                                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                            0, 0, 82, 26, window_,
+                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCopyErrorId)),
+                                            moduleInstance(), nullptr);
         status_ = CreateWindowExW(0, L"EDIT", L"Ready. Open a script or edit code.",
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER |
                                       ES_READONLY | ES_AUTOHSCROLL | ES_NOHIDESEL,
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.28",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.29",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
                                  moduleInstance(), nullptr);
+        fileName_ = CreateWindowExW(0, L"STATIC", L"Untitled script",
+                                    WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE | SS_PATHELLIPSIS,
+                                    0, 0, 300, kStatusHeight, window_,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFileNameId)),
+                                    moduleInstance(), nullptr);
         if (!sourceInitialized_) {
             currentSource_ = host_ && host_->hasEditorSource()
                                  ? fromUtf8(host_->editorSource())
@@ -393,18 +413,33 @@ private:
         MoveWindow(openButton_, kMargin + 120, buttonY, 56, kToolbarHeight - 4, TRUE);
         MoveWindow(saveButton_, kMargin + 180, buttonY, 62, kToolbarHeight - 4, TRUE);
         MoveWindow(saveAsButton_, kMargin + 250, buttonY, 76, kToolbarHeight - 4, TRUE);
-        MoveWindow(status_, kMargin + 330, buttonY, std::max(100, width - 350),
+        MoveWindow(copyErrorButton_, kMargin + 330, buttonY, 82, kToolbarHeight - 4, TRUE);
+        MoveWindow(status_, kMargin + 420, buttonY, std::max(100, width - 440),
                    kToolbarHeight - 4, TRUE);
         const int editorTop = kMargin + kToolbarHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
         MoveWindow(editor_, kMargin, editorTop, std::max(160, width - 2 * kMargin), editorHeight, TRUE);
-        MoveWindow(brand_, std::max(kMargin, width - 220),
-                   height - kStatusHeight - kMargin, 210, kStatusHeight, TRUE);
+        const int footerY = height - kStatusHeight - kMargin;
+        MoveWindow(fileName_, kMargin, footerY, std::max(120, width - 250),
+                   kStatusHeight, TRUE);
+        MoveWindow(brand_, std::max(kMargin, width - 220), footerY, 210, kStatusHeight, TRUE);
     }
 
     void updateSaveButton() {
         if (saveButton_)
             SetWindowTextW(saveButton_, documentDirty_ ? L"Save*" : L"Save");
+        updateFileName();
+    }
+
+    void updateFileName() {
+        if (!fileName_)
+            return;
+        std::wstring name = currentFilePath_.empty()
+                                ? L"Untitled script"
+                                : std::filesystem::path(currentFilePath_).filename().wstring();
+        if (documentDirty_)
+            name += L"  *";
+        SetWindowTextW(fileName_, name.c_str());
     }
 
     std::wstring editorSource() const {
@@ -427,6 +462,10 @@ private:
         currentSource_ = source;
         sourceInitialized_ = true;
         documentDirty_ = false;
+        copyDiagnosticPinned_ = false;
+        lastDiagnostic_.clear();
+        if (copyErrorButton_)
+            EnableWindow(copyErrorButton_, FALSE);
         if (host_)
             host_->setEditorSource(toUtf8(source));
         updateSaveButton();
@@ -592,6 +631,7 @@ private:
 
         setEditorSource(wideSource);
         currentFilePath_ = selectedPath;
+        updateFileName();
         SetWindowTextW(status_, L"Script loaded. Press Run to evaluate.");
     }
 
@@ -621,6 +661,7 @@ private:
         if (!saveSourceToPath(selectedPath))
             return false;
         currentFilePath_ = std::move(selectedPath);
+        updateFileName();
         currentSource_ = editorSource();
         sourceInitialized_ = true;
         documentDirty_ = false;
@@ -645,20 +686,62 @@ private:
     void runSource() {
         if (!editor_ || !host_)
             return;
+        copyDiagnosticPinned_ = false;
+        lastDiagnostic_.clear();
+        if (copyErrorButton_)
+            EnableWindow(copyErrorButton_, FALSE);
         const auto source = toUtf8(editorSource());
         const auto report = host_->checkCompatibility(source);
         if (report.rfind("No unsupported constructs detected", 0) != 0) {
             const auto message = fromUtf8(report);
-            const auto dialogText = message.empty()
-                ? std::wstring(L"Compatibility check failed; script was not run.\n\nPress Ctrl+C while this dialog is open to copy the report.")
-                : message + L"\n\nPress Ctrl+C while this dialog is open to copy the report.";
-            MessageBoxW(window_, dialogText.c_str(), L"FoxDot compatibility check",
-                        MB_OK | MB_ICONWARNING);
-            SetWindowTextW(status_, L"Compatibility items found; script was not run. Ctrl+C copies the popup report.");
+            lastDiagnostic_ = message.empty()
+                                  ? L"Compatibility check failed; script was not run."
+                                  : message;
+            copyDiagnosticPinned_ = true;
+            if (copyErrorButton_)
+                EnableWindow(copyErrorButton_, TRUE);
+            SetWindowTextW(status_, L"Compatibility items found; script was not run. Click Copy Error for details.");
             return;
         }
         host_->submitCode(source);
         SetWindowTextW(status_, L"Compatibility check passed; evaluating Python...");
+    }
+
+    void copyLastError() {
+        if (lastDiagnostic_.empty()) {
+            SetWindowTextW(status_, L"There is no error or compatibility report to copy yet.");
+            return;
+        }
+        if (!OpenClipboard(window_)) {
+            SetWindowTextW(status_, L"Clipboard is busy. Try Copy Error again.");
+            return;
+        }
+        EmptyClipboard();
+        const SIZE_T bytes = (lastDiagnostic_.size() + 1) * sizeof(wchar_t);
+        HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if (!memory) {
+            CloseClipboard();
+            SetWindowTextW(status_, L"Could not allocate clipboard text.");
+            return;
+        }
+        auto* destination = static_cast<wchar_t*>(GlobalLock(memory));
+        if (!destination) {
+            GlobalFree(memory);
+            CloseClipboard();
+            SetWindowTextW(status_, L"Could not lock clipboard text.");
+            return;
+        }
+        std::memcpy(destination, lastDiagnostic_.c_str(), bytes);
+        GlobalUnlock(memory);
+        if (!SetClipboardData(CF_UNICODETEXT, memory)) {
+            GlobalFree(memory);
+            CloseClipboard();
+            SetWindowTextW(status_, L"Windows could not place the report on the clipboard.");
+            return;
+        }
+        CloseClipboard();
+        copyDiagnosticPinned_ = true;
+        SetWindowTextW(status_, L"Full error/report copied to the clipboard.");
     }
 
     void refreshStatus() {
@@ -667,9 +750,31 @@ private:
         const auto restoredSource = fromUtf8(host_->editorSource());
         if (!documentDirty_ && host_->hasEditorSource() &&
             restoredSource != currentSource_) {
+            currentFilePath_.clear();
             setEditorSource(restoredSource);
         }
+        if (copyDiagnosticPinned_)
+            return;
         const auto message = fromUtf8(host_->editorStatus());
+        const bool hasDiagnostic =
+            message.find(L"Traceback") != std::wstring::npos ||
+            message.find(L"Error") != std::wstring::npos ||
+            message.find(L"error") != std::wstring::npos ||
+            message.find(L"exception") != std::wstring::npos ||
+            message.find(L"invalid") != std::wstring::npos ||
+            message.find(L"malformed") != std::wstring::npos ||
+            message.find(L"failed") != std::wstring::npos ||
+            message.find(L"unsupported") != std::wstring::npos ||
+            message.find(L"overlap") != std::wstring::npos ||
+            message.find(L"exceeds") != std::wstring::npos ||
+            message.find(L"Could not") != std::wstring::npos ||
+            message.find(L"could not") != std::wstring::npos;
+        if (hasDiagnostic)
+            lastDiagnostic_ = message;
+        else
+            lastDiagnostic_.clear();
+        if (copyErrorButton_)
+            EnableWindow(copyErrorButton_, hasDiagnostic ? TRUE : FALSE);
         SetWindowTextW(status_, message.c_str());
     }
 
@@ -683,8 +788,12 @@ private:
     HWND openButton_ = nullptr;
     HWND saveButton_ = nullptr;
     HWND saveAsButton_ = nullptr;
+    HWND copyErrorButton_ = nullptr;
     HWND status_ = nullptr;
     HWND brand_ = nullptr;
+    HWND fileName_ = nullptr;
+    std::wstring lastDiagnostic_;
+    bool copyDiagnosticPinned_ = false;
     std::wstring currentFilePath_;
     std::wstring currentSource_;
     bool updatingEditor_ = false;

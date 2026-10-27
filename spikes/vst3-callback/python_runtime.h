@@ -62,8 +62,14 @@ struct PythonPlayerUpdate {
     std::vector<PythonNoteEvent> events;
 };
 
+struct PythonPlayerMute {
+    int playerIndex = 0;
+    bool muted = false;
+};
+
 struct PythonPattern {
     std::vector<PythonPlayerUpdate> players;
+    std::vector<PythonPlayerMute> mutes;
 };
 
 class PortablePython {

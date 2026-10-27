@@ -58,7 +58,7 @@ safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filte
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
-    '_dexter_root': 60, '_dexter_updates': {},
+    '_dexter_root': 60, '_dexter_updates': {}, '_dexter_mutes': {},
     '_dexter_default_touched': False, '__name__': 'dexter_test',
     '__builtins__': {name: getattr(builtins, name) for name in safe_names},
 }
@@ -201,7 +201,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -215,12 +215,15 @@ def run_script(script_text, include_events=False, include_effects=False, include
         wrapper_globals = {'__name__': '__main__'}
         exec(wrapper, wrapper_globals, wrapper_globals)
         lines = open(result_path, encoding='utf-8').read().splitlines()
-        assert lines[0].startswith('OK\t') and 1 <= int(lines[0].split('\t')[1]) <= 8, lines[0]
+        assert lines[0].startswith('OK\t') and 0 <= int(lines[0].split('\t')[1]) <= 8, lines[0]
         player_rows = [line.split('\t') for line in lines if line.startswith('P\t')]
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
+        mute_rows = [line.split('\t') for line in lines if line.startswith('M\t')]
+        if include_mutes:
+            return player_rows, mute_rows
         if include_filters:
             return player_rows, filter_rows
         if include_decay:
@@ -432,12 +435,14 @@ assert [int(event[3]) for event in chordEvents[14:]] == [69, 72, 76, 81]
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, IV, V7, I7])\np2 >> saw(PGroup(0, 2, 4))\n')
 strumRows, strumEvents = run_script(open(os.path.join(sys.argv[2], '29-strummed-chords.py'), encoding='utf-8').read(), include_events=True)
 assert len(strumRows) == 2 and [row[1] for row in strumRows] == ['0', '1']
-assert [round(float(event[7]), 6) for event in strumEvents[:14]] == [0.0, 0.06, 0.12, 0.0, 0.06, 0.12, 0.18, 0.0, 0.06, 0.12, 0.0, 0.06, 0.12, 0.18]
+assert [round(float(event[7]), 6) for event in strumEvents[:14]] == [0.0, 0.04, 0.08, 0.0, 0.04, 0.08, 0.12, 0.0, 0.04, 0.08, 0.0, 0.04, 0.08, 0.12]
 assert [round(float(event[7]), 6) for event in strumEvents[14:]] == [0.0, 0.02, 0.04, 0.06, 0.0, 0.05, 0.1, 0.15, 0.0, 0.02, 0.04, 0.06, 0.0, 0.05, 0.1, 0.15]
-assert all(abs(float(event[2]) - 1.8) < 1e-9 for event in strumEvents)
+assert all(abs(float(event[2]) - 1.75) < 1e-9 for event in strumEvents)
 assert_player_polyphony_ok(strumRows[0], strumEvents[:14])
 assert_player_polyphony_ok(strumRows[1], strumEvents[14:])
-assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\n')
+assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
+muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
+assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
 namespace['_dexter_events'] = []
 namespace['_dexter_length'] = 1.0
 namespace['_dexter_slots'] = 0
@@ -453,6 +458,8 @@ assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
 assert [row[8] for row in filterExampleControls] == ['l:300.0,1800.0:4.0,4.0', '-', '-']
 assert [row[10] for row in filterExampleControls] == ['-', 'v:150.0,900.0:4.0,4.0', '-']
 assert [row[12] for row in filterExampleControls] == ['-', '-', 'l:350.0,1200.0:4.0,4.0']
+example30Rows = run_example('30-player-mute-controls.py')
+assert len(example30Rows) == 2 and [row[1] for row in example30Rows] == ['0', '1']
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 21 for row in example8)
 p1, p2 = example8
@@ -477,4 +484,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-29.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-30.')

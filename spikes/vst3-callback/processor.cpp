@@ -269,6 +269,7 @@ public:
         std::unique_lock<std::mutex> patternLock(patternMutex_, std::try_to_lock);
         if (patternLock.owns_lock()) {
             const auto updateMask = pendingPlayerMask_;
+            const auto muteMask = pendingMuteMask_;
             if (updateMask != 0) {
                 const auto newStart = sampleClock_ +
                     static_cast<std::uint64_t>(kSCBlockSize - cursor_);
@@ -313,8 +314,17 @@ public:
                     patternStartSamples_[player] = newStart;
                     updatePlayerReverb(player);
                 }
-                pendingPlayerMask_ = 0;
             }
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                if ((muteMask & static_cast<std::uint8_t>(1u << player)) == 0)
+                    continue;
+                const bool wasMuted = mutedPlayers_[player];
+                mutedPlayers_[player] = pendingMuteStates_[player];
+                if (!wasMuted && mutedPlayers_[player])
+                    stopPlayerMidiNotes(data.outputEvents, 0, static_cast<int>(player));
+            }
+            pendingPlayerMask_ = 0;
+            pendingMuteMask_ = 0;
             patternLock.unlock();
         }
 
@@ -392,11 +402,8 @@ public:
                         while (!message.empty() &&
                                (message.back() == '\r' || message.back() == '\n'))
                             message.pop_back();
-                        const auto lastLineStart = message.find_last_of("\r\n");
-                        if (lastLineStart != std::string::npos)
-                            message = message.substr(lastLineStart + 1);
                         setEditorStatus(message.empty() ? "Python evaluation failed."
-                                                        : message.substr(0, 180));
+                                                        : message);
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
                     }
@@ -405,7 +412,7 @@ public:
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
                     }
-                    if (pattern.players.empty()) {
+                    if (pattern.players.empty() && pattern.mutes.empty()) {
                         setEditorStatus("No players changed.");
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
@@ -479,11 +486,27 @@ public:
                                 pendingPatterns_[player] = updates[player];
                         }
                         pendingPlayerMask_ |= updateMask;
+                        for (const auto& mute : pattern.mutes) {
+                            if (mute.playerIndex < 0 || mute.playerIndex >= static_cast<int>(kPlayerCount)) {
+                                setEditorStatus("Player mute control is outside p1 through p8.");
+                                scriptRunning_.store(false, std::memory_order_release);
+                                return;
+                            }
+                            const auto player = static_cast<std::size_t>(mute.playerIndex);
+                            pendingMuteStates_[player] = mute.muted;
+                            pendingMuteMask_ |= static_cast<std::uint8_t>(1u << player);
+                        }
                     }
-                    setEditorStatus("Updated " + std::to_string(pattern.players.size()) +
-                                    " player(s), " + std::to_string(totalNotes) +
-                                    " notes at " + std::to_string(pattern.players.front().bpm) +
-                                    " BPM.");
+                    std::ostringstream status;
+                    if (!pattern.players.empty()) {
+                        status << "Updated " << pattern.players.size() << " player(s), "
+                               << totalNotes << " notes at " << pattern.players.front().bpm << " BPM.";
+                    } else {
+                        status << "Player control updated.";
+                    }
+                    for (const auto& mute : pattern.mutes)
+                        status << " p" << mute.playerIndex + 1 << (mute.muted ? " muted." : " unmuted.");
+                    setEditorStatus(status.str());
                 } catch (const std::exception& exception) {
                     setEditorStatus(std::string("Python worker error: ") + exception.what());
                 } catch (...) {
@@ -1002,6 +1025,8 @@ private:
             const auto player = static_cast<std::size_t>(event.playerIndex);
             const auto pitch = static_cast<std::size_t>(event.midiNote);
             auto& active = activeMidiNotes_[player][pitch];
+            if (event.noteOn && mutedPlayers_[player])
+                continue;
             if (event.noteOn) {
                 if (!active) {
                     addMidiNoteEvent(data.outputEvents,
@@ -1386,6 +1411,10 @@ private:
         const float mouseSmoothing = 1.0f - mixSmoothing;
         for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
             const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                const float target = mutedPlayers_[player] ? 0.0f : 1.0f;
+                playerMuteGain_[player] += mouseSmoothing * (target - playerMuteGain_[player]);
+            }
             std::array<float, kPlayerCount> playerLeft{};
             std::array<float, kPlayerCount> playerRight{};
             std::array<bool, kPlayerCount> playerHasVoice{};
@@ -1483,8 +1512,9 @@ private:
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
                 playerLeft[player] += amplitude * voice.leftGain;
                 playerRight[player] += amplitude * voice.rightGain;
-                playerHasVoice[player] = true;
-                ++contributingVoices;
+                playerHasVoice[player] = playerMuteGain_[player] > 1e-4f;
+                if (playerMuteGain_[player] > 1e-4f)
+                    ++contributingVoices;
             }
 
             float leftMixed = 0.0f;
@@ -1505,7 +1535,7 @@ private:
                 const auto reverbOffset = static_cast<std::size_t>(sampleIndex);
                 const float wetLeft = world_->mAudioBus[(reverbBus + 2) * busLength + reverbOffset];
                 const float wetRight = world_->mAudioBus[(reverbBus + 3) * busLength + reverbOffset];
-                if (!playerHasVoice[player] && reverbMix > 1e-5f &&
+                if (!playerHasVoice[player] && playerMuteGain_[player] > 1e-4f && reverbMix > 1e-5f &&
                     (std::abs(wetLeft) > 1e-6f || std::abs(wetRight) > 1e-6f))
                     ++reverbTailPlayers;
                 const float reverbedLeft = dryLeft * (1.0f - reverbMix) + wetLeft * reverbMix;
@@ -1555,18 +1585,18 @@ private:
                     const auto rightOffset = echoOffset(player, 1, readIndex);
                     const float delayedLeft = echoBuffer_[leftOffset];
                     const float delayedRight = echoBuffer_[rightOffset];
-                    if (!playerHasVoice[player] &&
+                    if (!playerHasVoice[player] && playerMuteGain_[player] > 1e-4f &&
                         (std::abs(delayedLeft) > 1e-6f || std::abs(delayedRight) > 1e-6f))
                         ++echoTailPlayers;
-                    leftMixed += reverbedLeft + delayedLeft * echoMix;
-                    rightMixed += reverbedRight + delayedRight * echoMix;
+                    leftMixed += (reverbedLeft + delayedLeft * echoMix) * playerMuteGain_[player];
+                    rightMixed += (reverbedRight + delayedRight * echoMix) * playerMuteGain_[player];
                     echoBuffer_[echoOffset(player, 0, writeIndex)] =
                         reverbedLeft + delayedLeft * feedback;
                     echoBuffer_[echoOffset(player, 1, writeIndex)] =
                         reverbedRight + delayedRight * feedback;
                 } else {
-                    leftMixed += reverbedLeft;
-                    rightMixed += reverbedRight;
+                    leftMixed += reverbedLeft * playerMuteGain_[player];
+                    rightMixed += reverbedRight * playerMuteGain_[player];
                     echoBuffer_[echoOffset(player, 0, writeIndex)] = 0.0f;
                     echoBuffer_[echoOffset(player, 1, writeIndex)] = 0.0f;
                 }
@@ -1617,6 +1647,10 @@ private:
         for (auto& playerNotes : activeMidiNotes_)
             playerNotes.fill(false);
         pendingPlayerMask_ = 0;
+        pendingMuteMask_ = 0;
+        pendingMuteStates_.fill(false);
+        mutedPlayers_.fill(false);
+        playerMuteGain_.fill(1.0f);
     }
 
     std::string scriptNamespace_;
@@ -1642,6 +1676,14 @@ private:
     std::array<PatternState, kPlayerCount> activePatterns_{};
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
     std::uint8_t pendingPlayerMask_ = 0;
+    std::array<bool, kPlayerCount> pendingMuteStates_{};
+    std::uint8_t pendingMuteMask_ = 0;
+    std::array<bool, kPlayerCount> mutedPlayers_{};
+    std::array<float, kPlayerCount> playerMuteGain_ = [] {
+        std::array<float, kPlayerCount> values{};
+        values.fill(1.0f);
+        return values;
+    }();
     std::array<std::uint64_t, kPlayerCount> patternStartSamples_{};
     std::uint64_t sampleClock_ = 0;
     std::array<std::array<bool, 128>, kPlayerCount> activeMidiNotes_{};
@@ -1668,7 +1710,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.19",
+           "0.4.29",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

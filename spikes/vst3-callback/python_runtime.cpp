@@ -188,8 +188,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self.add(node.lineno, 'Root only supports Root.default in this build.')
         if isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == 'Root' and node.value.attr == 'default' and node.attr != 'set':
             self.add(node.lineno, 'Root.default only supports .set(note).')
-        if isinstance(node.value, ast.Name) and re.fullmatch(r'p[0-9]+', node.value.id) and node.attr != 'stop':
-            self.add(node.lineno, "Player " + node.value.id + ' only supports .stop() in this build.')
+        if isinstance(node.value, ast.Name) and re.fullmatch(r'p[0-9]+', node.value.id):
+            if not re.fullmatch(r'p[1-8]', node.value.id):
+                self.add(node.lineno, 'Use one of the supported player names p1 through p8.')
+            elif node.attr not in {'stop', 'mute', 'unmute'}:
+                self.add(node.lineno, "Player " + node.value.id + ' supports .stop(), .mute(), and .unmute() in this build.')
         self.generic_visit(node)
 
     def visit_Subscript(self, node):
@@ -1233,6 +1236,14 @@ class Player:
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
                                              0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-')
 
+    def mute(self):
+        _dexter_mutes[self.number - 1] = True
+        return self
+
+    def unmute(self):
+        _dexter_mutes[self.number - 1] = False
+        return self
+
 p1 = Player(1)
 p2 = Player(2)
 p3 = Player(3)
@@ -1249,7 +1260,7 @@ p8 = Player(8)
            << "_dexter_scope['__name__'] = 'dexter'\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
            << "'_dexter_length': 1.0, '_dexter_slots': 0, '_dexter_updates': {}, '_dexter_default_touched': False, "
-           << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60})\n"
+           << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, '_dexter_mutes': {}})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
            << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
            << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', "
@@ -1275,7 +1286,8 @@ p8 = Player(8)
             << "        if _dexter_scope['_dexter_default_touched']:\n"
             << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-')\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
-            << "        _f.write('OK\\t{}\\n'.format(len(_updates)))\n"
+            << "        _mutes = _dexter_scope['_dexter_mutes']\n"
+            << "        _f.write('OK\\t{}\\t{}\\n'.format(len(_updates), len(_mutes)))\n"
             << "        for _player in sorted(_updates):\n"
             << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control = _updates[_player]\n"
             << "            _f.write('P\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control))\n"
@@ -1285,6 +1297,8 @@ p8 = Player(8)
              << "            _f.write('F\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, *[control.wire() if control is not None else '-' for control in _controls]))\n"
             << "            for _e in _events:\n"
             << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\t{}\\n'.format(*_e))\n"
+            << "        for _player, _muted in sorted(_mutes.items()):\n"
+            << "            _f.write('M\\t{}\\t{}\\n'.format(_player, int(_muted)))\n"
             << "except BaseException:\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
            << "        _f.write('ERROR\\n' + traceback.format_exc())\n";
@@ -1310,12 +1324,16 @@ bool parseResult(const std::filesystem::path& resultPath,
     std::istringstream fields(header);
     std::string marker;
     std::size_t updateCount = 0;
-    if (!(fields >> marker >> updateCount) || marker != "OK" || updateCount > 8) {
-        error = "Python returned an invalid player update list.";
+    std::size_t muteCount = 0;
+    if (!(fields >> marker >> updateCount >> muteCount) || marker != "OK" ||
+        updateCount > 8 || muteCount > 8) {
+        error = "Python returned an invalid player update header: " + header;
         return false;
     }
     pattern.players.clear();
     pattern.players.reserve(updateCount);
+    pattern.mutes.clear();
+    pattern.mutes.reserve(muteCount);
     std::array<bool, 8> seenPlayers{};
     for (std::size_t playerNumber = 0; playerNumber < updateCount; ++playerNumber) {
         char record = 0;
@@ -1347,7 +1365,13 @@ bool parseResult(const std::filesystem::path& resultPath,
             !std::isfinite(update.attackSeconds) || update.attackSeconds < 0.0 ||
             update.attackSeconds > 3.0 || !std::isfinite(update.releaseSeconds) ||
             update.releaseSeconds < 0.0 || update.releaseSeconds > 3.0) {
-            error = "Python returned a malformed player update.";
+            std::ostringstream detail;
+            detail << "Python returned malformed player update data (record=" << record
+                   << ", player=" << update.playerIndex + 1
+                   << ", stopped=" << stopped << ", events=" << eventCount
+                   << ", BPM=" << update.bpm << ", synth=" << update.synthIndex
+                   << "). Check the copied diagnostic for the full exception.";
+            error = detail.str();
             return false;
         }
         char effectRecord = 0;
@@ -1476,6 +1500,20 @@ bool parseResult(const std::filesystem::path& resultPath,
             }
         }
         pattern.players.push_back(std::move(update));
+    }
+    std::array<bool, 8> seenMutes{};
+    for (std::size_t i = 0; i < muteCount; ++i) {
+        char record = 0;
+        int playerIndex = -1;
+        int muted = -1;
+        if (!(input >> record >> playerIndex >> muted) || record != 'M' ||
+            playerIndex < 0 || playerIndex >= 8 || muted < 0 || muted > 1 ||
+            seenMutes[static_cast<std::size_t>(playerIndex)]) {
+            error = "Python returned an invalid player mute control (record, player index, or mute state).";
+            return false;
+        }
+        seenMutes[static_cast<std::size_t>(playerIndex)] = true;
+        pattern.mutes.push_back(PythonPlayerMute{playerIndex, muted != 0});
     }
     return true;
 }

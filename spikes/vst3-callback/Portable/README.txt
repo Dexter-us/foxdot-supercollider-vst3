@@ -51,3 +51,6 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 28-roman-numeral-chords.py demonstrates FoxDot's I–VII triad and seventh-chord names, plus custom chords made with PGroup(...).
 
 29-strummed-chords.py demonstrates chord-note staggering with strum in beats, including a time-varying strum value. Its sus=1.8 setting prevents each chord tail from overlapping the next chord's repeated pitches.
+
+29-strummed-chords.py uses a moderate 0.04-beat spread at 84 BPM, with a softer second layer whose strum varies over time.
+30-player-mute-controls.py shows p1.mute() and p1.unmute(); the pattern stays scheduled while its audio fades and MIDI note-ons are silenced.
