@@ -2,6 +2,7 @@ import ast
 import builtins
 import os
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -235,7 +236,7 @@ def run_script(script_text, include_events=False, include_effects=False, include
 newSynthRows = run_script('p1 >> bass([0, 3, 5], dur=0.5)\np2 >> varsaw([0, 4], dur=1, rate=0.25)\np3 >> varsaw([0])\np4 >> dirt([0, 3])\np5 >> jbass([0, 5])\np6 >> noise([0, 2])\n')
 assert len(newSynthRows) == 6
 assert [int(row[6]) for row in newSynthRows] == [4, 5, 5, 6, 7, 8]
-assert [float(row[21]) for row in newSynthRows] == [8.0, 0.25, 0.0, 0.0, 0.0, 0.0]
+assert [float(row[21]) for row in newSynthRows] == [0.0, 0.25, 0.0, 0.0, 0.0, 0.0]
 
 def run_error_script(script_text):
     with tempfile.TemporaryDirectory() as directory:
@@ -289,6 +290,53 @@ def run_compatibility_check(script_text):
         exec(compile(compatibility_checker, '<embedded compatibility checker>', 'exec'), namespace, namespace)
         return open(report_path, encoding='utf-8').read()
 
+def read_synthdef_manifest(data):
+    offset = 0
+
+    def read(fmt):
+        nonlocal offset
+        values = struct.unpack_from(fmt, data, offset)
+        offset += struct.calcsize(fmt)
+        return values[0] if len(values) == 1 else values
+
+    def read_string():
+        nonlocal offset
+        length = read('>B')
+        value = data[offset:offset + length].decode('utf-8')
+        offset += length
+        return value
+
+    assert data[:4] == b'SCgf'
+    offset = 4
+    version = read('>i')
+    graph_count = read('>H')
+    graphs = {}
+    for _ in range(graph_count):
+        name = read_string()
+        constant_count = read('>H')
+        offset += constant_count * 4
+        parameter_count = read('>H')
+        offset += parameter_count * 4
+        parameter_name_count = read('>H')
+        for _ in range(parameter_name_count):
+            read_string()
+            read('>H')
+        ugen_count = read('>H')
+        ugens = []
+        for _ in range(ugen_count):
+            ugen_name = read_string()
+            rate = read('>B')
+            input_count = read('>H')
+            output_count = read('>H')
+            read('>h')
+            offset += input_count * 4 + output_count
+            ugens.append((ugen_name, input_count, rate))
+        assert read('>H') == 0, 'unexpected SynthDef variants'
+        graphs[name] = ugens
+    assert offset == len(data), 'SynthDef parser did not consume the complete file'
+    return version, graphs
+
+
 def test_embedded_synthdef():
     plugin_dir = os.path.dirname(os.path.abspath(sys.argv[1]))
     repo_root = os.path.abspath(os.path.join(plugin_dir, '..', '..'))
@@ -303,12 +351,26 @@ def test_embedded_synthdef():
         embedded_bytes = bytes(int(value, 16) for value in
                                re.findall(r'0x([0-9a-fA-F]{2})', header_text))
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
+    synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
+    assert synthdef_version == 1 and len(graphs) == 12
+    assert ('LFSaw', 2, 2) in graphs['DexterDirt']
+    assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
+    assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
+    assert ('Crackle', 1, 1) in graphs['DexterCrunch']
+    assert ('Pulse', 2, 2) in graphs['DexterLazer']
+    assert ('Gendy1', 10, 2) in graphs['DexterRave']
     for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse',
                       b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag',
                       b'DexterBass', b'DexterVarsaw', b'DexterDirt',
                       b'DexterJBass', b'DexterNoise', b'VarSaw',
-                      b'LFSaw', b'LFNoise0'):
+                      b'DexterDub', b'DexterGrowl', b'DexterSoprano',
+                      b'DexterCrunch', b'DexterLazer', b'DexterRave',
+                      b'LFSaw', b'LFNoise0', b'Vibrato', b'Crackle', b'Gendy1'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
+    generator_text = open(generator, encoding='utf-8').read()
+    assert 'ugen("LFSaw", 2, [(1, 0), (-1, 0)], [2])' in generator_text
+    assert 'ugen("LFNoise0", 2, [(1, 0)], [2])' in generator_text
+    assert 'ugen("Gendy1", 2,' in generator_text
     reverb_generator = os.path.join(repo_root, 'spikes', 'direct-world', 'testdata', 'generate_reverb.py')
     reverb_header = os.path.join(plugin_dir, 'reverb_synthdef.h')
     with tempfile.TemporaryDirectory() as directory:
@@ -465,7 +527,7 @@ parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 8' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 14' in parse_source
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
 muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
 assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
@@ -506,6 +568,14 @@ assert [float(row[21]) for row in example31] == [8.0, 0.42]
 example32 = run_example('32-dirt-jbass-noise.py')
 assert len(example32) == 3
 assert [int(row[6]) for row in example32] == [6, 7, 8]
+example33 = run_example('33-dub-growl-soprano.py')
+assert len(example33) == 3
+assert [int(row[6]) for row in example33] == [9, 10, 11]
+assert [float(row[21]) for row in example33] == [0.0, 0.0, 2.0]
+example34 = run_example('34-crunch-lazer-rave.py')
+assert len(example34) == 3
+assert [int(row[6]) for row in example34] == [12, 13, 14]
+assert [float(row[21]) for row in example34] == [0.0, 2.5, 2.0]
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
@@ -521,4 +591,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-32.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-34.')

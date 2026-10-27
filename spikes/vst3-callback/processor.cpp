@@ -696,7 +696,7 @@ private:
     };
 
     struct AudioVoice {
-        std::array<Graph*, 6> synthGraphs{};
+        std::array<Graph*, 12> synthGraphs{};
         Graph* activeSynth = nullptr;
         int playerIndex = -1;
         int midiNote = -1;
@@ -946,16 +946,8 @@ private:
     static Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
         if (synthIndex >= 0 && synthIndex <= 3)
             return voice.synthGraphs[0];
-        if (synthIndex == 4)
-            return voice.synthGraphs[1];
-        if (synthIndex == 5)
-            return voice.synthGraphs[2];
-        if (synthIndex == 6)
-            return voice.synthGraphs[3];
-        if (synthIndex == 7)
-            return voice.synthGraphs[4];
-        if (synthIndex == 8)
-            return voice.synthGraphs[5];
+        if (synthIndex >= 4 && synthIndex <= 14)
+            return voice.synthGraphs[static_cast<std::size_t>(synthIndex - 3)];
         return nullptr;
     }
 
@@ -1140,7 +1132,8 @@ private:
                 found->midiNote = note.midiNote;
                 found->velocity = note.velocity;
                 found->synthIndex = note.synthIndex;
-                found->amplitude = note.amplitude;
+                found->amplitude = note.synthIndex == 12
+                    ? note.amplitude * note.amplitude : note.amplitude;
                 found->mousePan = note.mousePan;
                 found->mouseCutoff = note.mouseCutoff;
                 found->attackSeconds = note.attackSeconds;
@@ -1185,6 +1178,12 @@ private:
                                          note.synthIndex == mode ? 1.0f : 0.0f);
                     } else {
                         Graph_SetControl(found->activeSynth, 2, note.synthRate);
+                        if (note.synthIndex == 10) {
+                            const auto sustainSamples = note.endSample - note.startSample;
+                            Graph_SetControl(found->activeSynth, 3,
+                                static_cast<float>(static_cast<double>(sustainSamples) /
+                                                   sampleRate_));
+                        }
                     }
                     Node_SetRun(&found->activeSynth->mNode, 1);
                 }
@@ -1332,9 +1331,10 @@ private:
         }
         GraphDef_Define(world_, defs);
 
-        constexpr std::array<const char*, 6> synthNames{{
+        constexpr std::array<const char*, 12> synthNames{{
             "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
-            "DexterJBass", "DexterNoise"}};
+            "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
+            "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave"}};
         std::array<GraphDef*, synthNames.size()> synthDefinitions{};
         for (std::size_t index = 0; index < synthNames.size(); ++index) {
             int32 synthName[4]{};
@@ -1485,8 +1485,10 @@ private:
                           (60.0 * sampleRate_)
                     : 0.0;
                 if (livePattern.ampControl.active) {
-                    const float targetAmp = evaluateTimeVar(livePattern.ampControl, beat,
-                                                            livePattern.amplitude);
+                    const float patternAmp = evaluateTimeVar(livePattern.ampControl, beat,
+                                                             livePattern.amplitude);
+                    const float targetAmp = voice.synthIndex == 12
+                        ? patternAmp * patternAmp : patternAmp;
                     if (livePattern.ampControl.linear)
                         voice.amplitude = targetAmp;
                     else
@@ -1757,7 +1759,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.33",
+           "0.4.34",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

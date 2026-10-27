@@ -97,11 +97,12 @@ _COMPAT_CALLS = {
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
-    'dirt', 'jbass', 'noise',
+    'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
-_COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt', 'jbass', 'noise'}
+_COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
+                 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave'}
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'strum'
@@ -268,7 +269,7 @@ def _dexter_run_compatibility_check():
             lines.extend('Line ' + str(line) + ': ' + message for line, message in shown)
             if len(diagnostics) > len(shown):
                 lines.append('...and ' + str(len(diagnostics) - len(shown)) + ' more item(s).')
-            lines.append('Supported synth calls: sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise. Samples and other FoxDot synths remain deferred.')
+            lines.append('Supported synth calls: sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave. Samples and other FoxDot synths remain deferred.')
             report_text = '\n'.join(lines)
     except BaseException as exc:
         report_text = 'Compatibility check could not complete: ' + str(exc)
@@ -1036,11 +1037,13 @@ class PlayerPattern:
         self.offset = offset
         self.degrees = degrees
         self.rootMidi = None if root is None else _root_midi(root)
-        if synth not in ('sine', 'triangle', 'saw', 'square', 'bass', 'varsaw', 'dirt', 'jbass', 'noise'):
-            raise ValueError('synth must be sine, triangle, saw, square, bass, varsaw, dirt, jbass, or noise')
+        if synth not in ('sine', 'triangle', 'saw', 'square', 'bass', 'varsaw',
+                         'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano',
+                         'crunch', 'lazer', 'rave'):
+            raise ValueError('synth must be one of the embedded sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, or rave voices')
         self.synth = synth
         if synthRate is None:
-            synthRate = 8.0 if synth == 'bass' else 0.0
+            synthRate = 0.0
         try:
             self.synthRate = float(synthRate)
         except (TypeError, ValueError, OverflowError):
@@ -1194,11 +1197,17 @@ def _make_named_synth(name, defaultRate):
         return _fox_wave(name, notes, **kwargs)
     return synth
 
-bass = _make_named_synth('bass', 8.0)
+bass = _make_named_synth('bass', 0.0)
 varsaw = _make_named_synth('varsaw', 0.0)
 dirt = _make_named_synth('dirt', 0.0)
 jbass = _make_named_synth('jbass', 0.0)
 noise = _make_named_synth('noise', 0.0)
+dub = _make_named_synth('dub', 0.0)
+growl = _make_named_synth('growl', 0.0)
+soprano = _make_named_synth('soprano', 0.0)
+crunch = _make_named_synth('crunch', 0.0)
+lazer = _make_named_synth('lazer', 2.0)
+rave = _make_named_synth('rave', 1.0)
 
 class Player:
     def __init__(self, number):
@@ -1239,7 +1248,8 @@ class Player:
         if not 0 <= playerIndex < 8:
             raise ValueError('player number must be 1..8')
         synthIndex = ('sine', 'triangle', 'saw', 'square', 'bass', 'varsaw',
-                      'dirt', 'jbass', 'noise').index(pattern.synth)
+                      'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano',
+                      'crunch', 'lazer', 'rave').index(pattern.synth)
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echoBeats,
@@ -1383,7 +1393,7 @@ bool parseResult(const std::filesystem::path& resultPath,
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
             !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
-             update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 8 ||
+             update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 14 ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
              update.synthRate > 10.0 ||
              (update.synthIndex == 5 && update.synthRate > 1.0) ||
