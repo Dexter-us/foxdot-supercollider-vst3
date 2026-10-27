@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <mutex>
@@ -1295,13 +1296,16 @@ private:
         std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
         const auto ugenPath = bundledUGenPath();
         std::error_code pathError;
-        if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError))
+        if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError)) {
+            std::fprintf(stderr, "Dexter VST3: bundled SuperCollider UGen directory is missing.\n");
             return false;
+        }
         ugenPluginPath_ = ugenModuleSearchPath();
 
         try {
             echoBuffer_.assign(kPlayerCount * 2 * kMaxEchoBufferSamples, 0.0f);
         } catch (...) {
+            std::fprintf(stderr, "Dexter VST3: could not allocate the player echo buffer.\n");
             return false;
         }
 
@@ -1318,8 +1322,10 @@ private:
         options.mUGensPluginPath = ugenPluginPath_.c_str();
 
         world_ = World_New(&options);
-        if (!world_)
+        if (!world_) {
+            std::fprintf(stderr, "Dexter VST3: World_New failed at %.1f Hz.\n", sampleRate_);
             return false;
+        }
         const auto moduleFiles = discoverUGenModuleFiles();
         std::string moduleStatus = "UGen module files found (" + std::to_string(moduleFiles.size()) + "): ";
         for (std::size_t index = 0; index < moduleFiles.size(); ++index) {
@@ -1335,6 +1341,7 @@ private:
         auto* defs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kToneSynthDef),
                                    sizeof(kToneSynthDef), nullptr);
         if (!defs) {
+            std::fprintf(stderr, "Dexter VST3: GraphDef_Recv rejected the embedded synth bank.\n");
             discardPartialWorld();
             return false;
         }
@@ -1358,6 +1365,13 @@ private:
         if (std::any_of(synthDefinitions.begin(), synthDefinitions.end(),
                         [](const auto* definition) { return definition == nullptr; }) ||
             !root) {
+            for (std::size_t index = 0; index < synthDefinitions.size(); ++index) {
+                if (!synthDefinitions[index])
+                    std::fprintf(stderr, "Dexter VST3: missing embedded synth definition %s.\n",
+                                 synthNames[index]);
+            }
+            if (!root)
+                std::fprintf(stderr, "Dexter VST3: root group is unavailable.\n");
             discardPartialWorld();
             return false;
         }
@@ -1372,6 +1386,9 @@ private:
                 auto*& graph = voice.synthGraphs[synthIndex];
                 if (Graph_New(world_, synthDefinitions[synthIndex], nodeId++,
                               &noControls, &graph, true) != 0 || !graph) {
+                    std::fprintf(stderr,
+                                 "Dexter VST3: Graph_New failed for %s (voice %zu).\n",
+                                 synthNames[synthIndex], voiceIndex);
                     discardPartialWorld();
                     return false;
                 }
@@ -1393,6 +1410,7 @@ private:
         auto* reverbDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kReverbSynthDef),
                                          sizeof(kReverbSynthDef), nullptr);
         if (!reverbDefs) {
+            std::fprintf(stderr, "Dexter VST3: GraphDef_Recv rejected the embedded reverb bank.\n");
             discardPartialWorld();
             return false;
         }
@@ -1404,6 +1422,8 @@ private:
             std::memcpy(reverbName, reverbNames[type], std::strlen(reverbNames[type]));
             auto* reverbDefinition = World_GetGraphDef(world_, reverbName);
             if (!reverbDefinition) {
+                std::fprintf(stderr, "Dexter VST3: missing reverb definition %s.\n",
+                             reverbNames[type]);
                 discardPartialWorld();
                 return false;
             }
@@ -1412,6 +1432,9 @@ private:
                 sc_msg_iter noControls(0, "");
                 if (Graph_New(world_, reverbDefinition, reverbNodeId++, &noControls,
                               &graph, true) != 0 || !graph) {
+                    std::fprintf(stderr,
+                                 "Dexter VST3: Graph_New failed for %s (player %zu).\n",
+                                 reverbNames[type], player);
                     discardPartialWorld();
                     return false;
                 }
