@@ -96,17 +96,17 @@ _COMPAT_CALLS = {
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid',
-    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'var', 'linvar', 'Clock', 'Scale',
+    'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'var', 'linvar', 'Clock', 'Scale', 'Root',
     'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle'}
 _COMPAT_WAVE_KEYWORDS = {
-    'notes', 'dur', 'oct', 'sus', 'scale', 'amp', 'pan', 'cutoff', 'echo', 'decay',
+    'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
-    'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr'
+    'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'root'
 }
 _COMPAT_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees'}
 _COMPAT_SCALE_NAMES = {
@@ -183,7 +183,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Name) and node.value.id == 'Scale' and node.attr not in _COMPAT_SCALE_NAMES.union({'default'}):
             self.add(node.lineno, 'Scale.' + node.attr + ' is not available in the embedded scale set.')
         if isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == 'Scale' and node.value.attr == 'default' and node.attr != 'set':
-            self.add(node.lineno, 'Scale.default only supports .set(name, root=...).')
+            self.add(node.lineno, 'Scale.default only supports .set(...) and direct assignment in this build.')
+        if isinstance(node.value, ast.Name) and node.value.id == 'Root' and node.attr != 'default':
+            self.add(node.lineno, 'Root only supports Root.default in this build.')
+        if isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == 'Root' and node.value.attr == 'default' and node.attr != 'set':
+            self.add(node.lineno, 'Root.default only supports .set(note).')
         if isinstance(node.value, ast.Name) and re.fullmatch(r'p[0-9]+', node.value.id) and node.attr != 'stop':
             self.add(node.lineno, "Player " + node.value.id + ' only supports .stop() in this build.')
         self.generic_visit(node)
@@ -405,6 +409,26 @@ def _scale_intervals(name):
         raise ValueError('unknown scale; use a supported Scale name or custom ascending semitone intervals')
     return _SCALES[name]
 
+_ROOT_NOTES = {
+    'c': 0, 'b#': 0, 'c#': 1, 'db': 1, 'd': 2, 'd#': 3, 'eb': 3,
+    'e': 4, 'fb': 4, 'e#': 5, 'f': 5, 'f#': 6, 'gb': 6, 'g': 7,
+    'g#': 8, 'ab': 8, 'a': 9, 'a#': 10, 'bb': 10, 'b': 11, 'cb': 11
+}
+
+def _root_midi(value):
+    if isinstance(value, str):
+        name = value.strip().lower().replace('♯', '#').replace('♭', 'b')
+        if name not in _ROOT_NOTES:
+            raise ValueError('root must be a pitch class from 0 to 11 or a note name such as C# or Eb')
+        return 60 + _ROOT_NOTES[name]
+    try:
+        root = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError('root must be a pitch class from 0 to 11 or a MIDI note from 0 to 127')
+    if root != value or not 0 <= root <= 127:
+        raise ValueError('root must be a pitch class from 0 to 11 or a MIDI note from 0 to 127')
+    return 60 + root if root <= 11 else root
+
 def scale(name='major', root=60):
     global _dexter_scale, _dexter_root
     root = int(root)
@@ -415,7 +439,7 @@ def scale(name='major', root=60):
 
 class _FoxDotScaleDefault:
     def set(self, name, root=None):
-        scale(name, _dexter_root if root is None else root)
+        scale(name, _dexter_root if root is None else _root_midi(root))
 
 class _FoxDotScaleNamespace:
     def __init__(self):
@@ -424,8 +448,24 @@ class _FoxDotScaleNamespace:
             self.__dict__[name] = name
         for attribute, canonical in _SCALE_ATTRIBUTES.items():
             self.__dict__[attribute] = canonical
+    def __setattr__(self, name, value):
+        if name == 'default' and name in self.__dict__:
+            self.__dict__['default'].set(value)
+        else:
+            self.__dict__[name] = value
 
 Scale = _FoxDotScaleNamespace()
+
+class _FoxDotRootDefault:
+    def set(self, value):
+        global _dexter_root
+        _dexter_root = _root_midi(value)
+
+class _FoxDotRootNamespace:
+    def __init__(self):
+        self.default = _FoxDotRootDefault()
+
+Root = _FoxDotRootNamespace()
 
 class _FoxDotFinitePattern(list):
     def _gcd(self, a, b):
@@ -942,13 +982,14 @@ class PlayerPattern:
                  cutoff=20000.0, echo=0.0, delay=0.0, scaleName=None,
                  atk=0.01, rel=0.04, octaveControl=None, baseOctave=5, degreesPerOctave=7,
                  reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None):
+                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None):
         self.notes = notes
         self.step = step
         self.duration = duration
         self.velocity = velocity
         self.offset = offset
         self.degrees = degrees
+        self.rootMidi = None if root is None else _root_midi(root)
         if synth not in ('sine', 'triangle', 'saw', 'square'):
             raise ValueError('synth must be sine, triangle, saw, or square')
         self.synth = synth
@@ -1012,17 +1053,17 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
              offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
              cutoff=20000.0, echo=0.0, delay=0.0, atk=0.01, rel=0.04,
              reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None):
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
                         synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
                         reverb=reverb, room=room, mix=mix, damp=damp,
-                        revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback)
+                         revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root)
 
 def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
               amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0,
               velocity=100, rate=0.0, atk=0.01, rel=0.04,
               reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None):
     octaveControl = oct if isinstance(oct, _DexterTimeVar) else None
     if octaveControl is not None:
         if any(value < 0.0 or value > 10.0 for value in octaveControl.values):
@@ -1049,38 +1090,38 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     return PlayerPattern(notes, dur, dur if sus is None else sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
                          scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave,
-                         reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback)
+                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root)
 def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None):
+                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None):
     return _fox_wave('saw', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                     reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback)
+                      reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root)
 
 def pulse(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
           pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None):
     return _fox_wave('square', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                     reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback)
+                      reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root)
 
 def sine(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None):
+                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None):
     return _fox_wave('sine', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                     reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback)
+                      reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root)
 
 def triangle(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
              pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None):
     return _fox_wave('triangle', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                     reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback)
+                      reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root)
 
 class Player:
     def __init__(self, number):
@@ -1100,6 +1141,8 @@ class Player:
         try:
             if pattern.scaleName is not None:
                 scale(pattern.scaleName, _dexter_root)
+            if pattern.rootMidi is not None:
+                _dexter_root = pattern.rootMidi
             play(pattern.notes, step=pattern.step, duration=pattern.duration,
                  velocity=pattern.velocity, offset=pattern.offset,
                  degrees=pattern.degrees, _octave_control=pattern.octaveControl,

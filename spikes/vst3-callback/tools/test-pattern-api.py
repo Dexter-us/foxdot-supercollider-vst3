@@ -399,6 +399,11 @@ assert [int(event[3]) for event in scaleChordEvents[8:14]] == [48, 51, 55, 50, 5
 assert [int(event[3]) for event in scaleChordEvents[14:21]] == [60, 62, 63, 65, 67, 68, 70]
 assert 'No unsupported constructs detected' in run_compatibility_check('Scale.default.set(Scale.melodicMinor)\np1 >> saw(P[(0, 2, 4), None], scale=[0, 2, 3, 5, 7, 8, 10])\n')
 assert 'not available in the embedded scale set' in run_compatibility_check('Scale.notARealScale\n')
+rootRows, rootEvents = run_script(open(os.path.join(sys.argv[2], '27-root-and-scale-controls.py'), encoding='utf-8').read(), include_events=True)
+assert len(rootRows) == 3 and [row[1] for row in rootRows] == ['0', '1', '2']
+assert [int(event[3]) for event in rootEvents] == [62, 65, 69, 72, 55, 58, 62, 57, 60, 63, 63, 67, 70, 74]
+assert 'No unsupported constructs detected' in run_compatibility_check('Scale.default = "minor"\nRoot.default.set("Eb")\np1 >> saw([0, 2, 4], root=7)\n')
+assert 'Root.default only supports .set(note)' in run_compatibility_check('Root.default.notes\n')
 assert len(filterExampleRows) == 3 and [row[1] for row in filterExampleRows] == ['0', '1', '2']
 assert len(filterExampleControls) == 3 and all(len(row) == 14 for row in filterExampleControls)
 assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
@@ -426,4 +431,7 @@ for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-26.')
+for scale_name in namespace['_SCALES']:
+    namespace['Scale'].default.set(scale_name)
+    assert namespace['Scale'].__dict__[scale_name] == scale_name
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-27.')
