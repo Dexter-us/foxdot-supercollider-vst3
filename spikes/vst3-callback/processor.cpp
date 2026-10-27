@@ -1394,11 +1394,14 @@ private:
                  synthIndex < synthDefinitions.size(); ++synthIndex) {
                 sc_msg_iter noControls(0, "");
                 auto*& graph = voice.synthGraphs[synthIndex];
-                if (Graph_New(world_, synthDefinitions[synthIndex], nodeId++,
-                              &noControls, &graph, true) != 0 || !graph) {
+                const auto graphError =
+                    Graph_New(world_, synthDefinitions[synthIndex], nodeId++,
+                              &noControls, &graph, true);
+                if (graphError != 0 || !graph) {
                     std::fprintf(stderr,
-                                 "Dexter VST3: Graph_New failed for %s (voice %zu).\n",
-                                 synthNames[synthIndex], voiceIndex);
+                                 "Dexter VST3: Graph_New failed for %s (voice %zu, error %d).\n",
+                                 synthNames[synthIndex], voiceIndex,
+                                 static_cast<int>(graphError));
                     discardPartialWorld();
                     return false;
                 }
@@ -1427,7 +1430,9 @@ private:
         GraphDef_Define(world_, reverbDefs);
         const std::array<const char*, kReverbGraphCount> reverbNames{{
             "DexRevFree", "DexRevFree2", "DexRevGverb"}};
-        int32 reverbNodeId = 1000;
+        // Continue the synth-node ID sequence. Starting reverb IDs at 1000
+        // collides with the preallocated synth graphs (IDs 100–1467).
+        int32 reverbNodeId = nodeId;
         for (std::size_t type = 0; type < reverbNames.size(); ++type) {
             int32 reverbName[4]{};
             std::memcpy(reverbName, reverbNames[type], std::strlen(reverbNames[type]));
@@ -1441,11 +1446,14 @@ private:
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 auto*& graph = reverbGraphs_[player][type];
                 sc_msg_iter noControls(0, "");
-                if (Graph_New(world_, reverbDefinition, reverbNodeId++, &noControls,
-                              &graph, true) != 0 || !graph) {
+                const auto graphError =
+                    Graph_New(world_, reverbDefinition, reverbNodeId++, &noControls,
+                              &graph, true);
+                if (graphError != 0 || !graph) {
                     std::fprintf(stderr,
-                                 "Dexter VST3: Graph_New failed for %s (player %zu).\n",
-                                 reverbNames[type], player);
+                                 "Dexter VST3: Graph_New failed for %s (player %zu, error %d).\n",
+                                 reverbNames[type], player,
+                                 static_cast<int>(graphError));
                     discardPartialWorld();
                     return false;
                 }
