@@ -460,6 +460,10 @@ assert [row[10] for row in filterExampleControls] == ['-', 'v:150.0,900.0:4.0,4.
 assert [row[12] for row in filterExampleControls] == ['-', '-', 'l:350.0,1200.0:4.0,4.0']
 example30Rows = run_example('30-player-mute-controls.py')
 assert len(example30Rows) == 2 and [row[1] for row in example30Rows] == ['0', '1']
+example30Muted = open(os.path.join(sys.argv[2], '30-player-mute-controls.py'), encoding='utf-8').read().replace('#p2.mute()', 'p2.mute()')
+assert 'No unsupported constructs detected' in run_compatibility_check(example30Muted)
+mutedExampleRows, mutedExampleCommands = run_script(example30Muted, include_mutes=True)
+assert len(mutedExampleRows) == 2 and mutedExampleCommands == [['M', '1', '1']]
 example8 = run_example('08-synths-and-controls.py')
 assert len(example8) == 2 and all(len(row) == 21 for row in example8)
 p1, p2 = example8
