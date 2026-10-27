@@ -1,55 +1,79 @@
-# Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
+# Dexter U.S. FoxDot VST3
 
-This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 instrument. Its native editor evaluates a small Python pattern API, then passes bounded note events directly to the VST3 audio callback. The plugin renders up to eight independently running players, with up to eight notes per player (64 total), and emits matching MIDI notes on a separate channel per player. It does not launch `scsynth`, open an audio device, or use OSC.
+A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-## What it proves
+## MVP decisions
 
-- Sine, triangle, saw, and pulse/square voices are SynthDefs rendered by the embedded SuperCollider UGens; no server process is launched.
-- The host owns the audio callback; each VST block is split into SuperCollider's fixed 64-sample blocks and buffered for variable host block sizes.
-- The plugin bundles 26 official SuperCollider UGen modules in `Contents/Resources/SCPlugins` and also scans the portable `Portable/SCPlugins` folder for additional compatible Windows `.scx` modules at startup. The bundle includes `DiskIO_UGens` (`DiskIn`, `DiskOut`, and `VDiskIn`) plus the libsndfile 1.2.2 runtime DLL; its LGPL-2.1 license is included. `UIUGens` is included too: `MouseX`, `MouseY`, and `MouseButton` read global desktop input, while `KeyState` is registered but keyboard polling is disabled in SuperCollider's Windows implementation. No sample assets are included, and the Python API does not yet provide FoxDot sample players or buffer-file controls. Restart the DAW after adding modules. Ableton Link and Bela-specific modules remain excluded. The bundled SuperCollider modules use GPL terms; Boost headers used at build time are covered by the included Boost Software License notice.
-- The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
-- The editor supports `tempo(bpm)`, `scale(name="major", root=60)`, and `play(...)`, plus eight independent players (`p1`-`p8`) using `p1 >> sequence(...)`; calling `.stop()` stops only that player. Rerunning a script updates only the player slots named in that run; unmentioned players keep playing, as shown in Example 17. It now also accepts an initial FoxDot-style subset directly: `Clock.bpm`, `Scale.default.set(...)`, `p1 >> saw(...)` and `p2 >> pulse(...)`, including cyclic `dur` patterns, scalar `oct`, and `sus` values that fit within their steps. The source text stays unchanged; the embedded Python API maps it to the internal event stream, with no OSC or external server. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and Euclidean rhythm generation with `euclid(hits, steps, note=60, rotation=0)`. Finite `P[0, 2, None, (3, 5)]` literals convert to note lists with rests and chords; `+` and `-` support numeric transposition and FoxDot-style cyclic pattern lacing. Finite P patterns also support FoxDot-style `.reverse()`, `.rotate()`, `.stutter()`, `.palindrome()`, plus whole-pattern `.repeat()`. Slice-based and dynamic FoxDot patterns and sample strings remain unsupported. Example 10 demonstrates helper transformations, Example 11 demonstrates `P[...]` notation, Example 12 demonstrates `P` arithmetic, and Example 13 demonstrates transformation methods on P patterns, and Example 14 demonstrates `|` phrase concatenation and `&` pattern zipping into chords; Example 15 demonstrates the additional `*`, `/`, `//`, `%`, and `**` arithmetic operators; Example 16 demonstrates bounded `P` ranges and composable slices, and Example 17 shows how to update one player without stopping the others. Example 23 demonstrates FoxDot-compatible FreeVerb plus optional FreeVerb2 and GVerb reverb algorithms. Example 24 adds per-player FoxDot-style resonant LPF (lpf/lpr), HPF (hpf/hpr), and BPF (bpf/bpr), including var/linvar filter motion; bpnoise and envelope-driven swell remain unsupported. Example 25 demonstrates FoxDot-style beat-based `echo` spacing and `decay`; Example 22 combines them with beat-offset `delay` and the separate plugin extensions `delaytime`, `echomix`, and `feedback`. Degree-based playback supports major, minor, dorian, mixolydian, major/minor pentatonic, and blues scales; raw MIDI notes remain the default.
-- The Windows editor has visible Run, Stop, Open, Save, and Save As controls for UTF-8 Python scripts. Run performs a static compatibility check first; known unsupported FoxDot calls, player aliases, controls, Clock/Scale attributes, imports, and sample strings are reported with line numbers in a copyable Windows message box, and playback does not start until the reported issues are addressed. A clean static check then runs the script. The check does not execute code and cannot guarantee that runtime-computed values will succeed. The read-only status field is selectable; click it and press Ctrl+C to copy runtime errors. Twenty-five starter patterns are separate `.py` files in the bundle's `Portable` folder, and Open/Save As explicitly start there rather than using Windows' previously visited directory; ordinary Save writes back to the current script path. The editor prompts before replacing unsaved edits. The footer shows the plugin version.
-- VST3 project state stores the editor code. Loading a project restores the script in the editor but does not execute user code automatically.
-- Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
-- A MIDI output event bus is exposed to the host.
+- **Manufacturer:** Dexter U.S.
+- **Plugin:** Windows x64 VST3 with a native code editor, SuperCollider audio output, and MIDI event output.
+- **Code:** Bundled CPython 3.12 runtime with a deliberately small, FoxDot-style pattern/player API. This is not full FoxDot compatibility.
+- **Synthesis:** SuperCollider's synthesis engine runs in the plugin process. No separate SuperCollider application/server process.
+- **Control path:** Python evaluates on a worker thread; a bounded event pattern is handed directly to the audio callback. No OSC or external server.
+- **Tempo:** Each pattern has its own tempo, defaulting to 120 BPM. Timing is controlled by `tempo(bpm)`, independent of DAW transport.
 
-## Prototype limits
+## Current prototype
 
-- SuperCollider is pinned at `ef5771bce3d1c9c780cafd58cf032ec4a3f36d10`; the VST3 SDK checkout is 3.8.1. The Windows script bundles CPython 3.12.10. GitHub Actions builds and validates the Windows VST3; audio, editor, and MIDI behavior still require testing in a real Windows DAW.
-  - The engine uses `WorldOptions::mRealTime = false` so SuperCollider does not initialize its own audio driver. Seventy-two fixed voice slots support 64 active notes plus eight short release tails. All four voice modes (sine, triangle, saw, and pulse/square) use the embedded SuperCollider SynthDef and bundled UGen modules. This is not a real-time-safety guarantee for every UGen or third-party module; only load trusted, compatible modules and test them in a DAW. Audit allocations, locks, and thread behavior before treating it as a production instrument.
-- Audio pitch follows scheduled MIDI notes in 64-sample SuperCollider blocks, so audio onset is quantized to that block size; MIDI events retain sample offsets. Audio uses raised-cosine 10 ms attacks and up to 40 ms releases for natural note ends and explicit stops, plus smoothed voice-count mix adjustment. The envelope duration is unchanged; only the fade curve is smoother.
-- Each player supports up to eight simultaneous notes, and up to eight players can run independently. MIDI is emitted on a separate channel per player. Built-in sine, triangle, saw, and square oscillator choices are available. Each player can set amplitude, stereo pan, low-pass cutoff, echo, and reverb; these settings affect internal audio, not emitted MIDI notes. FoxDot-style `delay` offsets note starts in beats, and `echo` spacing plus `decay` tail duration are beat-based. Plugin-only `delaytime` (seconds override), `echomix` (wet level), and `feedback` (manual feedback) remain distinct extensions. FoxDot-compatible room/mix uses FreeVerb, while the per-player reverb selector also offers FreeVerb2 and GVerb; GVerb exposes revtime and spread as extensions. The DiskIO module is available to SuperCollider SynthDefs, but the current Python editor does not expose sample-player syntax or buffer-file controls; FoxDot sample-string players, the broader synth library, and player aliases beyond the built-in eight players remain deferred. Unsupported calls produce explicit Python errors instead of silent fallbacks. Run performs a static compatibility report before playback; it does not execute the script and cannot guarantee values computed dynamically at runtime. There is no arbitrary SynthDef evaluation, and the plugin does not follow DAW transport. The editor is currently Windows-only.
-- User code is intentionally constrained but not a security sandbox. Pattern evaluation has a two-second Python loop guard; avoid untrusted scripts.
-- SuperCollider is GPL-3.0, the Python runtime uses the PSF license, the VST3 SDK is MIT-licensed, and FoxDot-derived compatibility material is attributed and distributed under CC BY-SA 4.0. Package notices and license texts are included; binary distribution must comply with the relevant source and notice requirements. Review remaining transitive dependency terms before release.
+- Windows native editor with Run, Stop, Open, Save, and Save As. Twenty-five starter patterns are separate `.py` files in the `Portable` folder.
+- Open and Save As explicitly start in the `Portable` folder beside the VST3 bundle; ordinary Save writes back to the currently opened or saved script.
+- The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
+- `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independently editable players (`p1`–`p8`) using `p1 >> sequence(...)`; `.stop()` stops one player without stopping the others. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and `euclid`; finite FoxDot-style `P[...]` note/rest/chord literals and numeric `+`/`-` transposition are supported. Players can choose `sine`, `triangle`, `saw`, or `square` and set `amp`, `pan`, `cutoff`, `echo`, and `delay`; these controls affect the plugin's internal audio, while MIDI output remains note events.
+- Raw MIDI pitches remain the default. With `degrees=True`, zero-based scale degrees map to pitches using major, minor, dorian, mixolydian, major/minor pentatonic, or blues scales; degrees wrap across octaves.
+- MIDI note numbers 0–127, `None` rests, repeating patterns, and up to eight simultaneous notes per player (up to 64 across eight players).
+- Chords can be written as nested lists, such as `play([[60, 64, 67], [62, 65, 69]])`; separate `play()` calls can layer parts.
+- Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20–300 BPM.
+- Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
+- MIDI note events are emitted on the VST3 event output bus, with each player assigned its own MIDI channel; the engine supports up to 64 simultaneous notes and eight extra short-release voices.
+- Internal audio applies MIDI velocity, per-voice attack/release envelopes, and smoothed voice-count mix compensation to avoid abrupt level changes as players start and stop.
+- The plugin display name and native editor branding read “Dexter U.S FoxDot”; the VST3 manufacturer metadata remains Dexter U.S.
+- Dexter U.S. manufacturer metadata.
 
-## Build prerequisites
+Example:
 
-Use a SuperCollider source checkout at the pinned revision, a configured PIC-enabled SC build, the resulting `libscsynth` and UGen modules, the CPython 3.12.10 embeddable runtime, and a VST3 SDK checkout with its required submodules.
-
-The Windows build script downloads the libsndfile 1.2.2 x64 package and verifies its SHA-256 before use. Configure SuperCollider with `CMAKE_POSITION_INDEPENDENT_CODE=ON`, `LIBSCSYNTH=OFF`, `STATIC_PLUGINS=OFF`, and `NO_LIBSNDFILE=OFF`, then build `libscsynth` and the 26 supported UGen modules listed by the build script. The Windows build enables `UIUGens` without requiring X11. The engine archive must be PIC because it is linked into a shared VST3 module.
-
-```sh
-cmake -S spikes/vst3-callback -B build/vst3-callback -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DVST3_SDK_ROOT=/path/to/vst3sdk \
-  -DSC_SOURCE_DIR=/path/to/supercollider \
-  -DSC_BUILD_DIR=/path/to/supercollider-build \
-  -DSC_UGEN_PLUGIN_PATH=/path/to/supercollider-build/server/plugins \
-  -DPYTHON_RUNTIME_DIR=/path/to/python-3.12-embed
-cmake --build build/vst3-callback --target dexter_sc_tone
+```python
+tempo(120)
+play([60, 64, None, 67], step=0.5, duration=0.4)
 ```
 
-The build runs Steinberg's validator as a post-build check. `SC_UGEN_PLUGIN_PATH` is used only at build time to find platform-matched bundled modules. At runtime, the embedded SuperCollider loader searches `Contents/Resources/SCPlugins` and `Portable/SCPlugins`; the latter is the extension folder for user-added modules.
+Chord example:
 
-## Windows smoke build
-
-The Windows script and GitHub Actions job use Visual Studio 2022 or 2026 x64 to build the pinned SuperCollider engine and UGen modules, download the pinned libsndfile and CPython embeddable packages, build the VST3 bundle, and run the VST3 validator. The script clones the pinned SuperCollider revision and VST3 SDK tag into a temporary build directory; it does not require the full SuperCollider IDE or Qt.
-
-On Windows with Git, CMake 3.25 or newer, and the Visual Studio 2022 or 2026 C++ workload installed, run from the repository root:
-
-```powershell
-.\tools\build-windows-vst3.ps1
+```python
+tempo(100)
+play([[60, 64, 67], [57, 60, 64], [53, 57, 60], [55, 59, 62]],
+     step=1, duration=0.9)
 ```
 
-The GitHub Actions workflow also uploads the validated Windows VST3 bundle as a downloadable artifact when the job succeeds. This is a smoke-build path; Windows audio-host behavior still needs to be tested in a real VST3 host.
+Scale-degree example:
+
+```python
+tempo(112)
+scale("minor", root=60)
+play([0, 2, 4, 6, 4, 2], step=0.5, duration=0.4, degrees=True)
+```
+
+This is only a pattern-and-pitch slice: user code does not define arbitrary SuperCollider SynthDefs or access the full FoxDot API. The Python worker has a 2-second guard for ordinary Python loops and a restricted built-ins set, but this is not a security sandbox; only run code you trust.
+
+## Not included yet
+
+- Full compatibility with all FoxDot syntax, classes, synths, samples, and editor behavior.
+- An external SuperCollider process, network OSC, or remote server control.
+- DAW tempo/transport sync, MIDI clock, or network synchronization.
+- User-defined SynthDefs, sample playback, MIDI input, full FoxDot compatibility, and macOS/Linux editor support.
+
+## Architecture
+
+`VST3 host audio callback -> embedded SuperCollider engine -> host audio outputs`
+
+`Code editor -> embedded Python worker -> bounded pattern snapshot -> host audio callback -> SuperCollider + VST3 MIDI output`
+
+## Milestones
+
+1. **Complete:** Render the embedded SuperCollider engine in a VST3 process, with no separate server or OSC.
+2. **Complete:** Bundle the required SuperCollider UGen modules and license texts.
+3. **Complete in prototype:** Add Windows editor, embedded Python, repeating note patterns, and VST3 MIDI output.
+4. **In progress:** Validate the Python editor/runtime and MIDI/audio behavior in a Windows DAW; the user can test on Windows only.
+5. **In progress:** Save and restore editor code with DAW project state.
+6. **Later:** Incrementally expand the FoxDot-inspired pattern API; full FoxDot compatibility is not assumed.
+
+## Licensing and upstream code
+
+No FoxDot source has been copied into this repository. The VST3 bundles SuperCollider under GPL-3.0, the Python runtime under the PSF license, and the Steinberg VST3 SDK under its MIT license; notices are included with the package. Distribution must meet the applicable source-offer, notices, and dependency-license requirements. Review the complete dependency set before commercial redistribution.

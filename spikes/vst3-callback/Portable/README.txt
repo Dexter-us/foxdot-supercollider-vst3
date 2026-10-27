@@ -5,7 +5,7 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 06-pattern-tools.py demonstrates reverse, rotate, repeat, transpose, and Euclidean rhythm helpers.
 07-independent-players.py shows separate p1 and p2 parts; edit or stop one without replacing the other.
 
-08-synths-and-controls.py demonstrates oscillator choices and per-player amp, pan, cutoff, and echo settings. These settings shape the plugin's internal stereo audio; MIDI output remains note events.
+08-synths-and-controls.py demonstrates oscillator choices, per-player amp/pan/cutoff, beat-based echo spacing, and beat-offset delay. MIDI output remains note events.
 
 
 09-foxdot-core.py demonstrates the initial direct-compatibility subset: Clock.bpm, Scale.default.set(...), p1 >> saw(...), p2 >> pulse(...), cyclic dur values, and per-player oct/sus controls. It uses embedded SuperCollider oscillator UGens and does not start the FoxDot server clock or send OSC. FoxDot sample strings and the wider synth library are not included yet.
@@ -36,10 +36,10 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 
 21-timevar-note-controls.py demonstrates var()/linvar() on dur, oct, sus, and velocity. These are evaluated at each note start; dur changes event spacing, and oct is rounded to an integer octave per note. Event controls are sampled at note boundaries, while amp/pan/cutoff remain audio-rate controls.
 
-22-timevar-effects-envelopes.py demonstrates var()/linvar() on echo, delay, atk, and rel. Echo mix and delay are smoothed in the audio path; attack and release are evaluated for each note event.
+22-timevar-effects-envelopes.py demonstrates var()/linvar() on echo spacing, note-start delay, delaytime, echomix, feedback, atk, and rel. Native echo/delay use beat units; delaytime is an explicit plugin seconds override.
 
 23-reverb-algorithms.py keeps FoxDot room/mix syntax on FreeVerb and compares the optional FreeVerb2 and GVerb selectors. GVerb adds revtime and spread controls. Each player owns a separate reverb path.
 
 24-foxdot-filters.py demonstrates the FoxDot-style resonant low-pass (lpf/lpr), high-pass (hpf/hpr), and band-pass (bpf/bpr) filters, with var/linvar sweeps. bpnoise and the separate swell effect are not included yet.
 
-25-echo-decay-compat.py checks that the FoxDot-style `decay` keyword is accepted and controls echo-tail feedback in beats. Echo/delay semantics remain a subset under compatibility review.
+25-echo-decay-compat.py demonstrates FoxDot-style echo spacing and echo-tail decay, both measured in beats; echomix is shown as a separate plugin extension.

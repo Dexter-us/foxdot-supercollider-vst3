@@ -190,7 +190,8 @@ namespace['p1'] >> namespace['sequence']([60, None, 64], step=0.5, duration=0.4,
 update = namespace['_dexter_updates'][0]
 assert update[0] is False and len(update[3]) == 2
 assert update[4] == 3 and update[5] == 0.6 and update[6] == -0.25
-assert update[7] == 3200.0 and update[8] == 0.3 and update[9] == 0.2
+assert abs(update[7] - 3200.0) < 1e-9 and abs(update[8] - 0.3) < 1e-9 and abs(update[9]) < 1e-9, repr(update[7:10])
+assert abs(update[3][0][6] - 0.2) < 1e-9
 assert update[19:25] == (3, 0.4, 0.8, 0.25, 4.0, 22.0)
 assert update[10] is False and update[11] is False
 assert update[12] == 0.01 and update[13] == 0.04
@@ -287,7 +288,7 @@ fox_literal_rows = run_script('p1 >> saw(P[0, 2, None, (3, 5), 7], dur=0.5, oct=
 assert len(fox_literal_rows) == 1 and fox_literal_rows[0][5] == '5', fox_literal_rows
 assert legacy[0][5] == '2' and legacy[0][6] == '0'
 assert legacy[0][7] == '1.0' and legacy[0][8] == '0.0'
-assert legacy[0][10] == '0.0' and legacy[0][11] == '0.25'
+assert legacy[0][10] == '0.0' and legacy[0][11] == '0.0'
 assert legacy[0][12] == '0' and legacy[0][13] == '0'
 assert legacy[0][14] == '0.01' and legacy[0][15] == '0.04'
 assert legacy[0][16] == '-' and legacy[0][17] == '-' and legacy[0][18] == '-'
@@ -296,7 +297,7 @@ example7 = run_example('07-independent-players.py')
 assert len(example7) == 2 and all(len(row) == 21 for row in example7)
 assert example7[0][5] == '6' and example7[1][5] == '2'
 assert example7[0][6] == '0' and example7[1][6] == '0'
-assert example7[0][10] == '0.0' and example7[0][11] == '0.25'
+assert example7[0][10] == '0.0' and example7[0][11] == '0.0'
 example9 = run_example('09-foxdot-core.py')
 assert len(example9) == 2 and all(len(row) == 21 for row in example9)
 foxSaw, foxPulse = example9
@@ -356,14 +357,20 @@ assert abs(float(linNoteEvents[1][1]) - 0.25) < 1e-9
 assert abs(float(linNoteEvents[2][1]) - 0.5625) < 1e-9
 assert abs(float(linNoteEvents[2][2]) - 0.2125) < 1e-9
 assert int(linNoteEvents[2][3]) == 67 and int(linNoteEvents[2][4]) == 89
-effectRows, effectEvents = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=var([0.1, 0.5], [1, 1]), delay=linvar([0.1, 0.5], [1, 1]), atk=var([0.01, 0.03], [1, 1]), rel=linvar([0.02, 0.1], [1, 1]))\n', include_events=True)
-foxdotEchoRows, foxdotDecayRows = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=0.5, decay=0.75)\n', include_decay=True)
+effectRows, effectEvents = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=var([0.1, 0.5], [1, 1]), delay=linvar([0.0, 0.5], [1, 1]), delaytime=linvar([0.1, 0.5], [1, 1]), echomix=var([0.1, 0.5], [1, 1]), feedback=var([0.25, 0.45], [1, 1]), atk=var([0.01, 0.03], [1, 1]), rel=linvar([0.02, 0.1], [1, 1]))\n', include_events=True)
+foxdotEchoRows, foxdotDecayRows = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=0.5, decay=0.75, echomix=0.4, feedback=0.5)\n', include_decay=True)
 assert foxdotDecayRows[0][0] == 'E' and float(foxdotDecayRows[0][2]) == 0.75 and foxdotDecayRows[0][3] == '-'
-_, varDecayRows = run_script('p1 >> saw([0, 2], echo=0.5, decay=var([0.5, 1.5], [1, 1]))\n', include_decay=True)
-assert varDecayRows[0][3] == 'v:0.5,1.5:1.0,1.0'
+assert abs(float(foxdotEchoRows[0][10]) - 0.5) < 1e-9
+assert abs(float(foxdotDecayRows[0][4]) - 0.4) < 1e-9 and float(foxdotDecayRows[0][6]) == 0.5 and foxdotDecayRows[0][8] == '-'
+_, varDecayRows = run_script('p1 >> saw([0, 2], echo=0.5, decay=var([0.5, 1.5], [1, 1]), delay=linvar([0.1, 0.4], [1, 1]))\n', include_decay=True)
+assert varDecayRows[0][3] == 'v:0.5,1.5:1.0,1.0' and len(varDecayRows[0]) == 9
+assert varDecayRows[0][8] == 'l:0.1,0.4:1.0,1.0'
 assert len(effectRows) == 1 and len(effectRows[0]) == 21 and len(effectEvents) == 4
 assert effectRows[0][19] == 'v:0.1,0.5:1.0,1.0'
 assert effectRows[0][20] == 'l:0.1,0.5:1.0,1.0'
+assert abs(float(effectEvents[0][7]) - 0.0) < 1e-9
+assert abs(float(effectEvents[1][7])) < 1e-9
+assert abs(float(effectEvents[2][7])) < 1e-9
 assert abs(float(effectEvents[0][5]) - 0.01) < 1e-9 and abs(float(effectEvents[0][6]) - 0.02) < 1e-9
 assert abs(float(effectEvents[1][5]) - 0.01) < 1e-9 and abs(float(effectEvents[1][6]) - 0.06) < 1e-9
 assert abs(float(effectEvents[2][5]) - 0.03) < 1e-9 and abs(float(effectEvents[2][6]) - 0.1) < 1e-9
@@ -396,7 +403,7 @@ assert len(example8) == 2 and all(len(row) == 21 for row in example8)
 p1, p2 = example8
 assert p1[1] == '0' and p1[6] == '1' and abs(float(p1[7]) - 0.7) < 1e-6
 assert abs(float(p1[8]) + 0.4) < 1e-6 and p1[9] == '5000.0'
-assert p1[10] == '0.0' and p1[11] == '0.25'
+assert p1[10] == '0.0' and p1[11] == '0.0'
 assert p2[1] == '1' and p2[6] == '2' and abs(float(p2[7]) - 0.5) < 1e-6
 assert abs(float(p2[8]) - 0.4) < 1e-6 and p2[9] == '1800.0'
 assert p2[10] == '0.25' and p2[11] == '0.24'

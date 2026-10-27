@@ -281,9 +281,14 @@ public:
                     activePatterns_[player] = pendingPatterns_[player];
                     if (!activePatterns_[player].active) {
                         activePatterns_[player].echoMix = previous.echoMix;
-                        activePatterns_[player].echoDelaySeconds = previous.echoDelaySeconds;
+                        activePatterns_[player].echoBeats = previous.echoBeats;
+                        activePatterns_[player].delayTimeSeconds = previous.delayTimeSeconds;
+                        activePatterns_[player].echoFeedback = previous.echoFeedback;
                         activePatterns_[player].echoControl = previous.echoControl;
                         activePatterns_[player].delayControl = previous.delayControl;
+                        activePatterns_[player].echoMixControl = previous.echoMixControl;
+                        activePatterns_[player].echoFeedbackControl = previous.echoFeedbackControl;
+                        activePatterns_[player].noteDelayControl = previous.noteDelayControl;
                         activePatterns_[player].echoDecayControl = previous.echoDecayControl;
                         activePatterns_[player].echoDecayBeats = previous.echoDecayBeats;
                         activePatterns_[player].reverbIndex = previous.reverbIndex;
@@ -432,8 +437,11 @@ public:
                         if (!parseTimeVarControl(player.ampControlToken, 0.0, 1.0, next.ampControl) ||
                             !parseTimeVarControl(player.panControlToken, -1.0, 1.0, next.panControl) ||
                             !parseTimeVarControl(player.cutoffControlToken, 20.0, 20000.0, next.cutoffControl) ||
-                            !parseTimeVarControl(player.echoControlToken, 0.0, 0.75, next.echoControl) ||
-                            !parseTimeVarControl(player.delayControlToken, 0.05, 1.0, next.delayControl) ||
+                            !parseTimeVarControl(player.echoControlToken, 0.0, 64.0, next.echoControl) ||
+                            !parseTimeVarControl(player.delayTimeControlToken, 0.0, 4.0, next.delayControl) ||
+                             !parseTimeVarControl(player.echoMixControlToken, 0.0, 1.0, next.echoMixControl) ||
+                             !parseTimeVarControl(player.echoFeedbackControlToken, 0.0, 0.95, next.echoFeedbackControl) ||
+                             !parseTimeVarControl(player.noteDelayControlToken, 0.0, 8.0, next.noteDelayControl) ||
                              !parseTimeVarControl(player.echoDecayControlToken, 0.0, 64.0, next.echoDecayControl) ||
                             !parseTimeVarControl(player.lpfControlToken, 0.0, 20000.0, next.lpfControl) ||
                             !parseTimeVarControl(player.lprControlToken, 0.05, 1.0, next.lprControl) ||
@@ -443,7 +451,9 @@ public:
                             !parseTimeVarControl(player.bprControlToken, 0.05, 1.0, next.bprControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
                         next.echoMix = static_cast<float>(player.echoMix);
-                        next.echoDelaySeconds = player.echoDelaySeconds;
+                        next.echoBeats = player.echoBeats;
+                         next.delayTimeSeconds = player.delayTimeSeconds;
+                         next.echoFeedback = static_cast<float>(player.echoFeedback);
                         next.echoDecayBeats = player.echoDecayBeats;
                         next.reverbIndex = player.reverbIndex;
                         next.reverbMix = static_cast<float>(player.reverbMix);
@@ -613,9 +623,14 @@ private:
         TimeVarControl bprControl;
         TimeVarControl echoControl;
         TimeVarControl delayControl;
+        TimeVarControl echoMixControl;
+        TimeVarControl echoFeedbackControl;
+        TimeVarControl noteDelayControl;
         TimeVarControl echoDecayControl;
-        float echoMix = 0.0f;
-        double echoDelaySeconds = 0.25;
+        double echoBeats = 0.0;
+        double delayTimeSeconds = 0.0;
+        float echoMix = 0.35f;
+        float echoFeedback = -1.0f;
         double echoDecayBeats = 1.0;
         int reverbIndex = 1;
         float reverbMix = 0.1f;
@@ -944,18 +959,25 @@ private:
             const double startBeat = blockStart <= patternStart ? 0.0
                 : static_cast<double>(blockStart - patternStart) / samplesPerBeat;
             const double endBeat = static_cast<double>(blockEnd - patternStart) / samplesPerBeat;
-            const auto firstCycle = std::max<std::int64_t>(
-                0, static_cast<std::int64_t>(std::floor(startBeat / pattern.lengthBeats)) - 1);
-            const auto lastCycle = static_cast<std::int64_t>(
-                std::floor(endBeat / pattern.lengthBeats)) + 1;
-            for (std::int64_t cycle = firstCycle; cycle <= lastCycle; ++cycle) {
-                const double cycleBeat = static_cast<double>(cycle) * pattern.lengthBeats;
-                for (std::size_t i = 0; i < pattern.eventCount; ++i) {
-                    const auto& note = pattern.events[i];
+            for (std::size_t i = 0; i < pattern.eventCount; ++i) {
+                const auto& note = pattern.events[i];
+                const auto firstCycle = std::max<std::int64_t>(
+                    0, static_cast<std::int64_t>(std::floor(
+                           (startBeat - note.beat - 8.0 - note.durationBeats) /
+                           pattern.lengthBeats)) - 1);
+                const auto lastCycle = static_cast<std::int64_t>(
+                    std::ceil((endBeat - note.beat) / pattern.lengthBeats)) + 1;
+                for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
+                    const double baseEventBeat =
+                        static_cast<double>(cycle) * pattern.lengthBeats + note.beat;
+                    const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
+                                                                 baseEventBeat, 0.0f);
+                    const double onsetBeat = baseEventBeat + note.delayBeats + dynamicDelay;
+                    const double offsetBeat = onsetBeat + note.durationBeats;
                     const auto onSample = patternStart + static_cast<std::uint64_t>(
-                        std::llround((cycleBeat + note.beat) * samplesPerBeat));
+                        std::llround(onsetBeat * samplesPerBeat));
                     const auto offSample = patternStart + static_cast<std::uint64_t>(
-                        std::llround((cycleBeat + note.beat + note.durationBeats) * samplesPerBeat));
+                        std::llround(offsetBeat * samplesPerBeat));
                     append(onSample, static_cast<int>(player), note.midiNote, note.velocity, true);
                     append(offSample, static_cast<int>(player), note.midiNote, 0, false);
                 }
@@ -1009,32 +1031,40 @@ private:
                 continue;
             const double samplesPerBeat = sampleRate_ * 60.0 / pattern.bpm;
             const double beat = static_cast<double>(midpoint - patternStart) / samplesPerBeat;
-            const auto cycle = static_cast<std::int64_t>(
-                std::floor(beat / pattern.lengthBeats));
-            const double loopPosition =
-                beat - static_cast<double>(cycle) * pattern.lengthBeats;
             std::size_t playerVoices = 0;
             for (std::size_t i = 0; i < pattern.eventCount; ++i) {
                 const auto& event = pattern.events[i];
-                if (loopPosition < event.beat ||
-                    loopPosition >= event.beat + event.durationBeats)
-                    continue;
                 if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
                     break;
-                const double absoluteStartBeat =
-                    static_cast<double>(cycle) * pattern.lengthBeats + event.beat;
-                const double absoluteEndBeat = absoluteStartBeat + event.durationBeats;
-                desired[desiredCount++] = ScheduledAudioNote{
-                    static_cast<int>(player), event.midiNote, event.velocity,
-                    pattern.synthIndex, pattern.amplitude, pattern.pan, pattern.cutoffHz,
-                    pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
-                    pattern.mousePan, pattern.mouseCutoff,
-                    event.attackSeconds, event.releaseSeconds,
-                    patternStart + static_cast<std::uint64_t>(
-                        std::llround(absoluteStartBeat * samplesPerBeat)),
-                    patternStart + static_cast<std::uint64_t>(
-                        std::llround(absoluteEndBeat * samplesPerBeat))};
-                ++playerVoices;
+                const auto firstCycle = std::max<std::int64_t>(
+                    0, static_cast<std::int64_t>(std::floor(
+                           (beat - event.beat - 8.0 - event.durationBeats) /
+                           pattern.lengthBeats)) - 1);
+                const auto lastCycle = static_cast<std::int64_t>(
+                    std::floor((beat - event.beat) / pattern.lengthBeats));
+                for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
+                    const double baseEventBeat =
+                        static_cast<double>(cycle) * pattern.lengthBeats + event.beat;
+                    const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
+                                                                 baseEventBeat, 0.0f);
+                    const double absoluteStartBeat = baseEventBeat + event.delayBeats + dynamicDelay;
+                    const double absoluteEndBeat = absoluteStartBeat + event.durationBeats;
+                    if (beat < absoluteStartBeat || beat >= absoluteEndBeat)
+                        continue;
+                    if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
+                        break;
+                    desired[desiredCount++] = ScheduledAudioNote{
+                        static_cast<int>(player), event.midiNote, event.velocity,
+                        pattern.synthIndex, pattern.amplitude, pattern.pan, pattern.cutoffHz,
+                        pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
+                        pattern.mousePan, pattern.mouseCutoff,
+                        event.attackSeconds, event.releaseSeconds,
+                        patternStart + static_cast<std::uint64_t>(
+                            std::llround(absoluteStartBeat * samplesPerBeat)),
+                        patternStart + static_cast<std::uint64_t>(
+                            std::llround(absoluteEndBeat * samplesPerBeat))};
+                    ++playerVoices;
+                }
             }
         }
 
@@ -1486,25 +1516,35 @@ private:
                           (60.0 * sampleRate_)
                     : 0.0;
                 auto& echoMix = echoMixSmoothed_[player];
-                const float targetEchoMix = evaluateTimeVar(pattern.echoControl, playerBeat,
-                                                            pattern.echoMix);
+                const float echoBeats = evaluateTimeVar(pattern.echoControl, playerBeat,
+                                                        static_cast<float>(pattern.echoBeats));
+                const float requestedDelayTime = evaluateTimeVar(pattern.delayControl, playerBeat,
+                                                                  static_cast<float>(pattern.delayTimeSeconds));
+                const float targetEchoMix = (echoBeats > 0.0f || requestedDelayTime > 0.0f)
+                    ? evaluateTimeVar(pattern.echoMixControl, playerBeat, pattern.echoMix)
+                    : 0.0f;
                 echoMix += (targetEchoMix - echoMix) * mixSmoothing;
                 auto& delaySeconds = echoDelaySmoothed_[player];
-                const float targetDelaySeconds = evaluateTimeVar(pattern.delayControl, playerBeat,
-                                                                 static_cast<float>(pattern.echoDelaySeconds));
+                const float targetDelaySeconds = requestedDelayTime > 0.0f
+                    ? requestedDelayTime
+                    : (pattern.bpm > 0.0 ? echoBeats * 60.0f / static_cast<float>(pattern.bpm) : 0.0f);
                 delaySeconds += (targetDelaySeconds - delaySeconds) * mixSmoothing;
                 if (sampleIndex % kSCBlockSize == 0) {
                     const float decayBeats = evaluateTimeVar(pattern.echoDecayControl, playerBeat,
                                                             static_cast<float>(pattern.echoDecayBeats));
                     const double decaySeconds = pattern.bpm > 0.0
                         ? static_cast<double>(decayBeats) * 60.0 / pattern.bpm : 0.0;
-                    echoFeedbackTarget_[player] = decaySeconds > 0.0
-                        ? std::pow(0.001f, static_cast<float>(delaySeconds / decaySeconds))
-                        : 0.0f;
+                    const float requestedFeedback = evaluateTimeVar(pattern.echoFeedbackControl,
+                                                                     playerBeat, pattern.echoFeedback);
+                    echoFeedbackTarget_[player] = requestedFeedback >= 0.0f
+                        ? std::clamp(requestedFeedback, 0.0f, 0.95f)
+                        : (decaySeconds > 0.0 && delaySeconds > 0.0f
+                            ? std::pow(0.001f, static_cast<float>(delaySeconds / decaySeconds))
+                            : 0.0f);
                 }
                 auto& feedback = echoFeedbackSmoothed_[player];
                 feedback += (echoFeedbackTarget_[player] - feedback) * mixSmoothing;
-                if (echoMix > 1e-5f && !echoBuffer_.empty()) {
+                if (echoMix > 1e-5f && delaySeconds > 0.0f && !echoBuffer_.empty()) {
                     const auto requestedDelay = std::round(delaySeconds * sampleRate_);
                     const auto delaySamples = static_cast<std::size_t>(
                         std::max(1.0, std::min<double>(kMaxEchoBufferSamples - 1,
