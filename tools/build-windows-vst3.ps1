@@ -314,7 +314,19 @@ if ($Stage -in @("all", "package")) {
     if (-not $validator) {
         throw "The VST3 validator executable was not produced under $pluginBuild"
     }
-    Invoke-Checked $validator.FullName @($bundle.FullName)
+    $validatorSidecarPortable = Join-Path $bundle.Parent.FullName "Portable"
+    if (Test-Path $validatorSidecarPortable) {
+        throw "Refusing to overwrite existing validator sidecar folder: $validatorSidecarPortable"
+    }
+    try {
+        Copy-Item -Path $ugenPackPortableDirectory -Destination $bundle.Parent.FullName -Recurse -Force
+        Invoke-Checked $validator.FullName @($bundle.FullName)
+    }
+    finally {
+        if (Test-Path $validatorSidecarPortable) {
+            Remove-Item -Path $validatorSidecarPortable -Recurse -Force
+        }
+    }
 
     Write-Host "`nWindows VST3 build and validator completed successfully."
     Write-Host "Bundle: $($bundle.FullName)"
