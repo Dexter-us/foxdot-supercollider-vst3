@@ -41,7 +41,7 @@ def ugen(name, rate, inputs, output_rates, special_index=0):
 
 data.extend(b"SCgf")
 i32(1)  # SynthDef version
-u16(19)  # DexterTone plus eighteen embedded FoxDot patches
+u16(22)  # DexterTone plus twenty-one embedded FoxDot patches
 string("DexterTone")
 constants = (0.0, 0.1, 0.0, 0.5, 1.0, 0.2, 0.005)
 u16(len(constants))
@@ -95,7 +95,7 @@ constants = (0.0, 0.005, 0.1, 0.5, 1.0, 0.2, 0.005, 1.005, 0.0025, 0.004,
              2.571, 3.05, 6.242, 9.6, 11.0, 12.49, 13.0, 16.0, 24.0, 0.8,
              2.5, 8.0, 10.0, 0.015625, 0.000001, 0.3, 0.09, 1.002,
              440.0, 4000.0, 0.007, 0.501, 0.004, 0.02, 0.04, 0.5,
-             4.0, 9.0)
+              4.0, 9.0, 50.0)
 
 def begin_patch(name, patch_parameter_names=parameter_names,
                 patch_parameters=parameters):
@@ -415,6 +415,94 @@ ugen("Decay", 2, [(1, 0), (0, 3)], [2])
 ugen("BinaryOpUGen", 2, [(5, 0), (6, 0)], [2], 2)
 ugen("BinaryOpUGen", 2, [(7, 0), const_input(4.0)], [2], 2)
 mouse_and_reverb(8)
+finish_patch()
+
+foxdot_patch_parameters = (
+    ("out", 0), ("freq", 1), ("rate", 2), ("sus", 3),
+    ("unused4", 4), ("unused5", 5), ("wetbus", 6),
+    ("wetgain", 7), ("wetcutoff", 8))
+foxdot_patch_defaults = (0.0, 440.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 20000.0)
+
+begin_patch("DexterCharm", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(39)
+ugen("Control", 1, [], [1] * 9)
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(2.0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(1, 0), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(8.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(2, 0), const_input(8.0)], [2], 2)
+ugen("SinOsc", 2, [(0, 1), const_input(0.0)], [2])
+ugen("SinOsc", 2, [(2, 0), const_input(0.0)], [2])
+ugen("VarSaw", 2, [(3, 0), const_input(10.0), const_input(0.5)], [2])
+ugen("VarSaw", 2, [(4, 0), const_input(10.0), const_input(0.5)], [2])
+ugen("BinaryOpUGen", 2, [(8, 0), const_input(0.125)], [2], 2)
+ugen("BinaryOpUGen", 2, [(7, 0), const_input(0.125)], [2], 2)
+ugen("BinaryOpUGen", 2, [(5, 0), const_input(0.25)], [2], 2)
+ugen("BinaryOpUGen", 2, [(6, 0), const_input(0.25)], [2], 2)
+ugen("BinaryOpUGen", 2, [(11, 0), (9, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(12, 0), (10, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(0, 2), const_input(4.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(0, 3), const_input(0.125)], [2], 2)
+ugen("Line", 2, [const_input(1.0), (15, 0), (16, 0),
+                 const_input(0.0)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(18, 0), const_input(10.0)], [2], 0)
+ugen("SinOsc", 2, [(17, 0), const_input(0.0)], [2])
+ugen("BinaryOpUGen", 2, [(20, 0), (18, 0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(21, 0), (19, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(2, 0), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(22, 0), const_input(10.0)], [2], 0)
+ugen("SinOsc", 2, [(17, 0), const_input(0.0)], [2])
+ugen("BinaryOpUGen", 2, [(25, 0), (23, 0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(26, 0), (24, 0)], [2], 0)
+ugen("LPF", 2, [(13, 0), (22, 0)], [2])
+ugen("LPF", 2, [(14, 0), (27, 0)], [2])
+ugen("BinaryOpUGen", 2, [(27, 0), (28, 0)], [2], 0)
+mouse_and_reverb(30)
+finish_patch()
+
+begin_patch("DexterSpark", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(18)
+ugen("Control", 1, [], [1] * 9)
+ugen("Saw", 2, [const_input(0.1)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(1.002)], [2], 2)
+ugen("LFSaw", 2, [(2, 0), (1, 0)], [2])
+ugen("LFNoise2", 2, [const_input(50.0)], [2])
+ugen("BinaryOpUGen", 2, [(4, 0), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(0, 1), (5, 0)], [2], 0)
+ugen("LFSaw", 2, [(6, 0), (1, 0)], [2])
+ugen("BinaryOpUGen", 2, [(3, 0), (7, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(8, 0), const_input(0.3)], [2], 2)
+mouse_and_reverb(9)
+finish_patch()
+
+begin_patch("DexterBlip", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(32)
+ugen("Control", 1, [], [1] * 9)
+ugen("LFNoise2", 2, [const_input(50.0)], [2])
+ugen("BinaryOpUGen", 2, [(1, 0), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(0, 1), (2, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(3, 0), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(4, 0), const_input(1.002)], [2], 2)
+ugen("BinaryOpUGen", 2, [(5, 0), const_input(1.002)], [2], 2)
+ugen("LFCub", 2, [(6, 0), const_input(1.5)], [2])
+ugen("LFCub", 2, [(7, 0), const_input(1.5)], [2])
+ugen("Line", 2, [const_input(2.0), const_input(0.0), (0, 3),
+                 const_input(0.0)], [2])
+ugen("LFTri", 2, [(4, 0), (10, 0)], [2])
+ugen("LFTri", 2, [(5, 0), (10, 0)], [2])
+ugen("BinaryOpUGen", 2, [(11, 0), const_input(0.3)], [2], 2)
+ugen("BinaryOpUGen", 2, [(12, 0), const_input(0.3)], [2], 2)
+ugen("BinaryOpUGen", 2, [(8, 0), (13, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(9, 0), (14, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(4, 0), const_input(2.0)], [2], 3)
+ugen("BinaryOpUGen", 2, [(5, 0), const_input(2.0)], [2], 3)
+ugen("Blip", 2, [(17, 0), (0, 2)], [2])
+ugen("Blip", 2, [(18, 0), (0, 2)], [2])
+ugen("BinaryOpUGen", 2, [(15, 0), (19, 0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(16, 0), (20, 0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(21, 0), (22, 0)], [2], 0)
+mouse_and_reverb(23)
 finish_patch()
 
 out_path.parent.mkdir(parents=True, exist_ok=True)

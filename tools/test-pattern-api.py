@@ -239,7 +239,10 @@ def run_script(script_text, include_events=False, include_effects=False, include
 newSynthRows = run_script('p1 >> bass([0, 3, 5], dur=0.5)\np2 >> varsaw([0, 4], dur=1, rate=0.25)\np3 >> varsaw([0])\np4 >> dirt([0, 3])\np5 >> jbass([0, 5])\np6 >> noise([0, 2])\n')
 assert len(newSynthRows) == 6
 assert [int(row[6]) for row in newSynthRows] == [4, 5, 5, 6, 7, 8]
-assert [float(row[21]) for row in newSynthRows] == [0.0, 0.25, 0.0, 0.0, 0.0, 0.0]
+assert [float(row[21]) for row in newSynthRows] == [8.0, 0.25, 0.0, 0.0, 0.0, 0.0]
+newFoxDotBatch = run_script('p1 >> charm([0], rate=0.5)\np2 >> spark([0])\np3 >> blip([0], rate=8)\n')
+assert [int(row[6]) for row in newFoxDotBatch] == [22, 23, 24]
+assert [float(row[21]) for row in newFoxDotBatch] == [0.5, 0.0, 8.0]
 resonatorSynthRows = run_script('p1 >> bell([0], rate=1)\np2 >> gong([0])\np3 >> marimba([0])\np4 >> pluck([0])\np5 >> twang([0], rate=1)\np6 >> donk([0])\np7 >> squish([0], rate=1)\n')
 assert len(resonatorSynthRows) == 7
 assert [int(row[6]) for row in resonatorSynthRows] == [15, 16, 17, 18, 19, 20, 21]
@@ -366,7 +369,7 @@ def test_embedded_synthdef():
                                re.findall(r'0x([0-9a-fA-F]{2})', header_text))
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
-    assert synthdef_version == 1 and len(graphs) == 19
+    assert synthdef_version == 1 and len(graphs) == 22
     assert ('LFSaw', 2, 2) in graphs['DexterDirt']
     assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
     assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
@@ -381,6 +384,10 @@ def test_embedded_synthdef():
     assert ('Decay', 2, 2) in graphs['DexterPluck']
     assert ('CombL', 4, 2) in graphs['DexterTwang']
     assert ('Ringz', 3, 2) in graphs['DexterDonk']
+    assert ('LFNoise2', 1, 2) in graphs['DexterSpark']
+    assert ('LFCub', 2, 2) in graphs['DexterBlip']
+    assert ('Blip', 2, 2) in graphs['DexterBlip']
+    assert ('Line', 4, 2) in graphs['DexterCharm']
     for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse',
                       b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag',
                       b'DexterBass', b'DexterVarsaw', b'DexterDirt',
@@ -391,7 +398,9 @@ def test_embedded_synthdef():
                       b'DexterPluck', b'DexterTwang', b'DexterDonk',
                       b'DexterSquish', b'Klank', b'Trig1', b'PinkNoise',
                       b'Decay', b'CombL', b'Ringz',
-                      b'LFSaw', b'LFNoise0', b'Vibrato', b'Crackle', b'Gendy1'):
+                      b'LFSaw', b'LFNoise0', b'LFNoise2', b'LFCub', b'Blip',
+                      b'Line', b'Vibrato', b'Crackle', b'Gendy1',
+                      b'DexterCharm', b'DexterSpark', b'DexterBlip'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
     generator_text = open(generator, encoding='utf-8').read()
     assert 'ugen("LFSaw", 2, [(1, 0), (-1, 0)], [2])' in generator_text
@@ -553,12 +562,14 @@ parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 21' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 24' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
 assert 'kReverbSendReleaseSeconds' in processor_source and 'beginReverbTail' in processor_source
 assert '(voice.midiNote < 0 && !voice.releasing)' in processor_source
+assert 'foxDotEnvelopeDurationSeconds' in processor_source and 'safeSynthFrequency' in processor_source
+assert 'synthIndex == 5 || synthIndex == 22' in processor_source
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
 muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
 assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
@@ -625,6 +636,16 @@ example38Rows = run_example('38-bass-varsaw-release-check.py')
 assert len(example38Rows) == 2 and [int(row[6]) for row in example38Rows] == [4, 5]
 assert [float(row[14]) for row in example38Rows] == [0.04, 0.04]
 assert [float(row[15]) for row in example38Rows] == [0.28, 0.28]
+example39Rows, example39Events = run_script(
+    open(os.path.join(sys.argv[2], '39-foxdot-native-bass-varsaw.py'), encoding='utf-8').read(),
+    include_events=True)
+assert [int(row[6]) for row in example39Rows] == [4, 5]
+assert all(float(event[5]) == 0.01 and float(event[6]) == 0.04
+           for event in example39Events)
+example40Rows = run_example('40-charm-and-spark.py')
+assert [int(row[6]) for row in example40Rows] == [22, 23]
+example41Rows = run_example('41-blip-oscillator.py')
+assert [int(row[6]) for row in example41Rows] == [24, 22]
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
@@ -640,4 +661,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-38.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-41.')

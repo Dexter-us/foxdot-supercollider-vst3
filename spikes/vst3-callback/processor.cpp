@@ -568,7 +568,7 @@ private:
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
     static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
-    static constexpr std::size_t kSynthGraphCount = 19;
+    static constexpr std::size_t kSynthGraphCount = 22;
     static constexpr std::size_t kReverbGraphCount = 3;
     static constexpr uint32 kWorldNodeCapacity = 2048;
     static constexpr int kFirstAudioBus = 2;
@@ -759,7 +759,9 @@ private:
         double attackSeconds = kAttackSeconds;
         double releaseSeconds = kReleaseSeconds;
         std::uint64_t startSample = 0;
+        std::uint64_t sustainEndSample = 0;
         std::uint64_t endSample = 0;
+        bool foxDotNativeEnvelope = false;
         bool releasing = false;
         bool reverbTail = false;
         std::uint64_t releaseStartSample = 0;
@@ -789,6 +791,8 @@ private:
         double releaseSeconds = kReleaseSeconds;
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
+        std::uint64_t sustainEndSample = 0;
+        bool foxDotNativeEnvelope = false;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -936,6 +940,26 @@ private:
             std::max(1.0, std::round(sampleRate_ * seconds)));
     }
 
+    static bool usesFoxDotNativeEnvelope(int synthIndex, double attackSeconds,
+                                         double releaseSeconds) {
+        return (synthIndex == 4 || synthIndex == 5 ||
+                (synthIndex >= 22 && synthIndex <= 24)) &&
+               std::abs(attackSeconds - kAttackSeconds) < 1.0e-9 &&
+               std::abs(releaseSeconds - kReleaseSeconds) < 1.0e-9;
+    }
+
+    static double foxDotEnvelopeDurationSeconds(int synthIndex,
+                                                double sustainSeconds) {
+        switch (synthIndex) {
+        case 4: return 0.020 + sustainSeconds; // bass Env.perc(0.02, sus)
+        case 5: return sustainSeconds;         // varsaw Env(sus/2, sus/2)
+        case 22: return 0.010 + sustainSeconds; // charm Env.perc(0.01, sus, curve=0)
+        case 23: return sustainSeconds * 1.5;   // spark Line(..., sus * 1.5)
+        case 24: return sustainSeconds * 2.0;   // blip XLine(..., sus * 2)
+        default: return sustainSeconds;
+        }
+    }
+
     float voiceEnvelopeAt(const AudioVoice& voice, std::uint64_t sample) const {
         if (voice.releasing) {
             if (sample < voice.releaseStartSample)
@@ -951,6 +975,66 @@ private:
         if (voice.midiNote < 0 || sample < voice.startSample ||
             sample >= voice.endSample)
             return 0.0f;
+
+        if (voice.foxDotNativeEnvelope) {
+            if (voice.synthIndex == 22) {
+                const auto attack = envelopeSamples(0.010);
+                const auto releaseLength = voice.endSample -
+                    std::min(voice.endSample, voice.startSample + attack);
+                const auto attackEnd = voice.startSample + attack;
+                if (sample < attackEnd) {
+                    const double progress = static_cast<double>(sample - voice.startSample) /
+                                            static_cast<double>(attack);
+                    return static_cast<float>(progress);
+                }
+                const double progress = static_cast<double>(sample - attackEnd) /
+                    static_cast<double>(std::max<std::uint64_t>(1, releaseLength));
+                return static_cast<float>(std::max(0.0, 1.0 - progress));
+            }
+            if (voice.synthIndex == 4) {
+                const auto attackEnd = voice.startSample +
+                                       envelopeSamples(0.020);
+                if (sample < attackEnd)
+                    return static_cast<float>(sample - voice.startSample) /
+                           static_cast<float>(std::max<std::uint64_t>(
+                               1, attackEnd - voice.startSample));
+                const auto releaseLength = voice.sustainEndSample - voice.startSample;
+                const float progress = static_cast<float>(sample - attackEnd) /
+                                       static_cast<float>(std::max<std::uint64_t>(
+                                           1, releaseLength));
+                return std::max(0.0f, 1.0f - progress);
+            }
+            if (voice.synthIndex == 5) {
+                const auto duration = voice.endSample - voice.startSample;
+                const float progress = static_cast<float>(sample - voice.startSample) /
+                                       static_cast<float>(std::max<std::uint64_t>(
+                                           1, duration));
+                return progress < 0.5f
+                    ? progress * 2.0f : std::max(0.0f, (1.0f - progress) * 2.0f);
+            }
+            if (voice.synthIndex == 23) {
+                const auto sustainLength = std::max<std::uint64_t>(
+                    1, voice.sustainEndSample - voice.startSample);
+                const double time = static_cast<double>(sample - voice.startSample);
+                const double fadeInLength = std::max(
+                    1.0, static_cast<double>(sustainLength) * 0.033);
+                const double fadeOutLength = std::max(
+                    1.0, static_cast<double>(voice.endSample - voice.startSample));
+                const double fadeIn = 0.01 + 0.99 *
+                    std::min(1.0, time / fadeInLength);
+                const double fadeOut = std::max(
+                    0.0001, 1.0 - 0.9999 * time / fadeOutLength);
+                return static_cast<float>(fadeIn * fadeOut);
+            }
+            if (voice.synthIndex == 24) {
+                const double duration = static_cast<double>(
+                    std::max<std::uint64_t>(1, voice.endSample - voice.startSample));
+                const double progress = std::clamp(
+                    static_cast<double>(sample - voice.startSample) / duration,
+                    0.0, 1.0);
+                return static_cast<float>(std::pow(0.0001, progress));
+            }
+        }
 
         const auto duration = voice.endSample - voice.startSample;
         const auto attack = std::min(envelopeSamples(voice.attackSeconds), duration / 2);
@@ -970,6 +1054,35 @@ private:
             gain = std::min(gain, fadeOut);
         }
         return gain;
+    }
+
+    static float foxDotAmplitude(int synthIndex, float amplitude) {
+        if (synthIndex == 4)
+            return 0.8f * amplitude * amplitude;
+        if (synthIndex == 5 || synthIndex == 22)
+            return amplitude * amplitude;
+        if (synthIndex == 12)
+            return amplitude * amplitude;
+        if (synthIndex == 23 || synthIndex == 24)
+            return 0.3f * amplitude;
+        return amplitude;
+    }
+
+    float safeSynthFrequency(int synthIndex, int midiNote) const {
+        const float requested = 440.0f * std::pow(
+            2.0f, static_cast<float>(midiNote - 69) / 12.0f);
+        float highestPartial = 1.0f;
+        if (synthIndex == 5)
+            highestPartial = 1.005f;
+        else if (synthIndex == 22)
+            highestPartial = 16.05f;
+        else if (synthIndex == 23)
+            highestPartial = 1.002f;
+        else if (synthIndex == 24)
+            highestPartial = 2.005f;
+        const float safeLimit = static_cast<float>(sampleRate_ * 0.45) /
+                                highestPartial;
+        return std::min(requested, safeLimit);
     }
 
     void deactivateAudioVoice(AudioVoice& voice) {
@@ -993,7 +1106,7 @@ private:
     static Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
         if (synthIndex >= 0 && synthIndex <= 3)
             return voice.synthGraphs[0];
-        if (synthIndex >= 4 && synthIndex <= 21)
+        if (synthIndex >= 4 && synthIndex <= 24)
             return voice.synthGraphs[static_cast<std::size_t>(synthIndex - 3)];
         return nullptr;
     }
@@ -1132,7 +1245,16 @@ private:
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
                     const double absoluteStartBeat = baseEventBeat + event.delayBeats + dynamicDelay;
-                    const double absoluteEndBeat = absoluteStartBeat + event.durationBeats;
+                    const double sustainEndBeat = absoluteStartBeat + event.durationBeats;
+                    const bool foxDotNativeEnvelope = usesFoxDotNativeEnvelope(
+                        pattern.synthIndex, event.attackSeconds, event.releaseSeconds);
+                    const double sustainSeconds =
+                        event.durationBeats * 60.0 / pattern.bpm;
+                    const double sourceEnvelopeSeconds = foxDotNativeEnvelope
+                        ? foxDotEnvelopeDurationSeconds(pattern.synthIndex, sustainSeconds)
+                        : sustainSeconds;
+                    const double absoluteEndBeat = absoluteStartBeat +
+                        sourceEnvelopeSeconds * pattern.bpm / 60.0;
                     if (beat < absoluteStartBeat || beat >= absoluteEndBeat)
                         continue;
                     if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
@@ -1147,7 +1269,10 @@ private:
                         patternStart + static_cast<std::uint64_t>(
                             std::llround(absoluteStartBeat * samplesPerBeat)),
                         patternStart + static_cast<std::uint64_t>(
-                            std::llround(absoluteEndBeat * samplesPerBeat))};
+                            std::llround(absoluteEndBeat * samplesPerBeat)),
+                        patternStart + static_cast<std::uint64_t>(
+                            std::llround(sustainEndBeat * samplesPerBeat)),
+                        foxDotNativeEnvelope};
                     ++playerVoices;
                 }
             }
@@ -1183,8 +1308,7 @@ private:
                 found->midiNote = note.midiNote;
                 found->velocity = note.velocity;
                 found->synthIndex = note.synthIndex;
-                found->amplitude = note.synthIndex == 12
-                    ? note.amplitude * note.amplitude : note.amplitude;
+                found->amplitude = foxDotAmplitude(note.synthIndex, note.amplitude);
                 found->mousePan = note.mousePan;
                 found->mouseCutoff = note.mouseCutoff;
                 found->attackSeconds = note.attackSeconds;
@@ -1221,11 +1345,14 @@ private:
                 found->filterCoefficient = clampedCutoff >= maxCutoff
                     ? 1.0f
                     : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
-                found->frequencyHz = 440.0f * std::pow(
-                    2.0f, static_cast<float>(note.midiNote - 69) / 12.0f);
+                found->frequencyHz = safeSynthFrequency(note.synthIndex,
+                                                        note.midiNote);
                 found->startSample = note.startSample;
+                found->sustainEndSample = note.sustainEndSample;
                 found->endSample = note.endSample;
+                found->foxDotNativeEnvelope = note.foxDotNativeEnvelope;
                 found->releasing = false;
+                found->reverbTail = false;
                 auto* selectedSynth = graphForSynthIndex(*found, note.synthIndex);
                 if (found->activeSynth && found->activeSynth != selectedSynth)
                     Node_SetRun(&found->activeSynth->mNode, 0);
@@ -1248,7 +1375,14 @@ private:
                                 static_cast<float>(static_cast<double>(sustainSamples) /
                                                    sampleRate_));
                         }
-                        if (note.synthIndex >= 15) {
+                        if (note.synthIndex >= 22 && note.synthIndex <= 24) {
+                            const auto sustainSamples =
+                                note.sustainEndSample - note.startSample;
+                            Graph_SetControl(found->activeSynth, 3,
+                                static_cast<float>(static_cast<double>(sustainSamples) /
+                                                   sampleRate_));
+                        }
+                        if (note.synthIndex >= 15 && note.synthIndex <= 21) {
                             const auto sustainSamples = note.endSample - note.startSample;
                             Graph_SetControl(found->activeSynth, 3,
                                 static_cast<float>(static_cast<double>(sustainSamples) /
@@ -1468,7 +1602,8 @@ private:
             "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
             "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
             "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
-            "DexterTwang", "DexterDonk", "DexterSquish"}};
+            "DexterTwang", "DexterDonk", "DexterSquish", "DexterCharm",
+            "DexterSpark", "DexterBlip"}};
         std::array<GraphDef*, kSynthGraphCount> synthDefinitions{};
         for (std::size_t index = 0; index < synthNames.size(); ++index) {
             int32 synthName[4]{};
@@ -1655,8 +1790,7 @@ private:
                 if (livePattern.ampControl.active) {
                     const float patternAmp = evaluateTimeVar(livePattern.ampControl, beat,
                                                              livePattern.amplitude);
-                    const float targetAmp = voice.synthIndex == 12
-                        ? patternAmp * patternAmp : patternAmp;
+                    const float targetAmp = foxDotAmplitude(voice.synthIndex, patternAmp);
                     if (livePattern.ampControl.linear)
                         voice.amplitude = targetAmp;
                     else
@@ -1972,7 +2106,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.37",
+           "0.4.38",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
