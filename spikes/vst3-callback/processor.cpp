@@ -311,6 +311,10 @@ public:
                         activePatterns_[player].hprControl = previous.hprControl;
                         activePatterns_[player].bpfControl = previous.bpfControl;
                         activePatterns_[player].bprControl = previous.bprControl;
+                        activePatterns_[player].bpnoise = previous.bpnoise;
+                        activePatterns_[player].swell = previous.swell;
+                        activePatterns_[player].bpnoiseControl = previous.bpnoiseControl;
+                        activePatterns_[player].swellControl = previous.swellControl;
                     }
                     patternStartSamples_[player] = newStart;
                     updatePlayerReverb(player);
@@ -457,7 +461,9 @@ public:
                             !parseTimeVarControl(player.hpfControlToken, 0.0, 20000.0, next.hpfControl) ||
                             !parseTimeVarControl(player.hprControlToken, 0.05, 1.0, next.hprControl) ||
                             !parseTimeVarControl(player.bpfControlToken, 0.0, 20000.0, next.bpfControl) ||
-                            !parseTimeVarControl(player.bprControlToken, 0.05, 1.0, next.bprControl))
+                            !parseTimeVarControl(player.bprControlToken, 0.05, 1.0, next.bprControl) ||
+                            !parseTimeVarControl(player.bpnoiseControlToken, 0.0, 10.0, next.bpnoiseControl) ||
+                            !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoBeats = player.echoBeats;
@@ -476,6 +482,8 @@ public:
                         next.hpr = static_cast<float>(player.hpr);
                         next.bpfHz = static_cast<float>(player.bpfHz);
                         next.bpr = static_cast<float>(player.bpr);
+                        next.bpnoise = static_cast<float>(player.bpnoise);
+                        next.swell = static_cast<float>(player.swell);
                         next.eventCount = player.events.size();
                         std::copy(player.events.begin(), player.events.end(), next.events.begin());
                         totalNotes += player.events.size();
@@ -653,6 +661,8 @@ private:
         TimeVarControl hprControl;
         TimeVarControl bpfControl;
         TimeVarControl bprControl;
+        TimeVarControl bpnoiseControl;
+        TimeVarControl swellControl;
         TimeVarControl echoControl;
         TimeVarControl delayControl;
         TimeVarControl echoMixControl;
@@ -676,6 +686,8 @@ private:
         float hpr = 1.0f;
         float bpfHz = 0.0f;
         float bpr = 1.0f;
+        float bpnoise = 0.0f;
+        float swell = 0.0f;
         bool active = false;
     };
 
@@ -702,6 +714,13 @@ private:
         float wet = 0.0f;
     };
 
+    struct ModulationNoiseState {
+        double phase = 0.0;
+        float from = 0.0f;
+        float to = 0.0f;
+        std::uint32_t randomState = 1;
+    };
+
     struct AudioVoice {
         std::array<Graph*, kSynthGraphCount> synthGraphs{};
         Graph* activeSynth = nullptr;
@@ -723,9 +742,17 @@ private:
         float hpr = 1.0f;
         float bpfHz = 0.0f;
         float bpr = 1.0f;
+        float bpnoise = 0.0f;
+        float swell = 0.0f;
+        float modulatedBpfHz = 0.0f;
+        float modulatedBpr = 1.0f;
+        float swellCutoffHz = 0.0f;
+        ModulationNoiseState bpfNoise;
+        ModulationNoiseState bprNoise;
         BiquadState lpfState;
         BiquadState hpfState;
         BiquadState bpfState;
+        BiquadState swellState;
         bool mousePan = false;
         bool mouseCutoff = false;
         double attackSeconds = kAttackSeconds;
@@ -1156,10 +1183,23 @@ private:
                 found->hpr = static_cast<float>(note.hpr);
                 found->bpfHz = static_cast<float>(note.bpfHz);
                 found->bpr = static_cast<float>(note.bpr);
+                const auto playerIndex = static_cast<std::size_t>(note.playerIndex);
+                found->bpnoise = activePatterns_[playerIndex].bpnoise;
+                found->swell = activePatterns_[playerIndex].swell;
+                found->modulatedBpfHz = found->bpfHz;
+                found->modulatedBpr = found->bpr;
+                found->swellCutoffHz = 0.0f;
+                const auto seed = static_cast<std::uint32_t>(
+                    (note.startSample ^ (static_cast<std::uint64_t>(note.midiNote) << 16) ^
+                     (static_cast<std::uint64_t>(note.playerIndex + 1) << 24)) &
+                    0xffffffffu);
+                seedNoiseState(found->bpfNoise, seed ^ 0x9e3779b9u);
+                seedNoiseState(found->bprNoise, seed ^ 0x85ebca6bu);
                 found->filterState = 0.0f;
                 found->lpfState = {};
                 found->hpfState = {};
                 found->bpfState = {};
+                found->swellState = {};
                 const double maxCutoff = sampleRate_ * 0.45;
                 const double clampedCutoff = std::min<double>(note.cutoffHz, maxCutoff);
                 found->filterCoefficient = clampedCutoff >= maxCutoff
@@ -1206,6 +1246,56 @@ private:
             }
             found->velocity = note.velocity;
         }
+    }
+
+    static float randomBipolar(ModulationNoiseState& state) {
+        auto value = state.randomState;
+        value ^= value << 13;
+        value ^= value >> 17;
+        value ^= value << 5;
+        state.randomState = value == 0 ? 1u : value;
+        return static_cast<float>(state.randomState >> 8) *
+                   (2.0f / 16777215.0f) -
+               1.0f;
+    }
+
+    static void seedNoiseState(ModulationNoiseState& state, std::uint32_t seed) {
+        state = {};
+        state.randomState = seed == 0 ? 1u : seed;
+        state.from = randomBipolar(state);
+        state.to = randomBipolar(state);
+    }
+
+    float advanceNoise1(ModulationNoiseState& state, double rateHz) const {
+        if (!(rateHz > 0.0) || !(sampleRate_ > 0.0))
+            return 0.0f;
+        state.phase += std::min(rateHz, sampleRate_ * 0.25) *
+                       static_cast<double>(kSCBlockSize) / sampleRate_;
+        while (state.phase >= 1.0) {
+            state.phase -= 1.0;
+            state.from = state.to;
+            state.to = randomBipolar(state);
+        }
+        return state.from + (state.to - state.from) *
+                                static_cast<float>(state.phase);
+    }
+
+    float swellEnvelopeAt(const AudioVoice& voice, std::uint64_t sample) const {
+        if (sample < voice.startSample || sample >= voice.endSample)
+            return 0.0f;
+        const auto duration = voice.endSample - voice.startSample;
+        if (duration == 0)
+            return 0.0f;
+        const double progress = static_cast<double>(sample - voice.startSample) /
+                               static_cast<double>(duration);
+        if (progress >= 0.5)
+            return 0.0f;
+        if (progress < 0.25) {
+            const double rise = progress / 0.25;
+            return static_cast<float>(0.5 * (1.0 - std::cos(kPi * rise)));
+        }
+        const double fall = (progress - 0.25) / 0.25;
+        return static_cast<float>(0.5 * (1.0 + std::cos(kPi * fall)));
     }
 
     void configureBiquad(BiquadState& filter, float cutoffHz, float rq, int mode) {
@@ -1610,14 +1700,50 @@ private:
                 updateFilterControl(voice.hpr, livePattern.hprControl, livePattern.hpr);
                 updateFilterControl(voice.bpfHz, livePattern.bpfControl, livePattern.bpfHz);
                 updateFilterControl(voice.bpr, livePattern.bprControl, livePattern.bpr);
+                updateFilterControl(voice.bpnoise, livePattern.bpnoiseControl,
+                                    livePattern.bpnoise);
+                updateFilterControl(voice.swell, livePattern.swellControl,
+                                    livePattern.swell);
                 if (sampleIndex == 0) {
+                    const float controlSmoothing = static_cast<float>(
+                        1.0 - std::exp(-static_cast<double>(kSCBlockSize) /
+                                       (0.01 * sampleRate_)));
+                    float targetBpfHz = voice.bpfHz;
+                    float targetBpr = voice.bpr;
+                    if (voice.bpnoise > 0.0f && voice.bpfHz > 0.0f) {
+                        const double sustainSeconds = std::max(
+                            0.005, static_cast<double>(voice.endSample -
+                                                       voice.startSample) /
+                                       sampleRate_);
+                        const double noiseRateHz = voice.bpnoise / sustainSeconds;
+                        targetBpfHz *= std::exp2(
+                            advanceNoise1(voice.bpfNoise, noiseRateHz));
+                        targetBpr *= std::exp2(
+                            advanceNoise1(voice.bprNoise, noiseRateHz));
+                        targetBpr = std::clamp(targetBpr, 0.05f, 1.0f);
+                        voice.modulatedBpfHz += controlSmoothing *
+                                                (targetBpfHz - voice.modulatedBpfHz);
+                        voice.modulatedBpr += controlSmoothing *
+                                              (targetBpr - voice.modulatedBpr);
+                    } else {
+                        voice.modulatedBpfHz = targetBpfHz;
+                        voice.modulatedBpr = targetBpr;
+                    }
+                    const float swellTarget = swellEnvelopeAt(voice, absoluteSample) *
+                                              voice.swell * 2000.0f;
+                    voice.swellCutoffHz += controlSmoothing *
+                                           (swellTarget - voice.swellCutoffHz);
                     configureBiquad(voice.lpfState, voice.lpfHz, voice.lpr, 0);
                     configureBiquad(voice.hpfState, voice.hpfHz, voice.hpr, 1);
-                    configureBiquad(voice.bpfState, voice.bpfHz, voice.bpr, 2);
+                    configureBiquad(voice.bpfState, voice.modulatedBpfHz,
+                                    voice.modulatedBpr, 2);
+                    configureBiquad(voice.swellState, voice.swellCutoffHz,
+                                    voice.hpr, 1);
                 }
                 float shaped = processBiquad(voice.lpfState, voice.filterState);
                 shaped = processBiquad(voice.hpfState, shaped);
                 shaped = processBiquad(voice.bpfState, shaped);
+                shaped = processBiquad(voice.swellState, shaped);
                 const float amplitude = shaped * envelope * velocity * voice.amplitude;
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
                 playerLeft[player] += amplitude * voice.leftGain;
@@ -1820,7 +1946,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.35",
+           "0.4.36",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

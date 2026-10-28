@@ -202,7 +202,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -221,12 +221,15 @@ def run_script(script_text, include_events=False, include_effects=False, include
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
+        modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
         mute_rows = [line.split('\t') for line in lines if line.startswith('M\t')]
         if include_mutes:
             return player_rows, mute_rows
         if include_filters:
             return player_rows, filter_rows
+        if include_modulations:
+            return player_rows, modulation_rows
         if include_decay:
             return player_rows, decay_rows
         if include_effects:
@@ -551,6 +554,9 @@ parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
 assert 'update.synthRate' in parse_source and 'update.synthIndex > 21' in parse_source
+assert 'update.bpnoise' in source and 'update.swell' in source
+processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
+assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
 muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
 assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
@@ -587,9 +593,9 @@ assert p2[10] == '0.25' and p2[11] == '0.24'
 example31 = run_example('31-bass-varsaw-synths.py')
 assert len(example31) == 2
 assert [int(row[6]) for row in example31] == [4, 5]
-assert [float(row[21]) for row in example31] == [8.0, 0.42]
-assert [float(row[14]) for row in example31] == [0.02, 0.02]
-assert [float(row[15]) for row in example31] == [0.14, 0.14]
+assert [float(row[21]) for row in example31] == [5.0, 0.32]
+assert [float(row[14]) for row in example31] == [0.05, 0.04]
+assert [float(row[15]) for row in example31] == [0.22, 0.22]
 example32 = run_example('32-dirt-jbass-noise.py')
 assert len(example32) == 3
 assert [int(row[6]) for row in example32] == [7, 6, 8]
@@ -605,7 +611,15 @@ example35 = run_example('35-resonant-bells.py')
 assert len(example35) == 3 and [int(row[6]) for row in example35] == [15, 17, 16]
 example36 = run_example('36-plucked-resonators.py')
 assert len(example36) == 4 and [int(row[6]) for row in example36] == [18, 19, 20, 21]
-supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35)\np1.stop()\n')
+example37Rows, example37Modulations = run_script(
+    open(os.path.join(sys.argv[2], '37-bandpass-motion-and-swell.py'), encoding='utf-8').read(),
+    include_modulations=True)
+assert len(example37Rows) == 3 and len(example37Modulations) == 3
+assert [row[0] for row in example37Modulations] == ['G', 'G', 'G']
+assert [round(float(row[2]), 2) for row in example37Modulations] == [0.18, 0.0, 0.22]
+assert [round(float(row[3]), 2) for row in example37Modulations] == [0.0, 1.2, 0.2]
+assert example37Modulations[2][4].startswith('v:') and example37Modulations[2][5].startswith('l:')
+supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
@@ -620,4 +634,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-36.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-37.')

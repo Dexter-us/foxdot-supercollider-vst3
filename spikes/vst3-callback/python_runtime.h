@@ -30,6 +30,8 @@ struct PythonPlayerUpdate {
     std::string hprControlToken = "-";
     std::string bpfControlToken = "-";
     std::string bprControlToken = "-";
+    std::string bpnoiseControlToken = "-";
+    std::string swellControlToken = "-";
     int playerIndex = 0;
     bool stopped = false;
     double bpm = 120.0;
@@ -56,6 +58,8 @@ struct PythonPlayerUpdate {
     double hpr = 1.0;
     double bpfHz = 0.0;
     double bpr = 1.0;
+    double bpnoise = 0.0;
+    double swell = 0.0;
     bool mousePan = false;
     bool mouseCutoff = false;
     double attackSeconds = 0.01;

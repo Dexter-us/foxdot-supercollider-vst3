@@ -40,7 +40,7 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 
 23-reverb-algorithms.py keeps FoxDot room/mix syntax on FreeVerb and compares the optional FreeVerb2 and GVerb selectors. GVerb adds revtime and spread controls. Each player owns a separate reverb path.
 
-24-foxdot-filters.py demonstrates the FoxDot-style resonant low-pass (lpf/lpr), high-pass (hpf/hpr), and band-pass (bpf/bpr) filters, with var/linvar sweeps. bpnoise and the separate swell effect are not included yet.
+24-foxdot-filters.py demonstrates FoxDot-style resonant LPF/HPF/BPF controls, band-pass `bpnoise` movement, and the envelope-shaped high-pass `swell` effect.
 
 25-echo-decay-compat.py demonstrates FoxDot-style echo spacing and echo-tail decay, both measured in beats; echomix is shown as a separate plugin extension.
 
@@ -60,4 +60,6 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 33-dub-growl-soprano.py and 34-crunch-lazer-rave.py test the second FoxDot synth batch, including Gendy1.
 35-resonant-bells.py demonstrates bell, gong, and marimba using the bundled Klank resonator.
 36-plucked-resonators.py demonstrates the pluck, twang, donk, and squish resonator patches.
+
+37-bandpass-motion-and-swell.py demonstrates bpnoise modulation of the band-pass center and resonance, plus the swell high-pass envelope effect.
 30-player-mute-controls.py shows p2.mute() and p2.unmute(); the comment markers are at column one so uncommenting a command does not introduce Python indentation.
