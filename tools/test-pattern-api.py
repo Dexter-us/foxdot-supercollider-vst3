@@ -407,7 +407,7 @@ def test_embedded_synthdef():
     assert ('Pulse', 2, 2) in graphs['DexterBug']
     assert ('SinOsc', 4, 2) in graphs['DexterRipple']
     assert ('Vibrato', 9, 1) in graphs['DexterViola']
-    assert ('PMOsc', 6, 2) in graphs['DexterViola']
+    assert graphs['DexterViola'].count(('SinOsc', 4, 2)) == 2
     for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse',
                       b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag',
                       b'DexterBass', b'DexterVarsaw', b'DexterDirt',
@@ -423,8 +423,9 @@ def test_embedded_synthdef():
                       b'DexterCharm', b'DexterSpark', b'DexterBlip',
                       b'LFPulse', b'DexterScatter', b'DexterOrient',
                       b'DexterZap', b'DexterFuzz', b'DexterBug',
-                      b'DexterRipple', b'DexterViola', b'PMOsc'):
+                      b'DexterRipple', b'DexterViola'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
+    assert b'PMOsc' not in generated_bytes, 'language-level PMOsc shorthand must be expanded to server UGens'
     generator_text = open(generator, encoding='utf-8').read()
     assert 'ugen("LFSaw", 2, [(1, 0), (-1, 0)], [2])' in generator_text
     assert 'ugen("BinaryOpUGen", 2, [(11, 0), (10, 0)], [2], 0)' in generator_text

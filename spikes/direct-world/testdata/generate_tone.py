@@ -591,15 +591,18 @@ mouse_and_reverb(8)
 finish_patch()
 
 begin_patch("DexterViola", foxdot_patch_parameters, foxdot_patch_defaults)
-u16(12)
+u16(13)
 ugen("Control", 1, [], [1] * 9)
 ugen("BinaryOpUGen", 1, [(0, 3), const_input(0.25)], [1], 2)
 ugen("Vibrato", 1, [(0, 1), (0, 2), const_input(0.008), (1, 0),
                     const_input(0.0), const_input(0.0), const_input(0.0),
                     const_input(0.0), const_input(0.0)], [1])
-ugen("PMOsc", 2, [(0, 1), (2, 0), const_input(10.0), const_input(0.0),
-                  const_input(1.0), const_input(0.0)], [2])
-mouse_and_reverb(3)
+# PMOsc is a SuperCollider-language shorthand, not a server UGen:
+# SinOsc.ar(carfreq, SinOsc.ar(modfreq, modphase, pmindex), mul, add).
+ugen("SinOsc", 2, [(2, 0), const_input(0.0), const_input(10.0),
+                   const_input(0.0)], [2])
+ugen("SinOsc", 2, [(0, 1), (3, 0), const_input(1.0), const_input(0.0)], [2])
+mouse_and_reverb(4)
 finish_patch()
 
 out_path.parent.mkdir(parents=True, exist_ok=True)
