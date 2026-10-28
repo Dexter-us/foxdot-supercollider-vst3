@@ -62,4 +62,5 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 36-plucked-resonators.py demonstrates the pluck, twang, donk, and squish resonator patches.
 
 37-bandpass-motion-and-swell.py demonstrates bpnoise modulation of the band-pass center and resonance, plus the swell high-pass envelope effect.
+38-bass-varsaw-release-check.py compares dry bass with reverberated varsaw using matching, slow notes. The 0.4.37 engine keeps a short silent graph tail so the reverb send fades before the voice graph stops.
 30-player-mute-controls.py shows p2.mute() and p2.unmute(); the comment markers are at column one so uncommenting a command does not introduce Python indentation.

@@ -557,6 +557,8 @@ assert 'update.synthRate' in parse_source and 'update.synthIndex > 21' in parse_
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
+assert 'kReverbSendReleaseSeconds' in processor_source and 'beginReverbTail' in processor_source
+assert '(voice.midiNote < 0 && !voice.releasing)' in processor_source
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
 muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
 assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
@@ -619,6 +621,10 @@ assert [row[0] for row in example37Modulations] == ['G', 'G', 'G']
 assert [round(float(row[2]), 2) for row in example37Modulations] == [0.18, 0.0, 0.22]
 assert [round(float(row[3]), 2) for row in example37Modulations] == [0.0, 1.2, 0.2]
 assert example37Modulations[2][4].startswith('v:') and example37Modulations[2][5].startswith('l:')
+example38Rows = run_example('38-bass-varsaw-release-check.py')
+assert len(example38Rows) == 2 and [int(row[6]) for row in example38Rows] == [4, 5]
+assert [float(row[14]) for row in example38Rows] == [0.04, 0.04]
+assert [float(row[15]) for row in example38Rows] == [0.28, 0.28]
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
@@ -634,4 +640,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-37.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-38.')

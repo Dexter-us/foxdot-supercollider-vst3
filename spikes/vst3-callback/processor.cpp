@@ -578,6 +578,7 @@ private:
     static constexpr int kNumAudioBusChannels = 256;
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
+    static constexpr double kReverbSendReleaseSeconds = 0.015;
     static constexpr double kMixSmoothingSeconds = 0.010;
     static constexpr std::size_t kMaxEchoBufferSamples = 96000;
     static constexpr double kPi = 3.14159265358979323846;
@@ -760,6 +761,7 @@ private:
         std::uint64_t startSample = 0;
         std::uint64_t endSample = 0;
         bool releasing = false;
+        bool reverbTail = false;
         std::uint64_t releaseStartSample = 0;
         std::uint64_t releaseEndSample = 0;
         float releaseStartGain = 0.0f;
@@ -978,6 +980,16 @@ private:
         voice.synthGraphs = synthGraphs;
     }
 
+    void beginReverbTail(AudioVoice& voice, std::uint64_t tailStartSample) {
+        voice.midiNote = -1;
+        voice.releasing = true;
+        voice.reverbTail = true;
+        voice.releaseStartSample = tailStartSample;
+        voice.releaseEndSample =
+            tailStartSample + envelopeSamples(kReverbSendReleaseSeconds);
+        voice.releaseStartGain = 0.0f;
+    }
+
     static Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
         if (synthIndex >= 0 && synthIndex <= 3)
             return voice.synthGraphs[0];
@@ -995,7 +1007,7 @@ private:
                 continue;
             const float gain = voiceEnvelopeAt(voice, now);
             if (gain <= 0.0f) {
-                deactivateAudioVoice(voice);
+                beginReverbTail(voice, now);
                 continue;
             }
             voice.releasing = true;
@@ -1142,10 +1154,14 @@ private:
         }
 
         for (auto& voice : audioVoices_) {
-            if (voice.releasing && voice.releaseEndSample <= blockStart)
+            if (voice.reverbTail && voice.releaseEndSample <= blockStart)
                 deactivateAudioVoice(voice);
-            else if (voice.midiNote >= 0 && voice.endSample <= blockStart)
-                deactivateAudioVoice(voice);
+            else if (!voice.releasing && voice.midiNote >= 0 &&
+                     voice.endSample <= blockStart)
+                beginReverbTail(voice, blockStart);
+            else if (voice.releasing && !voice.reverbTail &&
+                     voice.releaseEndSample <= blockStart)
+                beginReverbTail(voice, blockStart);
         }
 
         for (std::size_t i = 0; i < desiredCount; ++i) {
@@ -1585,7 +1601,8 @@ private:
 
     void renderSCBlock(std::uint64_t blockStart) {
         for (auto& voice : audioVoices_) {
-            if (!voice.activeSynth || voice.midiNote < 0 || voice.playerIndex < 0 ||
+            if (!voice.activeSynth || (voice.midiNote < 0 && !voice.releasing) ||
+                voice.playerIndex < 0 ||
                 voice.playerIndex >= static_cast<int>(kPlayerCount))
                 continue;
             const auto player = static_cast<std::size_t>(voice.playerIndex);
@@ -1849,9 +1866,18 @@ private:
 
         const auto blockEnd = blockStart + static_cast<std::uint64_t>(kSCBlockSize);
         for (auto& voice : audioVoices_) {
-            if ((voice.releasing && voice.releaseEndSample <= blockEnd) ||
-                (voice.midiNote >= 0 && voice.endSample <= blockEnd))
+            if (voice.reverbTail && voice.releaseEndSample <= blockEnd) {
                 deactivateAudioVoice(voice);
+            } else if (voice.releasing && !voice.reverbTail &&
+                       voice.releaseEndSample <= blockEnd) {
+                // SynthDef reverb sends use a control-rate Lag. Keep the graph alive
+                // after its voice envelope reaches zero so a later block can set the
+                // send to zero and let that Lag finish before stopping the graph.
+                beginReverbTail(voice, blockEnd);
+            } else if (!voice.releasing && voice.midiNote >= 0 &&
+                       voice.endSample <= blockEnd) {
+                beginReverbTail(voice, blockEnd);
+            }
         }
         ++world_->mBufCounter;
         cursor_ = 0;
@@ -1946,7 +1972,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.36",
+           "0.4.37",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
