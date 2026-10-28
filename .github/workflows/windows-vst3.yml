@@ -1,0 +1,96 @@
+name: Windows VST3 smoke build
+
+on:
+  pull_request:
+    paths:
+      - "spikes/vst3-callback/**"
+      - "tools/build-windows-vst3.ps1"
+      - "tools/invoke-build-windows-vst3-stage.ps1"
+      - ".github/workflows/windows-vst3.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-vst3:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v4
+
+      - name: Detect Visual Studio generator for cache key
+        id: vs_generator
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $version = (& $vswhere -latest -products '*' -property installationVersion).Trim()
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^(?<major>\d+)\.') { throw 'Could not determine Visual Studio version for the cache key.' }
+          $major = [int]$Matches['major']
+          if ($major -notin @(17, 18)) { throw "Unsupported Visual Studio major version $major." }
+          "major=$major" >> $env:GITHUB_OUTPUT
+
+      - name: Restore SuperCollider build cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\dexter-windows-vst3\supercollider-build
+          key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-build-v1
+          restore-keys: |
+            windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
+
+      - name: Restore pinned dependency checkouts
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\dexter-windows-vst3\deps
+          key: windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-deps-v1
+          restore-keys: |
+            windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
+
+      - name: Prepare Python and pinned source checkouts
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage prepare -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Configure SuperCollider
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Compile SuperCollider engine and UGen modules
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Configure the VST3 plugin
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-plugin -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Compile the VST3 plugin
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-plugin -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Package and validate the Windows bundle
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage package -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Upload Windows VST3 bundle
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dexter-foxdot-live-vst3-windows-x64
+          path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload separate Windows UGen pack
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dexter-supercollider-ugens-windows-x64
+          path: ${{ runner.temp }}/dexter-windows-vst3/ugen-pack
+          if-no-files-found: warn
+          retention-days: 90
