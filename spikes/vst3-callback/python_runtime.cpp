@@ -100,7 +100,7 @@ _COMPAT_CALLS = {
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
     'charm', 'spark', 'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
-    'ripple',
+    'ripple', 'viola',
     'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
@@ -108,10 +108,10 @@ _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
                  'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
                  'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
                  'charm', 'spark', 'blip', 'scatter', 'orient', 'zap',
-                 'fuzz', 'bug', 'ripple'}
+                  'fuzz', 'bug', 'ripple', 'viola'}
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
-    'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum'
+    'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'vib', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -1048,11 +1048,11 @@ class PlayerPattern:
                          'crunch', 'lazer', 'rave', 'bell', 'gong', 'marimba',
                          'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
                          'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
-                         'ripple'):
-            raise ValueError('synth must be one of the embedded sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, blip, scatter, orient, zap, fuzz, bug, or ripple voices')
+                          'ripple', 'viola'):
+            raise ValueError('synth must be one of the embedded sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, blip, scatter, orient, zap, fuzz, bug, ripple, or viola voices')
         self.synth = synth
         if synthRate is None:
-            synthRate = 1.0 if synth == 'bug' else 0.0
+            synthRate = 1.0 if synth == 'bug' else (6.0 if synth == 'viola' else 0.0)
         try:
             self.synthRate = float(synthRate)
         except (TypeError, ValueError, OverflowError):
@@ -1128,7 +1128,8 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
     if isinstance(notes, _FoxDotChord):
         notes = [notes]
     if rate is None:
-        rate = 8.0 if synth == 'bass' else 0.0
+        rate = 8.0 if synth == 'bass' else (1.0 if synth == 'bug' else
+                (6.0 if synth == 'viola' else 0.0))
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
                         synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
                         reverb=reverb, room=room, mix=mix, damp=damp,
@@ -1235,6 +1236,14 @@ zap = _make_named_synth('zap', 0.0)
 fuzz = _make_named_synth('fuzz', 0.0)
 bug = _make_named_synth('bug', 1.0)
 ripple = _make_named_synth('ripple', 0.0)
+def viola(notes=0, **kwargs):
+    if 'vib' in kwargs:
+        if 'rate' in kwargs:
+            raise TypeError('use either vib or rate for viola, not both')
+        kwargs['rate'] = kwargs.pop('vib')
+    kwargs.setdefault('rate', 6.0)
+    kwargs.setdefault('mix', 0.33)
+    return _fox_wave('viola', notes, **kwargs)
 
 class Player:
     def __init__(self, number):
@@ -1279,7 +1288,7 @@ class Player:
                       'crunch', 'lazer', 'rave', 'bell', 'gong', 'marimba',
                       'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
                       'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
-                      'ripple').index(pattern.synth)
+                      'ripple', 'viola').index(pattern.synth)
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echoBeats,
@@ -1426,7 +1435,7 @@ bool parseResult(const std::filesystem::path& resultPath,
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
             !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
-             update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 30 ||
+              update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 31 ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
              update.synthRate > 10.0 ||
              (update.synthIndex == 5 && update.synthRate > 1.0) ||

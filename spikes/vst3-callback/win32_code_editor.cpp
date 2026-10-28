@@ -53,14 +53,14 @@ constexpr char kPythonKeywords[] =
 constexpr char kFoxDotApiKeywords[] =
     "Clock Scale Root Player P PGroup var linvar play stop sine triangle saw pulse bass varsaw dirt jbass noise "
     "dub growl soprano crunch lazer rave bell gong marimba pluck twang donk squish "
-    "charm spark blip scatter orient zap fuzz bug ripple "
+    "charm spark blip scatter orient zap fuzz bug ripple viola "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
     "echo delay mute unmute rate";
 constexpr char kFoxDotCompletions[] =
     "Clock P PGroup Player Root Scale amp cutoff delay dur echo linvar mute oct pan "
     "play p1 p2 p3 p4 p5 p6 p7 p8 pulse reverb resonance room saw sine stop strum "
     "sus triangle unmute var bass varsaw dirt jbass noise dub growl soprano crunch lazer rave "
-    "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple rate";
+    "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple viola rate vib";
 
 std::mutex gScintillaMutex;
 std::size_t gScintillaViewCount = 0;
@@ -433,7 +433,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.40",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.41",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -623,6 +623,8 @@ private:
                 callTip = "bug(notes, dur=1, oct=5, sus=1, rate=1, amp=1, pan=0)\nPulse-width cluster modulated by SinOsc";
             else if (name == "ripple")
                 callTip = "ripple(notes, dur=1, oct=5, sus=1, rate=1, amp=1, pan=0)\nLayered Pulse with slow amplitude motion";
+            else if (name == "viola")
+                callTip = "viola(notes, dur=1, oct=5, sus=1, vib=6, amp=1, pan=0)\nFoxDot PMOsc voice with delayed vibrato";
             else if (name == "var")
                 callTip = "var(values, durations=4)\nCycle values using FoxDot-style beat durations";
             else if (name == "linvar")

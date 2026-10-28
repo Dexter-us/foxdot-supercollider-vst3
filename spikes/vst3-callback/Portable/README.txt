@@ -68,4 +68,5 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 41-blip-oscillator.py demonstrates FoxDot's LFCub/LFTri/Blip texture; rate controls the Blip harmonic count.
 
 42-self-contained-ugens.py introduces scatter, orient, zap, fuzz, bug, and ripple. These first six additions use standard SuperCollider UGens and require no extra plugin modules.
+43-foxdot-viola.py demonstrates the self-contained FoxDot viola patch with its vib control.
 30-player-mute-controls.py shows p2.mute() and p2.unmute(); the comment markers are at column one so uncommenting a command does not introduce Python indentation.

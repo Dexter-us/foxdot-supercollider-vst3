@@ -10,6 +10,18 @@ import tempfile
 if len(sys.argv) != 3:
     raise SystemExit('usage: test-pattern-api.py python_runtime.cpp Portable-directory')
 source = open(sys.argv[1], encoding='utf-8').read()
+processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
+processor_source = open(processor_path, encoding='utf-8').read()
+graph_mapper_start = processor_source.find('static Graph* graphForSynthIndex')
+if graph_mapper_start < 0:
+    raise SystemExit('Could not find the synth graph selector in processor.cpp')
+graph_mapper_end = processor_source.find('\n    }', graph_mapper_start)
+graph_mapper = processor_source[graph_mapper_start:graph_mapper_end]
+assert 'synthIndex <= 31' in graph_mapper
+assert 'synthIndex - 3' in graph_mapper
+assert 'kAudioVoiceCount * kSynthGraphCount' in processor_source
+assert 'kWorldNodeCapacity =\n        kAudioVoiceCount * kSynthGraphCount +' in processor_source
+assert 'synthIndex >= 12 && synthIndex <= 18' in processor_source
 start_marker = 'static constexpr char api[] = R"PY(' + chr(10)
 end_marker = ')PY";'
 start = source.find(start_marker)
@@ -369,7 +381,7 @@ def test_embedded_synthdef():
                                re.findall(r'0x([0-9a-fA-F]{2})', header_text))
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
-    assert synthdef_version == 1 and len(graphs) == 28
+    assert synthdef_version == 1 and len(graphs) == 29
     assert ('LFSaw', 2, 2) in graphs['DexterDirt']
     assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
     assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
@@ -394,6 +406,8 @@ def test_embedded_synthdef():
     assert ('LFSaw', 4, 1) in graphs['DexterFuzz']
     assert ('Pulse', 2, 2) in graphs['DexterBug']
     assert ('SinOsc', 4, 2) in graphs['DexterRipple']
+    assert ('Vibrato', 9, 1) in graphs['DexterViola']
+    assert ('PMOsc', 6, 2) in graphs['DexterViola']
     for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse',
                       b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag',
                       b'DexterBass', b'DexterVarsaw', b'DexterDirt',
@@ -409,7 +423,7 @@ def test_embedded_synthdef():
                       b'DexterCharm', b'DexterSpark', b'DexterBlip',
                       b'LFPulse', b'DexterScatter', b'DexterOrient',
                       b'DexterZap', b'DexterFuzz', b'DexterBug',
-                      b'DexterRipple'):
+                      b'DexterRipple', b'DexterViola', b'PMOsc'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
     generator_text = open(generator, encoding='utf-8').read()
     assert 'ugen("LFSaw", 2, [(1, 0), (-1, 0)], [2])' in generator_text
@@ -573,7 +587,7 @@ parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 30' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 31' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
@@ -659,6 +673,11 @@ example41Rows = run_example('41-blip-oscillator.py')
 assert [int(row[6]) for row in example41Rows] == [24, 22]
 example42Rows = run_example('42-self-contained-ugens.py')
 assert [int(row[6]) for row in example42Rows] == [25, 26, 27, 28, 29, 30]
+example43Rows = run_example('43-foxdot-viola.py')
+assert [int(row[6]) for row in example43Rows] == [31, 0]
+assert [float(row[21]) for row in example43Rows] == [6.0, 0.0]
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> viola([0, 2, 4], vib=6)\n')
 assert namespace['bug']([0]).synthRate == 1.0
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
@@ -675,4 +694,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-42.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-43.')
