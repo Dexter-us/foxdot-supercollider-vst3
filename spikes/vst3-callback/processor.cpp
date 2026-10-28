@@ -568,7 +568,7 @@ private:
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
     static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
-    static constexpr std::size_t kSynthGraphCount = 22;
+    static constexpr std::size_t kSynthGraphCount = 28;
     static constexpr std::size_t kReverbGraphCount = 3;
     static constexpr uint32 kWorldNodeCapacity = 2048;
     static constexpr int kFirstAudioBus = 2;
@@ -1065,6 +1065,16 @@ private:
             return amplitude * amplitude;
         if (synthIndex == 23 || synthIndex == 24)
             return 0.3f * amplitude;
+        if (synthIndex == 25)
+            return amplitude * 0.125f;
+        if (synthIndex == 27)
+            return amplitude * 0.1f;
+        if (synthIndex == 28)
+            return amplitude / 6.0f;
+        if (synthIndex == 29)
+            return amplitude * 0.2f;
+        if (synthIndex == 30)
+            return amplitude / 6.0f;
         return amplitude;
     }
 
@@ -1080,6 +1090,12 @@ private:
             highestPartial = 1.002f;
         else if (synthIndex == 24)
             highestPartial = 2.005f;
+        else if (synthIndex == 25 || synthIndex == 29)
+            highestPartial = 1.01f;
+        else if (synthIndex == 27)
+            highestPartial = 1.02f;
+        else if (synthIndex == 28)
+            highestPartial = 1.5f;
         const float safeLimit = static_cast<float>(sampleRate_ * 0.45) /
                                 highestPartial;
         return std::min(requested, safeLimit);
@@ -1375,7 +1391,7 @@ private:
                                 static_cast<float>(static_cast<double>(sustainSamples) /
                                                    sampleRate_));
                         }
-                        if (note.synthIndex >= 22 && note.synthIndex <= 24) {
+                        if (note.synthIndex >= 22 && note.synthIndex <= 30) {
                             const auto sustainSamples =
                                 note.sustainEndSample - note.startSample;
                             Graph_SetControl(found->activeSynth, 3,
@@ -1603,7 +1619,8 @@ private:
             "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
             "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
             "DexterTwang", "DexterDonk", "DexterSquish", "DexterCharm",
-            "DexterSpark", "DexterBlip"}};
+            "DexterSpark", "DexterBlip", "DexterScatter", "DexterOrient",
+            "DexterZap", "DexterFuzz", "DexterBug", "DexterRipple"}};
         std::array<GraphDef*, kSynthGraphCount> synthDefinitions{};
         for (std::size_t index = 0; index < synthNames.size(); ++index) {
             int32 synthName[4]{};
@@ -2106,7 +2123,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.39",
+           "0.4.40",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

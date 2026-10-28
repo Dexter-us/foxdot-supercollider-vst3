@@ -41,7 +41,7 @@ def ugen(name, rate, inputs, output_rates, special_index=0):
 
 data.extend(b"SCgf")
 i32(1)  # SynthDef version
-u16(22)  # DexterTone plus twenty-one embedded FoxDot patches
+u16(28)  # DexterTone plus twenty-seven embedded FoxDot patches
 string("DexterTone")
 constants = (0.0, 0.1, 0.0, 0.5, 1.0, 0.2, 0.005)
 u16(len(constants))
@@ -94,8 +94,8 @@ constants = (0.0, 0.005, 0.1, 0.5, 1.0, 0.2, 0.005, 1.005, 0.0025, 0.004,
              0.01, 0.03, 0.05, 0.07, 0.14, 0.7, 0.9, 1.2, 2.002, 2.49,
              2.571, 3.05, 6.242, 9.6, 11.0, 12.49, 13.0, 16.0, 24.0, 0.8,
              2.5, 8.0, 10.0, 0.015625, 0.000001, 0.3, 0.09, 1.002,
-             440.0, 4000.0, 0.007, 0.501, 0.004, 0.02, 0.04, 0.5,
-              4.0, 9.0, 50.0)
+              440.0, 4000.0, 0.007, 0.501, 0.004, 0.02, 0.04, 0.5,
+              4.0, 9.0, 50.0, 1.01, 1.0001, 0.16)
 
 def begin_patch(name, patch_parameter_names=parameter_names,
                 patch_parameters=parameters):
@@ -503,6 +503,91 @@ ugen("BinaryOpUGen", 2, [(15, 0), (19, 0)], [2], 2)
 ugen("BinaryOpUGen", 2, [(16, 0), (20, 0)], [2], 2)
 ugen("BinaryOpUGen", 2, [(21, 0), (22, 0)], [2], 0)
 mouse_and_reverb(23)
+finish_patch()
+
+begin_patch("DexterScatter", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(18)
+ugen("Control", 1, [], [1] * 9)
+ugen("Saw", 2, [(0, 1)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(2.0)], [2], 0)
+ugen("VarSaw", 2, [(2, 0), const_input(0.0), const_input(0.5)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(1.0)], [2], 0)
+ugen("VarSaw", 2, [(4, 0), const_input(0.0), const_input(0.5)], [2])
+ugen("BinaryOpUGen", 2, [(3, 0), (5, 0)], [2], 0)
+ugen("LFNoise0", 2, [(0, 2)], [2])
+ugen("BinaryOpUGen", 2, [(6, 0), (7, 0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(1, 0), (8, 0)], [2], 0)
+mouse_and_reverb(9)
+finish_patch()
+
+begin_patch("DexterOrient", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(12)
+ugen("Control", 1, [], [1] * 9)
+ugen("LFPulse", 2, [(0, 1), const_input(0.5), const_input(0.25),
+                    const_input(0.25), const_input(0.0)], [2])
+ugen("LFPulse", 2, [(0, 1), const_input(1.0), const_input(0.1),
+                    const_input(0.25), const_input(0.0)], [2])
+ugen("BinaryOpUGen", 2, [(1, 0), (2, 0)], [2], 0)
+mouse_and_reverb(3)
+finish_patch()
+
+begin_patch("DexterZap", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(22)
+ugen("Control", 1, [], [1] * 9)
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(1.01)], [2], 2)
+ugen("LFNoise2", 2, [const_input(50.0)], [2])
+ugen("BinaryOpUGen", 2, [(2, 0), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(1, 0), (3, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(0, 1), (3, 0)], [2], 0)
+ugen("Saw", 2, [(4, 0)], [2])
+ugen("Saw", 2, [(5, 0)], [2])
+ugen("LFNoise2", 2, [const_input(50.0)], [2])
+ugen("BinaryOpUGen", 2, [(8, 0), const_input(2.0)], [2], 2)
+ugen("BinaryOpUGen", 2, [(0, 1), (9, 0)], [2], 0)
+ugen("VarSaw", 2, [(10, 0), const_input(1.0), const_input(0.5)], [2])
+ugen("BinaryOpUGen", 2, [(6, 0), (7, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(12, 0), (11, 0)], [2], 0)
+mouse_and_reverb(13)
+finish_patch()
+
+begin_patch("DexterFuzz", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(12)
+ugen("Control", 1, [], [1] * 9)
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(0.5)], [2], 2)
+ugen("LFSaw", 1, [(1, 0), const_input(0.0), (1, 0),
+                  (0, 1)], [1])
+ugen("LFSaw", 2, [(2, 0)], [2])
+mouse_and_reverb(3)
+finish_patch()
+
+begin_patch("DexterBug", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(18)
+ugen("Control", 1, [], [1] * 9)
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(1.0001)], [2], 2)
+ugen("Pulse", 2, [(0, 1), const_input(0.09)], [2])
+ugen("Pulse", 2, [(1, 0), const_input(0.16)], [2])
+ugen("Pulse", 2, [(0, 1), const_input(0.25)], [2])
+ugen("BinaryOpUGen", 2, [(0, 2), const_input(4.0)], [2], 2)
+ugen("SinOsc", 2, [(5, 0), const_input(0.0)], [2])
+ugen("BinaryOpUGen", 2, [(2, 0), (3, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(7, 0), (4, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(8, 0), (6, 0)], [2], 2)
+mouse_and_reverb(9)
+finish_patch()
+
+begin_patch("DexterRipple", foxdot_patch_parameters, foxdot_patch_defaults)
+u16(17)
+ugen("Control", 1, [], [1] * 9)
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(0.25)], [2], 3)
+ugen("Pulse", 2, [(1, 0), const_input(0.2), const_input(0.25)], [2])
+ugen("BinaryOpUGen", 2, [(0, 1), const_input(1.0)], [2], 0)
+ugen("Pulse", 2, [(3, 0), const_input(0.5), const_input(0.5)], [2])
+ugen("BinaryOpUGen", 2, [(2, 0), (4, 0)], [2], 0)
+ugen("BinaryOpUGen", 2, [(0, 2), (0, 3)], [2], 4)
+ugen("SinOsc", 2, [(6, 0), const_input(0.0), const_input(0.5),
+                    const_input(1.0)], [2])
+ugen("BinaryOpUGen", 2, [(5, 0), (7, 0)], [2], 2)
+mouse_and_reverb(8)
 finish_patch()
 
 out_path.parent.mkdir(parents=True, exist_ok=True)

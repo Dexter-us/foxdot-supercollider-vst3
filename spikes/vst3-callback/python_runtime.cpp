@@ -99,14 +99,16 @@ _COMPAT_CALLS = {
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
-    'charm', 'spark', 'blip',
+    'charm', 'spark', 'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
+    'ripple',
     'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
                  'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
                  'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
-                 'charm', 'spark', 'blip'}
+                 'charm', 'spark', 'blip', 'scatter', 'orient', 'zap',
+                 'fuzz', 'bug', 'ripple'}
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum'
@@ -273,7 +275,7 @@ def _dexter_run_compatibility_check():
             lines.extend('Line ' + str(line) + ': ' + message for line, message in shown)
             if len(diagnostics) > len(shown):
                 lines.append('...and ' + str(len(diagnostics) - len(shown)) + ' more item(s).')
-            lines.append('Supported synth calls: sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, blip. Samples remain deferred.')
+            lines.append('Supported synth calls: sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, blip, scatter, orient, zap, fuzz, bug, ripple. Samples remain deferred.')
             report_text = '\n'.join(lines)
     except BaseException as exc:
         report_text = 'Compatibility check could not complete: ' + str(exc)
@@ -1044,11 +1046,13 @@ class PlayerPattern:
         if synth not in ('sine', 'triangle', 'saw', 'square', 'bass', 'varsaw',
                          'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano',
                          'crunch', 'lazer', 'rave', 'bell', 'gong', 'marimba',
-                         'pluck', 'twang', 'donk', 'squish', 'charm', 'spark', 'blip'):
-            raise ValueError('synth must be one of the embedded sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, or blip voices')
+                         'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
+                         'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
+                         'ripple'):
+            raise ValueError('synth must be one of the embedded sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, blip, scatter, orient, zap, fuzz, bug, or ripple voices')
         self.synth = synth
         if synthRate is None:
-            synthRate = 0.0
+            synthRate = 1.0 if synth == 'bug' else 0.0
         try:
             self.synthRate = float(synthRate)
         except (TypeError, ValueError, OverflowError):
@@ -1225,6 +1229,12 @@ squish = _make_named_synth('squish', 0.0)
 charm = _make_named_synth('charm', 0.0)
 spark = _make_named_synth('spark', 0.0)
 blip = _make_named_synth('blip', 8.0)
+scatter = _make_named_synth('scatter', 0.0)
+orient = _make_named_synth('orient', 0.0)
+zap = _make_named_synth('zap', 0.0)
+fuzz = _make_named_synth('fuzz', 0.0)
+bug = _make_named_synth('bug', 1.0)
+ripple = _make_named_synth('ripple', 0.0)
 
 class Player:
     def __init__(self, number):
@@ -1268,7 +1278,8 @@ class Player:
                       'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano',
                       'crunch', 'lazer', 'rave', 'bell', 'gong', 'marimba',
                       'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
-                      'blip').index(pattern.synth)
+                      'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
+                      'ripple').index(pattern.synth)
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echoBeats,
@@ -1415,7 +1426,7 @@ bool parseResult(const std::filesystem::path& resultPath,
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
             !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
-             update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 24 ||
+             update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 30 ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
              update.synthRate > 10.0 ||
              (update.synthIndex == 5 && update.synthRate > 1.0) ||

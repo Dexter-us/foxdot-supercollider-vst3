@@ -369,7 +369,7 @@ def test_embedded_synthdef():
                                re.findall(r'0x([0-9a-fA-F]{2})', header_text))
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
-    assert synthdef_version == 1 and len(graphs) == 22
+    assert synthdef_version == 1 and len(graphs) == 28
     assert ('LFSaw', 2, 2) in graphs['DexterDirt']
     assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
     assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
@@ -388,6 +388,12 @@ def test_embedded_synthdef():
     assert ('LFCub', 2, 2) in graphs['DexterBlip']
     assert ('Blip', 2, 2) in graphs['DexterBlip']
     assert ('Line', 4, 2) in graphs['DexterCharm']
+    assert ('LFNoise0', 1, 2) in graphs['DexterScatter']
+    assert ('LFPulse', 5, 2) in graphs['DexterOrient']
+    assert ('Saw', 1, 2) in graphs['DexterZap']
+    assert ('LFSaw', 4, 1) in graphs['DexterFuzz']
+    assert ('Pulse', 2, 2) in graphs['DexterBug']
+    assert ('SinOsc', 4, 2) in graphs['DexterRipple']
     for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse',
                       b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag',
                       b'DexterBass', b'DexterVarsaw', b'DexterDirt',
@@ -400,7 +406,10 @@ def test_embedded_synthdef():
                       b'Decay', b'CombL', b'Ringz',
                       b'LFSaw', b'LFNoise0', b'LFNoise2', b'LFCub', b'Blip',
                       b'Line', b'Vibrato', b'Crackle', b'Gendy1',
-                      b'DexterCharm', b'DexterSpark', b'DexterBlip'):
+                      b'DexterCharm', b'DexterSpark', b'DexterBlip',
+                      b'LFPulse', b'DexterScatter', b'DexterOrient',
+                      b'DexterZap', b'DexterFuzz', b'DexterBug',
+                      b'DexterRipple'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
     generator_text = open(generator, encoding='utf-8').read()
     assert 'ugen("LFSaw", 2, [(1, 0), (-1, 0)], [2])' in generator_text
@@ -564,7 +573,7 @@ parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 24' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 30' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
@@ -648,6 +657,9 @@ example40Rows = run_example('40-charm-and-spark.py')
 assert [int(row[6]) for row in example40Rows] == [22, 23]
 example41Rows = run_example('41-blip-oscillator.py')
 assert [int(row[6]) for row in example41Rows] == [24, 22]
+example42Rows = run_example('42-self-contained-ugens.py')
+assert [int(row[6]) for row in example42Rows] == [25, 26, 27, 28, 29, 30]
+assert namespace['bug']([0]).synthRate == 1.0
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
@@ -663,4 +675,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-41.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-42.')
