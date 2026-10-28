@@ -568,9 +568,20 @@ private:
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
     static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
-    static constexpr std::size_t kSynthGraphCount = 28;
+    static constexpr const char* kSynthGraphNames[] = {
+        "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
+        "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
+        "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
+        "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
+        "DexterTwang", "DexterDonk", "DexterSquish", "DexterCharm",
+        "DexterSpark", "DexterBlip", "DexterScatter", "DexterOrient",
+        "DexterZap", "DexterFuzz", "DexterBug", "DexterRipple"};
+    static constexpr std::size_t kSynthGraphCount =
+        sizeof(kSynthGraphNames) / sizeof(kSynthGraphNames[0]);
     static constexpr std::size_t kReverbGraphCount = 3;
-    static constexpr uint32 kWorldNodeCapacity = 2048;
+    static constexpr std::size_t kWorldNodeCapacity =
+        kAudioVoiceCount * kSynthGraphCount +
+        kPlayerCount * kReverbGraphCount + 1;
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
@@ -586,9 +597,8 @@ private:
                   "The SuperCollider world needs three private buses per synth voice.");
     static_assert(kReverbBaseBus + kPlayerCount * kReverbBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per player reverb.");
-    static_assert(kAudioVoiceCount * kSynthGraphCount +
-                      kPlayerCount * kReverbGraphCount + 1 <= kWorldNodeCapacity,
-                  "The SuperCollider world needs a node slot for every voice and reverb graph.");
+    static_assert(kWorldNodeCapacity <= 0xffffffffu,
+                  "The SuperCollider world node capacity must fit WorldOptions.");
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
     static constexpr std::size_t kMaxEditorSourceBytes = 256 * 1024;
 
@@ -1575,9 +1585,11 @@ private:
         options.mRealTime = false;
         options.mPreferredSampleRate = sampleRate_;
         options.mBufLength = kSCBlockSize;
-        options.mMaxNodes = kWorldNodeCapacity;
-        // The preallocated graph bank exceeds SuperCollider's small default
-        // pool once every synth is instantiated for every polyphonic voice.
+        options.mMaxNodes = static_cast<uint32>(kWorldNodeCapacity);
+        options.mMaxGraphDefs =
+            static_cast<uint32>(kSynthGraphCount + kReverbGraphCount);
+        // Derive the node and graph-definition pools from the registered
+        // synth bank, voice count, and reverb bank instead of fixed ceilings.
         options.mRealTimeMemorySize = 65536;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
@@ -1613,19 +1625,11 @@ private:
         }
         GraphDef_Define(world_, defs);
 
-        constexpr std::array<const char*, kSynthGraphCount> synthNames{{
-            "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
-            "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
-            "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
-            "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
-            "DexterTwang", "DexterDonk", "DexterSquish", "DexterCharm",
-            "DexterSpark", "DexterBlip", "DexterScatter", "DexterOrient",
-            "DexterZap", "DexterFuzz", "DexterBug", "DexterRipple"}};
         std::array<GraphDef*, kSynthGraphCount> synthDefinitions{};
-        for (std::size_t index = 0; index < synthNames.size(); ++index) {
+        for (std::size_t index = 0; index < kSynthGraphCount; ++index) {
             int32 synthName[4]{};
-            std::memcpy(synthName, synthNames[index],
-                        std::min<std::size_t>(std::strlen(synthNames[index]),
+            std::memcpy(synthName, kSynthGraphNames[index],
+                        std::min<std::size_t>(std::strlen(kSynthGraphNames[index]),
                                               sizeof(synthName)));
             synthDefinitions[index] = World_GetGraphDef(world_, synthName);
         }
@@ -1636,7 +1640,7 @@ private:
             for (std::size_t index = 0; index < synthDefinitions.size(); ++index) {
                 if (!synthDefinitions[index])
                     std::fprintf(stderr, "Dexter VST3: missing embedded synth definition %s.\n",
-                                 synthNames[index]);
+                                 kSynthGraphNames[index]);
             }
             if (!root)
                 std::fprintf(stderr, "Dexter VST3: root group is unavailable.\n");
@@ -1658,7 +1662,7 @@ private:
                 if (graphError != 0 || !graph) {
                     std::fprintf(stderr,
                                  "Dexter VST3: Graph_New failed for %s (voice %zu, error %d).\n",
-                                 synthNames[synthIndex], voiceIndex,
+                                 kSynthGraphNames[synthIndex], voiceIndex,
                                  static_cast<int>(graphError));
                     discardPartialWorld();
                     return false;
@@ -1688,8 +1692,7 @@ private:
         GraphDef_Define(world_, reverbDefs);
         const std::array<const char*, kReverbGraphCount> reverbNames{{
             "DexRevFree", "DexRevFree2", "DexRevGverb"}};
-        // Continue the synth-node ID sequence. Starting reverb IDs at 1000
-        // collides with the preallocated synth graphs (IDs 100–1467).
+        // Continue the synth-node ID sequence after all preallocated voices.
         int32 reverbNodeId = nodeId;
         for (std::size_t type = 0; type < reverbNames.size(); ++type) {
             int32 reverbName[4]{};
@@ -2123,7 +2126,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.40",
+           "0.4.41",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

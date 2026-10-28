@@ -10,6 +10,8 @@ import tempfile
 if len(sys.argv) != 3:
     raise SystemExit('usage: test-pattern-api.py python_runtime.cpp Portable-directory')
 source = open(sys.argv[1], encoding='utf-8').read()
+processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
+processor_source = open(processor_path, encoding='utf-8').read()
 start_marker = 'static constexpr char api[] = R"PY(' + chr(10)
 end_marker = ')PY";'
 start = source.find(start_marker)
@@ -370,6 +372,16 @@ def test_embedded_synthdef():
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
     assert synthdef_version == 1 and len(graphs) == 28
+    graph_names_match = re.search(
+        r'static constexpr const char\* kSynthGraphNames\[\]\s*=\s*\{(.*?)\};',
+        processor_source, re.S)
+    assert graph_names_match, 'could not find the registered SuperCollider synth graph names'
+    registered_graphs = re.findall(r'"(Dexter[^"]+)"', graph_names_match.group(1))
+    assert len(registered_graphs) == len(graphs) and set(registered_graphs) == set(graphs), \
+        'registered graph names must exactly match the embedded SynthDef bank'
+    assert 'sizeof(kSynthGraphNames) / sizeof(kSynthGraphNames[0])' in processor_source
+    assert 'kAudioVoiceCount * kSynthGraphCount +' in processor_source
+    assert 'options.mMaxGraphDefs =' in processor_source
     assert ('LFSaw', 2, 2) in graphs['DexterDirt']
     assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
     assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
