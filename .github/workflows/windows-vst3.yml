@@ -5,6 +5,7 @@ on:
     paths:
       - "spikes/vst3-callback/**"
       - "tools/build-windows-vst3.ps1"
+      - "tools/invoke-build-windows-vst3-stage.ps1"
       - ".github/workflows/windows-vst3.yml"
   workflow_dispatch:
 
@@ -42,25 +43,35 @@ jobs:
           path: ${{ runner.temp }}\dexter-windows-vst3\deps
           key: windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
 
-      - name: Build SuperCollider and the VST3, then validate
+      - name: Prepare Python and pinned source checkouts
         shell: pwsh
         run: |
-          $buildLog = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3-build.log"
-          try {
-            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" *>&1 |
-              Tee-Object -FilePath $buildLog
-            $buildExitCode = $LASTEXITCODE
-            if ($buildExitCode -ne 0) {
-              throw "Build script exited with code $buildExitCode"
-            }
-          }
-          catch {
-            Write-Host "Build failed. Last 160 log lines:"
-            if (Test-Path $buildLog) {
-              Get-Content $buildLog -Tail 160
-            }
-            throw
-          }
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage prepare -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Configure SuperCollider
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Compile SuperCollider and bundled UGens
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Configure the VST3 plugin
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-plugin -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Compile the VST3 plugin
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-plugin -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+
+      - name: Package and validate the Windows bundle
+        shell: pwsh
+        run: |
+          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage package -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
 
       - name: Upload Windows VST3 bundle
         uses: actions/upload-artifact@v4

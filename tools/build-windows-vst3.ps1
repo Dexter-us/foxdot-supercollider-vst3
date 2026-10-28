@@ -1,6 +1,8 @@
 param(
     [string]$BuildRoot,
-    [int]$BuildJobs = 2
+    [int]$BuildJobs = 2,
+    [ValidateSet("all", "prepare", "configure-sc", "build-sc", "configure-plugin", "build-plugin", "package")]
+    [string]$Stage = "all"
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,223 +59,239 @@ foreach ($tool in @("git", "cmake")) {
     }
 }
 
-New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $BuildRoot "deps") | Out-Null
+if ($Stage -in @("all", "prepare")) {
+    New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $BuildRoot "deps") | Out-Null
 
-$pythonVersion = "3.12.10"
-$pythonArchive = Join-Path $BuildRoot "deps/python-3.12-embed-amd64.zip"
-if (-not (Test-Path (Join-Path $pythonRuntime "python312.dll"))) {
-    New-Item -ItemType Directory -Force -Path $pythonRuntime | Out-Null
-    Invoke-WebRequest `
-        -Uri "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip" `
-        -OutFile $pythonArchive
-    Expand-Archive -Path $pythonArchive -DestinationPath $pythonRuntime -Force
-}
-if (-not (Test-Path (Join-Path $pythonRuntime "PYTHON-LICENSE.txt"))) {
-    $packageLicense = Join-Path $pythonRuntime "LICENSE.txt"
-    if (Test-Path $packageLicense) {
-        Copy-Item $packageLicense (Join-Path $pythonRuntime "PYTHON-LICENSE.txt")
-    }
-    else {
+    $pythonVersion = "3.12.10"
+    $pythonArchive = Join-Path $BuildRoot "deps/python-3.12-embed-amd64.zip"
+    if (-not (Test-Path (Join-Path $pythonRuntime "python312.dll"))) {
+        New-Item -ItemType Directory -Force -Path $pythonRuntime | Out-Null
         Invoke-WebRequest `
-            -Uri "https://raw.githubusercontent.com/python/cpython/v$pythonVersion/LICENSE" `
-            -OutFile (Join-Path $pythonRuntime "PYTHON-LICENSE.txt")
+            -Uri "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip" `
+            -OutFile $pythonArchive
+        Expand-Archive -Path $pythonArchive -DestinationPath $pythonRuntime -Force
+    }
+    if (-not (Test-Path (Join-Path $pythonRuntime "PYTHON-LICENSE.txt"))) {
+        $packageLicense = Join-Path $pythonRuntime "LICENSE.txt"
+        if (Test-Path $packageLicense) {
+            Copy-Item $packageLicense (Join-Path $pythonRuntime "PYTHON-LICENSE.txt")
+        }
+        else {
+            Invoke-WebRequest `
+                -Uri "https://raw.githubusercontent.com/python/cpython/v$pythonVersion/LICENSE" `
+                -OutFile (Join-Path $pythonRuntime "PYTHON-LICENSE.txt")
+        }
+    }
+    if (-not (Test-Path (Join-Path $pythonRuntime "python312._pth"))) {
+        throw "The CPython embeddable distribution is missing python312._pth."
+    }
+    if (-not (Test-Path (Join-Path $pythonRuntime "python312.zip"))) {
+        throw "The CPython embeddable distribution is missing python312.zip."
+    }
+    if (-not (Test-Path (Join-Path $pythonRuntime "python312.dll"))) {
+        throw "The CPython embeddable distribution is missing python312.dll."
+    }
+    if (-not (Test-Path (Join-Path $pythonRuntime "python3.dll"))) {
+        throw "The CPython embeddable distribution is missing python3.dll."
+    }
+    if (-not (Test-Path (Join-Path $pythonRuntime "vcruntime140.dll"))) {
+        throw "The CPython embeddable distribution is missing vcruntime140.dll."
+    }
+    $pythonExe = Join-Path $pythonRuntime "python.exe"
+    if (-not (Test-Path $pythonExe)) {
+        throw "The CPython embeddable distribution is missing python.exe."
+    }
+    Write-Host "Prepared bundled CPython $pythonVersion runtime."
+
+    & $pythonExe -c "import sys, time, traceback; assert sys.version_info[:2] == (3, 12)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "The bundled CPython runtime did not pass its startup smoke test."
+    }
+    $patternApiTest = Join-Path $repoRoot "tools/test-pattern-api.py"
+    if (-not (Test-Path $patternApiTest)) {
+        throw "The pattern API smoke test is missing: $patternApiTest"
+    }
+    Invoke-Checked $pythonExe @($patternApiTest, (Join-Path $pluginSource 'python_runtime.cpp'), (Join-Path $pluginSource 'Portable'))
+
+    if (-not (Test-Path (Join-Path $scSource ".git"))) {
+        if (Test-Path $scSource) {
+            throw "The SuperCollider source path exists but is not a Git checkout: $scSource"
+        }
+        Invoke-Checked "git" @(
+            "clone", "--recurse-submodules",
+            "https://github.com/supercollider/supercollider.git", $scSource
+        )
+    }
+    Invoke-Checked "git" @("-C", $scSource, "checkout", "--detach", $scCommit)
+    Invoke-Checked "git" @("-C", $scSource, "submodule", "update", "--init", "--recursive")
+
+    if (-not (Test-Path (Join-Path $vst3Sdk "CMakeLists.txt"))) {
+        if (Test-Path $vst3Sdk) {
+            throw "The VST3 SDK path exists but is not a checkout: $vst3Sdk"
+        }
+        Invoke-Checked "git" @(
+            "clone", "--recurse-submodules", "--branch", $vst3Tag,
+            "https://github.com/steinbergmedia/vst3sdk.git", $vst3Sdk
+        )
+    }
+    Invoke-Checked "git" @("-C", $vst3Sdk, "checkout", "--detach", $vst3Tag)
+    Invoke-Checked "git" @("-C", $vst3Sdk, "submodule", "update", "--init", "--recursive")
+}
+
+if ($Stage -in @("all", "configure-sc")) {
+    $vcpkgRootWasSet = Test-Path Env:VCPKG_ROOT
+    $savedVcpkgRoot = $env:VCPKG_ROOT
+    Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
+    try {
+        Invoke-Checked "cmake" @(
+            "-S", $scSource,
+            "-B", $scBuild,
+            "-G", $vsGenerator,
+            "-A", "x64",
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+            "-DSC_QT=OFF",
+            "-DSC_IDE=OFF",
+            "-DSC_DOC_RENDER=OFF",
+            "-DNO_LIBSNDFILE=ON",
+            "-DFFT_GREEN=ON",
+            "-DLIBSCSYNTH=OFF",
+            "-DSTATIC_PLUGINS=OFF",
+            "-DSUPERNOVA=OFF",
+            "-DSC_HIDAPI=OFF",
+            "-DSC_ABLETON_LINK=OFF",
+            "-DENABLE_TESTSUITE=OFF",
+            "-DNO_X11=OFF",
+            "-DAUDIOAPI=portaudio",
+            "-DSYSTEM_PORTAUDIO=OFF"
+        )
+    }
+    finally {
+        if ($vcpkgRootWasSet) {
+            $env:VCPKG_ROOT = $savedVcpkgRoot
+        }
     }
 }
-if (-not (Test-Path (Join-Path $pythonRuntime "python312._pth"))) {
-    throw "The CPython embeddable distribution is missing python312._pth."
-}
-if (-not (Test-Path (Join-Path $pythonRuntime "python312.zip"))) {
-    throw "The CPython embeddable distribution is missing python312.zip."
-}
-if (-not (Test-Path (Join-Path $pythonRuntime "python312.dll"))) {
-    throw "The CPython embeddable distribution is missing python312.dll."
-}
-if (-not (Test-Path (Join-Path $pythonRuntime "python3.dll"))) {
-    throw "The CPython embeddable distribution is missing python3.dll."
-}
-if (-not (Test-Path (Join-Path $pythonRuntime "vcruntime140.dll"))) {
-    throw "The CPython embeddable distribution is missing vcruntime140.dll."
-}
-$pythonExe = Join-Path $pythonRuntime "python.exe"
-if (-not (Test-Path $pythonExe)) {
-    throw "The CPython embeddable distribution is missing python.exe."
-}
-Write-Host "Prepared bundled CPython $pythonVersion runtime."
 
-& $pythonExe -c "import sys, time, traceback; assert sys.version_info[:2] == (3, 12)"
-if ($LASTEXITCODE -ne 0) {
-    throw "The bundled CPython runtime did not pass its startup smoke test."
-}
-$patternApiTest = Join-Path $repoRoot "tools/test-pattern-api.py"
-if (-not (Test-Path $patternApiTest)) {
-    throw "The pattern API smoke test is missing: $patternApiTest"
-}
-Invoke-Checked $pythonExe @($patternApiTest, (Join-Path $pluginSource 'python_runtime.cpp'), (Join-Path $pluginSource 'Portable'))
-
-if (-not (Test-Path (Join-Path $scSource ".git"))) {
-    if (Test-Path $scSource) {
-        throw "The SuperCollider source path exists but is not a Git checkout: $scSource"
-    }
-    Invoke-Checked "git" @(
-        "clone", "--recurse-submodules",
-        "https://github.com/supercollider/supercollider.git", $scSource
-    )
-}
-Invoke-Checked "git" @("-C", $scSource, "checkout", "--detach", $scCommit)
-Invoke-Checked "git" @("-C", $scSource, "submodule", "update", "--init", "--recursive")
-
-if (-not (Test-Path (Join-Path $vst3Sdk "CMakeLists.txt"))) {
-    if (Test-Path $vst3Sdk) {
-        throw "The VST3 SDK path exists but is not a checkout: $vst3Sdk"
-    }
-    Invoke-Checked "git" @(
-        "clone", "--recurse-submodules", "--branch", $vst3Tag,
-        "https://github.com/steinbergmedia/vst3sdk.git", $vst3Sdk
-    )
-}
-Invoke-Checked "git" @("-C", $vst3Sdk, "checkout", "--detach", $vst3Tag)
-Invoke-Checked "git" @("-C", $vst3Sdk, "submodule", "update", "--init", "--recursive")
-
-$vcpkgRootWasSet = Test-Path Env:VCPKG_ROOT
-$savedVcpkgRoot = $env:VCPKG_ROOT
-Remove-Item Env:VCPKG_ROOT -ErrorAction SilentlyContinue
-try {
+if ($Stage -in @("all", "build-sc")) {
     Invoke-Checked "cmake" @(
-        "-S", $scSource,
-        "-B", $scBuild,
-        "-G", $vsGenerator,
-        "-A", "x64",
-        "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
-        "-DSC_QT=OFF",
-        "-DSC_IDE=OFF",
-        "-DSC_DOC_RENDER=OFF",
-        "-DNO_LIBSNDFILE=ON",
-        "-DFFT_GREEN=ON",
-        "-DLIBSCSYNTH=OFF",
-        "-DSTATIC_PLUGINS=OFF",
-        "-DSUPERNOVA=OFF",
-        "-DSC_HIDAPI=OFF",
-        "-DSC_ABLETON_LINK=OFF",
-        "-DENABLE_TESTSUITE=OFF",
-        "-DNO_X11=OFF",
-        "-DAUDIOAPI=portaudio",
-        "-DSYSTEM_PORTAUDIO=OFF"
+        "--build", $scBuild,
+        "--config", "Release",
+        "--target", "libscsynth", "BinaryOpUGens", "ChaosUGens", "DelayUGens", "DemandUGens", "DemoUGens", "DynNoiseUGens", "FilterUGens", "GendynUGens", "GrainUGens", "IOUGens", "LFUGens", "MulAddUGens", "NoiseUGens", "OscUGens", "PanUGens", "PhysicalModelingUGens", "ReverbUGens", "TestUGens", "TriggerUGens", "UIUGens", "UnaryOpUGens", "UnpackFFTUGens", "FFT_UGens", "PV_ThirdParty", "ML_UGens",
+        "--", "/m:$BuildJobs"
     )
 }
-finally {
-    if ($vcpkgRootWasSet) {
-        $env:VCPKG_ROOT = $savedVcpkgRoot
-    }
-}
-
-Invoke-Checked "cmake" @(
-    "--build", $scBuild,
-    "--config", "Release",
-    "--target", "libscsynth", "BinaryOpUGens", "ChaosUGens", "DelayUGens", "DemandUGens", "DemoUGens", "DynNoiseUGens", "FilterUGens", "GendynUGens", "GrainUGens", "IOUGens", "LFUGens", "MulAddUGens", "NoiseUGens", "OscUGens", "PanUGens", "PhysicalModelingUGens", "ReverbUGens", "TestUGens", "TriggerUGens", "UIUGens", "UnaryOpUGens", "UnpackFFTUGens", "FFT_UGens", "PV_ThirdParty", "ML_UGens",
-    "--", "/m:$BuildJobs"
-)
 
 $requiredModules = @("BinaryOpUGens.scx", "ChaosUGens.scx", "DelayUGens.scx", "DemandUGens.scx", "DemoUGens.scx", "DynNoiseUGens.scx", "FilterUGens.scx", "GendynUGens.scx", "GrainUGens.scx", "IOUGens.scx", "LFUGens.scx", "MulAddUGens.scx", "NoiseUGens.scx", "OscUGens.scx", "PanUGens.scx", "PhysicalModelingUGens.scx", "ReverbUGens.scx", "TestUGens.scx", "TriggerUGens.scx", "UIUGens.scx", "UnaryOpUGens.scx", "UnpackFFTUGens.scx", "FFT_UGens.scx", "PV_ThirdParty.scx", "ML_UGens.scx")
-$moduleFiles = foreach ($module in $requiredModules) {
-    $moduleCandidates = @(Get-ChildItem -Path $scBuild -Filter $module -File -Recurse)
-    $releaseMatch = @($moduleCandidates | Where-Object { $_.FullName -match "[\\/]Release[\\/]" })
-    if ($releaseMatch.Count -gt 0) {
-        $match = $releaseMatch[0]
+$moduleFiles = @()
+$moduleDirectories = @()
+$ugenPluginPath = $null
+if ($Stage -in @("all", "configure-plugin")) {
+    $moduleFiles = foreach ($module in $requiredModules) {
+        $moduleCandidates = @(Get-ChildItem -Path $scBuild -Filter $module -File -Recurse)
+        $releaseMatch = @($moduleCandidates | Where-Object { $_.FullName -match "[\\/]Release[\\/]" })
+        if ($releaseMatch.Count -gt 0) {
+            $match = $releaseMatch[0]
+        }
+        elseif ($moduleCandidates.Count -gt 0) {
+            $match = $moduleCandidates[0]
+        }
+        else {
+            throw "Could not find $module under the SuperCollider build directory: $scBuild"
+        }
+        $match
     }
-    elseif ($moduleCandidates.Count -gt 0) {
-        $match = $moduleCandidates[0]
+
+    $moduleDirectories = @($moduleFiles | ForEach-Object { $_.DirectoryName } | Select-Object -Unique)
+    if ($moduleDirectories.Count -ne 1) {
+        throw "The required UGen modules were built into different directories: $($moduleDirectories -join ', ')"
     }
-    else {
-        throw "Could not find $module under the SuperCollider build directory: $scBuild"
+    $ugenPluginPath = $moduleDirectories[0]
+
+    Invoke-Checked "cmake" @(
+        "-S", $pluginSource,
+        "-B", $pluginBuild,
+        "-G", $vsGenerator,
+        "-A", "x64",
+        "-DVST3_SDK_ROOT=$vst3Sdk",
+        "-DSC_SOURCE_DIR=$scSource",
+        "-DSC_BUILD_DIR=$scBuild",
+        "-DSC_UGEN_PLUGIN_PATH=$ugenPluginPath",
+        "-DPYTHON_RUNTIME_DIR=$pythonRuntime",
+        "-DSMTG_RUN_VST_VALIDATOR=OFF"
+    )
+}
+
+if ($Stage -in @("all", "build-plugin")) {
+    Invoke-Checked "cmake" @(
+        "--build", $pluginBuild,
+        "--config", "Release",
+        "--target", "dexter_sc_tone", "validator",
+        "--", "/m:$BuildJobs"
+    )
+}
+
+if ($Stage -in @("all", "package")) {
+    $bundle = Get-ChildItem -Path (Join-Path $pluginBuild "VST3") -Filter "dexter_sc_tone.vst3" -Directory -Recurse |
+        Select-Object -First 1
+    if (-not $bundle) {
+        throw "The VST3 bundle was not produced under $pluginBuild"
     }
-    $match
-}
 
-$moduleDirectories = @($moduleFiles | ForEach-Object { $_.DirectoryName } | Select-Object -Unique)
-if ($moduleDirectories.Count -ne 1) {
-    throw "The required UGen modules were built into different directories: $($moduleDirectories -join ', ')"
-}
-$ugenPluginPath = $moduleDirectories[0]
-
-Invoke-Checked "cmake" @(
-    "-S", $pluginSource,
-    "-B", $pluginBuild,
-    "-G", $vsGenerator,
-    "-A", "x64",
-    "-DVST3_SDK_ROOT=$vst3Sdk",
-    "-DSC_SOURCE_DIR=$scSource",
-    "-DSC_BUILD_DIR=$scBuild",
-    "-DSC_UGEN_PLUGIN_PATH=$ugenPluginPath",
-    "-DPYTHON_RUNTIME_DIR=$pythonRuntime",
-    "-DSMTG_RUN_VST_VALIDATOR=OFF"
-)
-Invoke-Checked "cmake" @(
-    "--build", $pluginBuild,
-    "--config", "Release",
-    "--target", "dexter_sc_tone", "validator",
-    "--", "/m:$BuildJobs"
-)
-
-$bundle = Get-ChildItem -Path (Join-Path $pluginBuild "VST3") -Filter "dexter_sc_tone.vst3" -Directory -Recurse |
-    Select-Object -First 1
-if (-not $bundle) {
-    throw "The VST3 bundle was not produced under $pluginBuild"
-}
-
-$portableDirectory = Join-Path $bundle.FullName "Portable"
-New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null
-$portableSource = Join-Path $pluginSource "Portable"
-if (-not (Test-Path $portableSource)) {
-    throw "Portable examples folder is missing: $portableSource"
-}
-Get-ChildItem -Path $portableSource -Force |
-    Copy-Item -Destination $portableDirectory -Recurse -Force
-
-$resourceRoot = Join-Path $bundle.FullName "Contents/Resources"
-foreach ($module in $requiredModules) {
-    if (-not (Test-Path (Join-Path $resourceRoot "SCPlugins/$module"))) {
-        throw "The VST3 bundle is missing UGen module $module"
+    $portableDirectory = Join-Path $bundle.FullName "Portable"
+    New-Item -ItemType Directory -Force -Path $portableDirectory | Out-Null
+    $portableSource = Join-Path $pluginSource "Portable"
+    if (-not (Test-Path $portableSource)) {
+        throw "Portable examples folder is missing: $portableSource"
     }
-}
-foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/Boost-1.0.txt", "Licenses/PYTHON-LICENSE.txt",
-        "Licenses/FoxDot-CC-BY-SA-4.0.txt", "Licenses/FoxDot-ATTRIBUTION.txt",
-        "Licenses/Scintilla-Lexilla-License.txt")) {
-    if (-not (Test-Path (Join-Path $resourceRoot $license))) {
-        throw "The VST3 bundle is missing license file $license"
-    }
-}
-foreach ($pythonFile in @("Python/python312.dll", "Python/python3.dll", "Python/python312.zip",
-        "Python/python312._pth", "Python/vcruntime140.dll")) {
-    if (-not (Test-Path (Join-Path $resourceRoot $pythonFile))) {
-        throw "The VST3 bundle is missing portable Python runtime file $pythonFile"
-    }
-}
-if (-not (Test-Path (Join-Path $resourceRoot "Licenses/PYTHON-LICENSE.txt"))) {
-    throw "The VST3 bundle is missing Python's license file"
-}
-if (-not (Test-Path (Join-Path $portableDirectory "README.txt"))) {
-    throw "The VST3 bundle is missing its Portable scripts folder"
-}
-$portableUgenDirectory = Join-Path $portableDirectory "SCPlugins"
-if (-not (Test-Path (Join-Path $portableUgenDirectory "README.txt"))) {
-    throw "The VST3 bundle is missing its Portable UGen module folder and loader instructions"
-}
-$bundledUgenCount = @(Get-ChildItem -Path (Join-Path $resourceRoot "SCPlugins") -Filter "*.scx" -File).Count
-if ($bundledUgenCount -ne $requiredModules.Count) {
-    throw "Expected $($requiredModules.Count) bundled UGen modules; found $bundledUgenCount."
-}
-$portableExamples = @(Get-ChildItem -Path $portableDirectory -Filter "*.py" -File)
-if ($portableExamples.Count -lt 9) {
-    throw "Expected at least nine packaged starter Python scripts in Portable; found $($portableExamples.Count)."
-}
+    Get-ChildItem -Path $portableSource -Force |
+        Copy-Item -Destination $portableDirectory -Recurse -Force
 
-$validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
-    Select-Object -First 1
-if (-not $validator) {
-    throw "The VST3 validator executable was not produced under $pluginBuild"
-}
-Invoke-Checked $validator.FullName @($bundle.FullName)
+    $resourceRoot = Join-Path $bundle.FullName "Contents/Resources"
+    foreach ($module in $requiredModules) {
+        if (-not (Test-Path (Join-Path $resourceRoot "SCPlugins/$module"))) {
+            throw "The VST3 bundle is missing UGen module $module"
+        }
+    }
+    foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/Boost-1.0.txt", "Licenses/PYTHON-LICENSE.txt",
+            "Licenses/FoxDot-CC-BY-SA-4.0.txt", "Licenses/FoxDot-ATTRIBUTION.txt",
+            "Licenses/Scintilla-Lexilla-License.txt")) {
+        if (-not (Test-Path (Join-Path $resourceRoot $license))) {
+            throw "The VST3 bundle is missing license file $license"
+        }
+    }
+    foreach ($pythonFile in @("Python/python312.dll", "Python/python3.dll", "Python/python312.zip",
+            "Python/python312._pth", "Python/vcruntime140.dll")) {
+        if (-not (Test-Path (Join-Path $resourceRoot $pythonFile))) {
+            throw "The VST3 bundle is missing portable Python runtime file $pythonFile"
+        }
+    }
+    if (-not (Test-Path (Join-Path $resourceRoot "Licenses/PYTHON-LICENSE.txt"))) {
+        throw "The VST3 bundle is missing Python's license file"
+    }
+    if (-not (Test-Path (Join-Path $portableDirectory "README.txt"))) {
+        throw "The VST3 bundle is missing its Portable scripts folder"
+    }
+    $portableUgenDirectory = Join-Path $portableDirectory "SCPlugins"
+    if (-not (Test-Path (Join-Path $portableUgenDirectory "README.txt"))) {
+        throw "The VST3 bundle is missing its Portable UGen module folder and loader instructions"
+    }
+    $bundledUgenCount = @(Get-ChildItem -Path (Join-Path $resourceRoot "SCPlugins") -Filter "*.scx" -File).Count
+    if ($bundledUgenCount -ne $requiredModules.Count) {
+        throw "Expected $($requiredModules.Count) bundled UGen modules; found $bundledUgenCount."
+    }
+    $portableExamples = @(Get-ChildItem -Path $portableDirectory -Filter "*.py" -File)
+    if ($portableExamples.Count -lt 9) {
+        throw "Expected at least nine packaged starter Python scripts in Portable; found $($portableExamples.Count)."
+    }
 
-Write-Host "`nWindows VST3 build and validator completed successfully."
-Write-Host "Bundle: $($bundle.FullName)"
+    $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
+        Select-Object -First 1
+    if (-not $validator) {
+        throw "The VST3 validator executable was not produced under $pluginBuild"
+    }
+    Invoke-Checked $validator.FullName @($bundle.FullName)
+
+    Write-Host "`nWindows VST3 build and validator completed successfully."
+    Write-Host "Bundle: $($bundle.FullName)"
+}
