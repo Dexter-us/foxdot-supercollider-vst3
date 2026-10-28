@@ -35,13 +35,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\dexter-windows-vst3\supercollider-build
-          key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
+          key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-build-v1
+          restore-keys: |
+            windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
 
       - name: Restore pinned dependency checkouts
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\dexter-windows-vst3\deps
-          key: windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
+          key: windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-deps-v1
+          restore-keys: |
+            windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
 
       - name: Prepare Python and pinned source checkouts
         shell: pwsh
@@ -53,7 +57,7 @@ jobs:
         run: |
           .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
 
-      - name: Compile SuperCollider and bundled UGens
+      - name: Compile SuperCollider engine and UGen modules
         shell: pwsh
         run: |
           .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
@@ -80,3 +84,11 @@ jobs:
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload separate Windows UGen pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: dexter-supercollider-ugens-windows-x64
+          path: ${{ runner.temp }}/dexter-windows-vst3/ugen-pack
+          if-no-files-found: error
+          retention-days: 90

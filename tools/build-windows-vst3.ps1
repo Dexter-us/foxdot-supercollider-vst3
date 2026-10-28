@@ -248,10 +248,9 @@ if ($Stage -in @("all", "package")) {
         Copy-Item -Destination $portableDirectory -Recurse -Force
 
     $resourceRoot = Join-Path $bundle.FullName "Contents/Resources"
-    foreach ($module in $requiredModules) {
-        if (-not (Test-Path (Join-Path $resourceRoot "SCPlugins/$module"))) {
-            throw "The VST3 bundle is missing UGen module $module"
-        }
+    $bundledUgenFiles = @(Get-ChildItem -Path $resourceRoot -Filter "*.scx" -File -Recurse -ErrorAction SilentlyContinue)
+    if ($bundledUgenFiles.Count -gt 0) {
+        throw "The VST3 bundle unexpectedly contains UGen binaries; they belong in the separate pack."
     }
     foreach ($license in @("Licenses/COPYING", "Licenses/LICENSE.txt", "Licenses/Boost-1.0.txt", "Licenses/PYTHON-LICENSE.txt",
             "Licenses/FoxDot-CC-BY-SA-4.0.txt", "Licenses/FoxDot-ATTRIBUTION.txt",
@@ -276,9 +275,34 @@ if ($Stage -in @("all", "package")) {
     if (-not (Test-Path (Join-Path $portableUgenDirectory "README.txt"))) {
         throw "The VST3 bundle is missing its Portable UGen module folder and loader instructions"
     }
-    $bundledUgenCount = @(Get-ChildItem -Path (Join-Path $resourceRoot "SCPlugins") -Filter "*.scx" -File).Count
-    if ($bundledUgenCount -ne $requiredModules.Count) {
-        throw "Expected $($requiredModules.Count) bundled UGen modules; found $bundledUgenCount."
+
+    $ugenPackRoot = Join-Path $BuildRoot "ugen-pack"
+    $ugenPackPortableDirectory = Join-Path $ugenPackRoot "Portable"
+    $ugenPackModuleDirectory = Join-Path $ugenPackPortableDirectory "SCPlugins"
+    New-Item -ItemType Directory -Force -Path $ugenPackModuleDirectory | Out-Null
+    foreach ($module in $requiredModules) {
+        $moduleCandidates = @(Get-ChildItem -Path $scBuild -Filter $module -File -Recurse)
+        $releaseMatch = @($moduleCandidates | Where-Object { $_.FullName -match "[\\/]Release[\\/]" })
+        if ($releaseMatch.Count -gt 0) {
+            $moduleFile = $releaseMatch[0]
+        }
+        elseif ($moduleCandidates.Count -gt 0) {
+            $moduleFile = $moduleCandidates[0]
+        }
+        else {
+            throw "Could not package $module; it was not found under $scBuild"
+        }
+        Copy-Item -Path $moduleFile.FullName -Destination (Join-Path $ugenPackModuleDirectory $module) -Force
+    }
+    Copy-Item -Path (Join-Path $scSource "COPYING") -Destination (Join-Path $ugenPackModuleDirectory "COPYING") -Force
+    Copy-Item -Path (Join-Path $pluginSource "Portable/SCPlugins/README.txt") `
+        -Destination (Join-Path $ugenPackModuleDirectory "README.txt") -Force
+    $ugenPackModules = @(Get-ChildItem -Path $ugenPackModuleDirectory -Filter "*.scx" -File)
+    if ($ugenPackModules.Count -ne $requiredModules.Count) {
+        throw "Expected $($requiredModules.Count) UGen modules in the separate pack; found $($ugenPackModules.Count)."
+    }
+    if (-not (Test-Path (Join-Path $ugenPackModuleDirectory "COPYING"))) {
+        throw "The separate UGen pack is missing SuperCollider's GPL license."
     }
     $portableExamples = @(Get-ChildItem -Path $portableDirectory -Filter "*.py" -File)
     if ($portableExamples.Count -lt 9) {
@@ -294,4 +318,5 @@ if ($Stage -in @("all", "package")) {
 
     Write-Host "`nWindows VST3 build and validator completed successfully."
     Write-Host "Bundle: $($bundle.FullName)"
+    Write-Host "Separate UGen pack: $ugenPackRoot"
 }

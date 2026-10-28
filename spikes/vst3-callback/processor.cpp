@@ -87,9 +87,19 @@ std::filesystem::path portableUGenPath() {
     return binaryPath.parent_path().parent_path().parent_path() / "Portable" / "SCPlugins";
 }
 
+std::filesystem::path sharedPortableUGenPath() {
+    const auto binaryPath = pluginBinaryPath();
+    if (binaryPath.empty())
+        return {};
+    const auto bundleRoot =
+        binaryPath.parent_path().parent_path().parent_path();
+    return bundleRoot.parent_path() / "Portable" / "SCPlugins";
+}
+
 std::vector<std::string> discoverUGenModuleFiles() {
     std::vector<std::string> modules;
-    for (const auto& directory : {bundledUGenPath(), portableUGenPath()}) {
+    for (const auto& directory : {
+             bundledUGenPath(), portableUGenPath(), sharedPortableUGenPath()}) {
         std::error_code error;
         if (!std::filesystem::is_directory(directory, error))
             continue;
@@ -113,9 +123,12 @@ std::vector<std::string> discoverUGenModuleFiles() {
 
 std::string ugenModuleSearchPath() {
     std::string path = bundledUGenPath().u8string();
-    const auto portablePath = portableUGenPath();
-    std::error_code error;
-    if (!portablePath.empty() && std::filesystem::is_directory(portablePath, error)) {
+    for (const auto& portablePath : {
+             portableUGenPath(), sharedPortableUGenPath()}) {
+        std::error_code error;
+        if (portablePath.empty() ||
+            !std::filesystem::is_directory(portablePath, error))
+            continue;
 #if defined(_WIN32)
         path += ';';
 #else
@@ -1572,10 +1585,13 @@ private:
 
     bool initializeWorld() {
         std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
-        const auto ugenPath = bundledUGenPath();
-        std::error_code pathError;
-        if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError)) {
-            std::fprintf(stderr, "Dexter VST3: bundled SuperCollider UGen directory is missing.\n");
+        const auto moduleFiles = discoverUGenModuleFiles();
+        if (moduleFiles.empty()) {
+            const std::string message =
+                "No SuperCollider UGen modules found. Install the separate UGen pack's "
+                "Portable folder beside the VST3 bundle, then restart the DAW.";
+            setEditorStatus(message);
+            std::fprintf(stderr, "Dexter VST3: %s\n", message.c_str());
             return false;
         }
         ugenPluginPath_ = ugenModuleSearchPath();
@@ -1610,14 +1626,13 @@ private:
             std::fprintf(stderr, "Dexter VST3: World_New failed at %.1f Hz.\n", sampleRate_);
             return false;
         }
-        const auto moduleFiles = discoverUGenModuleFiles();
         std::string moduleStatus = "UGen module files found (" + std::to_string(moduleFiles.size()) + "): ";
         for (std::size_t index = 0; index < moduleFiles.size(); ++index) {
             if (index != 0)
                 moduleStatus += ", ";
             moduleStatus += moduleFiles[index];
         }
-        moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
+        moduleStatus += ". Install/update modules in the sibling Portable/SCPlugins folder; restart the DAW after changes.";
         setEditorStatus(std::move(moduleStatus));
         World_SetSampleRate(world_, sampleRate_);
         World_Start(world_);
@@ -2133,7 +2148,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.42",
+           "0.4.43",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
