@@ -35,6 +35,8 @@ jobs:
         with:
           path: ${{ runner.temp }}\dexter-windows-vst3\supercollider-build
           key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
+          restore-keys: |
+            windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
       - name: Build SuperCollider and the VST3, then validate
         shell: pwsh
         run: |
