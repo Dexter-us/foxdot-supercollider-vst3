@@ -1,6 +1,7 @@
 param(
     [string]$BuildRoot,
-    [int]$BuildJobs = 2
+    [int]$BuildJobs = 2,
+    [switch]$UseCachedSuperColliderBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -167,14 +168,49 @@ finally {
     }
 }
 
-Invoke-Checked "cmake" @(
-    "--build", $scBuild,
-    "--config", "Release",
-    "--target", "libscsynth", "BinaryOpUGens", "ChaosUGens", "DelayUGens", "DemandUGens", "DemoUGens", "DynNoiseUGens", "FilterUGens", "GendynUGens", "GrainUGens", "IOUGens", "LFUGens", "MulAddUGens", "NoiseUGens", "OscUGens", "PanUGens", "PhysicalModelingUGens", "ReverbUGens", "TestUGens", "TriggerUGens", "UIUGens", "UnaryOpUGens", "UnpackFFTUGens", "FFT_UGens", "PV_ThirdParty", "ML_UGens",
-    "--", "/m:$BuildJobs"
-)
-
 $requiredModules = @("BinaryOpUGens.scx", "ChaosUGens.scx", "DelayUGens.scx", "DemandUGens.scx", "DemoUGens.scx", "DynNoiseUGens.scx", "FilterUGens.scx", "GendynUGens.scx", "GrainUGens.scx", "IOUGens.scx", "LFUGens.scx", "MulAddUGens.scx", "NoiseUGens.scx", "OscUGens.scx", "PanUGens.scx", "PhysicalModelingUGens.scx", "ReverbUGens.scx", "TestUGens.scx", "TriggerUGens.scx", "UIUGens.scx", "UnaryOpUGens.scx", "UnpackFFTUGens.scx", "FFT_UGens.scx", "PV_ThirdParty.scx", "ML_UGens.scx")
+if ($UseCachedSuperColliderBuild) {
+    Write-Host "Using cached SuperCollider outputs; SuperCollider and UGen compilation is disabled for this VST-only build."
+    $cachedLibraryChecks = @(
+        @{
+            Name = "libscsynth"
+            Path = (Join-Path $scBuild "server/scsynth")
+            Filter = "*scsynth*.lib"
+        },
+        @{
+            Name = "TLSF"
+            Path = (Join-Path $scBuild "external_libraries")
+            Filter = "tlsf*.lib"
+        },
+        @{
+            Name = "PortAudio"
+            Path = (Join-Path $scBuild "external_libraries/portaudio/portaudio_submodule")
+            Filter = "portaudio*.lib"
+        }
+    )
+    $missingCachedLibraries = @(
+        foreach ($check in $cachedLibraryChecks) {
+            $library = Get-ChildItem -Path $check.Path -Filter $check.Filter -File -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not $library) {
+                $check.Name
+            }
+        }
+    )
+    if ($missingCachedLibraries.Count -gt 0) {
+        throw "Cached SuperCollider build is incomplete; missing libraries: $($missingCachedLibraries -join ', '). No SuperCollider or UGen compilation was started."
+    }
+}
+else {
+    Write-Host "Building SuperCollider engine and bundled UGen modules."
+    Invoke-Checked "cmake" @(
+        "--build", $scBuild,
+        "--config", "Release",
+        "--target", "libscsynth", "BinaryOpUGens", "ChaosUGens", "DelayUGens", "DemandUGens", "DemoUGens", "DynNoiseUGens", "FilterUGens", "GendynUGens", "GrainUGens", "IOUGens", "LFUGens", "MulAddUGens", "NoiseUGens", "OscUGens", "PanUGens", "PhysicalModelingUGens", "ReverbUGens", "TestUGens", "TriggerUGens", "UIUGens", "UnaryOpUGens", "UnpackFFTUGens", "FFT_UGens", "PV_ThirdParty", "ML_UGens",
+        "--", "/m:$BuildJobs"
+    )
+}
+
 $moduleFiles = foreach ($module in $requiredModules) {
     $moduleCandidates = @(Get-ChildItem -Path $scBuild -Filter $module -File -Recurse)
     $releaseMatch = @($moduleCandidates | Where-Object { $_.FullName -match "[\\/]Release[\\/]" })

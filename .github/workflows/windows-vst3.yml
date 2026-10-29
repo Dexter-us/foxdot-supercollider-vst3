@@ -14,7 +14,7 @@ permissions:
 jobs:
   windows-vst3:
     runs-on: windows-latest
-    timeout-minutes: 180
+    timeout-minutes: 30
     steps:
       - name: Check out the project
         uses: actions/checkout@v4
@@ -37,12 +37,13 @@ jobs:
           key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
           restore-keys: |
             windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-      - name: Build SuperCollider and the VST3, then validate
+      - name: Build VST3 from cached SuperCollider outputs, then validate
         shell: pwsh
         run: |
           $buildLog = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3-build.log"
           try {
-            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" *> $buildLog
+            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" -UseCachedSuperColliderBuild *>&1 |
+              Tee-Object -FilePath $buildLog
             if ($LASTEXITCODE -ne 0) {
               throw "Build script exited with code $LASTEXITCODE"
             }
