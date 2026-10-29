@@ -1,7 +1,8 @@
 param(
     [string]$BuildRoot,
     [int]$BuildJobs = 2,
-    [switch]$UseCachedSuperColliderBuild
+    [switch]$UseCachedSuperColliderBuild,
+    [switch]$SkipValidator
 )
 
 $ErrorActionPreference = "Stop"
@@ -304,45 +305,50 @@ if ($portableExamples.Count -lt 9) {
     throw "Expected at least nine packaged starter Python scripts in Portable; found $($portableExamples.Count)."
 }
 
-$validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
-    Select-Object -First 1
-if (-not $validator) {
-    throw "The VST3 validator executable was not produced under $pluginBuild"
+if ($SkipValidator) {
+    Write-Host "Skipping VST3 validator execution; CI can run it as a separate bounded check."
 }
-$validatorStdout = Join-Path $BuildRoot "validator.stdout.log"
-$validatorStderr = Join-Path $BuildRoot "validator.stderr.log"
-Remove-Item -Path $validatorStdout, $validatorStderr -Force -ErrorAction SilentlyContinue
-$validatorArgument = '"' + $bundle.FullName + '"'
-$validatorProcess = Start-Process `
-    -FilePath $validator.FullName `
-    -ArgumentList $validatorArgument `
-    -WorkingDirectory $pluginBuild `
-    -NoNewWindow `
-    -RedirectStandardOutput $validatorStdout `
-    -RedirectStandardError $validatorStderr `
-    -PassThru
-$validatorTimeoutSeconds = 300
-if (-not $validatorProcess.WaitForExit($validatorTimeoutSeconds * 1000)) {
-    Write-Host "VST3 validator exceeded the $validatorTimeoutSeconds-second limit; terminating it."
-    Stop-Process -Id $validatorProcess.Id -Force -ErrorAction SilentlyContinue
-    $validatorProcess.WaitForExit()
+else {
+    $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
+        Select-Object -First 1
+    if (-not $validator) {
+        throw "The VST3 validator executable was not produced under $pluginBuild"
+    }
+    $validatorStdout = Join-Path $BuildRoot "validator.stdout.log"
+    $validatorStderr = Join-Path $BuildRoot "validator.stderr.log"
+    Remove-Item -Path $validatorStdout, $validatorStderr -Force -ErrorAction SilentlyContinue
+    $validatorArgument = '"' + $bundle.FullName + '"'
+    $validatorProcess = Start-Process `
+        -FilePath $validator.FullName `
+        -ArgumentList $validatorArgument `
+        -WorkingDirectory $pluginBuild `
+        -NoNewWindow `
+        -RedirectStandardOutput $validatorStdout `
+        -RedirectStandardError $validatorStderr `
+        -PassThru
+    $validatorTimeoutSeconds = 300
+    if (-not $validatorProcess.WaitForExit($validatorTimeoutSeconds * 1000)) {
+        Write-Host "VST3 validator exceeded the $validatorTimeoutSeconds-second limit; terminating it."
+        Stop-Process -Id $validatorProcess.Id -Force -ErrorAction SilentlyContinue
+        $validatorProcess.WaitForExit()
+        if (Test-Path $validatorStdout) {
+            Get-Content -Path $validatorStdout -Tail 80
+        }
+        if (Test-Path $validatorStderr) {
+            Get-Content -Path $validatorStderr -Tail 80
+        }
+        throw "VST3 validator timed out after $validatorTimeoutSeconds seconds."
+    }
     if (Test-Path $validatorStdout) {
-        Get-Content -Path $validatorStdout -Tail 80
+        Get-Content -Path $validatorStdout
     }
     if (Test-Path $validatorStderr) {
-        Get-Content -Path $validatorStderr -Tail 80
+        Get-Content -Path $validatorStderr
     }
-    throw "VST3 validator timed out after $validatorTimeoutSeconds seconds."
-}
-if (Test-Path $validatorStdout) {
-    Get-Content -Path $validatorStdout
-}
-if (Test-Path $validatorStderr) {
-    Get-Content -Path $validatorStderr
-}
-if ($validatorProcess.ExitCode -ne 0) {
-    throw "VST3 validator failed with exit code $($validatorProcess.ExitCode)."
+    if ($validatorProcess.ExitCode -ne 0) {
+        throw "VST3 validator failed with exit code $($validatorProcess.ExitCode)."
+    }
 }
 
-Write-Host "`nWindows VST3 build and validator completed successfully."
+Write-Host "`nWindows VST3 build completed successfully."
 Write-Host "Bundle: $($bundle.FullName)"

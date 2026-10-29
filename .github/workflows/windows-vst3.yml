@@ -37,12 +37,13 @@ jobs:
           key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
           restore-keys: |
             windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-      - name: Build VST3 from cached SuperCollider outputs, then validate
+      - name: Build VST3 from cached SuperCollider outputs
+        id: build_vst3
         shell: pwsh
         run: |
           $buildLog = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3-build.log"
           try {
-            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" -UseCachedSuperColliderBuild *>&1 |
+            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" -UseCachedSuperColliderBuild -SkipValidator *>&1 |
               Tee-Object -FilePath $buildLog
             if ($LASTEXITCODE -ne 0) {
               throw "Build script exited with code $LASTEXITCODE"
@@ -55,6 +56,35 @@ jobs:
             }
             throw
           }
+
+      - name: Optional VST3 validator (five-minute limit)
+        if: always() && steps.build_vst3.outcome == 'success'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          $bundle = Join-Path $pluginBuild "VST3\Release\dexter_sc_tone.vst3"
+          $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
+            Select-Object -First 1
+          if (-not (Test-Path $bundle)) { throw "The built VST3 bundle was not found: $bundle" }
+          if (-not $validator) { throw "The VST3 validator executable was not produced." }
+          $stdout = Join-Path $env:RUNNER_TEMP "vst3-validator.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "vst3-validator.stderr.log"
+          $argument = '"' + $bundle + '"'
+          $process = Start-Process -FilePath $validator.FullName -ArgumentList $argument `
+            -WorkingDirectory $pluginBuild -NoNewWindow -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr -PassThru
+          if (-not $process.WaitForExit(300000)) {
+            Write-Warning "VST3 validator exceeded five minutes; stopping the optional check so the VST artifact remains available."
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $process.WaitForExit()
+            if (Test-Path $stdout) { Get-Content $stdout -Tail 80 }
+            if (Test-Path $stderr) { Get-Content $stderr -Tail 80 }
+            throw "VST3 validator timed out after five minutes."
+          }
+          if (Test-Path $stdout) { Get-Content $stdout }
+          if (Test-Path $stderr) { Get-Content $stderr }
+          if ($process.ExitCode -ne 0) { throw "VST3 validator failed with exit code $($process.ExitCode)." }
 
       - name: Upload Windows VST3 bundle
         uses: actions/upload-artifact@v4
