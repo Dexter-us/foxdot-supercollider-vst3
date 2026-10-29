@@ -87,19 +87,9 @@ std::filesystem::path portableUGenPath() {
     return binaryPath.parent_path().parent_path().parent_path() / "Portable" / "SCPlugins";
 }
 
-std::filesystem::path sharedPortableUGenPath() {
-    const auto binaryPath = pluginBinaryPath();
-    if (binaryPath.empty())
-        return {};
-    const auto bundleRoot =
-        binaryPath.parent_path().parent_path().parent_path();
-    return bundleRoot.parent_path() / "Portable" / "SCPlugins";
-}
-
 std::vector<std::string> discoverUGenModuleFiles() {
     std::vector<std::string> modules;
-    for (const auto& directory : {
-             bundledUGenPath(), portableUGenPath(), sharedPortableUGenPath()}) {
+    for (const auto& directory : {bundledUGenPath(), portableUGenPath()}) {
         std::error_code error;
         if (!std::filesystem::is_directory(directory, error))
             continue;
@@ -123,12 +113,9 @@ std::vector<std::string> discoverUGenModuleFiles() {
 
 std::string ugenModuleSearchPath() {
     std::string path = bundledUGenPath().u8string();
-    for (const auto& portablePath : {
-             portableUGenPath(), sharedPortableUGenPath()}) {
-        std::error_code error;
-        if (portablePath.empty() ||
-            !std::filesystem::is_directory(portablePath, error))
-            continue;
+    const auto portablePath = portableUGenPath();
+    std::error_code error;
+    if (!portablePath.empty() && std::filesystem::is_directory(portablePath, error)) {
 #if defined(_WIN32)
         path += ';';
 #else
@@ -581,21 +568,9 @@ private:
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
     static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
-    static constexpr const char* kSynthGraphNames[] = {
-        "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
-        "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
-        "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
-        "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
-        "DexterTwang", "DexterDonk", "DexterSquish", "DexterCharm",
-        "DexterSpark", "DexterBlip", "DexterScatter", "DexterOrient",
-        "DexterZap", "DexterFuzz", "DexterBug", "DexterRipple",
-        "DexterViola"};
-    static constexpr std::size_t kSynthGraphCount =
-        sizeof(kSynthGraphNames) / sizeof(kSynthGraphNames[0]);
+    static constexpr std::size_t kSynthGraphCount = 28;
     static constexpr std::size_t kReverbGraphCount = 3;
-    static constexpr std::size_t kWorldNodeCapacity =
-        kAudioVoiceCount * kSynthGraphCount +
-        kPlayerCount * kReverbGraphCount + 1;
+    static constexpr uint32 kWorldNodeCapacity = 2048;
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
@@ -1100,8 +1075,6 @@ private:
             return amplitude * 0.2f;
         if (synthIndex == 30)
             return amplitude / 6.0f;
-        if (synthIndex == 31)
-            return amplitude * 0.25f;
         return amplitude;
     }
 
@@ -1123,8 +1096,6 @@ private:
             highestPartial = 1.02f;
         else if (synthIndex == 28)
             highestPartial = 1.5f;
-        else if (synthIndex == 31)
-            highestPartial = 1.1f;
         const float safeLimit = static_cast<float>(sampleRate_ * 0.45) /
                                 highestPartial;
         return std::min(requested, safeLimit);
@@ -1151,7 +1122,7 @@ private:
     static Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
         if (synthIndex >= 0 && synthIndex <= 3)
             return voice.synthGraphs[0];
-        if (synthIndex >= 4 && synthIndex <= 31)
+        if (synthIndex >= 4 && synthIndex <= 24)
             return voice.synthGraphs[static_cast<std::size_t>(synthIndex - 3)];
         return nullptr;
     }
@@ -1420,7 +1391,7 @@ private:
                                 static_cast<float>(static_cast<double>(sustainSamples) /
                                                    sampleRate_));
                         }
-                        if (note.synthIndex >= 22 && note.synthIndex <= 31) {
+                        if (note.synthIndex >= 22 && note.synthIndex <= 30) {
                             const auto sustainSamples =
                                 note.sustainEndSample - note.startSample;
                             Graph_SetControl(found->activeSynth, 3,
@@ -1585,13 +1556,10 @@ private:
 
     bool initializeWorld() {
         std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
-        const auto moduleFiles = discoverUGenModuleFiles();
-        if (moduleFiles.empty()) {
-            const std::string message =
-                "No SuperCollider UGen modules found. Install the separate UGen pack's "
-                "Portable folder beside the VST3 bundle, then restart the DAW.";
-            setEditorStatus(message);
-            std::fprintf(stderr, "Dexter VST3: %s\n", message.c_str());
+        const auto ugenPath = bundledUGenPath();
+        std::error_code pathError;
+        if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError)) {
+            std::fprintf(stderr, "Dexter VST3: bundled SuperCollider UGen directory is missing.\n");
             return false;
         }
         ugenPluginPath_ = ugenModuleSearchPath();
@@ -1607,11 +1575,9 @@ private:
         options.mRealTime = false;
         options.mPreferredSampleRate = sampleRate_;
         options.mBufLength = kSCBlockSize;
-        options.mMaxNodes = static_cast<uint32>(kWorldNodeCapacity);
-        options.mMaxGraphDefs =
-            static_cast<uint32>(kSynthGraphCount + kReverbGraphCount);
-        // Size SuperCollider's node pool from the synth registry and voice
-        // count. Adding a patch no longer hits a hard-coded 2048-node ceiling.
+        options.mMaxNodes = kWorldNodeCapacity;
+        // The preallocated graph bank exceeds SuperCollider's small default
+        // pool once every synth is instantiated for every polyphonic voice.
         options.mRealTimeMemorySize = 65536;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
@@ -1626,13 +1592,14 @@ private:
             std::fprintf(stderr, "Dexter VST3: World_New failed at %.1f Hz.\n", sampleRate_);
             return false;
         }
+        const auto moduleFiles = discoverUGenModuleFiles();
         std::string moduleStatus = "UGen module files found (" + std::to_string(moduleFiles.size()) + "): ";
         for (std::size_t index = 0; index < moduleFiles.size(); ++index) {
             if (index != 0)
                 moduleStatus += ", ";
             moduleStatus += moduleFiles[index];
         }
-        moduleStatus += ". Install/update modules in the sibling Portable/SCPlugins folder; restart the DAW after changes.";
+        moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
         setEditorStatus(std::move(moduleStatus));
         World_SetSampleRate(world_, sampleRate_);
         World_Start(world_);
@@ -1646,11 +1613,19 @@ private:
         }
         GraphDef_Define(world_, defs);
 
+        constexpr std::array<const char*, kSynthGraphCount> synthNames{{
+            "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
+            "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
+            "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
+            "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
+            "DexterTwang", "DexterDonk", "DexterSquish", "DexterCharm",
+            "DexterSpark", "DexterBlip", "DexterScatter", "DexterOrient",
+            "DexterZap", "DexterFuzz", "DexterBug", "DexterRipple"}};
         std::array<GraphDef*, kSynthGraphCount> synthDefinitions{};
-        for (std::size_t index = 0; index < kSynthGraphCount; ++index) {
+        for (std::size_t index = 0; index < synthNames.size(); ++index) {
             int32 synthName[4]{};
-            std::memcpy(synthName, kSynthGraphNames[index],
-                        std::min<std::size_t>(std::strlen(kSynthGraphNames[index]),
+            std::memcpy(synthName, synthNames[index],
+                        std::min<std::size_t>(std::strlen(synthNames[index]),
                                               sizeof(synthName)));
             synthDefinitions[index] = World_GetGraphDef(world_, synthName);
         }
@@ -1661,7 +1636,7 @@ private:
             for (std::size_t index = 0; index < synthDefinitions.size(); ++index) {
                 if (!synthDefinitions[index])
                     std::fprintf(stderr, "Dexter VST3: missing embedded synth definition %s.\n",
-                                 kSynthGraphNames[index]);
+                                 synthNames[index]);
             }
             if (!root)
                 std::fprintf(stderr, "Dexter VST3: root group is unavailable.\n");
@@ -1683,7 +1658,7 @@ private:
                 if (graphError != 0 || !graph) {
                     std::fprintf(stderr,
                                  "Dexter VST3: Graph_New failed for %s (voice %zu, error %d).\n",
-                                 kSynthGraphNames[synthIndex], voiceIndex,
+                                 synthNames[synthIndex], voiceIndex,
                                  static_cast<int>(graphError));
                     discardPartialWorld();
                     return false;
@@ -1692,7 +1667,7 @@ private:
                 Graph_SetControl(graph, 6, static_cast<float>(kReverbBaseBus));
                 Graph_SetControl(graph, 7, 0.0f);
                 Graph_SetControl(graph, 8, 20000.0f);
-                if (synthIndex >= 12 && synthIndex <= 18)
+                if (synthIndex >= 12)
                     Graph_SetControl(graph, 9, 0.0f);
                 if (synthIndex == 1)
                     Graph_SetControl(graph, 2, 8.0f);
@@ -2148,7 +2123,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.43",
+           "0.4.40",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

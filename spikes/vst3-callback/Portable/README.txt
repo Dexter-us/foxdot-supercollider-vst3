@@ -26,10 +26,7 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 
 17-live-player-edits.py demonstrates updating just p1 while p2 continues. Run both assignments once; then edit p1, comment out p2's assignment, and press Run. Unmentioned players keep playing; run p2.stop() alone to stop p2.
 
-The separate UGen-pack download contains a Portable/SCPlugins folder. Extract that Portable folder beside
-the dexter_sc_tone.vst3 bundle, not inside it. Keep it when replacing the VST3 bundle; the editor uses the
-in-bundle Portable folder for scripts, while the engine also checks the sibling Portable/SCPlugins folder
-for UGen modules. See SCPlugins/README.txt for details.
+The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 
 18-ui-mouse-controls.py is a Dexter-specific extension: MouseX() pans a player left/right, while MouseY() sweeps another player's cutoff. These wrappers use SuperCollider's UIUGens module; they are not standard FoxDot player controls.
 
@@ -71,5 +68,4 @@ for UGen modules. See SCPlugins/README.txt for details.
 41-blip-oscillator.py demonstrates FoxDot's LFCub/LFTri/Blip texture; rate controls the Blip harmonic count.
 
 42-self-contained-ugens.py introduces scatter, orient, zap, fuzz, bug, and ripple. These first six additions use standard SuperCollider UGens and require no extra plugin modules.
-43-foxdot-viola.py demonstrates the self-contained FoxDot viola patch with its vib control.
 30-player-mute-controls.py shows p2.mute() and p2.unmute(); the comment markers are at column one so uncommenting a command does not introduce Python indentation.

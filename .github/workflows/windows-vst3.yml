@@ -5,7 +5,6 @@ on:
     paths:
       - "spikes/vst3-callback/**"
       - "tools/build-windows-vst3.ps1"
-      - "tools/invoke-build-windows-vst3-stage.ps1"
       - ".github/workflows/windows-vst3.yml"
   workflow_dispatch:
 
@@ -35,62 +34,29 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\dexter-windows-vst3\supercollider-build
-          key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-build-v1
-          restore-keys: |
-            windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-
-      - name: Restore pinned dependency checkouts
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}\dexter-windows-vst3\deps
-          key: windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-deps-v1
-          restore-keys: |
-            windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-
-      - name: Prepare Python and pinned source checkouts
+          key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
+      - name: Build SuperCollider and the VST3, then validate
         shell: pwsh
         run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage prepare -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Configure SuperCollider
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Compile SuperCollider engine and UGen modules
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Configure the VST3 plugin
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-plugin -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Compile the VST3 plugin
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-plugin -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Package and validate the Windows bundle
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage package -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+          $buildLog = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3-build.log"
+          try {
+            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" *> $buildLog
+            if ($LASTEXITCODE -ne 0) {
+              throw "Build script exited with code $LASTEXITCODE"
+            }
+          }
+          catch {
+            Write-Host "Build failed. Last 160 log lines:"
+            if (Test-Path $buildLog) {
+              Get-Content $buildLog -Tail 160
+            }
+            throw
+          }
 
       - name: Upload Windows VST3 bundle
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: dexter-foxdot-live-vst3-windows-x64
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
-
-      - name: Upload separate Windows UGen pack
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: dexter-supercollider-ugens-windows-x64
-          path: ${{ runner.temp }}/dexter-windows-vst3/ugen-pack
-          if-no-files-found: warn
-          retention-days: 90
