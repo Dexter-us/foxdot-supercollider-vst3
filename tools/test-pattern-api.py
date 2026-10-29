@@ -10,6 +10,8 @@ import tempfile
 if len(sys.argv) != 3:
     raise SystemExit('usage: test-pattern-api.py python_runtime.cpp Portable-directory')
 source = open(sys.argv[1], encoding='utf-8').read()
+processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
+processor_source = open(processor_path, encoding='utf-8').read()
 start_marker = 'static constexpr char api[] = R"PY(' + chr(10)
 end_marker = ')PY";'
 start = source.find(start_marker)
@@ -370,6 +372,41 @@ def test_embedded_synthdef():
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
     assert synthdef_version == 1 and len(graphs) == 28
+    graph_names_match = re.search(
+        r'static constexpr auto kSynthGraphNames = std::array\{(.*?)\};',
+        processor_source, re.S)
+    assert graph_names_match, 'could not find the embedded synth graph registry'
+    registered_graphs = re.findall(r'"(Dexter[^"]+)"', graph_names_match.group(1))
+    assert len(registered_graphs) == len(graphs)
+    assert set(registered_graphs) == set(graphs), \
+        'the C++ graph registry must match the embedded SynthDef bank'
+    synth_names_match = re.search(
+        r'synthIndex\s*=\s*\((.*?)\)\.index\(pattern\.synth\)', api, re.S)
+    assert synth_names_match, 'could not find the Python synth selector'
+    synth_names = ast.literal_eval('(' + synth_names_match.group(1) + ')')
+    assert len(synth_names) == len(registered_graphs) + 3, \
+        'four base waveforms share DexterTone; every other player synth needs one graph'
+    assert 'kSynthGraphCount * kAudioVoiceCount' in processor_source or \
+        'kAudioVoiceCount * kSynthGraphCount' in processor_source
+    assert 'kPlayerCount * kReverbGraphCount + 1' in processor_source
+    assert 'kSynthGraphCount + kReverbGraphCount' in processor_source
+    assert 'kSynthGraphCount + 3> mapping{}' in processor_source
+    assert 'index <= 3 ? 0 : index - 3' in processor_source
+    assert 'kSynthIndexToGraphIndex.back() == kSynthGraphCount - 1' in processor_source
+    assert 'kSynthIndexToGraphIndex.size()' in processor_source
+    graph_selector_match = re.search(
+        r'static Graph\* graphForSynthIndex\(AudioVoice& voice, int synthIndex\)\s*\{(.*?)\n    \}',
+        processor_source, re.S)
+    assert graph_selector_match, 'could not find the synth-to-graph selector'
+    assert 'synthIndex <= 24' not in graph_selector_match.group(1), \
+        'the graph selector must not omit the last six embedded synths'
+    synth_graph_mapping = [
+        0 if index <= 3 else index - 3
+        for index in range(len(registered_graphs) + 3)
+    ]
+    assert len(synth_graph_mapping) == len(synth_names)
+    assert synth_graph_mapping[-6:] == list(range(len(registered_graphs) - 6,
+                                                   len(registered_graphs)))
     assert ('LFSaw', 2, 2) in graphs['DexterDirt']
     assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
     assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
