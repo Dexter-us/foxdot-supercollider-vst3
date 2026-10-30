@@ -321,29 +321,32 @@ def read_synthdef_manifest(data):
     assert data[:4] == b'SCgf'
     offset = 4
     version = read('>i')
+    assert version in (1, 2)
+    count_format = '>i' if version == 2 else '>H'
+    index_format = '>i' if version == 2 else '>h'
     graph_count = read('>H')
     graphs = {}
     for _ in range(graph_count):
         name = read_string()
-        constant_count = read('>H')
+        constant_count = read(count_format)
         offset += constant_count * 4
-        parameter_count = read('>H')
+        parameter_count = read(count_format)
         offset += parameter_count * 4
-        parameter_name_count = read('>H')
+        parameter_name_count = read(count_format)
         for _ in range(parameter_name_count):
             read_string()
-            read('>H')
-        ugen_count = read('>H')
+            read(count_format)
+        ugen_count = read(count_format)
         ugens = []
         for _ in range(ugen_count):
             ugen_name = read_string()
             rate = read('>B')
-            input_count = read('>H')
-            output_count = read('>H')
+            input_count = read(count_format)
+            output_count = read(count_format)
             read('>h')
             for _ in range(input_count):
-                source_index = read('>h')
-                read('>h')
+                source_index = read(index_format)
+                read(index_format)
                 assert source_index >= -1 and (source_index == -1 or source_index < len(ugens)), (
                     'SynthDef UGen input refers to an invalid or forward graph node: ' +
                     name + '/' + ugen_name)
@@ -372,6 +375,15 @@ def test_embedded_synthdef():
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
     assert synthdef_version == 1 and len(graphs) == 28
+    core_header = open(os.path.join(plugin_dir, 'foxdot_synthdefs.h'), encoding='utf-8').read()
+    core_bytes = bytes(int(value, 16) for value in re.findall(r'0x([0-9a-fA-F]{2})', core_header))
+    core_version, core_graphs = read_synthdef_manifest(core_bytes)
+    assert core_version == 2 and len(core_graphs) == 26
+    assert not set(graphs).intersection(core_graphs)
+    for graph, ugens in core_graphs.items():
+        assert any(name == 'EnvGen' for name, _, _ in ugens), graph
+        assert not any(name in ('MdaPiano', 'Decimator', 'PlayBuf') for name, _, _ in ugens), graph
+    graphs.update(core_graphs)
     graph_names_match = re.search(
         r'static constexpr auto kSynthGraphNames = std::array\{(.*?)\};',
         processor_source, re.S)
@@ -626,7 +638,7 @@ parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 30' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 56' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
@@ -713,6 +725,29 @@ assert [int(row[6]) for row in example41Rows] == [24, 22]
 example42Rows = run_example('42-self-contained-ugens.py')
 assert [int(row[6]) for row in example42Rows] == [25, 26, 27, 28, 29, 30]
 assert namespace['bug']([0]).synthRate == 1.0
+core_synth_names = namespace['_NEW_SYNTHS']
+assert len(core_synth_names) == 26
+for number, name in enumerate(core_synth_names, 43):
+    filename = f'{number:02d}-foxdot-{name}.py'
+    rows = run_example(filename)
+    assert len(rows) == 1 and int(rows[0][6]) == number - 12, (filename, rows)
+    # Every name must actually evaluate and reach the wire protocol, not merely
+    # be whitelisted by the static checker.
+    assert namespace[name](0).synth == name
+assert namespace['viola'](0).synthControls[0] == 6.0
+assert namespace['prophet'](0).synthControls[4] == 0.4
+assert namespace['scratch'](0).synthRate == 0.04
+assert namespace['swell'](0).synthRate == 1.0
+assert namespace['razz'](0).synthRate == 0.3
+assert namespace['pads'](0).attackSeconds == 0.1
+assert namespace['viola'](0, vib=8, fmod=0.5, blur=2).synthControls == (8, 0.5, 1, 0.5, 0.5, 0.5, 2)
+for keyword, value in [('vib', float('inf')), ('rq', 0), ('blur', 0), ('lfowidth', 2)]:
+    try:
+        namespace['viola'](0, **{keyword: value})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Invalid synth control accepted: ' + keyword)
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
@@ -728,4 +763,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-42.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-68.')

@@ -1,5 +1,15 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.46 adds one isolated synth test per file, examples 43-68:
+43 viola, 44 nylon, 45 arpy, 46 dab, 47 sawbass, 48 dbass,
+49 prophet, 50 pads, 51 pasha, 52 ambi, 53 sinepad, 54 keys,
+55 klank, 56 feel, 57 glass, 58 soft, 59 quin, 60 space,
+61 scratch, 62 creep, 63 snick, 64 swell, 65 razz, 66 sitar,
+67 star, 68 karp.
+They use original FoxDot core-UGen graphs, not samples or MdaPiano.
+Load one at a time initially; each uses p1, so running the next replaces it.
+The swell() synth is different from the existing swell= player effect.
+
 Open one of the numbered .py files in this folder from the plugin editor to load a starter pattern. You can edit it, run it, and save your own changes or scripts here. The Open and Save As dialogs default to this folder when the VST3 is installed in a writable location.
 
 06-pattern-tools.py demonstrates reverse, rotate, repeat, transpose, and Euclidean rhythm helpers.

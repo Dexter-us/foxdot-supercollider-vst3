@@ -19,7 +19,8 @@ std::size_t reachableSlots(std::size_t capacity) {
 int main() {
     assert(reachableSlots(31) == 2);
     for (const auto requested : {std::size_t(1), std::size_t(31), std::size_t(32),
-                                 std::size_t(33), std::size_t(2048), std::size_t(2049)}) {
+                                 std::size_t(33), std::size_t(57), std::size_t(64),
+                                 std::size_t(2048), std::size_t(2049)}) {
         const auto capacity = scPoolCapacity(requested);
         assert(capacity >= requested);
         assert((capacity & (capacity - 1)) == 0);

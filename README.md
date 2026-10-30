@@ -2,6 +2,12 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+The 0.4.46 test branch adds all 26 remaining original FoxDot core-UGen musical
+patches (53 FoxDot-derived patches in total), with individual Portable examples
+43–68. Samples, audio input and the SC3-plugin MdaPiano remain separate work.
+See `spikes/vst3-callback/foxdot-synths/README.md` for original source attribution,
+build-time graph compilation, and the explicit host/safety adaptations.
+
 ## MVP decisions
 
 - **Manufacturer:** Dexter U.S.

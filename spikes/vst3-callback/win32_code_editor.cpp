@@ -55,13 +55,19 @@ constexpr char kFoxDotApiKeywords[] =
     "Clock Scale Root Player P PGroup var linvar play stop sine triangle saw pulse bass varsaw dirt jbass noise "
     "dub growl soprano crunch lazer rave bell gong marimba pluck twang donk squish "
     "charm spark blip scatter orient zap fuzz bug ripple "
+    "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
+    "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
+    "vib depth lforate lfowidth rq fmod blur "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
     "echo delay mute unmute rate";
 constexpr char kFoxDotCompletions[] =
     "Clock P PGroup Player Root Scale amp cutoff delay dur echo linvar mute oct pan "
     "play p1 p2 p3 p4 p5 p6 p7 p8 pulse reverb resonance room saw sine stop strum "
     "sus triangle unmute var bass varsaw dirt jbass noise dub growl soprano crunch lazer rave "
-    "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple rate";
+    "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple rate "
+    "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
+    "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
+    "vib depth lforate lfowidth rq fmod blur";
 
 std::mutex gScintillaMutex;
 std::size_t gScintillaViewCount = 0;
@@ -437,7 +443,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.45 diagnostic",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.46",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -627,6 +633,18 @@ private:
                 callTip = "bug(notes, dur=1, oct=5, sus=1, rate=1, amp=1, pan=0)\nPulse-width cluster modulated by SinOsc";
             else if (name == "ripple")
                 callTip = "ripple(notes, dur=1, oct=5, sus=1, rate=1, amp=1, pan=0)\nLayered Pulse with slow amplitude motion";
+            else if (name == "viola" || name == "nylon" || name == "arpy" ||
+                     name == "dab" || name == "sawbass" || name == "dbass" ||
+                     name == "prophet" || name == "pads" || name == "pasha" ||
+                     name == "ambi" || name == "sinepad" || name == "keys" ||
+                     name == "klank" || name == "feel" || name == "glass" ||
+                     name == "soft" || name == "quin" || name == "space" ||
+                     name == "scratch" || name == "creep" || name == "snick" ||
+                     name == "swell" || name == "razz" || name == "sitar" ||
+                     name == "star" || name == "karp")
+                callTip = "synth(notes, dur=1, oct=5, sus=1, rate=0, amp=1, pan=0)\n"
+                          "Original FoxDot core-UGen graph; see its Portable example.\n"
+                          "Scalar controls: vib, depth, lforate, lfowidth, rq, fmod, blur";
             else if (name == "var")
                 callTip = "var(values, durations=4)\nCycle values using FoxDot-style beat durations";
             else if (name == "linvar")

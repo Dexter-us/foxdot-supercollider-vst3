@@ -101,7 +101,10 @@ _COMPAT_CALLS = {
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
     'charm', 'spark', 'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
-    'ripple',
+    'ripple', 'viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
+    'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys', 'klank',
+    'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
+    'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
     'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
 }
@@ -109,10 +112,15 @@ _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
                  'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
                  'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
                  'charm', 'spark', 'blip', 'scatter', 'orient', 'zap',
-                 'fuzz', 'bug', 'ripple'}
+                 'fuzz', 'bug', 'ripple', 'viola', 'nylon', 'arpy', 'dab',
+                 'sawbass', 'dbass', 'prophet', 'pads', 'pasha', 'ambi',
+                 'sinepad', 'keys', 'klank', 'feel', 'glass', 'soft', 'quin',
+                 'space', 'scratch', 'creep', 'snick', 'swell', 'razz',
+                 'sitar', 'star', 'karp'}
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
-    'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum'
+    'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum',
+    'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -276,7 +284,7 @@ def _dexter_run_compatibility_check():
             lines.extend('Line ' + str(line) + ': ' + message for line, message in shown)
             if len(diagnostics) > len(shown):
                 lines.append('...and ' + str(len(diagnostics) - len(shown)) + ' more item(s).')
-            lines.append('Supported synth calls: sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, blip, scatter, orient, zap, fuzz, bug, ripple. Samples remain deferred.')
+            lines.append('Supported synth calls: ' + ', '.join(sorted(_COMPAT_WAVES)) + '. Samples remain deferred.')
             report_text = '\n'.join(lines)
     except BaseException as exc:
         report_text = 'Compatibility check could not complete: ' + str(exc)
@@ -297,6 +305,12 @@ std::string makeEvaluationScript(const std::string& sourcePath,
                                 const std::string& resultPath,
                                 const std::string& namespaceName) {
     static constexpr char api[] = R"PY(
+_dexter_synth_controls = {}
+_NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
+               'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
+               'klank', 'feel', 'glass', 'soft', 'quin', 'space',
+               'scratch', 'creep', 'snick', 'swell', 'razz', 'sitar',
+               'star', 'karp')
 def tempo(bpm):
     global _dexter_bpm
     bpm = float(bpm)
@@ -1049,9 +1063,10 @@ class PlayerPattern:
                          'crunch', 'lazer', 'rave', 'bell', 'gong', 'marimba',
                          'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
                          'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
-                         'ripple'):
-            raise ValueError('synth must be one of the embedded sine, triangle, saw, pulse, bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, blip, scatter, orient, zap, fuzz, bug, or ripple voices')
+                         'ripple') + _NEW_SYNTHS:
+            raise ValueError('Unknown embedded synth: ' + str(synth))
         self.synth = synth
+        self.synthControls = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
         if synthRate is None:
             synthRate = 1.0 if synth == 'bug' else 0.0
         try:
@@ -1237,6 +1252,58 @@ fuzz = _make_named_synth('fuzz', 0.0)
 bug = _make_named_synth('bug', 1.0)
 ripple = _make_named_synth('ripple', 0.0)
 
+def _make_core_synth(name):
+    def synth(notes=0, **kwargs):
+        controls = []
+        specifications = (
+            ('vib', 6.0 if name == 'viola' else 0.0, 0.0, 100.0),
+            ('depth', 0.5, 0.0, 10.0), ('lforate', 1.0, 0.0, 100.0),
+            ('lfowidth', 0.5, 0.0, 1.0), ('rq', 0.5 if name != 'prophet' else 0.4, 0.01, 3.0),
+            ('fmod', 0.0, -2000.0, 2000.0), ('blur', 1.0, 0.01, 8.0))
+        for key, default, minimum, maximum in specifications:
+            value = float(kwargs.pop(key, default))
+            if value != value or not minimum <= value <= maximum:
+                raise ValueError(key + ' must be a finite scalar in the supported range')
+            controls.append(value)
+        kwargs.setdefault('rate', 0.04 if name == 'scratch' else
+                          1.0 if name == 'swell' else 0.3 if name == 'razz' else 0.0)
+        if name == 'pads':
+            kwargs.setdefault('atk', 0.1)
+        if name in ('sawbass', 'prophet', 'keys', 'pasha'):
+            kwargs.setdefault('cutoff', {'sawbass': 1000.0, 'prophet': 6000.0,
+                                        'keys': 400.0, 'pasha': 8000.0}[name])
+        pattern = _fox_wave(name, notes, **kwargs)
+        pattern.synthControls = tuple(controls)
+        return pattern
+    return synth
+
+viola = _make_core_synth('viola')
+nylon = _make_core_synth('nylon')
+arpy = _make_core_synth('arpy')
+dab = _make_core_synth('dab')
+sawbass = _make_core_synth('sawbass')
+dbass = _make_core_synth('dbass')
+prophet = _make_core_synth('prophet')
+pads = _make_core_synth('pads')
+pasha = _make_core_synth('pasha')
+ambi = _make_core_synth('ambi')
+sinepad = _make_core_synth('sinepad')
+keys = _make_core_synth('keys')
+klank = _make_core_synth('klank')
+feel = _make_core_synth('feel')
+glass = _make_core_synth('glass')
+soft = _make_core_synth('soft')
+quin = _make_core_synth('quin')
+space = _make_core_synth('space')
+scratch = _make_core_synth('scratch')
+creep = _make_core_synth('creep')
+snick = _make_core_synth('snick')
+swell = _make_core_synth('swell')
+razz = _make_core_synth('razz')
+sitar = _make_core_synth('sitar')
+star = _make_core_synth('star')
+karp = _make_core_synth('karp')
+
 class Player:
     def __init__(self, number):
         self.number = number
@@ -1280,7 +1347,12 @@ class Player:
                       'crunch', 'lazer', 'rave', 'bell', 'gong', 'marimba',
                       'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
                       'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
-                      'ripple').index(pattern.synth)
+                      'ripple', 'viola', 'nylon', 'arpy', 'dab', 'sawbass',
+                      'dbass', 'prophet', 'pads', 'pasha', 'ambi', 'sinepad',
+                      'keys', 'klank', 'feel', 'glass', 'soft', 'quin',
+                      'space', 'scratch', 'creep', 'snick', 'swell',
+                      'razz', 'sitar', 'star', 'karp').index(pattern.synth)
+        _dexter_synth_controls[playerIndex] = pattern.synthControls
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echoBeats,
@@ -1366,6 +1438,8 @@ p8 = Player(8)
              << "            _f.write('F\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, *[control.wire() if control is not None else '-' for control in _controls]))\n"
             << "            _modulation_values = (_player, _bpnoise, _swell, _bpnoise_control.wire() if _bpnoise_control is not None else '-', _swell_control.wire() if _swell_control is not None else '-')\n"
             << "            _f.write('G' + chr(9) + chr(9).join(map(str, _modulation_values)) + chr(10))\n"
+            << "            _synth_controls = _dexter_scope['_dexter_synth_controls'].get(_player, (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))\n"
+            << "            _f.write('S' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _synth_controls)) + chr(10))\n"
             << "            for _e in _events:\n"
             << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\t{}\\n'.format(*_e))\n"
             << "        for _player, _muted in sorted(_mutes.items()):\n"
@@ -1427,7 +1501,7 @@ bool parseResult(const std::filesystem::path& resultPath,
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
             !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
-             update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 30 ||
+              update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 56 ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
              update.synthRate > 10.0 ||
              (update.synthIndex == 5 && update.synthRate > 1.0) ||
@@ -1505,6 +1579,23 @@ bool parseResult(const std::filesystem::path& resultPath,
             update.swell < 0.0 || update.swell > 4.0) {
             error = "Python returned malformed filter-modulation controls.";
             return false;
+        }
+        char synthRecord = 0;
+        int synthPlayer = -1;
+        if (!(input >> synthRecord >> synthPlayer) ||
+            synthRecord != 'S' || synthPlayer != update.playerIndex) {
+            error = "Python returned malformed synth controls.";
+            return false;
+        }
+        constexpr std::array<double, 7> minimum{0, 0, 0, 0, 0.01, -2000, 0.01};
+        constexpr std::array<double, 7> maximum{100, 10, 100, 1, 3, 2000, 8};
+        for (std::size_t index = 0; index < update.synthControls.size(); ++index) {
+            auto& value = update.synthControls[index];
+            if (!(input >> value) || !std::isfinite(value) ||
+                value < minimum[index] || value > maximum[index]) {
+                error = "Python returned an invalid synth control.";
+                return false;
+            }
         }
         seenPlayers[static_cast<std::size_t>(update.playerIndex)] = true;
         update.stopped = stopped != 0;

@@ -1,5 +1,19 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.46 adds all 26 remaining core-UGen FoxDot musical patches in one
+batch: viola, nylon, arpy, dab, sawbass, dbass, prophet, pads, pasha, ambi,
+sinepad, keys, klank, feel, glass, soft, quin, space, scratch, creep, snick,
+swell, razz, sitar, star, and karp. Portable examples 43–68 test each one
+individually. The Python checker, editor highlighting/completion, runtime
+selector, and C++ definition registry cover the entire batch. The synth named
+`swell(...)` is separate from the existing `swell=` effect control.
+
+The checked-in bank is compiled by sclang from vendored, pinned original
+FoxDot `.scd` files, not hand-built oscillator approximations. See
+`foxdot-synths/README.md` for the trigger/routing and safety adaptations.
+Windows builds still use cached SC outputs and do not compile UGens.
+MdaPiano/Decimator, samples, and audio input are not added.
+
 This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 instrument. Its native editor evaluates a small Python pattern API, then passes bounded note events directly to the VST3 audio callback. The plugin renders up to eight independently running players, with up to eight notes per player (64 total), and emits matching MIDI notes on a separate channel per player. It does not launch `scsynth`, open an audio device, or use OSC.
 
 ## What it proves

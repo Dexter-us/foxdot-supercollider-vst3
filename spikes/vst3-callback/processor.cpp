@@ -17,6 +17,7 @@
 #include "SC_Graph.h"
 #include "SC_Lib_Cintf.h"
 #include "tone_synthdef.h"
+#include "foxdot_synthdefs.h"
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
 #include "win32_code_editor.h"
@@ -458,6 +459,7 @@ public:
                         next.lengthBeats = player.lengthBeats;
                         next.synthIndex = player.synthIndex;
                         next.synthRate = static_cast<float>(player.synthRate);
+                        next.synthControls = player.synthControls;
                         next.amplitude = static_cast<float>(player.amplitude);
                         next.pan = static_cast<float>(player.pan);
                         next.cutoffHz = static_cast<float>(player.cutoffHz);
@@ -606,7 +608,14 @@ private:
         "DexterBell", "DexterGong", "DexterMarimba", "DexterPluck",
         "DexterTwang", "DexterDonk", "DexterSquish", "DexterCharm",
         "DexterSpark", "DexterBlip", "DexterScatter", "DexterOrient",
-        "DexterZap", "DexterFuzz", "DexterBug", "DexterRipple"};
+        "DexterZap", "DexterFuzz", "DexterBug", "DexterRipple",
+        "DexterViola", "DexterNylon", "DexterArpy", "DexterDab",
+        "DexterSawbass", "DexterDbass", "DexterProphet", "DexterPads",
+        "DexterPasha", "DexterAmbi", "DexterSinepad", "DexterKeys",
+        "DexterKlank", "DexterFeel", "DexterGlass", "DexterSoft",
+        "DexterQuin", "DexterSpace", "DexterScratch", "DexterCreep",
+        "DexterSnick", "DexterSwell", "DexterRazz", "DexterSitar",
+        "DexterStar", "DexterKarp"};
     static constexpr std::size_t kSynthGraphCount = kSynthGraphNames.size();
     // The first graph handles sine/triangle/saw/square; every later synth
     // index owns one graph. This table grows automatically with the graph bank.
@@ -713,6 +722,7 @@ private:
         double lengthBeats = 1.0;
         int synthIndex = 0;
         float synthRate = 0.0f;
+        std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -1010,6 +1020,8 @@ private:
 
     static bool usesFoxDotNativeEnvelope(int synthIndex, double attackSeconds,
                                          double releaseSeconds) {
+        if (synthIndex >= 31)
+            return true; // These definitions contain retriggerable SC envelopes.
         return (synthIndex == 4 || synthIndex == 5 ||
                 (synthIndex >= 22 && synthIndex <= 24)) &&
                std::abs(attackSeconds - kAttackSeconds) < 1.0e-9 &&
@@ -1017,13 +1029,33 @@ private:
     }
 
     static double foxDotEnvelopeDurationSeconds(int synthIndex,
-                                                double sustainSeconds) {
+                                                double sustainSeconds,
+                                                double attackSeconds = 0.01) {
         switch (synthIndex) {
         case 4: return 0.020 + sustainSeconds; // bass Env.perc(0.02, sus)
         case 5: return sustainSeconds;         // varsaw Env(sus/2, sus/2)
         case 22: return 0.010 + sustainSeconds; // charm Env.perc(0.01, sus, curve=0)
         case 23: return sustainSeconds * 1.5;   // spark Line(..., sus * 1.5)
         case 24: return sustainSeconds * 2.0;   // blip XLine(..., sus * 2)
+        case 32: return 0.000125 + sustainSeconds * 3;
+        case 33: return 0.010 + sustainSeconds * 0.25;
+        case 34: return sustainSeconds * 1.25;
+        case 35: return sustainSeconds + 0.060;
+        case 36: return sustainSeconds + 0.030;
+        case 37: return sustainSeconds * 2 + 0.010;
+        case 38: return sustainSeconds * 1.2 + attackSeconds;
+        case 39: return sustainSeconds * (4.0 / 3.0) + 0.010;
+        case 40: return sustainSeconds * 1.5;
+        case 41: return sustainSeconds + 0.010;
+        case 42: return sustainSeconds * 1.5 + 0.010;
+        case 43: case 44: case 45: return sustainSeconds * 6;
+        case 46: return sustainSeconds * 2;
+        case 47: case 51: case 52: return sustainSeconds + 0.010;
+        case 48: return sustainSeconds * 1.4;
+        case 50: return sustainSeconds + 0.001;
+        case 53: return sustainSeconds + 0.125;
+        case 54: return sustainSeconds * 4;
+        case 55: return sustainSeconds * 3;
         default: return sustainSeconds;
         }
     }
@@ -1045,6 +1077,13 @@ private:
             return 0.0f;
 
         if (voice.foxDotNativeEnvelope) {
+            if (voice.synthIndex >= 31) {
+                // The graph owns its envelope. Retain a 5 ms end safety fade
+                // for upstream step/ramp envelopes and forced voice truncation.
+                const auto remaining = voice.endSample - sample;
+                return std::min(1.0f, static_cast<float>(remaining) /
+                    static_cast<float>(envelopeSamples(0.005)));
+            }
             if (voice.synthIndex == 22) {
                 const auto attack = envelopeSamples(0.010);
                 const auto releaseLength = voice.endSample -
@@ -1125,6 +1164,8 @@ private:
     }
 
     static float foxDotAmplitude(int synthIndex, float amplitude) {
+        if (synthIndex >= 31)
+            return 1.0f; // amp arithmetic is inside the original SC graph.
         if (synthIndex == 4)
             return 0.8f * amplitude * amplitude;
         if (synthIndex == 5 || synthIndex == 22)
@@ -1430,8 +1471,15 @@ private:
                         pattern.synthIndex, event.attackSeconds, event.releaseSeconds);
                     const double sustainSeconds =
                         event.durationBeats * 60.0 / pattern.bpm;
+                    // File-based upstream patches except sinepad do not apply blur.
+                    const bool appliesBlur = pattern.synthIndex >= 31 &&
+                        !(pattern.synthIndex >= 35 && pattern.synthIndex <= 40) &&
+                        pattern.synthIndex != 42 && pattern.synthIndex != 48;
+                    const double envelopeSustain = sustainSeconds *
+                        (appliesBlur ? pattern.synthControls[6] : 1.0);
                     const double sourceEnvelopeSeconds = foxDotNativeEnvelope
-                        ? foxDotEnvelopeDurationSeconds(pattern.synthIndex, sustainSeconds)
+                        ? foxDotEnvelopeDurationSeconds(pattern.synthIndex, envelopeSustain,
+                                                        event.attackSeconds)
                         : sustainSeconds;
                     const double absoluteEndBeat = absoluteStartBeat +
                         sourceEnvelopeSeconds * pattern.bpm / 60.0;
@@ -1528,7 +1576,7 @@ private:
                 found->swellState = {};
                 const double maxCutoff = sampleRate_ * 0.45;
                 const double clampedCutoff = std::min<double>(note.cutoffHz, maxCutoff);
-                found->filterCoefficient = clampedCutoff >= maxCutoff
+                found->filterCoefficient = note.synthIndex >= 31 || clampedCutoff >= maxCutoff
                     ? 1.0f
                     : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
                 found->frequencyHz = safeSynthFrequency(note.synthIndex,
@@ -1540,6 +1588,30 @@ private:
                 found->releasing = false;
                 found->reverbTail = false;
                 auto* selectedSynth = graphForSynthIndex(*found, note.synthIndex);
+                if (note.synthIndex >= 31) {
+                    // Original FoxDot starts a fresh SC node for each note.
+                    // Reusing oscillator state is observably wrong for e.g.
+                    // pads (zero-Hz Pulse state), and impulse-driven patches.
+                    // Graph_New/Node_End use SC's bounded RT memory pool.
+                    const auto graphIndex = kSynthIndexToGraphIndex[
+                        static_cast<std::size_t>(note.synthIndex)];
+                    if (selectedSynth) {
+                        if (found->activeSynth == selectedSynth)
+                            found->activeSynth = nullptr;
+                        Node_SetRun(&selectedSynth->mNode, 0);
+                        Node_End(&selectedSynth->mNode);
+                        found->synthGraphs[graphIndex] = nullptr;
+                    }
+                    std::string graphError;
+                    selectedSynth = createSynthGraph(
+                        static_cast<std::size_t>(std::distance(audioVoices_.begin(), found)),
+                        graphIndex, graphError);
+                    if (!selectedSynth) {
+                        found->midiNote = -1;
+                        found->velocity = 0;
+                        continue;
+                    }
+                }
                 if (found->activeSynth && found->activeSynth != selectedSynth)
                     Node_SetRun(&found->activeSynth->mNode, 0);
                 found->activeSynth = selectedSynth;
@@ -1573,6 +1645,23 @@ private:
                             Graph_SetControl(found->activeSynth, 3,
                                 static_cast<float>(static_cast<double>(sustainSamples) /
                                                    sampleRate_));
+                            Graph_SetControl(found->activeSynth, 9, 1.0f);
+                            found->triggerControlPendingReset = true;
+                        }
+                        if (note.synthIndex >= 31) {
+                            Graph_SetControl(found->activeSynth, 3,
+                                static_cast<float>(static_cast<double>(
+                                    note.sustainEndSample - note.startSample) / sampleRate_));
+                            const auto& state = activePatterns_[static_cast<std::size_t>(note.playerIndex)];
+                            for (std::size_t control = 0; control < state.synthControls.size(); ++control)
+                                Graph_SetControl(found->activeSynth, static_cast<int>(11 + control),
+                                                static_cast<float>(state.synthControls[control]));
+                            Graph_SetControl(found->activeSynth, 10, note.amplitude);
+                            Graph_SetControl(found->activeSynth, 18, note.cutoffHz);
+                            Graph_SetControl(found->activeSynth, 19, static_cast<float>(note.attackSeconds));
+                            Graph_SetControl(found->activeSynth, 20, static_cast<float>(note.releaseSeconds));
+                            Graph_SetControl(found->activeSynth, 21,
+                                static_cast<float>(60.0 / state.bpm));
                             Graph_SetControl(found->activeSynth, 9, 1.0f);
                             found->triggerControlPendingReset = true;
                         }
@@ -1794,6 +1883,14 @@ private:
             return false;
         }
         GraphDef_Define(world_, defs);
+        auto* coreDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kFoxDotSynthDefs),
+                                      sizeof(kFoxDotSynthDefs), nullptr);
+        if (!coreDefs) {
+            std::fprintf(stderr, "Dexter VST3: rejected the additional FoxDot synth bank.\n");
+            discardPartialWorld();
+            return false;
+        }
+        GraphDef_Define(world_, coreDefs);
 
         for (std::size_t index = 0; index < kSynthGraphNames.size(); ++index) {
             int32 synthName[4]{};
@@ -1902,6 +1999,16 @@ private:
                 continue;
             const auto player = static_cast<std::size_t>(voice.playerIndex);
             const auto& pattern = activePatterns_[player];
+            if (voice.synthIndex >= 31) {
+                const auto start = patternStartSamples_[player];
+                const double beat = blockStart >= start
+                    ? static_cast<double>(blockStart - start) * pattern.bpm /
+                          (60.0 * sampleRate_) : 0.0;
+                Graph_SetControl(voice.activeSynth, 10,
+                    evaluateTimeVar(pattern.ampControl, beat, pattern.amplitude));
+                Graph_SetControl(voice.activeSynth, 18,
+                    evaluateTimeVar(pattern.cutoffControl, beat, pattern.cutoffHz));
+            }
             const float level = reverbEnabled(pattern)
                 ? voiceEnvelopeAt(voice, blockStart) *
                       (static_cast<float>(voice.velocity) / 127.0f) * voice.amplitude
@@ -1947,7 +2054,7 @@ private:
                     ? static_cast<double>(absoluteSample - patternStart) * livePattern.bpm /
                           (60.0 * sampleRate_)
                     : 0.0;
-                if (livePattern.ampControl.active) {
+                if (livePattern.ampControl.active && voice.synthIndex < 31) {
                     const float patternAmp = evaluateTimeVar(livePattern.ampControl, beat,
                                                              livePattern.amplitude);
                     const float targetAmp = foxDotAmplitude(voice.synthIndex, patternAmp);
@@ -1997,7 +2104,12 @@ private:
                         ? 1.0f
                         : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
                 }
-                voice.filterState += voice.filterCoefficient * (source - voice.filterState);
+                // New source graphs own cutoff filtering; do not apply a
+                // second plugin-only low-pass at the same cutoff.
+                if (voice.synthIndex >= 31)
+                    voice.filterState = source;
+                else
+                    voice.filterState += voice.filterCoefficient * (source - voice.filterState);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
                 auto updateFilterControl = [&](float& current, const TimeVarControl& control, float fallback) {
                     if (!control.active) return;
@@ -2276,7 +2388,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-            "0.4.45",
+            "0.4.46",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
