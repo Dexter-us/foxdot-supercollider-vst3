@@ -26,6 +26,7 @@
 #include <atomic>
 #include <cmath>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -264,6 +265,14 @@ public:
             if (output.channelBuffers32[channel])
                 std::fill_n(output.channelBuffers32[channel], data.numSamples, 0.0f);
         }
+        // Graphs are built on the script worker, never on the realtime thread.
+        // If graph preparation briefly owns the world, output silence for this
+        // block rather than blocking the host's audio callback.
+        std::unique_lock<std::mutex> worldLock(worldAccessMutex_, std::try_to_lock);
+        if (!worldLock.owns_lock()) {
+            output.silenceFlags = 1;
+            return kResultOk;
+        }
         if (!world_)
             return kResultFalse;
 
@@ -489,6 +498,16 @@ public:
                         totalNotes += player.events.size();
                         updateMask |= static_cast<std::uint8_t>(1u << player.playerIndex);
                     }
+                    if (updateMask != 0) {
+                        std::string graphError;
+                        if (!prepareSynthGraphs(updates, updateMask, graphError)) {
+                            setEditorStatus(graphError.empty()
+                                                ? "Could not prepare the selected synth graphs."
+                                                : graphError);
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
+                    }
                     {
                         std::lock_guard<std::mutex> lock(patternMutex_);
                         for (std::size_t player = 0; player < kPlayerCount; ++player) {
@@ -567,7 +586,10 @@ private:
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
-    static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
+    static constexpr std::size_t kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1;
+    static constexpr std::size_t kAudioVoiceCount =
+        kPlayerCount * kVoiceSlotsPerPlayer;
+    static constexpr std::size_t kMaxCachedSynthGraphsPerVoice = 2;
     static constexpr auto kSynthGraphNames = std::array{
         "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
         "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
@@ -590,10 +612,10 @@ private:
                   "Every Python synth index must resolve to a registered graph.");
     static constexpr std::size_t kReverbGraphCount = 3;
     static constexpr std::size_t kCalculatedWorldNodeCapacity =
-        kAudioVoiceCount * kSynthGraphCount +
+        kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice +
         kPlayerCount * kReverbGraphCount + 1;
-    // Keep the known-good headroom from the previous 2048-node pool while
-    // allowing the pool to grow automatically as more synth graphs are added.
+    // Preserve the known-good headroom; graph definitions are registered
+    // independently, while active voice graphs are created lazily and cached.
     static constexpr std::size_t kWorldNodeCapacity =
         kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity;
     static constexpr std::size_t kWorldGraphDefCapacity =
@@ -602,7 +624,7 @@ private:
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
     static constexpr int kReverbBaseBus = kFirstAudioBus + static_cast<int>(kAudioVoiceCount) * kAudioBusStride;
-    static constexpr int kNumAudioBusChannels = 256;
+    static constexpr int kNumAudioBusChannels = 512;
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kReverbSendReleaseSeconds = 0.015;
@@ -1162,6 +1184,99 @@ private:
             : nullptr;
     }
 
+    Graph* createSynthGraph(std::size_t voiceIndex, std::size_t graphIndex,
+                            std::string& error) {
+        if (!world_ || !rootGroup_ || graphIndex >= synthDefinitions_.size() ||
+            !synthDefinitions_[graphIndex]) {
+            error = "The SuperCollider world or selected synth definition is not ready.";
+            return nullptr;
+        }
+        if (voiceIndex >= audioVoices_.size()) {
+            error = "The selected synth voice is outside the supported range.";
+            return nullptr;
+        }
+
+        auto& voice = audioVoices_[voiceIndex];
+        auto*& graph = voice.synthGraphs[graphIndex];
+        if (graph)
+            return graph;
+
+        const auto cachedCount = static_cast<std::size_t>(std::count_if(
+            voice.synthGraphs.begin(), voice.synthGraphs.end(),
+            [](const Graph* cached) { return cached != nullptr; }));
+        if (cachedCount >= kMaxCachedSynthGraphsPerVoice) {
+            const auto evict = std::find_if(
+                voice.synthGraphs.begin(), voice.synthGraphs.end(),
+                [&](Graph* cached) { return cached && cached != voice.activeSynth; });
+            if (evict == voice.synthGraphs.end()) {
+                error = "No inactive synth graph is available for replacement.";
+                return nullptr;
+            }
+            Node_SetRun(&(*evict)->mNode, 0);
+            Node_End(&(*evict)->mNode);
+            *evict = nullptr;
+        }
+
+        sc_msg_iter noControls(0, "");
+        Graph* created = nullptr;
+        const auto graphError =
+            Graph_New(world_, synthDefinitions_[graphIndex], nextDynamicGraphNodeId_++,
+                      &noControls, &created, true);
+        if (graphError != 0 || !created) {
+            error = "SuperCollider could not create synth graph " +
+                    std::string(kSynthGraphNames[graphIndex]) + " (error " +
+                    std::to_string(static_cast<int>(graphError)) + ").";
+            return nullptr;
+        }
+
+        const auto outputBus = kFirstAudioBus +
+                               kAudioBusStride * static_cast<int>(voiceIndex);
+        Graph_SetControl(created, 0, static_cast<float>(outputBus));
+        Graph_SetControl(created, 6, static_cast<float>(kReverbBaseBus));
+        Graph_SetControl(created, 7, 0.0f);
+        Graph_SetControl(created, 8, 20000.0f);
+        if (graphIndex >= 12)
+            Graph_SetControl(created, 9, 0.0f);
+        if (graphIndex == 1)
+            Graph_SetControl(created, 2, 8.0f);
+        else if (graphIndex == 2)
+            Graph_SetControl(created, 2, 0.0f);
+        Group_AddTail(rootGroup_, &created->mNode);
+        Node_SetRun(&created->mNode, 0);
+        graph = created;
+        return created;
+    }
+
+    bool prepareSynthGraphs(
+        const std::array<PatternState, kPlayerCount>& updates,
+        std::uint8_t updateMask, std::string& error) {
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        if (!world_) {
+            error = "SuperCollider is not ready yet; start playback, then run the script again.";
+            return false;
+        }
+
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            if ((updateMask & static_cast<std::uint8_t>(1u << player)) == 0 ||
+                !updates[player].active)
+                continue;
+            const auto synthIndex = updates[player].synthIndex;
+            if (synthIndex < 0 ||
+                static_cast<std::size_t>(synthIndex) >= kSynthIndexToGraphIndex.size()) {
+                error = "The selected synth index is outside the registered synth bank.";
+                return false;
+            }
+            const auto firstVoice = player * kVoiceSlotsPerPlayer;
+            const auto graphIndex =
+                kSynthIndexToGraphIndex[static_cast<std::size_t>(synthIndex)];
+            for (std::size_t offset = 0; offset < kVoiceSlotsPerPlayer; ++offset) {
+                if (!createSynthGraph(firstVoice + offset, graphIndex, error))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     void stopAudioVoices(int playerIndex = -1) {
         const auto now = sampleClock_ +
                          static_cast<std::uint64_t>(kSCBlockSize - cursor_);
@@ -1342,18 +1457,24 @@ private:
 
         for (std::size_t i = 0; i < desiredCount; ++i) {
             const auto& note = desired[i];
-            auto found = std::find_if(audioVoices_.begin(), audioVoices_.end(),
+            const auto playerStart =
+                static_cast<std::size_t>(note.playerIndex) * kVoiceSlotsPerPlayer;
+            auto voiceBegin = audioVoices_.begin() +
+                              static_cast<std::ptrdiff_t>(playerStart);
+            auto voiceEnd = voiceBegin +
+                            static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer);
+            auto found = std::find_if(voiceBegin, voiceEnd,
                                       [&](const AudioVoice& voice) {
                                           return voice.playerIndex == note.playerIndex &&
                                                  voice.midiNote == note.midiNote &&
                                                  voice.startSample == note.startSample;
                                       });
-            if (found == audioVoices_.end()) {
-                found = std::find_if(audioVoices_.begin(), audioVoices_.end(),
+            if (found == voiceEnd) {
+                found = std::find_if(voiceBegin, voiceEnd,
                                      [](const AudioVoice& voice) {
                                          return voice.midiNote < 0 && !voice.releasing;
                                      });
-                if (found == audioVoices_.end())
+                if (found == voiceEnd)
                     continue;
                 found->playerIndex = note.playerIndex;
                 found->midiNote = note.midiNote;
@@ -1590,6 +1711,7 @@ private:
     }
 
     bool initializeWorld() {
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
         std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
         const auto ugenPath = bundledUGenPath();
         std::error_code pathError;
@@ -1649,62 +1771,26 @@ private:
         }
         GraphDef_Define(world_, defs);
 
-        std::array<GraphDef*, kSynthGraphCount> synthDefinitions{};
         for (std::size_t index = 0; index < kSynthGraphNames.size(); ++index) {
             int32 synthName[4]{};
             std::memcpy(synthName, kSynthGraphNames[index],
                         std::min<std::size_t>(std::strlen(kSynthGraphNames[index]),
                                               sizeof(synthName)));
-            synthDefinitions[index] = World_GetGraphDef(world_, synthName);
+            synthDefinitions_[index] = World_GetGraphDef(world_, synthName);
         }
-        auto* root = World_GetGroup(world_, 0);
-        if (std::any_of(synthDefinitions.begin(), synthDefinitions.end(),
+        rootGroup_ = World_GetGroup(world_, 0);
+        if (std::any_of(synthDefinitions_.begin(), synthDefinitions_.end(),
                         [](const auto* definition) { return definition == nullptr; }) ||
-            !root) {
-            for (std::size_t index = 0; index < synthDefinitions.size(); ++index) {
-                if (!synthDefinitions[index])
+            !rootGroup_) {
+            for (std::size_t index = 0; index < synthDefinitions_.size(); ++index) {
+                if (!synthDefinitions_[index])
                     std::fprintf(stderr, "Dexter VST3: missing embedded synth definition %s.\n",
                                  kSynthGraphNames[index]);
             }
-            if (!root)
+            if (!rootGroup_)
                 std::fprintf(stderr, "Dexter VST3: root group is unavailable.\n");
             discardPartialWorld();
             return false;
-        }
-        int32 nodeId = 100;
-        std::size_t voiceIndex = 0;
-        for (auto& voice : audioVoices_) {
-            const auto outputBus = kFirstAudioBus +
-                                   kAudioBusStride * static_cast<int>(voiceIndex);
-            for (std::size_t synthIndex = 0;
-                 synthIndex < synthDefinitions.size(); ++synthIndex) {
-                sc_msg_iter noControls(0, "");
-                auto*& graph = voice.synthGraphs[synthIndex];
-                const auto graphError =
-                    Graph_New(world_, synthDefinitions[synthIndex], nodeId++,
-                              &noControls, &graph, true);
-                if (graphError != 0 || !graph) {
-                    std::fprintf(stderr,
-                                 "Dexter VST3: Graph_New failed for %s (voice %zu, error %d).\n",
-                                 kSynthGraphNames[synthIndex], voiceIndex,
-                                 static_cast<int>(graphError));
-                    discardPartialWorld();
-                    return false;
-                }
-                Graph_SetControl(graph, 0, static_cast<float>(outputBus));
-                Graph_SetControl(graph, 6, static_cast<float>(kReverbBaseBus));
-                Graph_SetControl(graph, 7, 0.0f);
-                Graph_SetControl(graph, 8, 20000.0f);
-                if (synthIndex >= 12)
-                    Graph_SetControl(graph, 9, 0.0f);
-                if (synthIndex == 1)
-                    Graph_SetControl(graph, 2, 8.0f);
-                else if (synthIndex == 2)
-                    Graph_SetControl(graph, 2, 0.0f);
-                Group_AddTail(root, &graph->mNode);
-                Node_SetRun(&graph->mNode, 0);
-            }
-            ++voiceIndex;
         }
         auto* reverbDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kReverbSynthDef),
                                          sizeof(kReverbSynthDef), nullptr);
@@ -1716,9 +1802,7 @@ private:
         GraphDef_Define(world_, reverbDefs);
         const std::array<const char*, kReverbGraphCount> reverbNames{{
             "DexRevFree", "DexRevFree2", "DexRevGverb"}};
-        // Continue the synth-node ID sequence. Starting reverb IDs at 1000
-        // collides with the preallocated synth graphs (IDs 100–1467).
-        int32 reverbNodeId = nodeId;
+        int32 reverbNodeId = 100;
         for (std::size_t type = 0; type < reverbNames.size(); ++type) {
             int32 reverbName[4]{};
             std::memcpy(reverbName, reverbNames[type], std::strlen(reverbNames[type]));
@@ -1759,6 +1843,9 @@ private:
                 Node_SetRun(&graph->mNode, 0);
             }
         }
+        // Synth voice graphs are created lazily by the script worker. IDs
+        // follow the small startup reverb bank and are unique within the world.
+        nextDynamicGraphNodeId_ = reverbNodeId;
         cursor_ = kSCBlockSize;
         return true;
     }
@@ -1772,6 +1859,9 @@ private:
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
+        synthDefinitions_.fill(nullptr);
+        rootGroup_ = nullptr;
+        nextDynamicGraphNodeId_ = 100;
     }
 
     static std::size_t echoOffset(std::size_t player, std::size_t channel,
@@ -2065,6 +2155,7 @@ private:
     // UGen registration is process-global in this SC revision. Keep modules loaded
     // while any VST instance exists; the VST module terminator unloads them once.
     void stopWorld() {
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
         if (world_) {
             std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
             World_Cleanup(world_, false);
@@ -2074,6 +2165,9 @@ private:
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
+        synthDefinitions_.fill(nullptr);
+        rootGroup_ = nullptr;
+        nextDynamicGraphNodeId_ = 100;
         cursor_ = kSCBlockSize;
         for (auto& channel : outputBlock_)
             channel.fill(0.0f);
@@ -2096,7 +2190,11 @@ private:
 
     std::string scriptNamespace_;
     double sampleRate_ = 48000.0;
+    std::mutex worldAccessMutex_;
     World* world_ = nullptr;
+    Group* rootGroup_ = nullptr;
+    std::array<GraphDef*, kSynthGraphCount> synthDefinitions_{};
+    int32 nextDynamicGraphNodeId_ = 100;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
     std::string ugenPluginPath_;
@@ -2151,7 +2249,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-            "0.4.42",
+            "0.4.43",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

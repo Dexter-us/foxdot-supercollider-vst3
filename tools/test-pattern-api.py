@@ -386,11 +386,23 @@ def test_embedded_synthdef():
     synth_names = ast.literal_eval('(' + synth_names_match.group(1) + ')')
     assert len(synth_names) == len(registered_graphs) + 3, \
         'four base waveforms share DexterTone; every other player synth needs one graph'
-    assert 'kSynthGraphCount * kAudioVoiceCount' in processor_source or \
-        'kAudioVoiceCount * kSynthGraphCount' in processor_source
+    assert 'kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1' in processor_source
+    assert 'kPlayerCount * kVoiceSlotsPerPlayer' in processor_source
+    assert 'kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice' in processor_source
     assert 'kPlayerCount * kReverbGraphCount + 1' in processor_source
     assert 'kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity' in processor_source
     assert 'static_assert(kWorldNodeCapacity >= 2048' in processor_source
+    assert 'prepareSynthGraphs(updates, updateMask, graphError)' in processor_source
+    assert 'Graph_New(world_, synthDefinitions_[graphIndex]' in processor_source
+    assert 'worldAccessMutex_, std::try_to_lock' in processor_source
+    init_block = re.search(
+        r'bool initializeWorld\(\)\s*\{(.*?)\n    void discardPartialWorld',
+        processor_source, re.S)
+    assert init_block, 'could not find the embedded engine initialization routine'
+    assert 'Graph_New(world_, synthDefinitions_' not in init_block.group(1), \
+        'synth voice graphs must not all be constructed during plugin startup'
+    assert 'static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer)' in processor_source, \
+        'voice allocation must stay within the owning player partition'
     assert 'kSynthGraphCount + kReverbGraphCount' in processor_source
     assert 'kSynthGraphCount + 3> mapping{}' in processor_source
     assert 'index <= 3 ? 0 : index - 3' in processor_source
