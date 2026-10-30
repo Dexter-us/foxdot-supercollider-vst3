@@ -8,6 +8,9 @@ Version 0.4.46 adds one isolated synth test per file, examples 43-68:
 67 star, 68 karp.
 They use original FoxDot core-UGen graphs, not samples or MdaPiano.
 Load one at a time initially; each uses p1, so running the next replaces it.
+Updated examples 43-68 explicitly stop p2-p8 before starting p1. Without that,
+players from an earlier multi-player demo can keep sounding underneath the
+new test. These are deliberately sparse four-note checks, not finished tunes.
 The swell() synth is different from the existing swell= player effect.
 
 Open one of the numbered .py files in this folder from the plugin editor to load a starter pattern. You can edit it, run it, and save your own changes or scripts here. The Open and Save As dialogs default to this folder when the VST3 is installed in a writable location.

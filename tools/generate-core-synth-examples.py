@@ -34,6 +34,15 @@ Clock.bpm = 90
 Scale.default = Scale.minor
 Root.default.set("C")
 
+# Make this a solo test even after a multi-player example.
+p2.stop()
+p3.stop()
+p4.stop()
+p5.stop()
+p6.stop()
+p7.stop()
+p8.stop()
+
 p1 >> {name}(P[0, 2, 4, 7], dur=4, sus=0.5, oct={octave},
              amp={amplitude}, reverb="none"{extras})
 

@@ -730,7 +730,10 @@ assert len(core_synth_names) == 26
 for number, name in enumerate(core_synth_names, 43):
     filename = f'{number:02d}-foxdot-{name}.py'
     rows = run_example(filename)
-    assert len(rows) == 1 and int(rows[0][6]) == number - 12, (filename, rows)
+    active_rows = [row for row in rows if row[2] == '0']
+    stopped_players = {int(row[1]) for row in rows if row[2] == '1'}
+    assert len(active_rows) == 1 and int(active_rows[0][6]) == number - 12, (filename, rows)
+    assert stopped_players == set(range(1, 8)), (filename, stopped_players)
     # Every name must actually evaluate and reach the wire protocol, not merely
     # be whitelisted by the static checker.
     assert namespace[name](0).synth == name
