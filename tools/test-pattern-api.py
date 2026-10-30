@@ -374,6 +374,12 @@ def read_synthdef_manifest(data):
 def test_embedded_synthdef():
     plugin_dir = os.path.dirname(os.path.abspath(sys.argv[1]))
     repo_root = os.path.abspath(os.path.join(plugin_dir, '..', '..'))
+    cmake_text = open(os.path.join(plugin_dir, 'CMakeLists.txt'), encoding='utf-8').read()
+    version = re.search(r'project\([^\n]*\bVERSION\s+([0-9.]+)', cmake_text).group(1)
+    factory_text = processor_source.split('BEGIN_FACTORY_DEF', 1)[1]
+    assert '"' + version + '"' in factory_text, 'VST factory version differs from CMake/moduleinfo'
+    editor_text = open(os.path.join(plugin_dir, 'win32_code_editor.cpp'), encoding='utf-8').read()
+    assert 'v' + version + '"' in editor_text, 'editor version differs from VST factory/moduleinfo'
     generator = os.path.join(repo_root, 'spikes', 'direct-world', 'testdata', 'generate_tone.py')
     header = os.path.join(plugin_dir, 'tone_synthdef.h')
     with tempfile.TemporaryDirectory() as directory:
