@@ -57,7 +57,7 @@ constexpr char kFoxDotApiKeywords[] =
     "charm spark blip scatter orient zap fuzz bug ripple "
     "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
-    "vib depth lforate lfowidth rq fmod blur "
+    "vib depth lforate lfowidth rq fmod blur sample "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
     "echo delay mute unmute rate";
 constexpr char kFoxDotCompletions[] =
@@ -67,7 +67,7 @@ constexpr char kFoxDotCompletions[] =
     "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple rate "
     "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
-    "vib depth lforate lfowidth rq fmod blur";
+    "vib depth lforate lfowidth rq fmod blur sample";
 
 std::mutex gScintillaMutex;
 std::size_t gScintillaViewCount = 0;
@@ -443,7 +443,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.47",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.48",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -652,7 +652,9 @@ private:
             else if (name == "PGroup")
                 callTip = "PGroup(*notes)\nGroup notes for chord and pattern operations";
             else if (name == "play")
-                callTip = "play(notes, step=1, duration=0.45, velocity=100, strum=0)";
+                callTip = "play(\"x-o-\", dur=0.5, sample=0, rate=1, amp=1, pan=0)\n"
+                          "Portable WAVs; - is a hat, spaces are rests; negative rate reverses.\n"
+                          "Legacy: play(notes, step=1, duration=0.45, velocity=100, strum=0)";
             else if (name == "set")
                 callTip = "set(value)\nSet the default root or scale";
             if (callTip)

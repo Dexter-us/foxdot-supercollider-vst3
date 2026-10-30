@@ -11,13 +11,15 @@
 
 #include "SC_WorldOptions.h"
 #include "SC_Prototypes.h"
-#include "SC_HiddenWorld.h"
+#include "SC_World.h"
 #include "SC_GraphDef.h"
 #include "SC_Group.h"
 #include "SC_Graph.h"
 #include "SC_Lib_Cintf.h"
 #include "tone_synthdef.h"
 #include "foxdot_synthdefs.h"
+#include "sample_synthdef.h"
+#include "portable_samples.h"
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
 #include "win32_code_editor.h"
@@ -34,6 +36,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <sstream>
@@ -510,6 +513,11 @@ public:
                     }
                     if (updateMask != 0) {
                         std::string graphError;
+                        if (!prepareSampleBuffers(updates, updateMask, graphError)) {
+                            setEditorStatus(graphError);
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
                         if (!prepareSynthGraphs(updates, updateMask, graphError)) {
                             setEditorStatus(graphError.empty()
                                                 ? "Could not prepare the selected synth graphs."
@@ -519,6 +527,17 @@ public:
                         }
                     }
                     {
+                        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+                        if (scriptGeneration_.load(std::memory_order_acquire) != generation) {
+                            setEditorStatus("Evaluation cancelled.");
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
+                        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                            if ((updateMask & (1u << player)) && updates[player].sampleWorld != 0 &&
+                                updates[player].sampleWorld != sampleWorldGeneration_)
+                                throw std::runtime_error("The audio engine restarted while loading samples. Press Run to retry.");
+                        }
                         std::lock_guard<std::mutex> lock(patternMutex_);
                         for (std::size_t player = 0; player < kPlayerCount; ++player) {
                             if (updateMask & static_cast<std::uint8_t>(1u << player))
@@ -614,7 +633,7 @@ private:
         "DexterKlank", "DexterFeel", "DexterGlass", "DexterSoft",
         "DexterQuin", "DexterSpace", "DexterScratch", "DexterCreep",
         "DexterSnick", "DexterSwell", "DexterRazz", "DexterSitar",
-        "DexterStar", "DexterKarp"};
+        "DexterStar", "DexterKarp", "DexterSample"};
     static constexpr std::size_t kSynthGraphCount = kSynthGraphNames.size();
     // The first graph handles sine/triangle/saw/square; every later synth
     // index owns one graph. This table grows automatically with the graph bank.
@@ -717,6 +736,7 @@ private:
     struct PatternState {
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
         std::size_t eventCount = 0;
+        std::uint64_t sampleWorld = 0;
         double bpm = 120.0;
         double lengthBeats = 1.0;
         int synthIndex = 0;
@@ -869,6 +889,7 @@ private:
         std::uint64_t endSample = 0;
         std::uint64_t sustainEndSample = 0;
         bool foxDotNativeEnvelope = false;
+        int sampleBuffer = -1;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -1019,6 +1040,8 @@ private:
 
     static bool usesFoxDotNativeEnvelope(int synthIndex, double attackSeconds,
                                          double releaseSeconds) {
+        if (synthIndex == 57)
+            return false; // Native PlayBuf one-shots use the host's edge fades.
         if (synthIndex >= 31)
             return true; // These definitions contain retriggerable SC envelopes.
         return (synthIndex == 4 || synthIndex == 5 ||
@@ -1304,6 +1327,118 @@ private:
         return created;
     }
 
+    struct CachedSample {
+        std::filesystem::path path;
+        PortableSamples::Wave wave;
+        int buffer = -1;
+    };
+
+    bool prepareSampleBuffers(std::array<PatternState, kPlayerCount>& updates,
+                              std::uint8_t updateMask, std::string& error) {
+        bool needed = false;
+        for (std::size_t player = 0; player < kPlayerCount; ++player)
+            needed |= (updateMask & (1u << player)) && updates[player].active &&
+                      updates[player].synthIndex == 57 && updates[player].eventCount != 0;
+        if (!needed) return true;
+        if (!initializeWorld()) {
+            std::lock_guard<std::mutex> lock(worldAccessMutex_);
+            error = worldInitializationError_; return false;
+        }
+        std::uint64_t generation;
+        {
+            std::lock_guard<std::mutex> lock(worldAccessMutex_);
+            generation = sampleWorldGeneration_;
+        }
+        const auto root = pluginBinaryPath().parent_path().parent_path().parent_path() /
+                          "Portable" / "Samples";
+        setEditorStatus("Loading portable WAV samples...");
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            auto& update = updates[player];
+            if (!(updateMask & (1u << player)) || !update.active || update.synthIndex != 57)
+                continue;
+            update.sampleWorld = generation;
+            for (std::size_t index = 0; index < update.eventCount; ++index) {
+                auto& event = update.events[index];
+                std::filesystem::path path;
+                if (!PortableSamples::resolveWave(root, event.sampleSymbol, event.sampleIndex, path, error))
+                    return false;
+                auto lookup = [&]() -> CachedSample* {
+                    for (const auto& cached : sampleCache_)
+                        if (cached->path == path) return cached.get();
+                    return nullptr;
+                };
+                auto ready = [&]() {
+                    if (world_ && generation == sampleWorldGeneration_) return true;
+                    error = "The audio engine restarted while loading samples. Press Run to retry.";
+                    return false;
+                };
+                std::size_t decodeBudget = 0;
+                {
+                    std::lock_guard<std::mutex> lock(worldAccessMutex_);
+                    if (!ready()) return false;
+                    if (const auto* cached = lookup()) {
+                        event.sampleBuffer = cached->buffer;
+                        event.sampleDurationSeconds = cached->wave.frames / cached->wave.sampleRate;
+                        continue;
+                    }
+                    decodeBudget = PortableSamples::kCacheBudgetBytes - sampleCacheBytes_;
+                    if (decodeBudget < 16) {
+                        error = "The 128 MiB decoded sample cache is full. Use shorter WAVs or reopen the plugin.";
+                        return false;
+                    }
+                }
+                // Expensive I/O/decoding is outside the world/audio lock.
+                auto loaded = std::make_unique<CachedSample>();
+                loaded->path = path;
+                if (!PortableSamples::readWave(path, loaded->wave, error, decodeBudget)) return false;
+                std::lock_guard<std::mutex> lock(worldAccessMutex_);
+                if (!ready()) return false;
+                const auto bytes = loaded->wave.mono.size() * sizeof(float);
+                if (bytes > PortableSamples::kCacheBudgetBytes - sampleCacheBytes_) {
+                    error = "The 128 MiB decoded sample cache is full. Use shorter WAVs or reopen the plugin.";
+                    return false;
+                }
+                // Buffer zero remains the nil buffer, as in FoxDot.
+                if (sampleCache_.size() + 1 >= world_->mNumSndBufs) {
+                    error = "SuperCollider sample buffers are full. Reopen the plugin to clear the cache.";
+                    return false;
+                }
+                loaded->buffer = static_cast<int>(sampleCache_.size() + 1);
+                auto* cached = loaded.get();
+                // Publish ownership first: allocation failure must never leave
+                // an SC buffer pointing at a destroyed vector.
+                sampleCache_.push_back(std::move(loaded));
+                SndBuf buffer{};
+                buffer.data = cached->wave.mono.data();
+                buffer.frames = cached->wave.frames;
+                buffer.samples = buffer.frames;
+                buffer.channels = 1;
+                buffer.samplerate = cached->wave.sampleRate;
+                buffer.sampledur = 1.0 / buffer.samplerate;
+                world_->mSndBufs[cached->buffer] = buffer;
+                world_->mSndBufsNonRealTimeMirror[cached->buffer] = buffer;
+                ++world_->mSndBufUpdates[cached->buffer].writes;
+                sampleCacheBytes_ += bytes;
+                event.sampleBuffer = cached->buffer;
+                event.sampleDurationSeconds = cached->wave.frames / cached->wave.sampleRate;
+            }
+        }
+        return true;
+    }
+
+    void detachSampleBuffers() {
+        // World_Cleanup uses free_alig(). Our immutable audio vectors are
+        // plugin-owned: detach both SC mirrors before cleanup, then destroy the
+        // vectors only after the graph/unit destructors have finished.
+        for (const auto& cached : sampleCache_) {
+            if (!world_ || cached->buffer < 0 ||
+                static_cast<unsigned>(cached->buffer) >= world_->mNumSndBufs) continue;
+            for (auto* buffers : {world_->mSndBufs, world_->mSndBufsNonRealTimeMirror})
+                if (buffers[cached->buffer].data == cached->wave.mono.data())
+                    buffers[cached->buffer] = {};
+        }
+    }
+
     bool prepareSynthGraphs(
         const std::array<PatternState, kPlayerCount>& updates,
         std::uint8_t updateMask, std::string& error) {
@@ -1465,11 +1600,20 @@ private:
             std::size_t playerVoices = 0;
             for (std::size_t i = 0; i < pattern.eventCount; ++i) {
                 const auto& event = pattern.events[i];
+                const bool isSample = pattern.synthIndex == 57;
+                if (isSample && (event.sampleBuffer < 1 ||
+                                 pattern.sampleWorld != sampleWorldGeneration_))
+                    continue;
+                double sampleSeconds = isSample
+                    ? event.sampleDurationSeconds / std::abs(event.sampleRate) : 0.0;
+                if (isSample && event.sampleGate)
+                    sampleSeconds = std::min(sampleSeconds, event.durationBeats * 60.0 / pattern.bpm);
+                const double lookback = isSample ? sampleSeconds * pattern.bpm / 60.0 : event.durationBeats;
                 if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
                     break;
                 const auto firstCycle = std::max<std::int64_t>(
                     0, static_cast<std::int64_t>(std::floor(
-                           (beat - event.beat - 15.0 - event.durationBeats) /
+                           (beat - event.beat - 15.0 - lookback) /
                            pattern.lengthBeats)) - 1);
                 const auto lastCycle = static_cast<std::int64_t>(
                     std::floor((beat - event.beat) / pattern.lengthBeats));
@@ -1490,7 +1634,7 @@ private:
                         pattern.synthIndex != 42 && pattern.synthIndex != 48;
                     const double envelopeSustain = sustainSeconds *
                         (appliesBlur ? pattern.synthControls[6] : 1.0);
-                    const double sourceEnvelopeSeconds = foxDotNativeEnvelope
+                    const double sourceEnvelopeSeconds = isSample ? sampleSeconds : foxDotNativeEnvelope
                         ? foxDotEnvelopeDurationSeconds(pattern.synthIndex, envelopeSustain,
                                                         event.attackSeconds)
                         : sustainSeconds;
@@ -1502,7 +1646,7 @@ private:
                         break;
                     desired[desiredCount++] = ScheduledAudioNote{
                         static_cast<int>(player), event.midiNote, event.velocity,
-                        pattern.synthIndex, pattern.synthRate,
+                        pattern.synthIndex, isSample ? static_cast<float>(event.sampleRate) : pattern.synthRate,
                         pattern.amplitude, pattern.pan, pattern.cutoffHz,
                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
                         pattern.mousePan, pattern.mouseCutoff,
@@ -1513,7 +1657,7 @@ private:
                             std::llround(absoluteEndBeat * samplesPerBeat)),
                         patternStart + static_cast<std::uint64_t>(
                             std::llround(sustainEndBeat * samplesPerBeat)),
-                        foxDotNativeEnvelope};
+                        foxDotNativeEnvelope, event.sampleBuffer};
                     ++playerVoices;
                 }
             }
@@ -1640,6 +1784,8 @@ private:
                                          note.synthIndex == mode ? 1.0f : 0.0f);
                     } else {
                         Graph_SetControl(found->activeSynth, 2, note.synthRate);
+                        if (note.synthIndex == 57)
+                            Graph_SetControl(found->activeSynth, 22, static_cast<float>(note.sampleBuffer));
                         if (note.synthIndex == 10) {
                             const auto sustainSamples = note.endSample - note.startSample;
                             Graph_SetControl(found->activeSynth, 3,
@@ -1924,6 +2070,13 @@ private:
             return fail("SuperCollider startup failed: the new FoxDot synth bank could not be loaded. A required UGen may be missing or incompatible. Restore the complete matching plugin/UGen bundle and restart the host.");
         }
         GraphDef_Define(world_, coreDefs);
+        auto* sampleDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kSampleSynthDef),
+                                         sizeof(kSampleSynthDef), nullptr);
+        if (!sampleDefs) {
+            discardPartialWorld();
+            return fail("SuperCollider startup failed: native sample playback definitions could not be loaded.");
+        }
+        GraphDef_Define(world_, sampleDefs);
 
         for (std::size_t index = 0; index < kSynthGraphNames.size(); ++index) {
             int32 synthName[4]{};
@@ -2349,11 +2502,15 @@ private:
     // Caller owns worldAccessMutex_. Never call the locking wrapper recursively.
     void stopWorldLocked() {
         if (world_) {
+            detachSampleBuffers();
             std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
             LifecycleTrace cleanupTrace("World_Cleanup", this);
             World_Cleanup(world_, false);
             world_ = nullptr;
         }
+        sampleCache_.clear();
+        sampleCacheBytes_ = 0;
+        ++sampleWorldGeneration_;
         for (auto& voice : audioVoices_)
             voice = {};
         for (auto& player : reverbGraphs_)
@@ -2407,6 +2564,9 @@ private:
     float mixGain_ = 0.0f;
     int cursor_ = kSCBlockSize;
     std::mutex patternMutex_;
+    std::vector<std::unique_ptr<CachedSample>> sampleCache_;
+    std::size_t sampleCacheBytes_ = 0;
+    std::uint64_t sampleWorldGeneration_ = 1;
     std::array<PatternState, kPlayerCount> activePatterns_{};
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
     std::uint8_t pendingPlayerMask_ = 0;

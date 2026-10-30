@@ -3,6 +3,7 @@
 #include <array>
 #include <filesystem>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 struct PythonNoteEvent {
@@ -13,7 +14,17 @@ struct PythonNoteEvent {
     double attackSeconds = 0.01;
     double releaseSeconds = 0.04;
     double delayBeats = 0.0;
+    int sampleSymbol = 0;
+    int sampleIndex = 0;
+    double sampleRate = 1.0;
+    bool sampleGate = false;
+    // Resolved on the script worker; these POD fields are safe to copy in process().
+    int sampleBuffer = -1;
+    double sampleDurationSeconds = 0.0;
 };
+
+static_assert(std::is_trivially_copyable<PythonNoteEvent>::value,
+              "Audio event handoff must not allocate or copy strings on the audio thread");
 
 struct PythonPlayerUpdate {
     std::string ampControlToken = "-";

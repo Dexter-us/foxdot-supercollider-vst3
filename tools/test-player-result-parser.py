@@ -50,7 +50,8 @@ with tempfile.TemporaryDirectory() as directory:
     unit.write_text(cpp)
     subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
                     "-I", str(plugin), str(unit), "-o", str(binary)], check=True)
-    for example in sorted((plugin / "Portable").glob("*.py")):
+    examples = sorted((plugin / "Portable").glob("*.py"))
+    for example in examples:
         result = directory / "result.out"
         wrapper = api_tests["make_wrapper"](str(example), str(result))
         exec(wrapper, {"__name__": "__main__"})
@@ -59,9 +60,14 @@ with tempfile.TemporaryDirectory() as directory:
     valid = result.read_text()
     for bad in (re.sub(r"^S\t0\t", "S\t9\t", valid, flags=re.M),
                 re.sub(r"^S\t0\t[^\n]+", "S\t0\tnan\t0.5\t1\t0.5\t0.5\t0\t1", valid, flags=re.M),
-                re.sub(r"^S\t[^\n]+\n", "", valid, flags=re.M)):
+                re.sub(r"^S\t[^\n]+\n", "", valid, flags=re.M),
+                re.sub(r"^B\t[^\n]+\n", "", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\tnan\t0", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\t0\t0", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t32\t0\t1\t0", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\t1\t2", valid, count=1, flags=re.M)):
         assert bad != valid
         result.write_text(bad)
         parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
         assert parsed.returncode == 1, parsed.stdout
-print("PASS: 69 example results accepted by compiled C++ parser; malformed synth records rejected")
+print(f"PASS: {len(examples)} example results accepted by compiled C++ parser; malformed synth/sample records rejected")

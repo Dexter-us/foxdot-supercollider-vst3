@@ -57,7 +57,7 @@ safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filte
               'float', 'int', 'isinstance', 'len', 'list', 'map', 'max', 'min',
               'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str',
               'sum', 'tuple', 'zip', 'ValueError', 'TypeError',
-              'ZeroDivisionError', '__build_class__')
+              'ZeroDivisionError', '__build_class__', 'ord', 'chr')
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
@@ -204,7 +204,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -226,6 +226,8 @@ def run_script(script_text, include_events=False, include_effects=False, include
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
         mute_rows = [line.split('\t') for line in lines if line.startswith('M\t')]
+        if include_samples:
+            return player_rows, [line.split('\t') for line in lines if line.startswith('B\t')]
         if include_mutes:
             return player_rows, mute_rows
         if include_filters:
@@ -342,6 +344,8 @@ def read_synthdef_manifest(data):
                 'out freq rate sus unused4 unused5 wetbus wetgain wetcutoff trigger '
                 'amp vib depth lforate lfowidth rq fmod blur cutoff atk rel beat_dur'
             ).split()
+            if name == 'DexterSample':
+                expected_controls.append('buf')
             assert parameter_names == {key: index for index, key in enumerate(expected_controls)}, (
                 name, 'C++ control-number ABI mismatch', parameter_names)
         ugen_count = read(count_format)
@@ -387,11 +391,17 @@ def test_embedded_synthdef():
     core_bytes = bytes(int(value, 16) for value in re.findall(r'0x([0-9a-fA-F]{2})', core_header))
     core_version, core_graphs = read_synthdef_manifest(core_bytes)
     assert core_version == 2 and len(core_graphs) == 26
+    sample_header = open(os.path.join(plugin_dir, 'sample_synthdef.h'), encoding='utf-8').read()
+    sample_bytes = bytes(int(value, 16) for value in re.findall(r'0x([0-9a-fA-F]{2})', sample_header))
+    sample_version, sample_graphs = read_synthdef_manifest(sample_bytes)
+    assert sample_version == 2 and set(sample_graphs) == {'DexterSample'}
+    assert any(ugen[0] == 'PlayBuf' for ugen in sample_graphs['DexterSample'])
     assert not set(graphs).intersection(core_graphs)
     for graph, ugens in core_graphs.items():
         assert any(name == 'EnvGen' for name, _, _ in ugens), graph
         assert not any(name in ('MdaPiano', 'Decimator', 'PlayBuf') for name, _, _ in ugens), graph
     graphs.update(core_graphs)
+    graphs.update(sample_graphs)
     graph_names_match = re.search(
         r'static constexpr auto kSynthGraphNames = std::array\{(.*?)\};',
         processor_source, re.S)
@@ -649,7 +659,7 @@ parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 56' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 57' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
@@ -766,7 +776,7 @@ supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 4:', 'Line 5:', 'Sample-string', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
+for phrase in ('Line 1:', 'Line 2:', 'Line 5:', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
@@ -779,4 +789,27 @@ for scale_name in namespace['_SCALES']:
     assert namespace['Scale'].__dict__[scale_name] == scale_name
 example69 = run_example('69-composed-star-and-karp.py')
 assert [int(row[6]) for row in example69 if row[2] == '0'] == [55, 56, 0]
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-69.')
+example70 = run_example('70-portable-sample-beat.py')
+assert int(next(row for row in example70 if row[2] == '0')[6]) == 57
+example71 = run_example('71-sample-selection-and-reverse.py')
+assert [int(row[6]) for row in example71 if row[2] == '0'] == [57, 57]
+players, requests = run_script('p1 >> play("x-o-", dur=0.5, sample=P[0, 1], rate=P[1, -1])', include_samples=True)
+assert int(players[0][6]) == 57
+assert [int(row[1]) for row in requests] == [120, 45, 111, 45]
+assert [int(row[2]) for row in requests] == [0, 1, 0, 1]
+assert [float(row[3]) for row in requests] == [1, -1, 1, -1]
+assert all(row[4] == '0' for row in requests)
+_, requests = run_script('p1 >> play("x ", sample=P[0, 1, 2])', include_samples=True)
+assert [int(row[2]) for row in requests] == [0, 2, 1], requests
+_, requests = run_script('p1 >> play("a", dur=0.5, sus=0.1, sample=P[-1, 0], rate=P[1, -1, 2, -2])', include_samples=True)
+assert [float(row[3]) for row in requests] == [1, -1, 2, -2]
+assert all(row[4] == '1' for row in requests)
+_, sample_notes = run_script('p1 >> play("x", dur=P[0.5, 1])', include_events=True)
+assert [float(row[1]) for row in sample_notes] == [0, 0.5]
+for bad in ('rate=0', 'rate=9', 'sample=0.5', 'sample=[]', 'rate=[]', 'rate=var([1, 2], 4)'):
+    failure = run_error_script('p1 >> play("x", ' + bad + ')')
+    assert failure.startswith('ERROR\n') and 'ValueError' in failure, (bad, failure)
+assert 'Nested sample notation' in run_compatibility_check('p1 >> play("[xx]")')
+sample_directory = os.path.join(sys.argv[2], 'Samples')
+assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-71.')

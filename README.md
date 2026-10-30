@@ -2,9 +2,20 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.48 adds the first portable WAV sample engine: `p1 >> play("x-o-",
+dur=0.5)`, sample selection, forward/reverse rate patterns, amp/pan and existing
+player effects. Spaces are rests; `-` is FoxDot's closed-hat symbol. Samples
+load/cache on the script worker and use the already bundled native SC PlayBuf
+UGen; no SC/UGen rebuild, libsndfile DLL, external process or OSC is added.
+Portable examples 70–71 include six generated CC0 diagnostic WAVs, not a
+third-party sound library. See `Portable/Samples/README.txt` for folder layout,
+format/safety limits and explicitly deferred nested sample notation,
+streaming, time stretching and stereo-preserving voices.
+
 The 0.4.46 test branch adds all 26 remaining original FoxDot core-UGen musical
 patches (53 FoxDot-derived patches in total), with individual Portable examples
-43–68. Samples, audio input and the SC3-plugin MdaPiano remain separate work.
+43–68. Full sample-language/library compatibility, audio input and the
+SC3-plugin MdaPiano remain separate work.
 See `spikes/vst3-callback/foxdot-synths/README.md` for original source attribution,
 build-time graph compilation, and the explicit host/safety adaptations.
 
@@ -19,7 +30,7 @@ build-time graph compilation, and the explicit host/safety adaptations.
 
 ## Current prototype
 
-- Windows native editor with Run, Stop, Open, Save, and Save As. Thirty-seven starter patterns are separate `.py` files in the `Portable` folder.
+- Windows native editor with Run, Stop, Open, Save, and Save As. Seventy-one starter patterns are separate `.py` files in the `Portable` folder.
 - Open and Save As explicitly start in the `Portable` folder beside the VST3 bundle; ordinary Save writes back to the currently opened or saved script.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
 - `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independently editable players (`p1`–`p8`) using `p1 >> sequence(...)`; `.stop()` stops one player without stopping the others. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and `euclid`; finite FoxDot-style `P[...]` note/rest/chord literals and numeric `+`/`-` transposition are supported. Players can choose the four basic oscillator modes plus twenty-one embedded FoxDot-derived synths: bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, and blip. These controls affect plugin audio; MIDI output remains note events.

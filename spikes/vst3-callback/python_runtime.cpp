@@ -126,7 +126,9 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
     'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate'
 }
-_COMPAT_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum'}
+_COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample'}
+_COMPAT_PLAY_KEYWORDS = _COMPAT_NOTE_PLAY_KEYWORDS | _COMPAT_SAMPLE_PLAY_KEYWORDS
 _COMPAT_SCALE_NAMES = {
     'chromatic', 'major', 'minor', 'natural_minor', 'aeolian', 'dorian',
     'dorian2', 'mixolydian', 'major_pentatonic', 'majorPentatonic',
@@ -185,14 +187,19 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             keyword_names = _COMPAT_SEQUENCE_KEYWORDS
         elif name == 'play':
             keyword_names = _COMPAT_PLAY_KEYWORDS
+            if node.args and isinstance(node.args[0], ast.Constant):
+                keyword_names = _COMPAT_SAMPLE_PLAY_KEYWORDS if isinstance(node.args[0].value, str) else _COMPAT_NOTE_PLAY_KEYWORDS
         if keyword_names is not None:
             for keyword in node.keywords:
                 if keyword.arg is None:
                     self.add(node.lineno, 'Dynamic keyword expansion cannot be checked; use explicit supported controls.')
                 elif keyword.arg not in keyword_names:
                     self.add(keyword.lineno or node.lineno, "Control '" + keyword.arg + "' is not supported by " + name + '() in this build.')
-        if name in _COMPAT_WAVES.union({'play'}) and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-            self.add(node.lineno, 'Sample-string playback is not included yet; sample support is deferred.')
+        if name in _COMPAT_WAVES and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            self.add(node.lineno, 'Use play(\"...\") for sample strings, not a pitched synth call.')
+        if name == 'play' and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            if re.search(r'[\[\]{}()<>]', node.args[0].value):
+                self.add(node.lineno, 'Nested sample notation comes later; this batch supports plain sample symbols and space rests.')
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
@@ -284,7 +291,7 @@ def _dexter_run_compatibility_check():
             lines.extend('Line ' + str(line) + ': ' + message for line, message in shown)
             if len(diagnostics) > len(shown):
                 lines.append('...and ' + str(len(diagnostics) - len(shown)) + ' more item(s).')
-            lines.append('Supported synth calls: ' + ', '.join(sorted(_COMPAT_WAVES)) + '. Samples remain deferred.')
+            lines.append('Supported synth calls: ' + ', '.join(sorted(_COMPAT_WAVES)) + '. Basic WAV samples use p1 >> play(\"x-o-\"); spaces are rests.')
             report_text = '\n'.join(lines)
     except BaseException as exc:
         report_text = 'Compatibility check could not complete: ' + str(exc)
@@ -306,6 +313,7 @@ std::string makeEvaluationScript(const std::string& sourcePath,
                                 const std::string& namespaceName) {
     static constexpr char api[] = R"PY(
 _dexter_synth_controls = {}
+_dexter_sample_events = {}
 _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
                'klank', 'feel', 'glass', 'soft', 'quin', 'space',
@@ -854,7 +862,7 @@ def _timing_pattern(value, count, name):
         raise ValueError(name + ' pattern cannot be empty')
     return [float(values[index % len(values)]) for index in range(count)]
 
-def play(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False,
+def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False,
          strum=0.0,
          _octave_control=None, _base_octave=5, _degrees_per_octave=7,
          _attack_control=None, _release_control=None,
@@ -1304,6 +1312,72 @@ sitar = _make_core_synth('sitar')
 star = _make_core_synth('star')
 karp = _make_core_synth('karp')
 
+_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
+
+def _sample_value(value, index, beat, name):
+    if isinstance(value, _DexterTimeVar):
+        return value.at(beat)
+    if isinstance(value, (int, float)):
+        return value
+    values = list(value)
+    if not values:
+        raise ValueError(name + ' pattern cannot be empty')
+    return values[index % len(values)]
+
+def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
+    if not text:
+        raise ValueError('sample pattern cannot be empty')
+    if isinstance(sample, _DexterTimeVar) or isinstance(rate, _DexterTimeVar):
+        raise ValueError('sample/rate use numbers or P[...] in this first batch; time-var sample controls come later')
+    selections = [sample] if isinstance(sample, (int, float)) else list(sample)
+    rates = [rate] if isinstance(rate, (int, float)) else list(rate)
+    if not selections or not rates:
+        raise ValueError('sample and rate patterns cannot be empty')
+    cycle = len(text)
+    lengths = [len(selections), len(rates)]
+    if not isinstance(dur, (int, float, _DexterTimeVar)):
+        dur = list(dur)
+        if not dur:
+            raise ValueError('dur pattern cannot be empty')
+        lengths.append(len(dur))
+    if sus is not None and not isinstance(sus, (int, float, _DexterTimeVar)):
+        sus = list(sus)
+        if not sus:
+            raise ValueError('sus pattern cannot be empty')
+        lengths.append(len(sus))
+    for length in lengths:
+        a, b = cycle, length
+        while b:
+            a, b = b, a % b
+        cycle = cycle * length // a
+    if cycle > 256:
+        raise ValueError('combined sample pattern exceeds 256 steps')
+    text = text * (cycle // len(text))
+    notes = []
+    positions = []
+    for position, symbol in enumerate(text):
+        if symbol.isspace():
+            notes.append(None)
+        elif symbol in _SAMPLE_SYMBOLS:
+            notes.append(ord(symbol))
+            positions.append(position)
+        else:
+            raise ValueError('Unsupported sample pattern character ' + symbol +
+                             '; first batch supports symbols and spaces, not nested notation')
+    controls.setdefault('atk', 0.001)
+    controls.setdefault('rel', 0.005)
+    controls.setdefault('reverb', 'none')
+    pattern = sequence(notes, step=dur, duration=sus, **controls)
+    pattern.synth = 'sample'
+    pattern.synthRate = 1.0
+    pattern.sampleSpec = (selections, rates, sus is not None, positions)
+    return pattern
+
+def play(notes, *args, **kwargs):
+    if isinstance(notes, str):
+        return _sample_pattern(notes, *args, **kwargs)
+    return _play_notes(notes, *args, **kwargs)
+
 class Player:
     def __init__(self, number):
         self.number = number
@@ -1351,7 +1425,25 @@ class Player:
                       'dbass', 'prophet', 'pads', 'pasha', 'ambi', 'sinepad',
                       'keys', 'klank', 'feel', 'glass', 'soft', 'quin',
                       'space', 'scratch', 'creep', 'snick', 'swell',
-                      'razz', 'sitar', 'star', 'karp').index(pattern.synth)
+                      'razz', 'sitar', 'star', 'karp', 'sample').index(pattern.synth)
+        if pattern.synth == 'sample':
+            requests = []
+            adjusted = []
+            selection, rates, gate, positions = pattern.sampleSpec
+            for index, event in enumerate(compiledEvents):
+                symbol = event[2]
+                sampleIndex = _sample_value(selection, positions[index], event[0], 'sample')
+                playbackRate = float(_sample_value(rates, positions[index], event[0], 'rate'))
+                if int(sampleIndex) != sampleIndex or not -1000000 <= sampleIndex <= 1000000:
+                    raise ValueError('sample selection must be an integer from -1000000 to 1000000')
+                if playbackRate != playbackRate or not 0.0625 <= abs(playbackRate) <= 8.0:
+                    raise ValueError('sample rate magnitude must be 0.0625 to 8; negative plays backwards')
+                requests.append((symbol, int(sampleIndex), playbackRate, int(gate)))
+                note = list(event)
+                note[2] = {120: 36, 88: 36, 111: 38, 79: 38, 45: 42, 61: 46, 42: 39}.get(symbol, 60)
+                adjusted.append(tuple(note))
+            compiledEvents = adjusted
+            _dexter_sample_events[playerIndex] = requests
         _dexter_synth_controls[playerIndex] = pattern.synthControls
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
@@ -1404,7 +1496,7 @@ p8 = Player(8)
            << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, '_dexter_mutes': {}})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
            << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
-           << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', "
+           << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', 'ord', 'chr', "
            << "'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum', 'tuple', "
            << "'zip', 'ValueError', 'TypeError', 'ZeroDivisionError', "
            << "'__build_class__')}\n"
@@ -1440,8 +1532,10 @@ p8 = Player(8)
             << "            _f.write('G' + chr(9) + chr(9).join(map(str, _modulation_values)) + chr(10))\n"
             << "            _synth_controls = _dexter_scope['_dexter_synth_controls'].get(_player, (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))\n"
             << "            _f.write('S' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _synth_controls)) + chr(10))\n"
-            << "            for _e in _events:\n"
+            << "            for _event_index, _e in enumerate(_events):\n"
             << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\t{}\\n'.format(*_e))\n"
+            << "                if _synth == 57:\n"
+            << "                    _f.write('B\\t{}\\t{}\\t{}\\t{}\\n'.format(*_dexter_scope['_dexter_sample_events'][_player][_event_index]))\n"
             << "        for _player, _muted in sorted(_mutes.items()):\n"
             << "            _f.write('M\\t{}\\t{}\\n'.format(_player, int(_muted)))\n"
             << "except BaseException:\n"
@@ -1501,7 +1595,7 @@ bool parseResult(const std::filesystem::path& resultPath,
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
             !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
-              update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 56 ||
+              update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 57 ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
              update.synthRate > 10.0 ||
              (update.synthIndex == 5 && update.synthRate > 1.0) ||
@@ -1620,6 +1714,21 @@ bool parseResult(const std::filesystem::path& resultPath,
                 event.releaseSeconds < 0.0 || event.releaseSeconds > 3.0) {
                 error = "Python returned a malformed note event.";
                 return false;
+            }
+            if (update.synthIndex == 57) {
+                char bufferRecord = 0;
+                int gate = 0;
+                if (!(input >> bufferRecord >> event.sampleSymbol >> event.sampleIndex >>
+                      event.sampleRate >> gate) || bufferRecord != 'B' ||
+                    event.sampleSymbol < 33 || event.sampleSymbol > 126 ||
+                    event.sampleIndex < -1000000 || event.sampleIndex > 1000000 ||
+                    !std::isfinite(event.sampleRate) ||
+                    std::abs(event.sampleRate) < 0.0625 || std::abs(event.sampleRate) > 8.0 ||
+                    (gate != 0 && gate != 1)) {
+                    error = "Python returned a malformed sample event.";
+                    return false;
+                }
+                event.sampleGate = gate != 0;
             }
             update.events.push_back(event);
         }
