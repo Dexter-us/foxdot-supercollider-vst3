@@ -1,5 +1,27 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.47 fixes fresh-note startup in the new synth bank: pausing a graph
+before its first SC render changes Graph_FirstCalc to Graph_NullFirstCalc;
+Node_SetRun(1) does not reverse that state until a paused render has occurred.
+Creating, pausing and immediately resuming every fresh note therefore left it
+silent. Fresh note graphs now stay running and receive their controls before
+the first World_Run. New-bank paused templates are no longer preallocated.
+The private-bus/numeric-control audio regression reproduces the old silence
+with --paused-start and passes all 26 graphs with the corrected lifecycle.
+Example 69 adds an arranged pattern-composition/star/karp demo with a quiet sine
+reference, rather than repeating the isolated four-note test.
+
+It also fixes startup reporting and recovery: Run retries an unavailable
+engine once on the script worker after the host has configured audio, rather
+than returning the same generic "not ready" message indefinitely. Before host
+audio setup it gives explicit host-processing instructions and does not guess
+a sample rate. Startup failure stage/details are shown in the copyable editor
+status, and successful startup clears stale errors. Teardown, sample-rate
+changes and initialization share the same lock. The readiness regression test
+uses the actual entry logic with a fake backend; it is not an audio/DAW test.
+The lifecycle fix passes offline audio tests; confirmation in the user's
+Windows host is still needed.
+
 Version 0.4.46 adds all 26 remaining core-UGen FoxDot musical patches in one
 batch: viola, nylon, arpy, dab, sawbass, dbass, prophet, pads, pasha, ambi,
 sinepad, keys, klank, feel, glass, soft, quin, space, scratch, creep, snick,

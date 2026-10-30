@@ -333,9 +333,17 @@ def read_synthdef_manifest(data):
         parameter_count = read(count_format)
         offset += parameter_count * 4
         parameter_name_count = read(count_format)
+        parameter_names = {}
         for _ in range(parameter_name_count):
-            read_string()
-            read(count_format)
+            parameter_name = read_string()
+            parameter_names[parameter_name] = read(count_format)
+        if version == 2:
+            expected_controls = (
+                'out freq rate sus unused4 unused5 wetbus wetgain wetcutoff trigger '
+                'amp vib depth lforate lfowidth rq fmod blur cutoff atk rel beat_dur'
+            ).split()
+            assert parameter_names == {key: index for index, key in enumerate(expected_controls)}, (
+                name, 'C++ control-number ABI mismatch', parameter_names)
         ugen_count = read(count_format)
         ugens = []
         for _ in range(ugen_count):
@@ -408,9 +416,12 @@ def test_embedded_synthdef():
     assert 'scPoolCapacity(kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity)' in processor_source
     assert 'prepareSynthGraphs(updates, updateMask, graphError)' in processor_source
     assert 'Graph_New(world_, synthDefinitions_[graphIndex]' in processor_source
+    assert 'bool startImmediately = false' in processor_source
+    assert 'if (!startImmediately)\n            Node_SetRun(&created->mNode, 0)' in processor_source
+    assert 'graphIndex, graphError, true)' in processor_source
     assert 'worldAccessMutex_, std::try_to_lock' in processor_source
     init_block = re.search(
-        r'bool initializeWorld\(\)\s*\{(.*?)\n    void discardPartialWorld',
+        r'bool initializeWorld\([^)]*\)\s*\{(.*?)\n    void discardPartialWorld',
         processor_source, re.S)
     assert init_block, 'could not find the embedded engine initialization routine'
     assert 'Graph_New(world_, synthDefinitions_' not in init_block.group(1), \
@@ -766,4 +777,6 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-68.')
+example69 = run_example('69-composed-star-and-karp.py')
+assert [int(row[6]) for row in example69 if row[2] == '0'] == [55, 56, 0]
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-69.')

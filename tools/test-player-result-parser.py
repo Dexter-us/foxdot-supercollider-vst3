@@ -64,4 +64,4 @@ with tempfile.TemporaryDirectory() as directory:
         result.write_text(bad)
         parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
         assert parsed.returncode == 1, parsed.stdout
-print("PASS: 68 example results accepted by compiled C++ parser; malformed synth records rejected")
+print("PASS: 69 example results accepted by compiled C++ parser; malformed synth records rejected")

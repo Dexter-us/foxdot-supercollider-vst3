@@ -247,11 +247,9 @@ public:
         const auto baseResult = SingleComponentEffect::setupProcessing(setup);
         if (baseResult != kResultOk)
             return baseResult;
-        if (world_ && sampleRate_ == setup.sampleRate)
-            return kResultOk;
-        stopWorld();
-        sampleRate_ = setup.sampleRate;
-        return initializeWorld() ? kResultOk : kResultFalse;
+        if (!std::isfinite(setup.sampleRate) || setup.sampleRate <= 0.0)
+            return kInvalidArgument;
+        return initializeWorld(setup.sampleRate) ? kResultOk : kResultFalse;
     }
 
     tresult PLUGIN_API terminate() override {
@@ -275,8 +273,9 @@ public:
             if (output.channelBuffers32[channel])
                 std::fill_n(output.channelBuffers32[channel], data.numSamples, 0.0f);
         }
-        // Graphs are built on the script worker, never on the realtime thread.
-        // If graph preparation briefly owns the world, output silence for this
+        // Script preparation/initialization owns the world off the audio thread.
+        // New-bank note nodes use SC's bounded RT pool while rendering.
+        // If preparation briefly owns the world, output silence for this
         // block rather than blocking the host's audio callback.
         std::unique_lock<std::mutex> worldLock(worldAccessMutex_, std::try_to_lock);
         if (!worldLock.owns_lock()) {
@@ -1240,7 +1239,7 @@ private:
     }
 
     Graph* createSynthGraph(std::size_t voiceIndex, std::size_t graphIndex,
-                            std::string& error) {
+                            std::string& error, bool startImmediately = false) {
         if (!world_ || !rootGroup_ || graphIndex >= synthDefinitions_.size() ||
             !synthDefinitions_[graphIndex]) {
             error = "The SuperCollider world or selected synth definition is not ready.";
@@ -1297,7 +1296,10 @@ private:
         else if (graphIndex == 2)
             Graph_SetControl(created, 2, 0.0f);
         Group_AddTail(rootGroup_, &created->mNode);
-        Node_SetRun(&created->mNode, 0);
+        // SC cannot resume Graph_NullFirstCalc until it has had a world tick.
+        // A fresh note must keep Graph_FirstCalc until its first render.
+        if (!startImmediately)
+            Node_SetRun(&created->mNode, 0);
         graph = created;
         return created;
     }
@@ -1305,9 +1307,16 @@ private:
     bool prepareSynthGraphs(
         const std::array<PatternState, kPlayerCount>& updates,
         std::uint8_t updateMask, std::string& error) {
+        // Run may follow a failed host setup (e.g. a previously missing UGen
+        // folder). Retry once on this worker, never on the audio callback.
+        if (!initializeWorld()) {
+            std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+            error = worldInitializationError_;
+            return false;
+        }
         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
         if (!world_) {
-            error = "SuperCollider is not ready yet; start playback, then run the script again.";
+            error = "The audio engine changed during Run. Enable host audio processing and press Run again.";
             return false;
         }
 
@@ -1321,6 +1330,10 @@ private:
                 error = "The selected synth index is outside the registered synth bank.";
                 return false;
             }
+            // New-bank notes are born running, with controls configured before
+            // World_Run. Do not create paused, never-rendered templates for them.
+            if (synthIndex >= 31)
+                continue;
             const auto firstVoice = player * kVoiceSlotsPerPlayer;
             const auto graphIndex =
                 kSynthIndexToGraphIndex[static_cast<std::size_t>(synthIndex)];
@@ -1605,7 +1618,7 @@ private:
                     std::string graphError;
                     selectedSynth = createSynthGraph(
                         static_cast<std::size_t>(std::distance(audioVoices_.begin(), found)),
-                        graphIndex, graphError);
+                        graphIndex, graphError, true);
                     if (!selectedSynth) {
                         found->midiNote = -1;
                         found->velocity = 0;
@@ -1813,16 +1826,36 @@ private:
         }
     }
 
-    bool initializeWorld() {
+    bool initializeWorld(double hostSampleRate = 0.0) {
         LifecycleTrace trace("initializeWorld including locks", this);
         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        if (hostSampleRate > 0.0) {
+            if (world_ && sampleRate_ == hostSampleRate)
+                return true;
+            // Keep teardown, sample-rate change and creation under one lock so
+            // a Run worker cannot initialize at the previous host sample rate.
+            stopWorldLocked();
+            sampleRate_ = hostSampleRate;
+            hostProcessingConfigured_ = true;
+        } else if (world_) {
+            return true;
+        }
+        auto fail = [this](std::string message) {
+            worldInitializationError_ = std::move(message);
+            setEditorStatus(worldInitializationError_);
+            return false;
+        };
+        if (!hostProcessingConfigured_)
+            return fail("The host has not configured audio processing yet. Enable the DAW audio engine (or start playback), then press Run again.");
+        worldInitializationError_.clear();
+        setEditorStatus("Starting the embedded SuperCollider engine...");
         std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
         LifecycleTrace lockedTrace("initializeWorld locks acquired", this);
         const auto ugenPath = bundledUGenPath();
         std::error_code pathError;
         if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError)) {
             std::fprintf(stderr, "Dexter VST3: bundled SuperCollider UGen directory is missing.\n");
-            return false;
+            return fail("SuperCollider startup failed: the bundled SCPlugins folder is missing or inaccessible. Restore the UGen files, restart the host, and press Run.");
         }
         ugenPluginPath_ = ugenModuleSearchPath();
 
@@ -1831,7 +1864,7 @@ private:
             echoBuffer_.assign(kPlayerCount * 2 * kMaxEchoBufferSamples, 0.0f);
         } catch (...) {
             std::fprintf(stderr, "Dexter VST3: could not allocate the player echo buffer.\n");
-            return false;
+            return fail("SuperCollider startup failed: could not allocate the player echo buffers. Close unused plugin instances and press Run to retry.");
         }
 
         WorldOptions options;
@@ -1857,7 +1890,8 @@ private:
         }
         if (!world_) {
             std::fprintf(stderr, "Dexter VST3: World_New failed at %.1f Hz.\n", sampleRate_);
-            return false;
+            return fail("SuperCollider startup failed: World_New could not create the engine at " +
+                        std::to_string(sampleRate_) + " Hz. Check the complete matching UGen bundle and press Run to retry.");
         }
         const auto moduleFiles = discoverUGenModuleFiles();
         std::string moduleStatus = "UGen module files found (" + std::to_string(moduleFiles.size()) + "): ";
@@ -1867,7 +1901,6 @@ private:
             moduleStatus += moduleFiles[index];
         }
         moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
-        setEditorStatus(std::move(moduleStatus));
         World_SetSampleRate(world_, sampleRate_);
         {
             LifecycleTrace startTrace("World_Start", this);
@@ -1880,7 +1913,7 @@ private:
         if (!defs) {
             std::fprintf(stderr, "Dexter VST3: GraphDef_Recv rejected the embedded synth bank.\n");
             discardPartialWorld();
-            return false;
+            return fail("SuperCollider startup failed: the base synth definitions could not be loaded. A required UGen may be missing or incompatible. Restore the complete matching plugin/UGen bundle and restart the host.");
         }
         GraphDef_Define(world_, defs);
         auto* coreDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kFoxDotSynthDefs),
@@ -1888,7 +1921,7 @@ private:
         if (!coreDefs) {
             std::fprintf(stderr, "Dexter VST3: rejected the additional FoxDot synth bank.\n");
             discardPartialWorld();
-            return false;
+            return fail("SuperCollider startup failed: the new FoxDot synth bank could not be loaded. A required UGen may be missing or incompatible. Restore the complete matching plugin/UGen bundle and restart the host.");
         }
         GraphDef_Define(world_, coreDefs);
 
@@ -1903,22 +1936,30 @@ private:
         if (std::any_of(synthDefinitions_.begin(), synthDefinitions_.end(),
                         [](const auto* definition) { return definition == nullptr; }) ||
             !rootGroup_) {
+            std::string missing;
             for (std::size_t index = 0; index < synthDefinitions_.size(); ++index) {
                 if (!synthDefinitions_[index])
                     std::fprintf(stderr, "Dexter VST3: missing embedded synth definition %s.\n",
                                  kSynthGraphNames[index]);
+                if (!synthDefinitions_[index]) {
+                    if (!missing.empty()) missing += ", ";
+                    missing += kSynthGraphNames[index];
+                }
             }
             if (!rootGroup_)
                 std::fprintf(stderr, "Dexter VST3: root group is unavailable.\n");
             discardPartialWorld();
-            return false;
+            return fail("SuperCollider startup failed: " +
+                        (missing.empty() ? std::string("the root group is unavailable.") :
+                         "missing synth definitions: " + missing + ".") +
+                        " Press Run to retry initialization.");
         }
         auto* reverbDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kReverbSynthDef),
                                          sizeof(kReverbSynthDef), nullptr);
         if (!reverbDefs) {
             std::fprintf(stderr, "Dexter VST3: GraphDef_Recv rejected the embedded reverb bank.\n");
             discardPartialWorld();
-            return false;
+            return fail("SuperCollider startup failed: the reverb definitions could not be loaded. Check the matching ReverbUGens module and restart the host.");
         }
         GraphDef_Define(world_, reverbDefs);
         const std::array<const char*, kReverbGraphCount> reverbNames{{
@@ -1932,7 +1973,8 @@ private:
                 std::fprintf(stderr, "Dexter VST3: missing reverb definition %s.\n",
                              reverbNames[type]);
                 discardPartialWorld();
-                return false;
+                return fail("SuperCollider startup failed: missing reverb definition " +
+                            std::string(reverbNames[type]) + ". Press Run to retry.");
             }
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 auto*& graph = reverbGraphs_[player][type];
@@ -1947,7 +1989,11 @@ private:
                                  reverbNames[type], player,
                                  static_cast<int>(graphError));
                     discardPartialWorld();
-                    return false;
+                    return fail("SuperCollider startup failed: could not create " +
+                                std::string(reverbNames[type]) + " for player " +
+                                std::to_string(player + 1) + " (SC error " +
+                                std::to_string(static_cast<int>(graphError)) +
+                                "). Press Run to retry.");
                 }
                 const auto bus = kReverbBaseBus + static_cast<int>(player) * kReverbBusStride;
                 Graph_SetControl(graph, 0, static_cast<float>(bus));
@@ -1969,6 +2015,8 @@ private:
         // follow the small startup reverb bank and are unique within the world.
         nextDynamicGraphNodeId_ = reverbNodeId;
         cursor_ = kSCBlockSize;
+        worldInitializationError_.clear();
+        setEditorStatus("SuperCollider ready. Press Run to evaluate the script. " + moduleStatus);
         return true;
     }
 
@@ -2294,6 +2342,12 @@ private:
     void stopWorld() {
         LifecycleTrace trace("stopWorld including locks", this);
         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        stopWorldLocked();
+        hostProcessingConfigured_ = false;
+    }
+
+    // Caller owns worldAccessMutex_. Never call the locking wrapper recursively.
+    void stopWorldLocked() {
         if (world_) {
             std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
             LifecycleTrace cleanupTrace("World_Cleanup", this);
@@ -2330,6 +2384,8 @@ private:
     std::string scriptNamespace_;
     double sampleRate_ = 48000.0;
     std::mutex worldAccessMutex_;
+    bool hostProcessingConfigured_ = false;
+    std::string worldInitializationError_;
     World* world_ = nullptr;
     Group* rootGroup_ = nullptr;
     std::array<GraphDef*, kSynthGraphCount> synthDefinitions_{};
@@ -2388,7 +2444,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-            "0.4.46",
+    "0.4.47",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
