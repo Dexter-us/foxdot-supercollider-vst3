@@ -1839,7 +1839,7 @@ private:
                     Graph_SetControl(graph, 4, 0.5f);
                     Graph_SetControl(graph, 5, 15.0f);
                 }
-                Group_AddTail(root, &graph->mNode);
+                Group_AddTail(rootGroup_, &graph->mNode);
                 Node_SetRun(&graph->mNode, 0);
             }
         }
