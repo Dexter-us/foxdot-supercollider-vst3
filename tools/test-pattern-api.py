@@ -813,6 +813,8 @@ example74 = run_example('74-nested-play-strings.py')
 assert [int(row[6]) for row in example74 if row[2] == '0'] == [57, 57]
 example75 = run_example('75-random-and-layered-strings.py')
 assert [int(row[6]) for row in example75 if row[2] == '0'] == [57, 57, 57]
+example76 = run_example('76-sample-index-selection.py')
+assert [int(row[6]) for row in example76 if row[2] == '0'] == [57]
 _, duplicateLayerRequests, duplicateLayerEvents = run_script(
     'p1 >> play("<x><x>", dur=1)', include_samples=True, include_events=True)
 assert [int(row[1]) for row in duplicateLayerRequests] == [120, 120]
@@ -861,11 +863,28 @@ _, randomRequests, randomEvents = run_script(
     'p1 >> play("{xo}", dur=1)', include_samples=True, include_events=True)
 assert len(randomRequests) == 8 and len(randomEvents) == 8
 assert len({int(row[1]) for row in randomRequests}) == 2
+_, sampleIndexRequests = run_script(
+    'p1 >> play("|x1|x|x0|x", sample=P[0, 1])', include_samples=True)
+assert [int(row[1]) for row in sampleIndexRequests] == [120, 120, 120, 120]
+assert [int(row[2]) for row in sampleIndexRequests] == [1, 1, 0, 1]
+_, nestedSampleIndexRequests, nestedSampleIndexEvents = run_script(
+    'p1 >> play("[|x1|x]o", dur=1, sample=0)',
+    include_samples=True, include_events=True)
+assert [int(row[2]) for row in nestedSampleIndexRequests] == [1, 0, 0]
+assert [float(row[1]) for row in nestedSampleIndexEvents] == [0.0, 0.5, 1.0]
+for badSelector in ('|x|', '|x10|', '|.1|', '|x1'):
+    failure = run_error_script('p1 >> play("' + badSelector + '")')
+    assert failure.startswith('ERROR\n') and 'ValueError' in failure, (badSelector, failure)
 malformed_string = run_compatibility_check('p1 >> play("x[--")')
 assert 'missing closing delimiter' in malformed_string
 assert 'empty group' in run_compatibility_check('p1 >> play("x[]")')
 assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play("|x1|x|a1|a", sample=0)')
+for badSelector in ('|x|', '|x10|', '|.1|', '|x1'):
+    assert 'sample-index selector' in run_compatibility_check(
+        'p1 >> play("' + badSelector + '")')
+assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play("x[--]o(=[-o])")')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-75.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-76.')

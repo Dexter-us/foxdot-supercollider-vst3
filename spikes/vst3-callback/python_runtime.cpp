@@ -150,9 +150,19 @@ def _compat_validate_play_string(text):
     pairs = {'[':']', '(' :')', '{':'}', '<':'>'}
     stack = []
     symbols = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
-    for index, character in enumerate(text):
+    index = 0
+    while index < len(text):
+        character = text[index]
         if character == '|':
-            raise ValueError('FoxDot || sample-index syntax is not supported yet')
+            closing = text.find('|', index + 1)
+            if closing < 0:
+                raise ValueError("missing closing '|' in sample-index selector; use |x1|")
+            selector = text[index + 1:closing]
+            if (len(selector) != 2 or selector[0] not in symbols or
+                    selector[1] not in '0123456789'):
+                raise ValueError('sample-index selector must contain one sample symbol and one digit, like |x1|')
+            index = closing + 1
+            continue
         if character in pairs:
             stack.append((pairs[character], character, index))
             if len(stack) > 8:
@@ -165,6 +175,7 @@ def _compat_validate_play_string(text):
             stack.pop()
         elif not character.isspace() and character not in symbols:
             raise ValueError('unsupported sample-string character ' + repr(character))
+        index += 1
     if stack:
         raise ValueError('missing closing delimiter ' + stack[-1][0] + ' in sample string')
 
@@ -315,7 +326,7 @@ def _dexter_run_compatibility_check():
             lines.extend('Line ' + str(line) + ': ' + message for line, message in shown)
             if len(diagnostics) > len(shown):
                 lines.append('...and ' + str(len(diagnostics) - len(shown)) + ' more item(s).')
-            lines.append('Supported synth calls: ' + ', '.join(sorted(_COMPAT_WAVES)) + '. WAV play strings support symbols, rests, [], (), {}, and adjacent <> layers; || sample-index syntax is deferred.')
+            lines.append('Supported synth calls: ' + ', '.join(sorted(_COMPAT_WAVES)) + '. WAV play strings support symbols, rests, [], (), {}, adjacent <> layers, and per-hit sample selectors like |x1|.')
             report_text = '\n'.join(lines)
     except BaseException as exc:
         report_text = 'Compatibility check could not complete: ' + str(exc)
@@ -1392,7 +1403,16 @@ def _sample_parse_nodes(text, depth=0, closing=None, position=0):
         if symbol in ')]}>':
             raise ValueError('unmatched closing delimiter ' + symbol + ' in sample string')
         if symbol == '|':
-            raise ValueError('FoxDot || sample-index syntax is not supported yet')
+            pipeIndex = text.find('|', position + 1)
+            if pipeIndex < 0:
+                raise ValueError("missing closing '|' in FoxDot sample-index selector; use |x1|")
+            selector = text[position + 1:pipeIndex]
+            if (len(selector) != 2 or selector[0] not in _SAMPLE_SYMBOLS or
+                    selector[1] not in '0123456789'):
+                raise ValueError('sample-index selector must contain one sample symbol and one digit, like |x1|')
+            nodes.append(('sample-index', (selector[0], int(selector[1]))))
+            position = pipeIndex + 1
+            continue
         if symbol in pairs:
             children, nextPosition = _sample_parse_nodes(
                 text, depth + 1, pairs[symbol], position + 1)
@@ -1480,7 +1500,10 @@ def _sample_layout_node(node, cycleIndex, randomState):
     kind, children = node
     if kind == 'symbol':
         symbol = children
-        return 1.0, ({0.0:[symbol]} if not symbol.isspace() else {}), {0.0, 1.0}
+        return 1.0, ({0.0:[(symbol, None)]} if not symbol.isspace() else {}), {0.0, 1.0}
+    if kind == 'sample-index':
+        symbol, sampleIndex = children
+        return 1.0, {0.0:[(symbol, sampleIndex)]}, {0.0, 1.0}
     if kind in ('subdivide', 'lace', 'random'):
         if kind == 'subdivide':
             innerWidth, innerEvents, innerBoundaries = _sample_layout_sequence(
@@ -1567,9 +1590,10 @@ def _sample_timeline(text, parameterLengths):
                     continue
                 localStart = start - cycleIndex * baseWidth
                 symbols = events.get(round(localStart, 10), [])
-                notes.append(None if not symbols else
-                             ord(symbols[0]) if len(symbols) == 1 else
-                             tuple(ord(symbol) for symbol in symbols))
+                sampleSymbols = [symbol for symbol, _ in symbols]
+                notes.append(None if not sampleSymbols else
+                             ord(sampleSymbols[0]) if len(sampleSymbols) == 1 else
+                             tuple(ord(symbol) for symbol in sampleSymbols))
                 multipliers.append(end - start)
                 symbolSlots.append(tuple(symbols))
     return notes, multipliers, symbolSlots
@@ -1612,9 +1636,9 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
     positions = []
     symbolEvents = []
     for position, symbols in enumerate(symbolSlots):
-        for symbol in symbols:
+        for symbol, sampleOverride in symbols:
             positions.append(position)
-            symbolEvents.append((symbol, position))
+            symbolEvents.append((symbol, position, sampleOverride))
     if not any(symbols for symbols in symbolSlots):
         raise ValueError('sample pattern contains only rests')
     controls.setdefault('atk', 0.001)
@@ -1691,9 +1715,10 @@ class Player:
             assignedMidiIntervals = []
             selection, rates, gate, positions, sampleControl, rateControl, symbolEvents = pattern.sampleSpec
             for index, event in enumerate(compiledEvents):
-                symbol, position = symbolEvents[index]
+                symbol, position, sampleOverride = symbolEvents[index]
                 symbol = ord(symbol)
-                sampleIndex = (_sample_timevar_value(sampleControl, event[0])
+                sampleIndex = (sampleOverride if sampleOverride is not None else
+                               _sample_timevar_value(sampleControl, event[0])
                                if sampleControl is not None else
                                _sample_value(selection, position, event[0], 'sample'))
                 playbackRate = float(_sample_value(rates, position, event[0], 'rate'))

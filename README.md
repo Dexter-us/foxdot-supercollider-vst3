@@ -2,17 +2,17 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.50 adds the core nested FoxDot sample-string groups: square
-brackets subdivide one step, parentheses lace patterns across cycles, curly
-braces make bounded eight-cycle variations, and adjacent angle groups layer
-sample hits. Plain symbols, rests, sample/rate controls and var()/linvar()
-remain supported. `||` sample-index delimiters and general P-pattern
-composition over sample strings are still unsupported and are reported by the
+Version 0.4.51 adds FoxDot's per-hit sample-index selectors, written as a
+bar-enclosed symbol and one-digit index such as `|x1|`. The selector chooses
+the indexed WAV for that hit; other hits continue using `sample=`. Version
+0.4.50 added nested play-string groups: `[]` subdivisions, `()` lacing, bounded
+eight-cycle `{}` variations, and adjacent `<>` layers. General P-pattern
+composition over sample strings is still unsupported and reported by the
 compatibility checker. Playback uses the bundled native SC PlayBuf UGen; no
 SC/UGen rebuild, libsndfile DLL, external process or OSC is added. Portable
-examples 70–75 include six generated CC0 diagnostic WAVs, not a third-party
-sound library. See `Portable/Samples/README.txt` for exact syntax, folder
-layout and file-format/safety limits.
+examples 70–76 include six generated CC0 diagnostic WAVs, not a third-party
+sound library. See `Portable/Samples/README.txt` for syntax, folder layout and
+file-format/safety limits.
 
 The 0.4.46 test branch adds all 26 remaining original FoxDot core-UGen musical
 patches (53 FoxDot-derived patches in total), with individual Portable examples

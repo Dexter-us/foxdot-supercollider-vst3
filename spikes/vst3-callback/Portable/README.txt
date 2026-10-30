@@ -1,6 +1,7 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.46 adds one isolated synth test per file, examples 43-68:
+Version 0.4.51 adds per-hit FoxDot sample-index selectors; see Example 76.
+The 0.4.46 synth batch has one isolated synth test per file, examples 43-68:
 43 viola, 44 nylon, 45 arpy, 46 dab, 47 sawbass, 48 dbass,
 49 prophet, 50 pads, 51 pasha, 52 ambi, 53 sinepad, 54 keys,
 55 klank, 56 feel, 57 glass, 58 soft, 59 quin, 60 space,
@@ -46,8 +47,10 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 74-nested-play-strings.py demonstrates `[]` step subdivisions and `()` lacing.
 75-random-and-layered-strings.py demonstrates bounded `{}` variations and
 adjacent `<>` layers. The compatibility checker reports malformed strings;
-FoxDot `||` sample-index delimiters and general P-pattern operations over
-sample strings remain unsupported.
+76-sample-index-selection.py demonstrates FoxDot's `|x1|` notation to choose
+one sample variant for a single hit. The selector contains one sample symbol
+and a one-digit sample index; other hits still use the `sample=` control.
+General P-pattern operations over sample strings remain unsupported.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 
