@@ -204,7 +204,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -226,6 +226,9 @@ def run_script(script_text, include_events=False, include_effects=False, include
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
         mute_rows = [line.split('\t') for line in lines if line.startswith('M\t')]
+        if include_sample_controls:
+            return (player_rows, [line.split('\t') for line in lines if line.startswith('B\t')],
+                    [line.split('\t') for line in lines if line.startswith('Q\t')])
         if include_samples:
             return player_rows, [line.split('\t') for line in lines if line.startswith('B\t')]
         if include_mutes:
@@ -799,6 +802,10 @@ example70 = run_example('70-portable-sample-beat.py')
 assert int(next(row for row in example70 if row[2] == '0')[6]) == 57
 example71 = run_example('71-sample-selection-and-reverse.py')
 assert [int(row[6]) for row in example71 if row[2] == '0'] == [57, 57]
+example72 = run_example('72-var-sample-and-rate.py')
+assert [int(row[6]) for row in example72 if row[2] == '0'] == [57, 57]
+example73 = run_example('73-linvar-sample-and-rate.py')
+assert [int(row[6]) for row in example73 if row[2] == '0'] == [57]
 players, requests = run_script('p1 >> play("x-o-", dur=0.5, sample=P[0, 1], rate=P[1, -1])', include_samples=True)
 assert int(players[0][6]) == 57
 assert [int(row[1]) for row in requests] == [120, 45, 111, 45]
@@ -812,10 +819,22 @@ assert [float(row[3]) for row in requests] == [1, -1, 2, -2]
 assert all(row[4] == '1' for row in requests)
 _, sample_notes = run_script('p1 >> play("x", dur=P[0.5, 1])', include_events=True)
 assert [float(row[1]) for row in sample_notes] == [0, 0.5]
-for bad in ('rate=0', 'rate=9', 'sample=0.5', 'sample=[]', 'rate=[]', 'rate=var([1, 2], 4)'):
+varPlayers, varRequests, varControls = run_script(
+    'p1 >> play("x-o-", sample=var([0, 1], [2, 2]), rate=var([1, -1], 4))',
+    include_sample_controls=True)
+assert len(varRequests) == 4
+assert varControls == [['Q', '0', 'v:0.0,1.0:2.0,2.0', 'v:1.0,-1.0:4.0,4.0']], varControls
+linPlayers, linRequests, linControls = run_script(
+    'p1 >> play("x", sample=linvar([0, 1], 4), rate=linvar([0.75, 1.5], 4))',
+    include_sample_controls=True)
+assert linControls == [['Q', '0', 'l:0.0,1.0:4.0,4.0', 'l:0.75,1.5:4.0,4.0']], linControls
+assert float(linRequests[0][3]) == 0.75
+for bad in ('rate=0', 'rate=9', 'sample=0.5', 'sample=[]', 'rate=[]',
+            'sample=var([0, 0.5], 4)', 'sample=linvar([0, 1.5], 4)',
+            'rate=var([0.01, 1], 4)', 'rate=linvar([-1, 1], 4)'):
     failure = run_error_script('p1 >> play("x", ' + bad + ')')
     assert failure.startswith('ERROR\n') and 'ValueError' in failure, (bad, failure)
 assert 'Nested sample notation' in run_compatibility_check('p1 >> play("[xx]")')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-71.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-73.')

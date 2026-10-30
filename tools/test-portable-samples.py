@@ -49,9 +49,15 @@ struct World {
 };
 struct Harness {
     static constexpr std::size_t kPlayerCount=8;
+    struct TimeVarControl {
+        bool active=false;
+        std::size_t count=0;
+        std::array<double,8> values{};
+    };
     struct PatternState {
         bool active=false; int synthIndex=0; std::size_t eventCount=0;
         std::uint64_t sampleWorld=0;
+        TimeVarControl sampleControl;
         std::array<PythonNoteEvent,256> events{};
     };
     World ownedWorld;
@@ -121,6 +127,15 @@ int main(int argc, char** argv) {
     assert(h.ownedWorld.rt[1].samplerate==44100 && h.ownedWorld.rt[1].channels==1);
     assert(h.prepareSampleBuffers(updates,1,error));
     assert(h.sampleCache_.size()==2 && data==h.ownedWorld.rt[1].data);
+    updates[0].sampleControl.active=true;
+    updates[0].sampleControl.count=2;
+    updates[0].sampleControl.values[0]=0;
+    updates[0].sampleControl.values[1]=1;
+    assert(h.prepareSampleBuffers(updates,1,error));
+    assert(updates[0].events[0].sampleVariantCount==2);
+    assert(updates[0].events[0].sampleVariantBuffers[0]==1);
+    assert(updates[0].events[0].sampleVariantBuffers[1]==2);
+    updates[0].sampleControl.active=false;
     updates[0].events[0].sampleSymbol='a'; updates[0].eventCount=1;
     auto oldBytes=h.sampleCacheBytes_;
     h.sampleCacheBytes_=kCacheBudgetBytes;

@@ -487,6 +487,17 @@ public:
                             !parseTimeVarControl(player.bpnoiseControlToken, 0.0, 10.0, next.bpnoiseControl) ||
                             !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
+                        if (next.synthIndex == 57) {
+                            if (!parseTimeVarControl(player.sampleControlToken, -1000000.0, 1000000.0,
+                                                     next.sampleControl) ||
+                                !parseTimeVarControl(player.sampleRateControlToken, -8.0, 8.0,
+                                                     next.sampleRateControl))
+                                throw std::runtime_error("Invalid sample/rate var/linvar control from Python.");
+                            if (!validSampleSelectionControl(next.sampleControl))
+                                throw std::runtime_error("Sample var/linvar requires whole sample indexes.");
+                            if (!validSampleRateControl(next.sampleRateControl))
+                                throw std::runtime_error("Rate var/linvar magnitude must be 0.0625 to 8; rate linvar must not cross zero.");
+                        }
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoBeats = player.echoBeats;
                          next.delayTimeSeconds = player.delayTimeSeconds;
@@ -737,6 +748,8 @@ private:
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
         std::size_t eventCount = 0;
         std::uint64_t sampleWorld = 0;
+        TimeVarControl sampleControl;
+        TimeVarControl sampleRateControl;
         double bpm = 120.0;
         double lengthBeats = 1.0;
         int synthIndex = 0;
@@ -967,6 +980,54 @@ private:
             position -= duration;
         }
         return static_cast<float>(control.values[control.count - 1]);
+    }
+
+    static float evaluateSampleSelection(const TimeVarControl& control, double beat,
+                                         float fallback) {
+        if (!control.active || control.count == 0)
+            return fallback;
+        if (!control.linear || control.count == 1)
+            return evaluateTimeVar(control, beat, fallback);
+        double cycle = 0.0;
+        for (std::size_t i = 0; i < control.count; ++i)
+            cycle += control.durations[i];
+        if (cycle <= 0.0)
+            return fallback;
+        double position = std::fmod(std::max(0.0, beat), cycle);
+        for (std::size_t i = 0; i < control.count; ++i) {
+            const double duration = control.durations[i];
+            if (position < duration || i + 1 == control.count) {
+                const double progress = std::clamp(position / duration, 0.0, 1.0);
+                const auto next = (i + 1) % control.count;
+                return static_cast<float>(control.values[progress >= 0.5 ? next : i]);
+            }
+            position -= duration;
+        }
+        return static_cast<float>(control.values[control.count - 1]);
+    }
+
+    static bool validSampleSelectionControl(const TimeVarControl& control) {
+        for (std::size_t value = 0; value < control.count; ++value) {
+            const double index = control.values[value];
+            if (!std::isfinite(index) || index < -1000000.0 || index > 1000000.0 ||
+                std::floor(index) != index)
+                return false;
+        }
+        return true;
+    }
+
+    static bool validSampleRateControl(const TimeVarControl& control) {
+        int rateSign = 0;
+        for (std::size_t value = 0; value < control.count; ++value) {
+            const double rate = control.values[value];
+            if (!std::isfinite(rate) || std::abs(rate) < 0.0625 || std::abs(rate) > 8.0)
+                return false;
+            const int sign = std::signbit(rate) ? -1 : 1;
+            if (rateSign && sign != rateSign && control.linear)
+                return false;
+            rateSign = sign;
+        }
+        return true;
     }
 
     void setEditorStatus(std::string status) {
@@ -1359,68 +1420,87 @@ private:
             update.sampleWorld = generation;
             for (std::size_t index = 0; index < update.eventCount; ++index) {
                 auto& event = update.events[index];
-                std::filesystem::path path;
-                if (!PortableSamples::resolveWave(root, event.sampleSymbol, event.sampleIndex, path, error))
+                event.sampleVariantCount = update.sampleControl.active
+                    ? update.sampleControl.count : 1;
+                if (event.sampleVariantCount == 0 ||
+                    event.sampleVariantCount > event.sampleVariantBuffers.size()) {
+                    error = "Sample var/linvar has an unsupported number of variants.";
                     return false;
-                auto lookup = [&]() -> CachedSample* {
-                    for (const auto& cached : sampleCache_)
-                        if (cached->path == path) return cached.get();
-                    return nullptr;
-                };
-                auto ready = [&]() {
-                    if (world_ && generation == sampleWorldGeneration_) return true;
-                    error = "The audio engine restarted while loading samples. Press Run to retry.";
-                    return false;
-                };
-                std::size_t decodeBudget = 0;
-                {
-                    std::lock_guard<std::mutex> lock(worldAccessMutex_);
-                    if (!ready()) return false;
-                    if (const auto* cached = lookup()) {
-                        event.sampleBuffer = cached->buffer;
-                        event.sampleDurationSeconds = cached->wave.frames / cached->wave.sampleRate;
-                        continue;
-                    }
-                    decodeBudget = PortableSamples::kCacheBudgetBytes - sampleCacheBytes_;
-                    if (decodeBudget < 16) {
-                        error = "The 128 MiB decoded sample cache is full. Use shorter WAVs or reopen the plugin.";
+                }
+                event.sampleVariantBuffers.fill(-1);
+                event.sampleVariantDurations.fill(0.0);
+                for (std::size_t variant = 0; variant < event.sampleVariantCount; ++variant) {
+                    const auto rawIndex = update.sampleControl.active
+                        ? update.sampleControl.values[variant] : event.sampleIndex;
+                    if (!std::isfinite(rawIndex) || std::floor(rawIndex) != rawIndex ||
+                        rawIndex < -1000000.0 || rawIndex > 1000000.0) {
+                        error = "Sample var/linvar requires whole sample indexes from -1000000 to 1000000.";
                         return false;
                     }
+                    std::filesystem::path path;
+                    if (!PortableSamples::resolveWave(root, event.sampleSymbol,
+                                                       static_cast<int>(rawIndex), path, error))
+                        return false;
+                    auto ready = [&]() {
+                        if (world_ && generation == sampleWorldGeneration_) return true;
+                        error = "The audio engine restarted while loading samples. Press Run to retry.";
+                        return false;
+                    };
+                    CachedSample* cached = nullptr;
+                    std::size_t decodeBudget = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(worldAccessMutex_);
+                        if (!ready()) return false;
+                        for (const auto& item : sampleCache_)
+                            if (item->path == path) { cached = item.get(); break; }
+                        if (!cached) {
+                            decodeBudget = PortableSamples::kCacheBudgetBytes - sampleCacheBytes_;
+                            if (decodeBudget < 16) {
+                                error = "The 128 MiB decoded sample cache is full. Use shorter WAVs or reopen the plugin.";
+                                return false;
+                            }
+                        }
+                    }
+                    if (!cached) {
+                        // Expensive I/O/decoding is outside the world/audio lock.
+                        auto loaded = std::make_unique<CachedSample>();
+                        loaded->path = path;
+                        if (!PortableSamples::readWave(path, loaded->wave, error, decodeBudget))
+                            return false;
+                        std::lock_guard<std::mutex> lock(worldAccessMutex_);
+                        if (!ready()) return false;
+                        const auto bytes = loaded->wave.mono.size() * sizeof(float);
+                        if (bytes > PortableSamples::kCacheBudgetBytes - sampleCacheBytes_) {
+                            error = "The 128 MiB decoded sample cache is full. Use shorter WAVs or reopen the plugin.";
+                            return false;
+                        }
+                        // Buffer zero remains the nil buffer, as in FoxDot.
+                        if (sampleCache_.size() + 1 >= world_->mNumSndBufs) {
+                            error = "SuperCollider sample buffers are full. Reopen the plugin to clear the cache.";
+                            return false;
+                        }
+                        loaded->buffer = static_cast<int>(sampleCache_.size() + 1);
+                        cached = loaded.get();
+                        // Publish ownership before either SC buffer mirror points at the vector.
+                        sampleCache_.push_back(std::move(loaded));
+                        SndBuf buffer{};
+                        buffer.data = cached->wave.mono.data();
+                        buffer.frames = cached->wave.frames;
+                        buffer.samples = buffer.frames;
+                        buffer.channels = 1;
+                        buffer.samplerate = cached->wave.sampleRate;
+                        buffer.sampledur = 1.0 / buffer.samplerate;
+                        world_->mSndBufs[cached->buffer] = buffer;
+                        world_->mSndBufsNonRealTimeMirror[cached->buffer] = buffer;
+                        ++world_->mSndBufUpdates[cached->buffer].writes;
+                        sampleCacheBytes_ += bytes;
+                    }
+                    event.sampleVariantBuffers[variant] = cached->buffer;
+                    event.sampleVariantDurations[variant] =
+                        cached->wave.frames / cached->wave.sampleRate;
                 }
-                // Expensive I/O/decoding is outside the world/audio lock.
-                auto loaded = std::make_unique<CachedSample>();
-                loaded->path = path;
-                if (!PortableSamples::readWave(path, loaded->wave, error, decodeBudget)) return false;
-                std::lock_guard<std::mutex> lock(worldAccessMutex_);
-                if (!ready()) return false;
-                const auto bytes = loaded->wave.mono.size() * sizeof(float);
-                if (bytes > PortableSamples::kCacheBudgetBytes - sampleCacheBytes_) {
-                    error = "The 128 MiB decoded sample cache is full. Use shorter WAVs or reopen the plugin.";
-                    return false;
-                }
-                // Buffer zero remains the nil buffer, as in FoxDot.
-                if (sampleCache_.size() + 1 >= world_->mNumSndBufs) {
-                    error = "SuperCollider sample buffers are full. Reopen the plugin to clear the cache.";
-                    return false;
-                }
-                loaded->buffer = static_cast<int>(sampleCache_.size() + 1);
-                auto* cached = loaded.get();
-                // Publish ownership first: allocation failure must never leave
-                // an SC buffer pointing at a destroyed vector.
-                sampleCache_.push_back(std::move(loaded));
-                SndBuf buffer{};
-                buffer.data = cached->wave.mono.data();
-                buffer.frames = cached->wave.frames;
-                buffer.samples = buffer.frames;
-                buffer.channels = 1;
-                buffer.samplerate = cached->wave.sampleRate;
-                buffer.sampledur = 1.0 / buffer.samplerate;
-                world_->mSndBufs[cached->buffer] = buffer;
-                world_->mSndBufsNonRealTimeMirror[cached->buffer] = buffer;
-                ++world_->mSndBufUpdates[cached->buffer].writes;
-                sampleCacheBytes_ += bytes;
-                event.sampleBuffer = cached->buffer;
-                event.sampleDurationSeconds = cached->wave.frames / cached->wave.sampleRate;
+                event.sampleBuffer = event.sampleVariantBuffers[0];
+                event.sampleDurationSeconds = event.sampleVariantDurations[0];
             }
         }
         return true;
@@ -1604,8 +1684,20 @@ private:
                 if (isSample && (event.sampleBuffer < 1 ||
                                  pattern.sampleWorld != sampleWorldGeneration_))
                     continue;
-                double sampleSeconds = isSample
-                    ? event.sampleDurationSeconds / std::abs(event.sampleRate) : 0.0;
+                double longestSampleSeconds = 0.0;
+                double minimumSampleRate = std::abs(event.sampleRate);
+                if (isSample) {
+                    for (std::size_t variant = 0; variant < event.sampleVariantCount; ++variant)
+                        longestSampleSeconds = std::max(longestSampleSeconds,
+                                                        event.sampleVariantDurations[variant]);
+                    if (pattern.sampleRateControl.active)
+                        for (std::size_t value = 0; value < pattern.sampleRateControl.count; ++value)
+                            minimumSampleRate = std::min(
+                                minimumSampleRate,
+                                std::abs(pattern.sampleRateControl.values[value]));
+                }
+                double sampleSeconds = isSample && minimumSampleRate > 0.0
+                    ? longestSampleSeconds / minimumSampleRate : 0.0;
                 if (isSample && event.sampleGate)
                     sampleSeconds = std::min(sampleSeconds, event.durationBeats * 60.0 / pattern.bpm);
                 const double lookback = isSample ? sampleSeconds * pattern.bpm / 60.0 : event.durationBeats;
@@ -1623,6 +1715,42 @@ private:
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
                     const double absoluteStartBeat = baseEventBeat + event.delayBeats + dynamicDelay;
+                    std::size_t selectedVariant = 0;
+                    int selectedSampleBuffer = event.sampleBuffer;
+                    double selectedSampleRate = event.sampleRate;
+                    double selectedSampleSeconds = sampleSeconds;
+                    if (isSample) {
+                        const double selection = evaluateSampleSelection(
+                            pattern.sampleControl, absoluteStartBeat,
+                            static_cast<float>(event.sampleIndex));
+                        if (pattern.sampleControl.active) {
+                            for (std::size_t variant = 0;
+                                 variant < event.sampleVariantCount; ++variant) {
+                                if (pattern.sampleControl.values[variant] == selection) {
+                                    selectedVariant = variant;
+                                    break;
+                                }
+                            }
+                        }
+                        if (selectedVariant >= event.sampleVariantCount)
+                            continue;
+                        selectedSampleBuffer = event.sampleVariantBuffers[selectedVariant];
+                        selectedSampleRate = pattern.sampleRateControl.active
+                            ? evaluateTimeVar(pattern.sampleRateControl, absoluteStartBeat,
+                                              static_cast<float>(event.sampleRate))
+                            : event.sampleRate;
+                        if (selectedSampleBuffer < 1 ||
+                            std::abs(selectedSampleRate) < 0.0625 ||
+                            std::abs(selectedSampleRate) > 8.0)
+                            continue;
+                        selectedSampleSeconds =
+                            event.sampleVariantDurations[selectedVariant] /
+                            std::abs(selectedSampleRate);
+                        if (event.sampleGate)
+                            selectedSampleSeconds = std::min(
+                                selectedSampleSeconds,
+                                event.durationBeats * 60.0 / pattern.bpm);
+                    }
                     const double sustainEndBeat = absoluteStartBeat + event.durationBeats;
                     const bool foxDotNativeEnvelope = usesFoxDotNativeEnvelope(
                         pattern.synthIndex, event.attackSeconds, event.releaseSeconds);
@@ -1634,7 +1762,7 @@ private:
                         pattern.synthIndex != 42 && pattern.synthIndex != 48;
                     const double envelopeSustain = sustainSeconds *
                         (appliesBlur ? pattern.synthControls[6] : 1.0);
-                    const double sourceEnvelopeSeconds = isSample ? sampleSeconds : foxDotNativeEnvelope
+                    const double sourceEnvelopeSeconds = isSample ? selectedSampleSeconds : foxDotNativeEnvelope
                         ? foxDotEnvelopeDurationSeconds(pattern.synthIndex, envelopeSustain,
                                                         event.attackSeconds)
                         : sustainSeconds;
@@ -1646,7 +1774,7 @@ private:
                         break;
                     desired[desiredCount++] = ScheduledAudioNote{
                         static_cast<int>(player), event.midiNote, event.velocity,
-                        pattern.synthIndex, isSample ? static_cast<float>(event.sampleRate) : pattern.synthRate,
+                        pattern.synthIndex, isSample ? static_cast<float>(selectedSampleRate) : pattern.synthRate,
                         pattern.amplitude, pattern.pan, pattern.cutoffHz,
                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
                         pattern.mousePan, pattern.mouseCutoff,
@@ -1657,7 +1785,7 @@ private:
                             std::llround(absoluteEndBeat * samplesPerBeat)),
                         patternStart + static_cast<std::uint64_t>(
                             std::llround(sustainEndBeat * samplesPerBeat)),
-                        foxDotNativeEnvelope, event.sampleBuffer};
+                        foxDotNativeEnvelope, selectedSampleBuffer};
                     ++playerVoices;
                 }
             }
@@ -2604,7 +2732,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-    "0.4.48",
+    "0.4.49",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

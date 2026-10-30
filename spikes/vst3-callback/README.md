@@ -1,13 +1,20 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.48 adds initial portable WAV playback, preserving the 0.4.47
+Version 0.4.49 adds timed sample/rate var() and linvar() controls, preserving the 0.4.48
+portable WAV playback and 0.4.47
 fresh-note lifecycle correction below. Use `p1 >> play("x-o-", dur=0.5)` with
 FoxDot's symbol-folder mapping under `Portable/Samples`. A hyphen selects a
 closed-hat sample, while whitespace is a rest. `sample=` and signed `rate=`
 accept numbers or P/list patterns; selection and rate cycles expand to their
-LCM, with rests consuming parameter steps. Rate=1 is natural speed; negative
-rates reverse the native PlayBuf start/direction. Dur controls rhythm;
-unspecified sus allows natural one-shot length; explicit sus crops it.
+LCM, with rests consuming parameter steps. They also accept var() and linvar()
+for live changes over beat time. Sample selection remains discrete (linvar
+switches to the nearest selected WAV at each segment midpoint); playback-rate
+linvar glides between same-sign rates, while var() can switch direction.
+Rate=1 is natural speed; negative rates reverse the native PlayBuf start and
+direction. Playback-rate var/linvar values are evaluated at each trigger; a
+single sample voice does not pitch-glide while it is already playing.
+Dur controls rhythm; unspecified sus allows natural one-shot length, and
+explicit sus crops it.
 Amp/pan, player stop/mute, basic effects and MIDI note output remain available.
 
 The standalone C++ reader accepts PCM 8/16/24/32 and IEEE float32 mono/stereo
@@ -22,13 +29,13 @@ being published. Errors leave active players unchanged.
 File limit is 64 MiB, decoded cache budget 128 MiB, rate magnitude 0.0625–8;
 existing overlap/polyphony limits still apply. Buffers are retained until
 engine reset/unload; reopen after editing an already cached WAV. Nested sample
-notation, time-var sample/rate, streaming, loops/slicing, time stretching,
+notation, streaming, loops/slicing, time stretching,
 non-WAV codecs and third-party sample-library redistribution remain deferred.
 The six tiny diagnostic WAVs are generated locally and offered under CC0.
-Examples 70–71 exercise beat symbols, selection, source sample rates and
-reverse playback. `tools/test-portable-samples.py` compiles the actual decoder
-and worker/cache code with undefined-behavior checks, then fills an SC buffer
-from decoded floats and checks five native PlayBuf notes, direction/rate,
+Examples 70–73 exercise beat symbols, selection, reverse playback and
+time-var sample/rate controls. `tools/test-portable-samples.py` compiles the
+actual decoder and worker/cache code with undefined-behavior checks, then fills
+an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,
 natural stopping, repeated startup and finite output. It does not use a disk
 UGen or soundfile reader; Windows host validation is still required.
 

@@ -2,12 +2,15 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.48 adds the first portable WAV sample engine: `p1 >> play("x-o-",
+Version 0.4.49 adds live `var()`/`linvar()` control of the first portable WAV
+sample engine: `p1 >> play("x-o-",
 dur=0.5)`, sample selection, forward/reverse rate patterns, amp/pan and existing
-player effects. Spaces are rests; `-` is FoxDot's closed-hat symbol. Samples
+player effects. Spaces are rests; `-` is FoxDot's closed-hat symbol. Sample
+selection remains discrete during `linvar`, while playback rate glides.
+Samples
 load/cache on the script worker and use the already bundled native SC PlayBuf
 UGen; no SC/UGen rebuild, libsndfile DLL, external process or OSC is added.
-Portable examples 70–71 include six generated CC0 diagnostic WAVs, not a
+Portable examples 70–73 include six generated CC0 diagnostic WAVs, not a
 third-party sound library. See `Portable/Samples/README.txt` for folder layout,
 format/safety limits and explicitly deferred nested sample notation,
 streaming, time stretching and stereo-preserving voices.

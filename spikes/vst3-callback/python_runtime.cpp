@@ -314,6 +314,7 @@ std::string makeEvaluationScript(const std::string& sourcePath,
     static constexpr char api[] = R"PY(
 _dexter_synth_controls = {}
 _dexter_sample_events = {}
+_dexter_sample_controls = {}
 _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
                'klank', 'feel', 'glass', 'soft', 'quin', 'space',
@@ -1324,15 +1325,39 @@ def _sample_value(value, index, beat, name):
         raise ValueError(name + ' pattern cannot be empty')
     return values[index % len(values)]
 
+def _sample_timevar_value(control, beat):
+    if not control.linear or len(control.values) < 2:
+        return control.at(beat)
+    cycle = sum(control.durations)
+    position = max(0.0, float(beat)) % cycle
+    for index, duration in enumerate(control.durations):
+        if position < duration or index + 1 == len(control.values):
+            following = control.values[(index + 1) % len(control.values)]
+            return following if position / duration >= 0.5 else control.values[index]
+        position -= duration
+    return control.values[-1]
+
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
     if not text:
         raise ValueError('sample pattern cannot be empty')
-    if isinstance(sample, _DexterTimeVar) or isinstance(rate, _DexterTimeVar):
-        raise ValueError('sample/rate use numbers or P[...] in this first batch; time-var sample controls come later')
-    selections = [sample] if isinstance(sample, (int, float)) else list(sample)
-    rates = [rate] if isinstance(rate, (int, float)) else list(rate)
+    sampleControl = sample if isinstance(sample, _DexterTimeVar) else None
+    rateControl = rate if isinstance(rate, _DexterTimeVar) else None
+    selections = ([sample.values[0]] if sampleControl is not None else
+                  [sample] if isinstance(sample, (int, float)) else list(sample))
+    rates = ([rate.values[0]] if rateControl is not None else
+             [rate] if isinstance(rate, (int, float)) else list(rate))
     if not selections or not rates:
         raise ValueError('sample and rate patterns cannot be empty')
+    if sampleControl is not None:
+        if any(not float(value).is_integer() or abs(value) > 1000000
+               for value in sampleControl.values):
+            raise ValueError('sample var/linvar values must be whole sample indexes from -1000000 to 1000000')
+    if rateControl is not None:
+        if any(not 0.0625 <= abs(value) <= 8.0 for value in rateControl.values):
+            raise ValueError('rate var/linvar values must have magnitude 0.0625 to 8')
+        if rateControl.linear and any(value * rateControl.values[0] <= 0.0
+                                      for value in rateControl.values):
+            raise ValueError('rate linvar values must keep the same sign; use var() to switch direction')
     cycle = len(text)
     lengths = [len(selections), len(rates)]
     if not isinstance(dur, (int, float, _DexterTimeVar)):
@@ -1370,7 +1395,8 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
     pattern = sequence(notes, step=dur, duration=sus, **controls)
     pattern.synth = 'sample'
     pattern.synthRate = 1.0
-    pattern.sampleSpec = (selections, rates, sus is not None, positions)
+    pattern.sampleSpec = (selections, rates, sus is not None, positions,
+                          sampleControl, rateControl)
     return pattern
 
 def play(notes, *args, **kwargs):
@@ -1385,6 +1411,7 @@ class Player:
     def __rshift__(self, pattern):
         global _dexter_events, _dexter_length, _dexter_slots
         global _dexter_default_touched, _dexter_scale, _dexter_root
+        global _dexter_sample_controls
         if not isinstance(pattern, PlayerPattern):
             raise TypeError('assign sequence(...) to a player using >>')
         saved = (_dexter_events, _dexter_length, _dexter_slots,
@@ -1429,10 +1456,12 @@ class Player:
         if pattern.synth == 'sample':
             requests = []
             adjusted = []
-            selection, rates, gate, positions = pattern.sampleSpec
+            selection, rates, gate, positions, sampleControl, rateControl = pattern.sampleSpec
             for index, event in enumerate(compiledEvents):
                 symbol = event[2]
-                sampleIndex = _sample_value(selection, positions[index], event[0], 'sample')
+                sampleIndex = (_sample_timevar_value(sampleControl, event[0])
+                               if sampleControl is not None else
+                               _sample_value(selection, positions[index], event[0], 'sample'))
                 playbackRate = float(_sample_value(rates, positions[index], event[0], 'rate'))
                 if int(sampleIndex) != sampleIndex or not -1000000 <= sampleIndex <= 1000000:
                     raise ValueError('sample selection must be an integer from -1000000 to 1000000')
@@ -1444,6 +1473,9 @@ class Player:
                 adjusted.append(tuple(note))
             compiledEvents = adjusted
             _dexter_sample_events[playerIndex] = requests
+            _dexter_sample_controls[playerIndex] = (
+                sampleControl.wire() if sampleControl is not None else '-',
+                rateControl.wire() if rateControl is not None else '-')
         _dexter_synth_controls[playerIndex] = pattern.synthControls
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
@@ -1532,6 +1564,9 @@ p8 = Player(8)
             << "            _f.write('G' + chr(9) + chr(9).join(map(str, _modulation_values)) + chr(10))\n"
             << "            _synth_controls = _dexter_scope['_dexter_synth_controls'].get(_player, (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))\n"
             << "            _f.write('S' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _synth_controls)) + chr(10))\n"
+             << "            if _synth == 57:\n"
+             << "                _sample_control, _rate_control = _dexter_scope['_dexter_sample_controls'].get(_player, ('-', '-'))\n"
+             << "                _f.write('Q' + chr(9) + str(_player) + chr(9) + _sample_control + chr(9) + _rate_control + chr(10))\n"
             << "            for _event_index, _e in enumerate(_events):\n"
             << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\t{}\\n'.format(*_e))\n"
             << "                if _synth == 57:\n"
@@ -1688,6 +1723,28 @@ bool parseResult(const std::filesystem::path& resultPath,
             if (!(input >> value) || !std::isfinite(value) ||
                 value < minimum[index] || value > maximum[index]) {
                 error = "Python returned an invalid synth control.";
+                return false;
+            }
+        }
+        if (update.synthIndex == 57) {
+            char controlRecord = 0;
+            int controlPlayer = -1;
+            auto validControlToken = [](const std::string& token) {
+                if (token == "-") return true;
+                if (token.size() > 256 || token.size() < 5 ||
+                    (token[0] != 'v' && token[0] != 'l') || token[1] != ':')
+                    return false;
+                const auto delimiter = token.find(':', 2);
+                return delimiter != std::string::npos && delimiter > 2 &&
+                       delimiter + 1 < token.size() &&
+                       token.find(':', delimiter + 1) == std::string::npos;
+            };
+            if (!(input >> controlRecord >> controlPlayer >> update.sampleControlToken >>
+                  update.sampleRateControlToken) ||
+                controlRecord != 'Q' || controlPlayer != update.playerIndex ||
+                !validControlToken(update.sampleControlToken) ||
+                !validControlToken(update.sampleRateControlToken)) {
+                error = "Python returned malformed sample time-var controls.";
                 return false;
             }
         }

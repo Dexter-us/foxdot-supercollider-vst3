@@ -39,8 +39,12 @@ int main(int argc, char** argv) {
         std::cerr << error << '\n';
         return 1;
     }
-    for (const auto& player : pattern.players)
+    for (const auto& player : pattern.players) {
         std::cout << player.synthIndex << ' ';
+        if (player.synthIndex == 57)
+            std::cout << "Q:" << player.sampleControlToken << ':'
+                      << player.sampleRateControlToken << ' ';
+    }
     return 0;
 }
 """
@@ -57,6 +61,10 @@ with tempfile.TemporaryDirectory() as directory:
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
         assert parsed.returncode == 0, (example.name, parsed.stderr)
+        if example.name == "72-var-sample-and-rate.py":
+            assert "Q:v:0.0,1.0:4.0,4.0:v:1.0,-1.0:4.0,4.0" in parsed.stdout
+        if example.name == "73-linvar-sample-and-rate.py":
+            assert "Q:l:0.0,1.0:4.0,4.0:l:0.75,1.5:4.0,4.0" in parsed.stdout
     valid = result.read_text()
     for bad in (re.sub(r"^S\t0\t", "S\t9\t", valid, flags=re.M),
                 re.sub(r"^S\t0\t[^\n]+", "S\t0\tnan\t0.5\t1\t0.5\t0.5\t0\t1", valid, flags=re.M),
@@ -66,6 +74,13 @@ with tempfile.TemporaryDirectory() as directory:
                 re.sub(r"^B\t[^\n]+", "B\t120\t0\t0\t0", valid, count=1, flags=re.M),
                 re.sub(r"^B\t[^\n]+", "B\t32\t0\t1\t0", valid, count=1, flags=re.M),
                 re.sub(r"^B\t[^\n]+", "B\t120\t0\t1\t2", valid, count=1, flags=re.M)):
+        assert bad != valid
+        result.write_text(bad)
+        parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+        assert parsed.returncode == 1, parsed.stdout
+    for bad in (re.sub(r"^Q\t[^\n]+\n", "", valid, count=1, flags=re.M),
+                re.sub(r"^Q\t[^\n]+", "Q\t9\tv:0,1:2,2\t-", valid, count=1, flags=re.M),
+                re.sub(r"^Q\t[^\n]+", "Q\t0\tinvalid\t-", valid, count=1, flags=re.M)):
         assert bad != valid
         result.write_text(bad)
         parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)

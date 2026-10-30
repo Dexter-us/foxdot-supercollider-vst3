@@ -21,6 +21,9 @@ struct PythonNoteEvent {
     // Resolved on the script worker; these POD fields are safe to copy in process().
     int sampleBuffer = -1;
     double sampleDurationSeconds = 0.0;
+    std::array<int, 8> sampleVariantBuffers{};
+    std::array<double, 8> sampleVariantDurations{};
+    std::size_t sampleVariantCount = 0;
 };
 
 static_assert(std::is_trivially_copyable<PythonNoteEvent>::value,
@@ -44,6 +47,8 @@ struct PythonPlayerUpdate {
     std::string bprControlToken = "-";
     std::string bpnoiseControlToken = "-";
     std::string swellControlToken = "-";
+    std::string sampleControlToken = "-";
+    std::string sampleRateControlToken = "-";
     int playerIndex = 0;
     bool stopped = false;
     double bpm = 120.0;
