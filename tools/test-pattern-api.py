@@ -229,6 +229,9 @@ def run_script(script_text, include_events=False, include_effects=False, include
         if include_sample_controls:
             return (player_rows, [line.split('\t') for line in lines if line.startswith('B\t')],
                     [line.split('\t') for line in lines if line.startswith('Q\t')])
+        if include_samples and include_events:
+            return (player_rows, [line.split('\t') for line in lines if line.startswith('B\t')],
+                    event_rows)
         if include_samples:
             return player_rows, [line.split('\t') for line in lines if line.startswith('B\t')]
         if include_mutes:
@@ -806,6 +809,14 @@ example72 = run_example('72-var-sample-and-rate.py')
 assert [int(row[6]) for row in example72 if row[2] == '0'] == [57, 57]
 example73 = run_example('73-linvar-sample-and-rate.py')
 assert [int(row[6]) for row in example73 if row[2] == '0'] == [57]
+example74 = run_example('74-nested-play-strings.py')
+assert [int(row[6]) for row in example74 if row[2] == '0'] == [57, 57]
+example75 = run_example('75-random-and-layered-strings.py')
+assert [int(row[6]) for row in example75 if row[2] == '0'] == [57, 57, 57]
+_, duplicateLayerRequests, duplicateLayerEvents = run_script(
+    'p1 >> play("<x><x>", dur=1)', include_samples=True, include_events=True)
+assert [int(row[1]) for row in duplicateLayerRequests] == [120, 120]
+assert len({int(row[3]) for row in duplicateLayerEvents}) == 2
 players, requests = run_script('p1 >> play("x-o-", dur=0.5, sample=P[0, 1], rate=P[1, -1])', include_samples=True)
 assert int(players[0][6]) == 57
 assert [int(row[1]) for row in requests] == [120, 45, 111, 45]
@@ -834,7 +845,27 @@ for bad in ('rate=0', 'rate=9', 'sample=0.5', 'sample=[]', 'rate=[]',
             'rate=var([0.01, 1], 4)', 'rate=linvar([-1, 1], 4)'):
     failure = run_error_script('p1 >> play("x", ' + bad + ')')
     assert failure.startswith('ERROR\n') and 'ValueError' in failure, (bad, failure)
-assert 'Nested sample notation' in run_compatibility_check('p1 >> play("[xx]")')
+_, nestedRequests, nestedEvents = run_script(
+    'p1 >> play("x[--]o", dur=1)', include_samples=True, include_events=True)
+assert [int(row[1]) for row in nestedRequests] == [120, 45, 45, 111]
+assert [float(row[1]) for row in nestedEvents] == [0.0, 1.0, 1.5, 2.0]
+_, lacedRequests, lacedEvents = run_script(
+    'p1 >> play("(xo)---", dur=1)', include_samples=True, include_events=True)
+assert [int(row[1]) for row in lacedRequests] == [120, 45, 45, 45, 111, 45, 45, 45]
+assert [float(row[1]) for row in lacedEvents] == [float(i) for i in range(8)]
+_, layeredRequests, layeredEvents = run_script(
+    'p1 >> play("<x  ><-  >", dur=1)', include_samples=True, include_events=True)
+assert [int(row[1]) for row in layeredRequests] == [120, 45]
+assert [float(row[1]) for row in layeredEvents] == [0.0, 0.0]
+_, randomRequests, randomEvents = run_script(
+    'p1 >> play("{xo}", dur=1)', include_samples=True, include_events=True)
+assert len(randomRequests) == 8 and len(randomEvents) == 8
+assert len({int(row[1]) for row in randomRequests}) == 2
+malformed_string = run_compatibility_check('p1 >> play("x[--")')
+assert 'missing closing delimiter' in malformed_string
+assert 'empty group' in run_compatibility_check('p1 >> play("x[]")')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play("x[--]o(=[-o])")')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-73.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-75.')

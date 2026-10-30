@@ -2,18 +2,17 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.49 adds live `var()`/`linvar()` control of the first portable WAV
-sample engine: `p1 >> play("x-o-",
-dur=0.5)`, sample selection, forward/reverse rate patterns, amp/pan and existing
-player effects. Spaces are rests; `-` is FoxDot's closed-hat symbol. Sample
-selection remains discrete during `linvar`, while playback rate glides.
-Samples
-load/cache on the script worker and use the already bundled native SC PlayBuf
-UGen; no SC/UGen rebuild, libsndfile DLL, external process or OSC is added.
-Portable examples 70–73 include six generated CC0 diagnostic WAVs, not a
-third-party sound library. See `Portable/Samples/README.txt` for folder layout,
-format/safety limits and explicitly deferred nested sample notation,
-streaming, time stretching and stereo-preserving voices.
+Version 0.4.50 adds the core nested FoxDot sample-string groups: square
+brackets subdivide one step, parentheses lace patterns across cycles, curly
+braces make bounded eight-cycle variations, and adjacent angle groups layer
+sample hits. Plain symbols, rests, sample/rate controls and var()/linvar()
+remain supported. `||` sample-index delimiters and general P-pattern
+composition over sample strings are still unsupported and are reported by the
+compatibility checker. Playback uses the bundled native SC PlayBuf UGen; no
+SC/UGen rebuild, libsndfile DLL, external process or OSC is added. Portable
+examples 70–75 include six generated CC0 diagnostic WAVs, not a third-party
+sound library. See `Portable/Samples/README.txt` for exact syntax, folder
+layout and file-format/safety limits.
 
 The 0.4.46 test branch adds all 26 remaining original FoxDot core-UGen musical
 patches (53 FoxDot-derived patches in total), with individual Portable examples
@@ -33,7 +32,7 @@ build-time graph compilation, and the explicit host/safety adaptations.
 
 ## Current prototype
 
-- Windows native editor with Run, Stop, Open, Save, and Save As. Seventy-one starter patterns are separate `.py` files in the `Portable` folder.
+- Windows native editor with Run, Stop, Open, Save, and Save As. Seventy-five starter patterns are separate `.py` files in the `Portable` folder.
 - Open and Save As explicitly start in the `Portable` folder beside the VST3 bundle; ordinary Save writes back to the currently opened or saved script.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
 - `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independently editable players (`p1`–`p8`) using `p1 >> sequence(...)`; `.stop()` stops one player without stopping the others. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and `euclid`; finite FoxDot-style `P[...]` note/rest/chord literals and numeric `+`/`-` transposition are supported. Players can choose the four basic oscillator modes plus twenty-one embedded FoxDot-derived synths: bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, and blip. These controls affect plugin audio; MIDI output remains note events.

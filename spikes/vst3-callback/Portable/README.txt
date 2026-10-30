@@ -24,11 +24,11 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 08-synths-and-controls.py demonstrates oscillator choices, per-player amp/pan/cutoff, beat-based echo spacing, and beat-offset delay. MIDI output remains note events.
 
 
-09-foxdot-core.py demonstrates the initial direct-compatibility subset: Clock.bpm, Scale.default.set(...), p1 >> saw(...), p2 >> pulse(...), cyclic dur values, and per-player oct/sus controls. It uses embedded SuperCollider oscillator UGens and does not start the FoxDot server clock or send OSC. FoxDot sample strings and most of the synth library are still not included.
+09-foxdot-core.py demonstrates Clock.bpm, Scale.default.set(...), p1 >> saw(...), p2 >> pulse(...), cyclic dur values, and per-player oct/sus controls. It uses embedded SuperCollider oscillator UGens and does not start the FoxDot server clock or send OSC.
 
 10-pattern-transformations.py demonstrates palindrome, stutter, and interleave pattern tools with rests and per-player FoxDot-style saw/pulse syntax.
 
-11-foxdot-pattern-literals.py demonstrates the finite FoxDot-style P[...] literal for note lists, rests, and chords. Slice-based/dynamic patterns and sample strings remain unsupported.
+11-foxdot-pattern-literals.py demonstrates the finite FoxDot-style P[...] literal for note lists, rests, and chords. It is separate from the direct play-string syntax in examples 70-75.
 
 12-pattern-arithmetic.py shows FoxDot-style P[...] numeric transposition with + and -, including laced patterns, rests, and numeric chords.
 
@@ -41,6 +41,13 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 16-bounded-pattern-slices.py shows finite P ranges, stepped/descending ranges, and slicing the generated pattern. P ranges need an integer stop and are limited to 256 items.
 
 17-live-player-edits.py demonstrates updating just p1 while p2 continues. Run both assignments once; then edit p1, comment out p2's assignment, and press Run. Unmentioned players keep playing; run p2.stop() alone to stop p2.
+
+70-73 demonstrate portable WAV playback, sample/rate controls and var()/linvar().
+74-nested-play-strings.py demonstrates `[]` step subdivisions and `()` lacing.
+75-random-and-layered-strings.py demonstrates bounded `{}` variations and
+adjacent `<>` layers. The compatibility checker reports malformed strings;
+FoxDot `||` sample-index delimiters and general P-pattern operations over
+sample strings remain unsupported.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 
