@@ -21,7 +21,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 
 ## Prototype limits
 
-- Version 0.4.44 is a diagnostic build, not a confirmed freeze fix. It writes flushed lifecycle phase timings to stderr outside the audio callback. Windows CI preserves validator stdout/stderr as a separate diagnostics artifact and treats validator failure or timeout as a workflow failure.
+- Version 0.4.45 rounds both SuperCollider hash-table capacities up to powers of two. The previous graph-definition capacity of 31 violated the pinned hash implementation's bit-mask probing requirement. Compile-time guards and a bounded probing regression test cover this constraint. Lifecycle timing traces remain enabled outside the audio callback; Windows CI preserves validator logs and treats timeout or failure as a workflow failure. Resolution of the host freeze still requires runtime verification.
 
 - SuperCollider is pinned at `ef5771bce3d1c9c780cafd58cf032ec4a3f36d10`; the VST3 SDK checkout is 3.8.1. The Windows script bundles CPython 3.12.10. GitHub Actions builds and validates the Windows VST3; audio, editor, and MIDI behavior still require testing in a real Windows DAW.
   - The engine uses `WorldOptions::mRealTime = false` so SuperCollider does not initialize its own audio driver. One hundred thirty-six fixed voice slots provide 17 slots per player for active notes and overlapping release tails. All four voice modes (sine, triangle, saw, and pulse/square) use the embedded SuperCollider SynthDef and bundled UGen modules. This is not a real-time-safety guarantee for every UGen or third-party module; only load trusted, compatible modules and test them in a DAW. Audit allocations, locks, and thread behavior before treating it as a production instrument.

@@ -21,6 +21,7 @@
 #include "python_runtime.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
+#include "sc_pool_capacity.h"
 
 #include <algorithm>
 #include <array>
@@ -625,9 +626,13 @@ private:
     // Preserve the known-good headroom; graph definitions are registered
     // independently, while active voice graphs are created lazily and cached.
     static constexpr std::size_t kWorldNodeCapacity =
-        kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity;
+        scPoolCapacity(kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity);
     static constexpr std::size_t kWorldGraphDefCapacity =
-        kSynthGraphCount + kReverbGraphCount;
+        scPoolCapacity(kSynthGraphCount + kReverbGraphCount);
+    static_assert((kWorldNodeCapacity & (kWorldNodeCapacity - 1)) == 0,
+                  "SC node hash capacity must be a power of two.");
+    static_assert((kWorldGraphDefCapacity & (kWorldGraphDefCapacity - 1)) == 0,
+                  "SC graph-definition hash capacity must be a power of two.");
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
@@ -2271,7 +2276,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-            "0.4.44",
+            "0.4.45",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

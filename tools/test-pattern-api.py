@@ -392,6 +392,8 @@ def test_embedded_synthdef():
     assert 'kPlayerCount * kReverbGraphCount + 1' in processor_source
     assert 'kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity' in processor_source
     assert 'static_assert(kWorldNodeCapacity >= 2048' in processor_source
+    assert 'scPoolCapacity(kSynthGraphCount + kReverbGraphCount)' in processor_source
+    assert 'scPoolCapacity(kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity)' in processor_source
     assert 'prepareSynthGraphs(updates, updateMask, graphError)' in processor_source
     assert 'Graph_New(world_, synthDefinitions_[graphIndex]' in processor_source
     assert 'worldAccessMutex_, std::try_to_lock' in processor_source
