@@ -589,9 +589,13 @@ private:
                       kSynthIndexToGraphIndex.back() == kSynthGraphCount - 1,
                   "Every Python synth index must resolve to a registered graph.");
     static constexpr std::size_t kReverbGraphCount = 3;
-    static constexpr std::size_t kWorldNodeCapacity =
+    static constexpr std::size_t kCalculatedWorldNodeCapacity =
         kAudioVoiceCount * kSynthGraphCount +
         kPlayerCount * kReverbGraphCount + 1;
+    // Keep the known-good headroom from the previous 2048-node pool while
+    // allowing the pool to grow automatically as more synth graphs are added.
+    static constexpr std::size_t kWorldNodeCapacity =
+        kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity;
     static constexpr std::size_t kWorldGraphDefCapacity =
         kSynthGraphCount + kReverbGraphCount;
     static constexpr int kFirstAudioBus = 2;
@@ -611,6 +615,8 @@ private:
                   "The SuperCollider world needs three private buses per player reverb.");
     static_assert(kWorldNodeCapacity <= 0xffffffffu,
                   "The SuperCollider world node capacity must fit WorldOptions.");
+    static_assert(kWorldNodeCapacity >= 2048,
+                  "Preserve the proven minimum node-pool headroom.");
     static_assert(kWorldGraphDefCapacity <= 0xffffffffu,
                   "The SuperCollider graph-definition capacity must fit WorldOptions.");
     static_assert(kWorldNodeCapacity + 100 <= 0x7fffffff,
@@ -2145,7 +2151,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.41",
+            "0.4.42",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

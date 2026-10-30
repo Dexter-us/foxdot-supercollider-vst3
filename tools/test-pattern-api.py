@@ -389,6 +389,8 @@ def test_embedded_synthdef():
     assert 'kSynthGraphCount * kAudioVoiceCount' in processor_source or \
         'kAudioVoiceCount * kSynthGraphCount' in processor_source
     assert 'kPlayerCount * kReverbGraphCount + 1' in processor_source
+    assert 'kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity' in processor_source
+    assert 'static_assert(kWorldNodeCapacity >= 2048' in processor_source
     assert 'kSynthGraphCount + kReverbGraphCount' in processor_source
     assert 'kSynthGraphCount + 3> mapping{}' in processor_source
     assert 'index <= 3 ? 0 : index - 3' in processor_source
