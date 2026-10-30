@@ -20,6 +20,7 @@
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
 #include "win32_code_editor.h"
+#include "lifecycle_trace.h"
 
 #include <algorithm>
 #include <array>
@@ -49,6 +50,7 @@ namespace {
 std::mutex scLibraryLifecycleMutex;
 std::atomic<unsigned long long> nextScriptNamespace{1};
 Steinberg::ModuleTerminator cleanupSuperCollider([] {
+    LifecycleTrace trace("deinitialize_library");
     deinitialize_library();
 });
 
@@ -140,6 +142,7 @@ namespace Steinberg::Vst {
 class DexterSCTone final : public SingleComponentEffect, public ICodeEditorHost {
 public:
     static FUnknown* createInstance(void*) {
+        LifecycleTrace trace("createInstance");
         return static_cast<IAudioProcessor*>(new DexterSCTone());
     }
 
@@ -148,11 +151,13 @@ public:
                            std::to_string(nextScriptNamespace.fetch_add(1))) {}
 
     ~DexterSCTone() override {
+        LifecycleTrace trace("processor destructor", this);
         joinScriptThread();
         stopWorld();
     }
 
     tresult PLUGIN_API initialize(FUnknown* context) override {
+        LifecycleTrace trace("processor initialize", this);
         const auto result = SingleComponentEffect::initialize(context);
         if (result != kResultOk)
             return result;
@@ -162,6 +167,7 @@ public:
     }
 
     IPlugView* PLUGIN_API createView(FIDString name) override {
+        LifecycleTrace trace("createView", this);
         if (!name || std::strcmp(name, ViewType::kEditor) != 0)
             return nullptr;
         return createCodeEditorView(
@@ -235,6 +241,7 @@ public:
     }
 
     tresult PLUGIN_API setupProcessing(ProcessSetup& setup) override {
+        LifecycleTrace trace("setupProcessing", this);
         const auto baseResult = SingleComponentEffect::setupProcessing(setup);
         if (baseResult != kResultOk)
             return baseResult;
@@ -246,6 +253,7 @@ public:
     }
 
     tresult PLUGIN_API terminate() override {
+        LifecycleTrace trace("processor terminate", this);
         joinScriptThread();
         stopWorld();
         return SingleComponentEffect::terminate();
@@ -932,6 +940,7 @@ private:
     }
 
     void joinScriptThread() {
+        LifecycleTrace trace("joinScriptThread", this);
         std::thread thread;
         {
             std::lock_guard<std::mutex> lock(scriptThreadMutex_);
@@ -1711,8 +1720,10 @@ private:
     }
 
     bool initializeWorld() {
+        LifecycleTrace trace("initializeWorld including locks", this);
         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
         std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
+        LifecycleTrace lockedTrace("initializeWorld locks acquired", this);
         const auto ugenPath = bundledUGenPath();
         std::error_code pathError;
         if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError)) {
@@ -1722,6 +1733,7 @@ private:
         ugenPluginPath_ = ugenModuleSearchPath();
 
         try {
+            LifecycleTrace allocationTrace("echo buffer allocation", this);
             echoBuffer_.assign(kPlayerCount * 2 * kMaxEchoBufferSamples, 0.0f);
         } catch (...) {
             std::fprintf(stderr, "Dexter VST3: could not allocate the player echo buffer.\n");
@@ -1745,7 +1757,10 @@ private:
         options.mVerbosity = -1;
         options.mUGensPluginPath = ugenPluginPath_.c_str();
 
-        world_ = World_New(&options);
+        {
+            LifecycleTrace worldTrace("World_New", this);
+            world_ = World_New(&options);
+        }
         if (!world_) {
             std::fprintf(stderr, "Dexter VST3: World_New failed at %.1f Hz.\n", sampleRate_);
             return false;
@@ -1760,8 +1775,12 @@ private:
         moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
         setEditorStatus(std::move(moduleStatus));
         World_SetSampleRate(world_, sampleRate_);
-        World_Start(world_);
+        {
+            LifecycleTrace startTrace("World_Start", this);
+            World_Start(world_);
+        }
 
+        LifecycleTrace definitionsTrace("synth definitions and reverb bank", this);
         auto* defs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kToneSynthDef),
                                    sizeof(kToneSynthDef), nullptr);
         if (!defs) {
@@ -1815,6 +1834,7 @@ private:
             }
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 auto*& graph = reverbGraphs_[player][type];
+                LifecycleTrace reverbTrace(reverbNames[type], this);
                 sc_msg_iter noControls(0, "");
                 const auto graphError =
                     Graph_New(world_, reverbDefinition, reverbNodeId++, &noControls,
@@ -2155,9 +2175,11 @@ private:
     // UGen registration is process-global in this SC revision. Keep modules loaded
     // while any VST instance exists; the VST module terminator unloads them once.
     void stopWorld() {
+        LifecycleTrace trace("stopWorld including locks", this);
         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
         if (world_) {
             std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
+            LifecycleTrace cleanupTrace("World_Cleanup", this);
             World_Cleanup(world_, false);
             world_ = nullptr;
         }
@@ -2249,7 +2271,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-            "0.4.43",
+            "0.4.44",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

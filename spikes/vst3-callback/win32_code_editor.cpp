@@ -1,4 +1,5 @@
 #include "win32_code_editor.h"
+#include "lifecycle_trace.h"
 
 #if defined(_WIN32)
 
@@ -128,6 +129,7 @@ public:
     }
 
     ~CodeEditorView() override {
+        LifecycleTrace trace("editor destructor", this);
         removed();
         if (frame_)
             frame_->release();
@@ -158,6 +160,7 @@ public:
 
     Steinberg::tresult PLUGIN_API attached(void* parent,
                                             Steinberg::FIDString type) override {
+        LifecycleTrace trace("editor attached", this);
         if (!parent || !type || std::strcmp(type, Steinberg::kPlatformTypeHWND) != 0)
             return Steinberg::kResultFalse;
         if (window_)
@@ -188,6 +191,7 @@ public:
     }
 
     Steinberg::tresult PLUGIN_API removed() override {
+        LifecycleTrace trace("editor removed", this);
         if (window_) {
             KillTimer(window_, 1);
             if (editor_) {
@@ -433,7 +437,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.43",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.44 diagnostic",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),

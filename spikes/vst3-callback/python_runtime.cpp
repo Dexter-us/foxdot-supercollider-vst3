@@ -1,4 +1,5 @@
 #include "python_runtime.h"
+#include "lifecycle_trace.h"
 
 #include <algorithm>
 #include <array>
@@ -1613,6 +1614,7 @@ PortablePython& PortablePython::instance() {
 
 bool PortablePython::initialize(const std::filesystem::path& runtimeDirectory,
                                 std::string& error) {
+    LifecycleTrace trace("Python initialize including lock", this);
 #if defined(_WIN32)
     std::lock_guard<std::mutex> lock(gPythonMutex);
     if (initialized_)
