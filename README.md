@@ -2,7 +2,10 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.63 extends `PAlt`, `PStretch`, `PStutter`, `PShuf`, and `PJoin`
+Version 0.4.64 adds bounded nested `PRhythm(...)` groups. Nested duration lists
+expand into note offsets, with nesting limited to eight levels and expanded
+events limited to 256; see Example 89. Version 0.4.63 extends
+`PAlt`, `PStretch`, `PStutter`, `PShuf`, and `PJoin`
 to finite numeric note patterns, including rests and chord groups, as well as
 sample-symbol patterns. `PStutter` now uses FoxDot's least-common-multiple
 cycling for source/count patterns; see Example 88. Version 0.4.62 allows
@@ -31,7 +34,7 @@ bounded eight-cycle `{}` variations, and adjacent `<>` layers. Numeric P
 arithmetic and sample-symbol `&` chord-zipping remain unsupported and are
 reported by the compatibility checker. Playback uses the
 bundled native SC PlayBuf UGen; no SC/UGen rebuild, libsndfile DLL, external
-process or OSC is added. Portable examples 70–88 include six generated CC0
+process or OSC is added. Portable examples 70–89 include six generated CC0
 diagnostic WAVs, not a third-party sound library. See
 `Portable/Samples/README.txt` for syntax, folder layout and file-format/safety
 limits.
@@ -54,14 +57,14 @@ build-time graph compilation, and the explicit host/safety adaptations.
 
 ## Current prototype
 
-- Windows native editor with Run, Stop, Open, Save, and Save As. Seventy-seven starter patterns are separate `.py` files in the `Portable` folder.
+- Windows native editor with Run, Stop, Open, Save, and Save As. Eighty-nine starter patterns are separate `.py` files in the `Portable` folder.
 - Open and Save As explicitly start in the `Portable` folder beside the VST3 bundle; ordinary Save writes back to the currently opened or saved script.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
 - `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independently editable players (`p1`–`p8`) using `p1 >> sequence(...)`; `.stop()` stops one player without stopping the others. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and `euclid`; finite FoxDot-style `P[...]` note/rest/chord literals and numeric `+`/`-` transposition are supported. Players can choose the four basic oscillator modes plus twenty-one embedded FoxDot-derived synths: bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, and blip. These controls affect plugin audio; MIDI output remains note events.
 - Raw MIDI pitches remain the default. With `degrees=True`, zero-based scale degrees map to pitches using major, minor, dorian, mixolydian, major/minor pentatonic, or blues scales; degrees wrap across octaves.
 - MIDI note numbers 0–127, `None` rests, repeating patterns, and up to eight simultaneous notes per player (up to 64 across eight players).
 - Chords can be written as nested lists, such as `play([[60, 64, 67], [62, 65, 69]])`; separate `play()` calls can layer parts.
-- Maximum 256 note events per pattern, 256 step slots, 4096 beats, and 20–300 BPM.
+- Maximum 256 note events per pattern, 256 step slots, and 4096 beats. Tempo has a 0.001 BPM numerical-safety floor and no fixed upper cap; non-finite values are rejected.
 - Embedded CPython runtime and the required SuperCollider UGen modules are packaged with the VST3.
 - MIDI note events are emitted on the VST3 event output bus, with each player assigned its own MIDI channel; the engine supports up to 64 simultaneous notes and eight extra short-release voices.
 - Internal audio applies MIDI velocity, per-voice attack/release envelopes, and smoothed voice-count mix compensation to avoid abrupt level changes as players start and stop.

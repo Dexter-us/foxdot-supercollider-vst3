@@ -238,6 +238,15 @@ assert namespace['PRhythm']([2, (3, 8, 1, 0.25)]) == [
     2.0, (2.0, 0.75, 1.25)]
 assert namespace['PRhythm'](namespace['P'][1, (3, 8)]) == [
     1.0, (2.0, 0.75, 1.5)]
+assert namespace['PRhythm']([1, [0.25, 0.25]]) == [
+    1.0, (0.5, 0.25)]
+assert namespace['PRhythm']([0.75, [0.25, 0.25], (3, 8)]) == [
+    0.75, (0.5, 0.25), (2.0, 0.75, 1.5)]
+assert namespace['PRhythm']([0.5, [0.25, [0.125, 0.125]]]) == [
+    0.5, (0.5, 0.25, 0.375)]
+deepRhythm = [1]
+for _ in range(9):
+    deepRhythm = [deepRhythm]
 for badRhythm in (
         lambda: namespace['PBeat'](123),
         lambda: namespace['PBeat']('x' * 257),
@@ -271,7 +280,10 @@ for badRhythm in (
         lambda: namespace['PRhythm']([1, (3,)]),
         lambda: namespace['PRhythm']([1, (3.0, 8)]),
         lambda: namespace['PRhythm']([1, (3, 64)]),
-        lambda: namespace['PRhythm']([[1, 2]]),
+        lambda: namespace['PRhythm']([[9, 1]]),
+        lambda: namespace['PRhythm']([[4096, 1]]),
+        lambda: namespace['PRhythm']([[1] * 257]),
+        lambda: namespace['PRhythm']([deepRhythm]),
         lambda: namespace['PRhythm']([1] * 257)):
     try:
         badRhythm()
@@ -762,6 +774,18 @@ test_embedded_synthdef()
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
 assert len(legacy) == 1 and len(legacy[0]) == 22
+namespace['tempo'](10000)
+assert namespace['_dexter_bpm'] == 10000.0
+namespace['tempo'](0.001)
+assert namespace['_dexter_bpm'] == 0.001
+for badTempo in (0, -1, 0.0009, float('inf'), float('-inf'), float('nan')):
+    try:
+        namespace['tempo'](badTempo)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('tempo must reject out-of-range or non-finite values')
+namespace['tempo'](120)
 fox_literal_rows = run_script('p1 >> saw(P[0, 2, None, (3, 5), 7], dur=0.5, oct=5, sus=0.4)\n')
 assert len(fox_literal_rows) == 1 and fox_literal_rows[0][5] == '5', fox_literal_rows
 assert legacy[0][5] == '2' and legacy[0][6] == '0'
@@ -1322,6 +1346,18 @@ assert sorted(round(float(event[7]), 6) for event in example85Events
     0.0, 0.0, 0.0, 0.0, 0.175, 0.175, 0.175, 0.175,
     0.2625, 0.2625, 0.2625, 0.2625,
     0.30625, 0.30625, 0.30625, 0.30625]
+example89Text = open(
+    os.path.join(sys.argv[2], '89-nested-prhythm.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(example89Text)
+example89Rows, example89Events = run_script(example89Text, include_events=True)
+assert len(example89Rows) == 1 and len(example89Events) == 6
+assert [round(float(event[1]) + float(event[7]), 6)
+        for event in example89Events] == [
+    0.0, 0.75, 1.0, 1.25, 2.0, 2.75]
+assert [round(float(event[2]), 6) for event in example89Events] == [
+    0.35] * 6
+assert_player_polyphony_ok(example89Rows[0], example89Events)
 numericTransformText = open(
     os.path.join(sys.argv[2], '88-numeric-pattern-transforms.py'),
     encoding='utf-8').read()
@@ -1336,4 +1372,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-88.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-89.')

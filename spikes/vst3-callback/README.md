@@ -1,6 +1,9 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.63 extends `PAlt`, `PStretch`, `PStutter`, `PShuf`, and `PJoin`
+Version 0.4.64 adds bounded nested `PRhythm(...)` groups. Nested duration lists
+expand into note offsets, with nesting limited to eight levels and expanded
+events limited to 256; see Example 89. Version 0.4.63 extends
+`PAlt`, `PStretch`, `PStutter`, `PShuf`, and `PJoin`
 from sample-symbol inputs to bounded numeric note patterns, including rests
 and chord groups. `PStutter` uses FoxDot's least-common-multiple cycling for
 source/count patterns; Example 88 exercises all five transforms.
@@ -13,7 +16,7 @@ chord patterns; Example 86 demonstrates both. Version 0.4.60 added
 `PQuicken(...)` delay clusters and a bounded `PRhythm(...)`
 subset matching FoxDot's documented flat-list and Euclidean-tuple behavior;
 Example 85 demonstrates both. Tuple groups in `dur=` create delayed repeats.
-Nested PRhythm structures and grouped `sus=` are deferred.
+Nested duration patterns now create bounded groups; grouped `sus=` remains deferred.
 Version 0.4.59 adds bounded `PDelay(...)` beat offsets and FoxDot's `PStrum(...)`
 rhythm pattern; Example 84 combines them. Version 0.4.58 matches FoxDot's
 slice-based `start` rotations for `PBeat(...)` and `PDur(...)`, including
@@ -81,7 +84,8 @@ example 77 tests finite P sample sequences, reversal and rotation, and example
 alternation, 80 combines PStretch/PStutter, 81 tests PShuf, 82 combines
 PJoin/PShuf, 83 tests PBeat/PDur durations, 84 combines PDelay/PStrum, 85
 demonstrates PQuicken/PRhythm, 86 combines PZip/PZip2, and 87 exercises
-overlapping sustains. Example 88 uses all five transforms on numeric notes.
+overlapping sustains. Example 88 uses all five transforms on numeric notes;
+Example 89 demonstrates nested PRhythm timing groups.
 `tools/test-portable-samples.py` compiles the
 actual decoder and worker/cache code with undefined-behavior checks, then fills
 an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,

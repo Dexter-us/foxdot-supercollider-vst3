@@ -1,5 +1,8 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.64 adds nested PRhythm duration groups, flattened to bounded note
+offsets. Nesting is limited to eight levels and expanded note events to 256;
+see Example 89. Grouped sus= remains deferred.
 Version 0.4.63 extends PAlt, PStretch, PStutter, PShuf, and PJoin to bounded
 numeric note patterns, rests and chord groups as well as sample-symbol inputs.
 PStutter cycles source and count patterns to their least-common-multiple length,
@@ -13,10 +16,11 @@ with a rule; see Example 86. PZip/PZip2 accept 1D numeric note patterns and
 rests, capped at 8 inputs and 256 laced items. Sample-symbol and nested-chord
 zipping are deferred.
 Version 0.4.60 adds PQuicken delay clusters and a bounded PRhythm subset;
-see Example 85. PRhythm accepts a flat pattern of positive durations and
+see Example 85. PRhythm accepts positive durations and
 (n, k[, start[, dur]]) Euclidean tuples. A tuple group in dur= plays delayed
-repeats at the cumulative Euclidean offsets. Nested PRhythm patterns and
-grouped sus= are deferred. PQuicken output and each player are capped at 256
+repeats at the cumulative Euclidean offsets. Nested lists now create bounded
+groups using cumulative child-duration offsets; grouped sus= remains deferred.
+PQuicken output and each player are capped at 256
 expanded note events; delay offsets are limited to 8 beats.
 Version 0.4.59 adds bounded PDelay groups and the FoxDot PStrum rhythm
 pattern; see Example 84. A PDelay group repeats each note at its cumulative
@@ -123,6 +127,9 @@ voices sustaining over a pattern loop.
 
 88-numeric-pattern-transforms.py uses PAlt, PStretch, PStutter, PShuf, and
 PJoin on scale-degree notes, including numeric rest/chord support.
+
+89-nested-prhythm.py demonstrates nested duration groups, including a nested
+Euclidean tuple and the resulting retrigger offsets.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

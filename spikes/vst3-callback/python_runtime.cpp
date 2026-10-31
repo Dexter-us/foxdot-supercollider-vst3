@@ -475,8 +475,8 @@ _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
 def tempo(bpm):
     global _dexter_bpm
     bpm = float(bpm)
-    if bpm != bpm or not 20.0 <= bpm <= 300.0:
-        raise ValueError('tempo must be from 20 to 300 BPM')
+    if bpm != bpm or bpm in (float('inf'), float('-inf')) or bpm < 0.001:
+        raise ValueError('tempo must be finite and at least 0.001 BPM')
     _dexter_bpm = bpm
 
 class _FoxDotClock:
@@ -1185,14 +1185,29 @@ def PRhythm(durations):
     values = list(durations)
     if not values or len(values) > 256:
         raise ValueError('PRhythm requires 1 to 256 duration items')
+    if len(values) == 1 and isinstance(values[0], _FoxDotDurationGroup):
+        return _FoxDotFinitePattern(values)
     if len(values) == 1 and isinstance(values[0], tuple):
         if not 2 <= len(values[0]) <= 4:
             raise ValueError('PRhythm Euclidean tuples require 2 to 4 PDur arguments')
         return PDur(*values[0])
-    output = []
-    expandedItems = 0
-    totalBeats = 0.0
-    for item in values:
+
+    expandedItems = [0]
+
+    def parseItem(item, depth):
+        if depth > 8:
+            raise ValueError('PRhythm nesting is limited to 8 levels')
+        if isinstance(item, _FoxDotDurationGroup):
+            if not item:
+                raise ValueError('PRhythm duration groups cannot be empty')
+            base = float(item[0])
+            offsets = [float(value) for value in item[1:]]
+            if (base != base or base < 0.001 or base > 4096.0 or
+                    any(value != value or value < 0.0 or value > 8.0 or value > base
+                        for value in offsets)):
+                raise ValueError('PRhythm duration-group offsets must fit the 8-beat delay range')
+            expandedItems[0] += len(item)
+            return item, base
         if isinstance(item, tuple):
             if not 2 <= len(item) <= 4:
                 raise ValueError('PRhythm Euclidean tuples require 2 to 4 PDur arguments')
@@ -1205,20 +1220,45 @@ def PRhythm(durations):
                 offsets.append(elapsed)
             if baseDuration > 4096.0 or any(value > 8.0 for value in offsets):
                 raise ValueError('PRhythm grouped offsets must fit the 8-beat delay range')
-            output.append(_FoxDotDurationGroup(
-                [baseDuration] + offsets))
-            expandedItems += 1 + len(offsets)
-            totalBeats += baseDuration
-        elif isinstance(item, (int, float)) and not isinstance(item, bool):
+            expandedItems[0] += len(euclideanDurations)
+            return _FoxDotDurationGroup([baseDuration] + offsets), baseDuration
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
             value = float(item)
             if value != value or value in (float('inf'), float('-inf')) or not 0.001 <= value <= 4096.0:
                 raise ValueError('PRhythm durations must be finite values from 0.001 to 4096 beats')
-            output.append(value)
-            expandedItems += 1
-            totalBeats += value
-        else:
-            raise TypeError('PRhythm supports flat numeric durations and (n, k[, start[, dur]]) tuples only')
-        if expandedItems > 256 or totalBeats > 4096.0:
+            expandedItems[0] += 1
+            return value, value
+        if isinstance(item, (list, _FoxDotFinitePattern)):
+            children = list(item)
+            if not children or len(children) > 256:
+                raise ValueError('PRhythm nested patterns require 1 to 256 items')
+            parsed = [parseItem(child, depth + 1) for child in children]
+            if len(parsed) == 1:
+                return parsed[0]
+            offsets = []
+            elapsed = 0.0
+            for child, span in parsed:
+                if isinstance(child, _FoxDotDurationGroup):
+                    if elapsed > 0.0:
+                        offsets.append(elapsed)
+                    offsets.extend(elapsed + float(value) for value in child[1:])
+                elif elapsed > 0.0:
+                    offsets.append(elapsed)
+                elapsed += span
+            if elapsed > 4096.0 or any(
+                    value > 8.0 or value > elapsed for value in offsets):
+                raise ValueError('PRhythm nested offsets must fit the 8-beat delay range')
+            return _FoxDotDurationGroup([elapsed] + offsets), elapsed
+        raise TypeError(
+            'PRhythm supports numbers, nested duration patterns, and (n, k[, start[, dur]]) tuples')
+
+    output = []
+    totalBeats = 0.0
+    for item in values:
+        parsed, span = parseItem(item, 0)
+        output.append(parsed)
+        totalBeats += span
+        if expandedItems[0] > 256 or totalBeats > 4096.0:
             raise ValueError('PRhythm is limited to 256 expanded items and 4096 total beats')
     return _FoxDotFinitePattern(output)
 
@@ -2507,7 +2547,7 @@ bool parseResult(const std::filesystem::path& resultPath,
             record != 'P' || update.playerIndex < 0 || update.playerIndex >= 8 ||
             stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
-            !std::isfinite(update.bpm) || update.bpm < 20.0 || update.bpm > 300.0 ||
+            !std::isfinite(update.bpm) || update.bpm < 0.001 ||
             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
               update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 57 ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||

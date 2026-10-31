@@ -69,6 +69,29 @@ with tempfile.TemporaryDirectory() as directory:
     sample_wrapper = api_tests["make_wrapper"](str(sample_example), str(result))
     exec(sample_wrapper, {"__name__": "__main__"})
     valid = result.read_text()
+    high_tempo = re.sub(r"^(P\t[^\t]+\t[^\t]+\t)[^\t]+",
+                        r"\g<1>10000", valid, count=1, flags=re.M)
+    assert high_tempo != valid
+    result.write_text(high_tempo)
+    parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+    assert parsed.returncode == 0, parsed.stderr
+    low_tempo = re.sub(r"^(P\t[^\t]+\t[^\t]+\t)[^\t]+",
+                       r"\g<1>0.001", valid, count=1, flags=re.M)
+    assert low_tempo != valid
+    result.write_text(low_tempo)
+    parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+    assert parsed.returncode == 0, parsed.stderr
+    for bad_tempo in (
+            re.sub(r"^(P\t[^\t]+\t[^\t]+\t)[^\t]+",
+                   r"\g<1>inf", valid, count=1, flags=re.M),
+            re.sub(r"^(P\t[^\t]+\t[^\t]+\t)[^\t]+",
+                   r"\g<1>0", valid, count=1, flags=re.M),
+            re.sub(r"^(P\t[^\t]+\t[^\t]+\t)[^\t]+",
+                   r"\g<1>0.0009", valid, count=1, flags=re.M)):
+        assert bad_tempo != valid
+        result.write_text(bad_tempo)
+        parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+        assert parsed.returncode == 1, parsed.stdout
     for bad in (re.sub(r"^S\t0\t", "S\t9\t", valid, flags=re.M),
                 re.sub(r"^S\t0\t[^\n]+", "S\t0\tnan\t0.5\t1\t0.5\t0.5\t0\t1", valid, flags=re.M),
                 re.sub(r"^S\t[^\n]+\n", "", valid, flags=re.M),
