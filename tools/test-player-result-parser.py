@@ -65,6 +65,9 @@ with tempfile.TemporaryDirectory() as directory:
             assert "Q:v:0.0,1.0:4.0,4.0:v:1.0,-1.0:4.0,4.0" in parsed.stdout
         if example.name == "73-linvar-sample-and-rate.py":
             assert "Q:l:0.0,1.0:4.0,4.0:l:0.75,1.5:4.0,4.0" in parsed.stdout
+    sample_example = plugin / "Portable" / "83-pbeat-pdur-rhythm-durations.py"
+    sample_wrapper = api_tests["make_wrapper"](str(sample_example), str(result))
+    exec(sample_wrapper, {"__name__": "__main__"})
     valid = result.read_text()
     for bad in (re.sub(r"^S\t0\t", "S\t9\t", valid, flags=re.M),
                 re.sub(r"^S\t0\t[^\n]+", "S\t0\tnan\t0.5\t1\t0.5\t0.5\t0\t1", valid, flags=re.M),

@@ -184,6 +184,13 @@ assert namespace['PDur'](0, 8) == [2.0]
 assert namespace['PDur'](3, 2) == [0.125, 0.125, 0.25]
 assert namespace['PDur'](3, 8, 1, 0.25) == [0.75, 0.5, 0.75]
 assert namespace['PDur'](3, 8, 4) == [0.75, 0.75, 0.5]
+assert namespace['PDelay'](3, 8) == [0.0, 0.75, 1.5]
+assert namespace['PDelay'](5, 16) == [0.0, 0.75, 1.5, 2.25, 3.0]
+assert namespace['PDelay'](3, 8, 1, 0.25) == [0.0, 0.75, 1.25]
+assert namespace['PStrum']() == [
+    1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.5, 0.5, 0.5, 0.5, 0.5, 1.0]
+assert namespace['PStrum'](0) == [1.0, 0.5, 1.5, 1.0]
+assert len(namespace['PStrum'](15)) == 34
 for badRhythm in (
         lambda: namespace['PBeat'](123),
         lambda: namespace['PBeat']('x' * 257),
@@ -193,13 +200,17 @@ for badRhythm in (
         lambda: namespace['PDur'](1, 0),
         lambda: namespace['PDur'](-1, 8),
         lambda: namespace['PDur'](256, 129),
-        lambda: namespace['PDur'](0, 256, dur=17)):
+        lambda: namespace['PDur'](0, 256, dur=17),
+        lambda: namespace['PDelay'](300, 128),
+        lambda: namespace['PStrum'](-1),
+        lambda: namespace['PStrum'](16),
+        lambda: namespace['PStrum'](4.0)):
     try:
         badRhythm()
     except (TypeError, ValueError):
         pass
     else:
-        raise AssertionError('PBeat/PDur must reject invalid or unbounded rhythm inputs')
+        raise AssertionError('rhythm helpers must reject invalid or unbounded inputs')
 assert namespace['PStretch'](namespace['P']['x', 'o'], 256) == (
     list(namespace['P']['x', 'o']) * 128)
 assert len(namespace['PStutter'](['x'] * 16, 16)) == 256
@@ -742,6 +753,24 @@ assert abs(float(linNoteEvents[2][1]) - 0.5625) < 1e-9
 assert abs(float(linNoteEvents[2][2]) - 0.2125) < 1e-9
 assert int(linNoteEvents[2][3]) == 67 and int(linNoteEvents[2][4]) == 89
 effectRows, effectEvents = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=var([0.1, 0.5], [1, 1]), delay=linvar([0.0, 0.5], [1, 1]), delaytime=linvar([0.1, 0.5], [1, 1]), echomix=var([0.1, 0.5], [1, 1]), feedback=var([0.25, 0.45], [1, 1]), atk=var([0.01, 0.03], [1, 1]), rel=linvar([0.02, 0.1], [1, 1]))\n', include_events=True)
+patternDelayRows, patternDelayEvents = run_script(
+    'p1 >> saw([0, 2, 4, 5, 7], dur=0.5, delay=PDelay(3, 8))\n',
+    include_events=True)
+assert len(patternDelayRows) == 1 and len(patternDelayEvents) == 15
+assert [round(float(event[7]), 6) for event in patternDelayEvents] == [
+    0.0, 0.75, 1.5] * 5
+chordDelayRows, chordDelayEvents = run_script(
+    'p1 >> saw(P[(0, 2), (2, 4)], dur=1, sus=0.4, strum=0.05, delay=PDelay(2, 4))\n',
+    include_events=True)
+assert len(chordDelayRows) == 1 and [
+    round(float(event[7]), 6) for event in chordDelayEvents
+] == [0.0, 0.5, 0.05, 0.55, 0.0, 0.5, 0.05, 0.55]
+assert [round(float(event[1]), 6) for event in chordDelayEvents] == [
+    0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+tooManyDelayedEvents = run_error_script(
+    'p1 >> saw([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] * 7 + [0, 1], '
+    'dur=1, sus=0.1, delay=PDelay(3, 8))\n')
+assert 'PDelay is limited to 256 expanded note events per player' in tooManyDelayedEvents
 foxdotEchoRows, foxdotDecayRows = run_script('p1 >> saw([0, 2, 4, 6], dur=0.5, echo=0.5, decay=0.75, echomix=0.4, feedback=0.5)\n', include_decay=True)
 assert foxdotDecayRows[0][0] == 'E' and float(foxdotDecayRows[0][2]) == 0.75 and foxdotDecayRows[0][3] == '-'
 assert abs(float(foxdotEchoRows[0][10]) - 0.5) < 1e-9
@@ -1066,6 +1095,12 @@ assert 'PBeat expects a pulse string' in run_compatibility_check(
     'p1 >> play("x", dur=PBeat())')
 assert 'PDur expects pulse and step counts' in run_compatibility_check(
     'p1 >> play("x", dur=PDur(3))')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw(P[0, 2, 4], dur=PStrum(2), delay=PDelay(3, 8))')
+assert 'PDelay expects pulse and step counts' in run_compatibility_check(
+    'p1 >> saw([0], delay=PDelay(3))')
+assert 'PStrum accepts one optional subdivision count' in run_compatibility_check(
+    'p1 >> saw([0], dur=PStrum(2, 3))')
 assert 'PStretch currently accepts sample-symbol patterns only' in run_compatibility_check(
     'p1 >> play(PStretch(P[0, 1], 6))')
 assert 'PStutter currently accepts sample-symbol patterns only' in run_compatibility_check(
@@ -1117,6 +1152,15 @@ example83Rows, example83Requests, example83Events = run_script(
 assert len(example83Rows) == 2 and len(example83Requests) == 7 and len(example83Events) == 7
 assert sorted(round(float(row[1]), 6) for row in example83Events) == [
     0.0, 0.0, 0.5, 0.75, 1.25, 1.5, 1.5]
+example84Rows, example84Events = run_script(
+    open(os.path.join(sys.argv[2], '84-pdelay-pstrum-combination.py'), encoding='utf-8').read(),
+    include_events=True)
+assert len(example84Rows) == 1 and len(example84Events) == 36
+assert [round(float(event[7]), 6) for event in example84Events] == [
+    0.0, 0.75, 1.5] * 12
+assert [round(float(event[1]), 6) for event in example84Events] == [
+    beat for beat in (0.0, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 5.0, 5.5, 6.0, 6.5, 7.0)
+    for _ in range(3)]
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-83.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-84.')

@@ -97,7 +97,7 @@ _COMPAT_CALLS = {
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
-    'PShuf', 'PJoin', 'PBeat', 'PDur',
+    'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -255,6 +255,10 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 self.add(node.lineno, name + ' expects ' +
                          ('a pulse string' if name == 'PBeat' else 'pulse and step counts') +
                          ' with optional start and dur values.')
+        if name == 'PDelay' and not 2 <= len(node.args) + len(node.keywords) <= 4:
+            self.add(node.lineno, 'PDelay expects pulse and step counts with optional start and dur values.')
+        if name == 'PStrum' and len(node.args) + len(node.keywords) > 1:
+            self.add(node.lineno, 'PStrum accepts one optional subdivision count.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -994,6 +998,22 @@ def PDur(n, k, start=0, dur=0.25):
     return _scale_foxdot_durations(
         _rotate_foxdot_durations(durations, rotation), dur, 'PDur')
 
+def PDelay(n, k, start=0, dur=0.25):
+    durations = PDur(n, k, start, dur)
+    offsets = [0.0]
+    for duration in durations[:-1]:
+        offsets.append(offsets[-1] + duration)
+    return _FoxDotFinitePattern(offsets)
+
+def PStrum(n=4):
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError('PStrum subdivision count must be an integer')
+    if n < 0 or n > 15:
+        raise ValueError('PStrum subdivision count must be between 0 and 15')
+    first = _FoxDotFinitePattern([1.0, 0.5]).stutter([1, n + 1])
+    second = _FoxDotFinitePattern([1.5, 0.5]).stutter([1, n])
+    return first | second | 1.0
+
 def PStretch(pattern, size):
     values = _sample_pattern_items(pattern, 'PStretch')
     if isinstance(size, bool) or not isinstance(size, int):
@@ -1390,6 +1410,16 @@ def _event_control(value, name, lower, upper):
         raise ValueError(name + ' is outside the supported range')
     return result, None
 
+def _note_delay_control(value):
+    if isinstance(value, _FoxDotFinitePattern):
+        if not value or len(value) > 256:
+            raise ValueError('delay pattern must contain 1 to 256 offsets')
+        offsets = [float(item) for item in value]
+        if any(item != item or item < 0.0 or item > 8.0 for item in offsets):
+            raise ValueError('delay pattern offsets must be between 0 and 8 beats')
+        return offsets[0], _FoxDotFinitePattern(offsets)
+    return _event_control(value, 'delay', 0.0, 8.0)
+
 class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
@@ -1443,7 +1473,7 @@ class PlayerPattern:
         else:
             self.cutoff, self.cutoffControl = _control_value(cutoff, 'cutoff', 20.0, 20000.0)
         self.echoBeats, self.echoControl = _control_value(echo, 'echo', 0.0, 64.0)
-        self.delayBeats, self.delayControl = _event_control(delay, 'delay', 0.0, 8.0)
+        self.delayBeats, self.delayControl = _note_delay_control(delay)
         delaytimeValue = 0.0 if delaytime is None else delaytime
         self.delayTimeSeconds, self.delayTimeControl = _control_value(delaytimeValue, 'delaytime', 0.0, 4.0)
         self.echoMix, self.echoMixControl = _control_value(echomix, 'echomix', 0.0, 1.0)
@@ -1984,7 +2014,23 @@ class Player:
                    _allow_repeated_notes=pattern.allowRepeatedNotes,
                   strum=pattern.strumControl if pattern.strumControl is not None else pattern.strumBeats)
             compiledLength = _dexter_length
-            compiledEvents = [event[:6] + (event[6] + (0.0 if pattern.delayControl is not None else pattern.delayBeats),) for event in _dexter_events]
+            delayPattern = isinstance(pattern.delayControl, _FoxDotFinitePattern)
+            if delayPattern:
+                delayValues = list(pattern.delayControl)
+                if len(_dexter_events) * len(delayValues) > 256:
+                    raise ValueError('PDelay is limited to 256 expanded note events per player')
+                compiledEvents = []
+                for event in _dexter_events:
+                    for delayValue in delayValues:
+                        compiledEvents.append(event[:6] + (event[6] + delayValue,))
+                serializedDelayControl = None
+            else:
+                compiledEvents = [
+                    event[:6] + (event[6] +
+                                 (0.0 if pattern.delayControl is not None else pattern.delayBeats),)
+                    for event in _dexter_events
+                ]
+                serializedDelayControl = pattern.delayControl
         finally:
             _dexter_events, _dexter_length, _dexter_slots, _dexter_default_touched = saved[:4]
             _dexter_scale, _dexter_root = saved[4], saved[5]
@@ -2057,7 +2103,7 @@ class Player:
                                          pattern.lpfControl, pattern.lprControl,
                                          pattern.hpfControl, pattern.hprControl,
                                          pattern.bpfControl, pattern.bprControl, pattern.echoDecayBeats, pattern.echoDecayControl,
-                                         pattern.echoMix, pattern.echoMixControl, pattern.feedback, pattern.feedbackControl, pattern.delayControl, pattern.synthRate,
+                                         pattern.echoMix, pattern.echoMixControl, pattern.feedback, pattern.feedbackControl, serializedDelayControl, pattern.synthRate,
                                          pattern.bpnoise, pattern.bpnoiseControl, pattern.swell, pattern.swellControl)
         if playerIndex == 0:
             _dexter_default_touched = False

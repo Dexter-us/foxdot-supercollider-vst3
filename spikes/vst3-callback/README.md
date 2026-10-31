@@ -1,7 +1,9 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.58 matches FoxDot's slice-based `start` rotations for `PBeat(...)`
-and `PDur(...)`, including negative and over-length offsets; see Example 83.
+Version 0.4.59 adds bounded `PDelay(...)` beat offsets and FoxDot's `PStrum(...)`
+rhythm pattern; Example 84 combines them. Version 0.4.58 matches FoxDot's
+slice-based `start` rotations for `PBeat(...)` and `PDur(...)`, including
+negative and over-length offsets; see Example 83.
 Version 0.4.57 added bounded FoxDot-compatible `PBeat(...)` and `PDur(...)`
 duration patterns. Version 0.4.56 added sample-symbol `PShuf(...)` and `PJoin(...)`: shuffle a
 complete phrase, or join small motifs before shuffling; see Examples 81–82.
@@ -63,7 +65,7 @@ time-var sample/rate controls; example 76 tests per-hit sample indices,
 example 77 tests finite P sample sequences, reversal and rotation, and example
 78 demonstrates pattern concatenation followed by rotation, 79 tests PAlt
 alternation, 80 combines PStretch/PStutter, 81 tests PShuf, 82 combines
-PJoin/PShuf, and 83 tests PBeat/PDur duration patterns.
+PJoin/PShuf, 83 tests PBeat/PDur durations, and 84 combines PDelay/PStrum.
 `tools/test-portable-samples.py` compiles the
 actual decoder and worker/cache code with undefined-behavior checks, then fills
 an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,
