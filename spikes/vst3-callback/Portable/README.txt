@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.68 adds FoxDot-compatible Clock.swing(amount=0.1): a sample-accurate
+onset nudge alternating every half-beat. Clock.swing(0) disables it. The nudge
+is bounded to less than half a beat to avoid negative or wrapped note times.
+Its phase starts when a player is run or updated and does not follow DAW
+transport. See Example 93.
+
 Version 0.4.67 adds sample-symbol PZip(...) and PZip2(...), matching FoxDot's
 cyclic least-common-multiple lacing for finite patterns. The resulting groups
 flatten into simultaneous sample hits; a space rests only its own lane. Laced

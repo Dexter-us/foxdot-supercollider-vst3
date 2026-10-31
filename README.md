@@ -2,6 +2,10 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.68 adds `Clock.swing(amount=0.1)`, matching FoxDot's alternating
+half-beat clock nudge in the plugin's sample-accurate scheduler; zero disables
+it. The shift is safety-bounded to less than half a beat; its phase starts when
+the player is run or updated, not from DAW transport. See Example 93.
 Version 0.4.67 extends `PZip(...)` and `PZip2(...)` to finite sample-symbol
 patterns, cycling inputs to their least-common-multiple length and flattening
 them into simultaneous hits. The laced result is capped at 256 items and each

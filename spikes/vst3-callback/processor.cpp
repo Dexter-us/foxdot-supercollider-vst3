@@ -22,6 +22,7 @@
 #include "portable_samples.h"
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
+#include "clock_swing.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
@@ -458,6 +459,7 @@ public:
                         auto& next = updates[static_cast<std::size_t>(player.playerIndex)];
                         next.active = !player.stopped;
                         next.bpm = player.bpm;
+                        next.swingSeconds = player.swingSeconds;
                         next.lengthBeats = player.lengthBeats;
                         next.synthIndex = player.synthIndex;
                         next.synthRate = static_cast<float>(player.synthRate);
@@ -751,6 +753,7 @@ private:
         TimeVarControl sampleControl;
         TimeVarControl sampleRateControl;
         double bpm = 120.0;
+        double swingSeconds = 0.0;
         double lengthBeats = 1.0;
         int synthIndex = 0;
         float synthRate = 0.0f;
@@ -1624,7 +1627,10 @@ private:
                         static_cast<double>(cycle) * pattern.lengthBeats + note.beat;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
-                    const double onsetBeat = baseEventBeat + note.delayBeats + dynamicDelay;
+                    const double scheduledBeat = baseEventBeat + note.delayBeats + dynamicDelay;
+                    const double onsetBeat = scheduledBeat -
+                        foxDotClockSwingOffsetBeats(pattern.swingSeconds,
+                                                    pattern.bpm, scheduledBeat);
                     const double offsetBeat = onsetBeat + note.durationBeats;
                     const auto onSample = patternStart + static_cast<std::uint64_t>(
                         std::llround(onsetBeat * samplesPerBeat));
@@ -1743,7 +1749,11 @@ private:
                         static_cast<double>(cycle) * pattern.lengthBeats + event.beat;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
-                    const double absoluteStartBeat = baseEventBeat + event.delayBeats + dynamicDelay;
+                    const double scheduledBeat =
+                        baseEventBeat + event.delayBeats + dynamicDelay;
+                    const double absoluteStartBeat = scheduledBeat -
+                        foxDotClockSwingOffsetBeats(pattern.swingSeconds,
+                                                    pattern.bpm, scheduledBeat);
                     std::size_t selectedVariant = 0;
                     int selectedSampleBuffer = event.sampleBuffer;
                     double selectedSampleRate = event.sampleRate;
@@ -2761,7 +2771,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-      "0.4.67",
+      "0.4.68",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

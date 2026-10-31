@@ -277,6 +277,16 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = node.func.id if isinstance(node.func, ast.Name) else None
+        if (isinstance(node.func, ast.Attribute) and
+                isinstance(node.func.value, ast.Name) and
+                node.func.value.id == 'Clock' and node.func.attr == 'swing'):
+            if len(node.args) > 1:
+                self.add(node.lineno, 'Clock.swing accepts one optional amount.')
+            for keyword in node.keywords:
+                if keyword.arg is None:
+                    self.add(keyword.lineno or node.lineno, 'Dynamic keyword expansion cannot be checked; use Clock.swing(amount).')
+                elif keyword.arg != 'amount':
+                    self.add(keyword.lineno or node.lineno, 'Clock.swing accepts only the amount keyword.')
         if name and name not in _COMPAT_CALLS and name not in self.defined:
             self.add(node.lineno, "Call '" + name + "()' is not in the embedded API (often an unsupported FoxDot synth or pattern helper).")
         if name == 'PAlt':
@@ -366,8 +376,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
-        if isinstance(node.value, ast.Name) and node.value.id == 'Clock' and node.attr not in {'bpm', 'meter'}:
-            self.add(node.lineno, "Clock." + node.attr + ' is not supported; only Clock.bpm and fixed 4/4 Clock.meter are available.')
+        if isinstance(node.value, ast.Name) and node.value.id == 'Clock' and node.attr not in {'bpm', 'meter', 'swing'}:
+            self.add(node.lineno, "Clock." + node.attr + ' is not supported; use Clock.bpm, fixed 4/4 Clock.meter, or Clock.swing(...).')
+        if (isinstance(node.value, ast.Name) and node.value.id == 'Clock' and
+                node.attr == 'swing' and isinstance(node.ctx, ast.Store)):
+            self.add(node.lineno, 'Clock.swing is a method; call Clock.swing(amount), not assign to it.')
         if isinstance(node.value, ast.Name) and node.value.id == 'Scale' and node.attr not in _COMPAT_SCALE_NAMES.union({'default'}):
             self.add(node.lineno, 'Scale.' + node.attr + ' is not available in the embedded scale set.')
         if isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == 'Scale' and node.value.attr == 'default' and node.attr != 'set':
@@ -504,6 +517,7 @@ _dexter_synth_controls = {}
 _dexter_sample_events = {}
 _dexter_sample_controls = {}
 _dexter_shuffle_counter = 0
+_dexter_swing_seconds = 0.0
 _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
                'klank', 'feel', 'glass', 'soft', 'quin', 'space',
@@ -514,6 +528,8 @@ def tempo(bpm):
     bpm = float(bpm)
     if bpm != bpm or bpm in (float('inf'), float('-inf')) or bpm < 0.001:
         raise ValueError('tempo must be finite and at least 0.001 BPM')
+    if abs(_dexter_swing_seconds * bpm / 60.0) >= 0.49:
+        raise ValueError('Clock.swing would shift notes by 0.49 beats or more at this tempo')
     _dexter_bpm = bpm
 
 class _FoxDotClock:
@@ -523,6 +539,18 @@ class _FoxDotClock:
         if name == 'meter':
             return (4, 4)
         raise ValueError('Clock.' + str(name) + ' is not supported in the embedded clock')
+    def swing(self, amount=0.1):
+        global _dexter_swing_seconds
+        amount = float(amount)
+        if amount != amount or amount in (float('inf'), float('-inf')):
+            raise ValueError('Clock.swing amount must be finite')
+        nudge = amount * (_dexter_bpm / 120.0)
+        if abs(nudge * _dexter_bpm / 60.0) >= 0.49:
+            raise ValueError('Clock.swing would shift notes by 0.49 beats or more at this tempo')
+        _dexter_swing_seconds = nudge
+        for _player in _dexter_updates:
+            _update = _dexter_updates[_player]
+            _dexter_updates[_player] = _update[:-1] + (_dexter_swing_seconds,)
     def __setattr__(self, name, value):
         if name == 'bpm':
             tempo(value)
@@ -2576,14 +2604,15 @@ class Player:
                                          pattern.hpfControl, pattern.hprControl,
                                          pattern.bpfControl, pattern.bprControl, pattern.echoDecayBeats, pattern.echoDecayControl,
                                          pattern.echoMix, pattern.echoMixControl, pattern.feedback, pattern.feedbackControl, serializedDelayControl, pattern.synthRate,
-                                         pattern.bpnoise, pattern.bpnoiseControl, pattern.swell, pattern.swellControl)
+                                         pattern.bpnoise, pattern.bpnoiseControl, pattern.swell, pattern.swellControl,
+                                         _dexter_swing_seconds)
         if playerIndex == 0:
             _dexter_default_touched = False
         return self
 
     def stop(self):
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None)
+                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, _dexter_swing_seconds)
 
     def mute(self):
         _dexter_mutes[self.number - 1] = True
@@ -2609,7 +2638,8 @@ p8 = Player(8)
            << "_dexter_scope['__name__'] = 'dexter'\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
            << "'_dexter_length': 1.0, '_dexter_slots': 0, '_dexter_updates': {}, '_dexter_default_touched': False, "
-           << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, '_dexter_mutes': {}, "
+            << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, '_dexter_mutes': {}, "
+            << "'_dexter_swing_seconds': 0.0, "
            << "'_dexter_shuffle_seed': int(time.monotonic_ns() & 0xffffffff)})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
            << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
@@ -2634,13 +2664,14 @@ p8 = Player(8)
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-             << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None)\n"
+              << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None) + (_dexter_scope['_dexter_swing_seconds'],)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _mutes = _dexter_scope['_dexter_mutes']\n"
             << "        _f.write('OK\\t{}\\t{}\\n'.format(len(_updates), len(_mutes)))\n"
             << "        for _player in sorted(_updates):\n"
-             << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control = _updates[_player]\n"
-             << "            _f.write('P\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _synth_rate))\n"
+              << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control, _swing_seconds = _updates[_player]\n"
+             << "            _p_values = (_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _synth_rate, _swing_seconds)\n"
+             << "            _f.write('P' + chr(9) + chr(9).join(map(str, _p_values)) + chr(10))\n"
             << "            _f.write('R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _reverb, _mix, _room, _damp, _revtime, _spread))\n"
              << "            _f.write('E\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _decay, _decay_control.wire() if _decay_control is not None else '-', _echo_mix, _echo_mix_control, _feedback, _feedback_control if _feedback_control is not None else '-', _note_delay_control.wire() if hasattr(_note_delay_control, 'wire') else (_note_delay_control if _note_delay_control is not None else '-')))\n"
               << "            _controls = (_lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control)\n"
@@ -2709,7 +2740,8 @@ bool parseResult(const std::filesystem::path& resultPath,
               update.pan >> update.cutoffHz >> update.echoBeats >> update.delayTimeSeconds >>
               mousePan >> mouseCutoff >> update.attackSeconds >> update.releaseSeconds >>
               update.ampControlToken >> update.panControlToken >> update.cutoffControlToken >>
-              update.echoControlToken >> update.delayTimeControlToken >> update.synthRate) ||
+              update.echoControlToken >> update.delayTimeControlToken >> update.synthRate >>
+              update.swingSeconds) ||
             record != 'P' || update.playerIndex < 0 || update.playerIndex >= 8 ||
             stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
@@ -2718,7 +2750,9 @@ bool parseResult(const std::filesystem::path& resultPath,
               update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 57 ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
              update.synthRate > 10.0 ||
-             (update.synthIndex == 5 && update.synthRate > 1.0) ||
+              (update.synthIndex == 5 && update.synthRate > 1.0) ||
+              !std::isfinite(update.swingSeconds) ||
+              std::abs(update.swingSeconds * update.bpm / 60.0) >= 0.49 ||
             !std::isfinite(update.amplitude) || update.amplitude < 0.0 || update.amplitude > 1.0 ||
             !std::isfinite(update.pan) || update.pan < -1.0 || update.pan > 1.0 ||
             !std::isfinite(update.cutoffHz) || update.cutoffHz < 20.0 ||

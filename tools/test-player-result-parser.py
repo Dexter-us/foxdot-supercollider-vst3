@@ -21,6 +21,7 @@ parse_start = source.index("bool parseResult(")
 parse_end = source.index("} // namespace", parse_start)
 cpp = r"""
 #include "python_runtime.h"
+#include "clock_swing.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -33,6 +34,14 @@ cpp += source[parse_start:parse_end]
 cpp += r"""
 int main(int argc, char** argv) {
     if (argc != 2) return 3;
+    if (std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.0)) > 1e-9 ||
+        std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.25)) > 1e-9 ||
+        std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.5) - 0.2) > 1e-9 ||
+        std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.75) - 0.2) > 1e-9 ||
+        std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 1.0)) > 1e-9 ||
+        std::abs(foxDotClockSwingOffsetBeats(-0.1, 120.0, 0.5) + 0.2) > 1e-9 ||
+        foxDotClockSwingOffsetBeats(0.0, 120.0, 0.5) != 0.0)
+        return 4;
     PythonPattern pattern;
     std::string error;
     if (!parseResult(argv[1], pattern, error)) {
@@ -41,6 +50,7 @@ int main(int argc, char** argv) {
     }
     for (const auto& player : pattern.players) {
         std::cout << player.synthIndex << ' ';
+        std::cout << "W:" << player.swingSeconds << ' ';
         if (player.synthIndex == 57)
             std::cout << "Q:" << player.sampleControlToken << ':'
                       << player.sampleRateControlToken << ' ';
@@ -65,6 +75,22 @@ with tempfile.TemporaryDirectory() as directory:
             assert "Q:v:0.0,1.0:4.0,4.0:v:1.0,-1.0:4.0,4.0" in parsed.stdout
         if example.name == "73-linvar-sample-and-rate.py":
             assert "Q:l:0.0,1.0:4.0,4.0:l:0.75,1.5:4.0,4.0" in parsed.stdout
+        if example.name == "93-clock-swing.py":
+            assert parsed.stdout.count("W:0.04") == 2, parsed.stdout
+    swing_example = plugin / "Portable" / "93-clock-swing.py"
+    swing_wrapper = api_tests["make_wrapper"](str(swing_example), str(result))
+    exec(swing_wrapper, {"__name__": "__main__"})
+    valid_swing = result.read_text()
+    for bad_value in ("inf", "0.245"):
+        lines = valid_swing.splitlines()
+        player_line = next(i for i, line in enumerate(lines) if line.startswith("P\t"))
+        columns = lines[player_line].split("\t")
+        columns[-1] = bad_value
+        lines[player_line] = "\t".join(columns)
+        result.write_text("\n".join(lines) + "\n")
+        parsed = subprocess.run([str(binary), str(result)],
+                                capture_output=True, text=True)
+        assert parsed.returncode == 1, (bad_value, parsed.stderr)
     sample_example = plugin / "Portable" / "83-pbeat-pdur-rhythm-durations.py"
     sample_wrapper = api_tests["make_wrapper"](str(sample_example), str(result))
     exec(sample_wrapper, {"__name__": "__main__"})

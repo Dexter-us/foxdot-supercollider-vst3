@@ -1,5 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.68 adds `Clock.swing(amount=0.1)` with FoxDot's alternating
+half-beat nudge, translated to sample-accurate onset offsets instead of a
+separate server clock. Zero disables swing; the offset is safety-bounded to
+less than half a beat. Its phase starts when a player is run or updated and
+does not follow DAW transport. See Portable Example 93.
 Version 0.4.67 extends `PZip(...)` and `PZip2(...)` to finite sample-symbol
 patterns, matching FoxDot's cyclic least-common-multiple lacing. Zipped symbols
 flatten into simultaneous sample hits; space-rests silence only their own lane.

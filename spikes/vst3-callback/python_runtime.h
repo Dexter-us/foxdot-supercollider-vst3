@@ -55,6 +55,7 @@ struct PythonPlayerUpdate {
     double lengthBeats = 1.0;
     int synthIndex = 0;
     double synthRate = 0.0;
+    double swingSeconds = 0.0;
     // vib, depth, lforate, lfowidth, rq, fmod, blur
     std::array<double, 7> synthControls{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
     double amplitude = 1.0;
