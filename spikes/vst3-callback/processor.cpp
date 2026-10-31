@@ -790,7 +790,7 @@ private:
     static constexpr std::size_t kReverbGraphCount = 3;
     static constexpr std::size_t kCalculatedWorldNodeCapacity =
         kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice +
-        kPlayerCount * kReverbGraphCount + 1;
+        kPlayerCount * (kReverbGraphCount + 1) + 1;
     // Preserve the known-good headroom; graph definitions are registered
     // independently, while active voice graphs are created lazily and cached.
     static constexpr std::size_t kWorldNodeCapacity =
@@ -805,6 +805,10 @@ private:
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
     static constexpr int kReverbBaseBus = kFirstAudioBus + static_cast<int>(kAudioVoiceCount) * kAudioBusStride;
+    static constexpr int kAirwindowsInputBusBase =
+        kReverbBaseBus + static_cast<int>(kPlayerCount) * kReverbBusStride;
+    static constexpr int kAirwindowsOutputBusBase =
+        kAirwindowsInputBusBase + static_cast<int>(kPlayerCount) * 2;
     static constexpr int kNumAudioBusChannels = 512;
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
@@ -816,6 +820,8 @@ private:
                   "The SuperCollider world needs three private buses per synth voice.");
     static_assert(kReverbBaseBus + kPlayerCount * kReverbBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per player reverb.");
+    static_assert(kAirwindowsOutputBusBase + kPlayerCount * 2 <= kNumAudioBusChannels,
+                  "The SuperCollider world needs stereo Airwindows input and return buses per player.");
     static_assert(kWorldNodeCapacity <= 0xffffffffu,
                   "The SuperCollider world node capacity must fit WorldOptions.");
     static_assert(kWorldNodeCapacity >= 2048,
@@ -935,7 +941,9 @@ private:
     struct UserSynthDefinition {
         std::string name;
         GraphDef* definition = nullptr;
+        bool persistentPlayerEffect = false;
         int outControl = -1;
+        int inputBusControl = -1;
         int frequencyControl = -1;
         int amplitudeControl = -1;
         int panControl = -1;
@@ -943,6 +951,7 @@ private:
         int attackControl = -1;
         int releaseControl = -1;
         int sustainControl = -1;
+        std::array<int, 7> effectControlIndices{};
     };
 
     struct TimedMidiEvent {
@@ -1484,6 +1493,16 @@ private:
             : nullptr;
     }
 
+    bool isPersistentPlayerEffectSynthIndex(int synthIndex) const {
+        if (synthIndex < 0 ||
+            static_cast<std::size_t>(synthIndex) < kSynthIndexToGraphIndex.size())
+            return false;
+        const auto userIndex = static_cast<std::size_t>(synthIndex) -
+                               kSynthIndexToGraphIndex.size();
+        return userIndex < userSynthDefinitions_.size() &&
+               userSynthDefinitions_[userIndex].persistentPlayerEffect;
+    }
+
     bool makeSynthGraphCacheRoom(AudioVoice& voice, std::string& error) {
         const auto builtinCount = static_cast<std::size_t>(std::count_if(
             voice.synthGraphs.begin(), voice.synthGraphs.end(),
@@ -1622,6 +1641,80 @@ private:
             Node_SetRun(&created->mNode, 0);
         graph = created;
         return created;
+    }
+
+    bool createPlayerEffectGraph(std::size_t player, std::size_t userIndex,
+                                 const std::array<double, 7>& controls,
+                                 std::string& error) {
+        if (!world_ || !rootGroup_ || player >= kPlayerCount ||
+            userIndex >= userSynthDefinitions_.size()) {
+            error = "The requested per-player effect is not registered.";
+            return false;
+        }
+        const auto& definition = userSynthDefinitions_[userIndex];
+        if (!definition.persistentPlayerEffect || definition.inputBusControl < 0 ||
+            definition.outControl < 0) {
+            error = definition.name + " is not a supported persistent player effect.";
+            return false;
+        }
+        if (playerEffectGraphs_[player] &&
+            playerEffectDefinitionIndices_[player] == static_cast<int>(userIndex))
+            return true;
+
+        sc_msg_iter noControls(0, "");
+        Graph* created = nullptr;
+        const auto graphError = Graph_New(world_, definition.definition,
+                                          nextDynamicGraphNodeId_++, &noControls,
+                                          &created, true);
+        if (graphError != 0 || !created) {
+            error = "SuperCollider could not create the persistent " +
+                    definition.name + " player effect (error " +
+                    std::to_string(static_cast<int>(graphError)) + ").";
+            return false;
+        }
+
+        const auto inputBus = kAirwindowsInputBusBase +
+                              static_cast<int>(player) * 2;
+        const auto outputBus = kAirwindowsOutputBusBase +
+                               static_cast<int>(player) * 2;
+        Graph_SetControl(created, definition.inputBusControl,
+                         static_cast<float>(inputBus));
+        Graph_SetControl(created, definition.outControl,
+                         static_cast<float>(outputBus));
+        for (std::size_t control = 0;
+             control < definition.effectControlIndices.size(); ++control) {
+            const auto controlIndex = definition.effectControlIndices[control];
+            if (controlIndex >= 0)
+                Graph_SetControl(created, controlIndex,
+                                 static_cast<float>(controls[control]));
+        }
+
+        Group_AddTail(rootGroup_, &created->mNode);
+        // The persistent graph is manually calculated after its player's input
+        // bus is filled. Initialize its UGens once here, then keep it out of the
+        // normal World_Run pass so delay state advances exactly once per block.
+        if (!created->mNode.mCalcFunc) {
+            Node_End(&created->mNode);
+            error = "SuperCollider returned a player-effect graph without a calculation function.";
+            return false;
+        }
+        const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+        for (int channel = 0; channel < 2; ++channel) {
+            const auto bus = static_cast<std::size_t>(inputBus + channel);
+            auto* samples = world_->mAudioBus + bus * busLength;
+            std::fill(samples, samples + busLength, 0.0f);
+            world_->mAudioBusTouched[bus] = world_->mBufCounter;
+        }
+        created->mNode.mCalcFunc(&created->mNode);
+        Node_SetRun(&created->mNode, 0);
+
+        if (auto* previous = playerEffectGraphs_[player]) {
+            Node_SetRun(&previous->mNode, 0);
+            Node_End(&previous->mNode);
+        }
+        playerEffectGraphs_[player] = created;
+        playerEffectDefinitionIndices_[player] = static_cast<int>(userIndex);
+        return true;
     }
 
     struct CachedSample {
@@ -1800,6 +1893,15 @@ private:
                     kSynthIndexToGraphIndex.size() + userSynthDefinitions_.size()) {
                 error = "The selected synth index is outside the registered synth bank.";
                 return false;
+            }
+            if (static_cast<std::size_t>(synthIndex) >=
+                kSynthIndexToGraphIndex.size()) {
+                const auto userIndex = static_cast<std::size_t>(synthIndex) -
+                                       kSynthIndexToGraphIndex.size();
+                if (userSynthDefinitions_[userIndex].persistentPlayerEffect &&
+                    !createPlayerEffectGraph(player, userIndex,
+                                             updates[player].synthControls, error))
+                    return false;
             }
             // New-bank notes are born running, with controls configured before
             // World_Run. Do not create paused, never-rendered templates for them.
@@ -2157,6 +2259,8 @@ private:
                 const bool isUserSynth =
                     static_cast<std::size_t>(note.synthIndex) >=
                     kSynthIndexToGraphIndex.size();
+                const bool isPlayerEffect =
+                    isPersistentPlayerEffectSynthIndex(note.synthIndex);
                 found->filterCoefficient =
                     (note.synthIndex >= 31 && !isUserSynth) ||
                     clampedCutoff >= maxCutoff
@@ -2171,8 +2275,35 @@ private:
                 found->userSynthGateReleased = false;
                 found->releasing = false;
                 found->reverbTail = false;
-                auto* selectedSynth = graphForSynthIndex(*found, note.synthIndex);
-                if (note.synthIndex >= 31) {
+                auto* selectedSynth = isPlayerEffect
+                    ? nullptr : graphForSynthIndex(*found, note.synthIndex);
+                if (isPlayerEffect) {
+                    // Airwindows' state now belongs to one persistent graph per
+                    // player. These per-note source graphs use DexterTone's
+                    // saw mode and feed the player's summed insert input.
+                    std::string graphError;
+                    const auto voiceIndex =
+                        static_cast<std::size_t>(std::distance(audioVoices_.begin(), found));
+                    constexpr std::size_t kAirwindowsSourceSynthIndex = 2; // saw
+                    constexpr auto kAirwindowsSourceGraphIndex =
+                        kSynthIndexToGraphIndex[kAirwindowsSourceSynthIndex];
+                    auto*& sourceGraph =
+                        found->synthGraphs[kAirwindowsSourceGraphIndex];
+                    if (sourceGraph) {
+                        if (found->activeSynth == sourceGraph)
+                            found->activeSynth = nullptr;
+                        Node_SetRun(&sourceGraph->mNode, 0);
+                        Node_End(&sourceGraph->mNode);
+                        sourceGraph = nullptr;
+                    }
+                    selectedSynth = createSynthGraph(
+                        voiceIndex, kAirwindowsSourceGraphIndex, graphError, true);
+                    if (!selectedSynth) {
+                        found->midiNote = -1;
+                        found->velocity = 0;
+                        continue;
+                    }
+                } else if (note.synthIndex >= 31) {
                     // Original FoxDot starts a fresh SC node for each note.
                     // Reusing oscillator state is observably wrong for e.g.
                     // pads (zero-Hz Pulse state), and impulse-driven patches.
@@ -2215,7 +2346,7 @@ private:
                     Node_SetRun(&found->activeSynth->mNode, 0);
                 found->activeSynth = selectedSynth;
                 if (found->activeSynth) {
-                    if (isUserSynth) {
+                    if (isUserSynth && !isPlayerEffect) {
                         const auto userIndex = static_cast<std::size_t>(note.synthIndex) -
                                                kSynthIndexToGraphIndex.size();
                         const auto& definition = userSynthDefinitions_[userIndex];
@@ -2260,7 +2391,11 @@ private:
                             reverbEnabled(activePatterns_[static_cast<std::size_t>(
                                 note.playerIndex)]) ? 1.0f : 0.0f);
                         Graph_SetControl(found->activeSynth, 8, found->cutoffHz);
-                        if (note.synthIndex <= 3) {
+                        if (isPlayerEffect) {
+                            for (int mode = 0; mode < 4; ++mode)
+                                Graph_SetControl(found->activeSynth, 2 + mode,
+                                                 mode == 2 ? 1.0f : 0.0f);
+                        } else if (note.synthIndex <= 3) {
                             for (int mode = 0; mode < 4; ++mode)
                                 Graph_SetControl(found->activeSynth, 2 + mode,
                                              note.synthIndex == mode ? 1.0f : 0.0f);
@@ -2448,8 +2583,9 @@ private:
         }
         for (auto& voice : audioVoices_) {
             if (voice.activeSynth && voice.playerIndex == static_cast<int>(player) &&
-                static_cast<std::size_t>(voice.synthIndex) <
-                    kSynthIndexToGraphIndex.size()) {
+                (static_cast<std::size_t>(voice.synthIndex) <
+                     kSynthIndexToGraphIndex.size() ||
+                 isPersistentPlayerEffectSynthIndex(voice.synthIndex))) {
                 Graph_SetControl(voice.activeSynth, 6, static_cast<float>(bus));
                 Graph_SetControl(voice.activeSynth, 7, enabled ? 1.0f : 0.0f);
                 Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
@@ -2467,6 +2603,10 @@ private:
         return std::string(bytes, length);
     }
 
+    static bool isPersistentPlayerEffectName(std::string_view name) {
+        return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam";
+    }
+
     static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
         if (!definition || !definition->mParamSpecs)
             return -1;
@@ -2482,7 +2622,7 @@ private:
         return -1;
     }
 
-    static bool hasMonoOutUnit(GraphDef* definition) {
+    static bool hasOutUnit(GraphDef* definition, std::size_t channels) {
         if (!definition || !definition->mUnitSpecs)
             return false;
         for (uint32 index = 0; index < definition->mNumUnitSpecs; ++index) {
@@ -2494,7 +2634,8 @@ private:
             std::size_t length = 0;
             while (length < sizeof(unit.mUnitDef->mUnitDefName) && bytes[length] != '\0')
                 ++length;
-            if (std::string_view(bytes, length) == "Out" && unit.mNumInputs == 2)
+            if (std::string_view(bytes, length) == "Out" &&
+                unit.mNumInputs == channels + 1)
                 return true;
         }
         return false;
@@ -2564,7 +2705,10 @@ private:
             UserSynthDefinition userDefinition;
             userDefinition.name = synthFile.name;
             userDefinition.definition = loaded;
+            userDefinition.persistentPlayerEffect =
+                isPersistentPlayerEffectName(userDefinition.name);
             userDefinition.outControl = synthControlIndex(loaded, "out");
+            userDefinition.inputBusControl = synthControlIndex(loaded, "inbus");
             userDefinition.frequencyControl = synthControlIndex(loaded, "freq");
             userDefinition.amplitudeControl = synthControlIndex(loaded, "amp");
             userDefinition.panControl = synthControlIndex(loaded, "pan");
@@ -2574,12 +2718,38 @@ private:
             userDefinition.sustainControl = synthControlIndex(loaded, "sustain");
             if (userDefinition.sustainControl < 0)
                 userDefinition.sustainControl = synthControlIndex(loaded, "sus");
+            constexpr std::array<std::string_view, 7> effectControlNames{{
+                "vib", "depth", "lforate", "lfowidth", "rq", "fmod", "blur"}};
+            for (std::size_t index = 0; index < effectControlNames.size(); ++index)
+                userDefinition.effectControlIndices[index] =
+                    synthControlIndex(loaded, effectControlNames[index]);
             if (userDefinition.outControl < 0) {
                 error = synthFile.path.filename().string() +
                         " needs an 'out' control so the plugin can route it to a private voice bus.";
                 return false;
             }
-            if (!hasMonoOutUnit(loaded)) {
+            if (userDefinition.persistentPlayerEffect) {
+                const std::array<bool, 7> requiredEffectControls =
+                    userDefinition.name == "AirwindowsTapeDelay2"
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, true}}
+                    : std::array<bool, 7>{{true, true, true, false, false, false, true}};
+                bool missingRequiredEffectControl = false;
+                for (std::size_t index = 0;
+                     index < requiredEffectControls.size(); ++index)
+                    missingRequiredEffectControl |= requiredEffectControls[index] &&
+                        userDefinition.effectControlIndices[index] < 0;
+                if (userDefinition.inputBusControl < 0 ||
+                    missingRequiredEffectControl) {
+                    error = synthFile.path.filename().string() +
+                            " is missing a required inbus or Airwindows effect control.";
+                    return false;
+                }
+                if (!hasOutUnit(loaded, 2)) {
+                    error = synthFile.path.filename().string() +
+                            " needs an Out UGen that writes a stereo signal to its 'out' control.";
+                    return false;
+                }
+            } else if (!hasOutUnit(loaded, 1)) {
                 error = synthFile.path.filename().string() +
                         " needs an Out UGen that writes exactly one mono signal to its 'out' control.";
                 return false;
@@ -2659,6 +2829,9 @@ private:
         options.mMaxGraphDefs = static_cast<uint32>(graphDefinitionCapacity);
         // Size both SuperCollider pools from the actual embedded graph bank,
         // voice slots, and reverb bank; adding a registered synth grows them.
+        // SuperCollider measures this field in KiB. 64 MiB is enough for
+        // persistent Airwindows delay state on all eight players, without
+        // multiplying those large delay buffers by note polyphony.
         options.mRealTimeMemorySize = 65536;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
@@ -2832,6 +3005,8 @@ private:
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
+        playerEffectGraphs_.fill(nullptr);
+        playerEffectDefinitionIndices_.fill(-1);
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
         userSynthFiles_.clear();
@@ -2855,7 +3030,9 @@ private:
             const bool isUserSynth =
                 static_cast<std::size_t>(voice.synthIndex) >=
                 kSynthIndexToGraphIndex.size();
-            if (isUserSynth) {
+            const bool isPlayerEffect =
+                isPersistentPlayerEffectSynthIndex(voice.synthIndex);
+            if (isUserSynth && !isPlayerEffect) {
                 const auto userIndex = static_cast<std::size_t>(voice.synthIndex) -
                                        kSynthIndexToGraphIndex.size();
                 if (userIndex >= userSynthDefinitions_.size())
@@ -2873,7 +3050,7 @@ private:
                     Graph_SetControl(voice.activeSynth, definition.gateControl, 0.0f);
                     voice.userSynthGateReleased = true;
                 }
-            } else if (voice.synthIndex >= 31) {
+            } else if (voice.synthIndex >= 31 && !isPlayerEffect) {
                 const auto start = patternStartSamples_[player];
                 const double beat = blockStart >= start
                     ? static_cast<double>(blockStart - start) * pattern.bpm /
@@ -2883,7 +3060,7 @@ private:
                 Graph_SetControl(voice.activeSynth, 18,
                     evaluateTimeVar(pattern.cutoffControl, beat, pattern.cutoffHz));
             }
-            if (!isUserSynth) {
+            if (!isUserSynth || isPlayerEffect) {
                 const float level = reverbEnabled(pattern)
                     ? voiceEnvelopeAt(voice, blockStart) *
                           (static_cast<float>(voice.velocity) / 127.0f) * voice.amplitude
@@ -2899,6 +3076,11 @@ private:
                 voice.triggerControlPendingReset = false;
             }
         }
+        std::array<std::array<float, kSCBlockSize>, kPlayerCount> playerLeftBlock{};
+        std::array<std::array<float, kSCBlockSize>, kPlayerCount> playerRightBlock{};
+        std::array<std::array<float, kSCBlockSize>, kPlayerCount> playerMuteGainBlock{};
+        std::array<std::array<bool, kSCBlockSize>, kPlayerCount> playerHasVoiceBlock{};
+        std::array<std::size_t, kSCBlockSize> contributingVoicesBlock{};
         const float mixSmoothing = std::exp(
             -1.0f / static_cast<float>(sampleRate_ * kMixSmoothingSeconds));
         const float mouseSmoothing = 1.0f - mixSmoothing;
@@ -2907,6 +3089,8 @@ private:
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 const float target = mutedPlayers_[player] ? 0.0f : 1.0f;
                 playerMuteGain_[player] += mouseSmoothing * (target - playerMuteGain_[player]);
+                playerMuteGainBlock[player][static_cast<std::size_t>(sampleIndex)] =
+                    playerMuteGain_[player];
             }
             std::array<float, kPlayerCount> playerLeft{};
             std::array<float, kPlayerCount> playerRight{};
@@ -3057,16 +3241,116 @@ private:
                     ++contributingVoices;
             }
 
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                playerLeftBlock[player][static_cast<std::size_t>(sampleIndex)] =
+                    playerLeft[player];
+                playerRightBlock[player][static_cast<std::size_t>(sampleIndex)] =
+                    playerRight[player];
+                playerHasVoiceBlock[player][static_cast<std::size_t>(sampleIndex)] =
+                    playerHasVoice[player];
+            }
+            contributingVoicesBlock[static_cast<std::size_t>(sampleIndex)] =
+                contributingVoices;
+        }
+
+        const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            auto* graph = playerEffectGraphs_[player];
+            if (!graph)
+                continue;
+            const auto& pattern = activePatterns_[player];
+            const auto userIndex = pattern.synthIndex >= 0 &&
+                    static_cast<std::size_t>(pattern.synthIndex) >=
+                        kSynthIndexToGraphIndex.size()
+                ? static_cast<std::size_t>(pattern.synthIndex) -
+                      kSynthIndexToGraphIndex.size()
+                : userSynthDefinitions_.size();
+            const bool effectSelected = pattern.active &&
+                isPersistentPlayerEffectSynthIndex(pattern.synthIndex) &&
+                userIndex == static_cast<std::size_t>(
+                    playerEffectDefinitionIndices_[player]);
+            const auto inputBus = static_cast<std::size_t>(kAirwindowsInputBusBase) +
+                                  player * 2;
+            for (int channel = 0; channel < 2; ++channel) {
+                const auto bus = inputBus + static_cast<std::size_t>(channel);
+                auto* destination = world_->mAudioBus + bus * busLength;
+                const auto& source = channel == 0
+                    ? playerLeftBlock[player] : playerRightBlock[player];
+                for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex)
+                    destination[sampleIndex] = effectSelected
+                        ? source[static_cast<std::size_t>(sampleIndex)] : 0.0f;
+                world_->mAudioBusTouched[bus] = world_->mBufCounter;
+            }
+            if (effectSelected && userIndex < userSynthDefinitions_.size()) {
+                const auto& definition = userSynthDefinitions_[userIndex];
+                for (std::size_t control = 0;
+                     control < definition.effectControlIndices.size(); ++control) {
+                    const auto controlIndex = definition.effectControlIndices[control];
+                    if (controlIndex >= 0)
+                        Graph_SetControl(graph, controlIndex,
+                                         static_cast<float>(pattern.synthControls[control]));
+                }
+            }
+            // The graph is paused in the root group and is advanced exactly
+            // once here, after its summed stereo input bus is ready.
+            Graph_Calc(graph);
+        }
+
+        for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
+            const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
+            std::array<float, kPlayerCount> playerLeft{};
+            std::array<float, kPlayerCount> playerRight{};
+            std::array<bool, kPlayerCount> playerHasVoice{};
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                playerLeft[player] =
+                    playerLeftBlock[player][static_cast<std::size_t>(sampleIndex)];
+                playerRight[player] =
+                    playerRightBlock[player][static_cast<std::size_t>(sampleIndex)];
+                playerHasVoice[player] =
+                    playerHasVoiceBlock[player][static_cast<std::size_t>(sampleIndex)];
+                playerMuteGain_[player] =
+                    playerMuteGainBlock[player][static_cast<std::size_t>(sampleIndex)];
+            }
+            std::size_t contributingVoices =
+                contributingVoicesBlock[static_cast<std::size_t>(sampleIndex)];
             float leftMixed = 0.0f;
             float rightMixed = 0.0f;
             const auto writeIndex = static_cast<std::size_t>(absoluteSample % kMaxEchoBufferSamples);
             std::size_t echoTailPlayers = 0;
             std::size_t reverbTailPlayers = 0;
-            const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+            std::size_t effectTailPlayers = 0;
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 const auto& pattern = activePatterns_[player];
-                const float dryLeft = playerLeft[player];
-                const float dryRight = playerRight[player];
+                const auto* effectGraph = playerEffectGraphs_[player];
+                const auto userIndex = pattern.synthIndex >= 0 &&
+                        static_cast<std::size_t>(pattern.synthIndex) >=
+                            kSynthIndexToGraphIndex.size()
+                    ? static_cast<std::size_t>(pattern.synthIndex) -
+                          kSynthIndexToGraphIndex.size()
+                    : userSynthDefinitions_.size();
+                const bool effectSelected = pattern.active && effectGraph &&
+                    isPersistentPlayerEffectSynthIndex(pattern.synthIndex) &&
+                    userIndex == static_cast<std::size_t>(
+                        playerEffectDefinitionIndices_[player]);
+                const auto effectOutputBus =
+                    static_cast<std::size_t>(kAirwindowsOutputBusBase) + player * 2;
+                const float effectLeft = effectGraph
+                    ? world_->mAudioBus[effectOutputBus * busLength +
+                                        static_cast<std::size_t>(sampleIndex)]
+                    : 0.0f;
+                const float effectRight = effectGraph
+                    ? world_->mAudioBus[(effectOutputBus + 1) * busLength +
+                                        static_cast<std::size_t>(sampleIndex)]
+                    : 0.0f;
+                const float dryLeft = effectSelected
+                    ? effectLeft : playerLeft[player] + effectLeft;
+                const float dryRight = effectSelected
+                    ? effectRight : playerRight[player] + effectRight;
+                if (effectGraph && !playerHasVoice[player] &&
+                    playerMuteGain_[player] > 1e-4f &&
+                    (std::abs(effectLeft) > 1e-6f ||
+                     std::abs(effectRight) > 1e-6f))
+                    ++effectTailPlayers;
                 const float targetReverbMix = reverbEnabled(pattern) ? pattern.reverbMix : 0.0f;
                 auto& reverbMix = reverbMixSmoothed_[player];
                 reverbMix += (targetReverbMix - reverbMix) * mixSmoothing;
@@ -3142,7 +3426,8 @@ private:
                 }
             }
 
-            const auto mixContributors = contributingVoices + echoTailPlayers + reverbTailPlayers;
+            const auto mixContributors = contributingVoices + echoTailPlayers +
+                                         reverbTailPlayers + effectTailPlayers;
             const float targetMixGain = mixContributors == 0
                                             ? 1.0f
                                             : 1.0f / static_cast<float>(mixContributors);
@@ -3195,6 +3480,8 @@ private:
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
+        playerEffectGraphs_.fill(nullptr);
+        playerEffectDefinitionIndices_.fill(-1);
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
         userSynthFiles_.clear();
@@ -3233,6 +3520,12 @@ private:
     int32 nextDynamicGraphNodeId_ = 100;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
+    std::array<Graph*, kPlayerCount> playerEffectGraphs_{};
+    std::array<int, kPlayerCount> playerEffectDefinitionIndices_ = [] {
+        std::array<int, kPlayerCount> indices{};
+        indices.fill(-1);
+        return indices;
+    }();
     std::string ugenPluginPath_;
     std::array<std::array<float, kSCBlockSize>, 2> outputBlock_{};
     std::vector<float> echoBuffer_;
@@ -3288,7 +3581,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-      "0.4.71",
+       "0.4.72",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

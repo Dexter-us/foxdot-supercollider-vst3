@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Test both Portable examples with the real embedded parser
+      - name: Test Airwindows Portable examples and persistent SynthDef ABI
         shell: pwsh
         run: |
           python .\UGens\Airwindows\test-examples.py `

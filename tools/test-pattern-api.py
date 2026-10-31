@@ -750,14 +750,17 @@ def test_embedded_synthdef():
     assert 'kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1' in processor_source
     assert 'kPlayerCount * kVoiceSlotsPerPlayer' in processor_source
     assert 'kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice' in processor_source
-    assert 'kPlayerCount * kReverbGraphCount + 1' in processor_source
+    assert 'kPlayerCount * (kReverbGraphCount + 1) + 1' in processor_source
+    assert 'kAirwindowsInputBusBase' in processor_source
+    assert 'playerEffectGraphs_[player]' in processor_source
+    assert 'Graph_Calc(graph)' in processor_source
     assert 'kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity' in processor_source
     assert 'static_assert(kWorldNodeCapacity >= 2048' in processor_source
     assert 'scPoolCapacity(kSynthGraphCount + kReverbGraphCount)' in processor_source
     assert 'scPoolCapacity(kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity)' in processor_source
     assert 'prepareSynthGraphs(updates, updateMask, userSynthNames,' in processor_source
-    assert 'static bool hasMonoOutUnit(GraphDef* definition)' in processor_source
-    assert 'std::string_view(bytes, length) == "Out" && unit.mNumInputs == 2' in processor_source
+    assert 'static bool hasOutUnit(GraphDef* definition, std::size_t channels)' in processor_source
+    assert 'unit.mNumInputs == channels + 1' in processor_source
     assert 'needs an Out UGen that writes exactly one mono signal' in processor_source
     assert 'Graph_New(world_, synthDefinitions_[graphIndex]' in processor_source
     assert 'name.size() > kSCNodeDefNameByteLen - 1' in processor_source, \

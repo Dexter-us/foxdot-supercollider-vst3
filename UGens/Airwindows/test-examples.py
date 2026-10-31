@@ -82,7 +82,7 @@ def compatibility_report(script_text: str, synth_names: tuple[str, ...]) -> str:
         return report_file.read_text(encoding="utf-8")
 
 
-def synthdef_info(data: bytes) -> tuple[str, dict[str, int], set[str]]:
+def synthdef_info(data: bytes) -> tuple[str, dict[str, int], set[str], dict[str, int]]:
     if data[:4] != b"SCgf":
         raise AssertionError("Invalid SynthDef header.")
     offset = 4
@@ -118,11 +118,14 @@ def synthdef_info(data: bytes) -> tuple[str, dict[str, int], set[str]]:
     for _ in range(control_count):
         control_name = read_string()
         controls[control_name] = read(count_format)
+    unit_input_counts: dict[str, int] = {}
     ugen_names: set[str] = set()
     for _ in range(read(count_format)):
-        ugen_names.add(read_string())
+        ugen_name = read_string()
+        ugen_names.add(ugen_name)
         read(">B")  # calculation rate
         input_count = read(count_format)
+        unit_input_counts[ugen_name] = input_count
         output_count = read(count_format)
         read(">h")  # special index
         for _ in range(input_count):
@@ -131,7 +134,7 @@ def synthdef_info(data: bytes) -> tuple[str, dict[str, int], set[str]]:
         offset += output_count  # one byte per output rate
     if read(">H") != 0 or offset != len(data):
         raise AssertionError("Unexpected SynthDef variant or trailing data.")
-    return name, controls, ugen_names
+    return name, controls, ugen_names, unit_input_counts
 
 
 def evaluate(script_text: str, synth_names: tuple[str, ...]) -> tuple[list[list[str]], dict[int, list[float]]]:
@@ -173,18 +176,30 @@ for filename, synth_names, ugen_name, expected_controls in examples:
     script_text = example_path.read_text(encoding="utf-8")
     if not binary_path.is_file():
         raise AssertionError(f"Missing or mismatched precompiled SynthDef: {binary_path}")
-    binary_name_in_file, controls, ugen_names = synthdef_info(binary_path.read_bytes())
+    binary_name_in_file, controls, ugen_names, unit_inputs = synthdef_info(
+        binary_path.read_bytes()
+    )
     expected_control_names = (
-        "out freq rate sus unused4 unused5 wetbus wetgain wetcutoff trigger "
-        "amp vib depth lforate lfowidth rq fmod blur cutoff atk rel beat_dur "
-        "buf gate pan"
+        "out inbus vib depth lforate lfowidth rq blur"
+        if synth_name == "AirwindowsTapeDelay2"
+        else "out inbus vib depth lforate blur"
     ).split()
     if binary_name_in_file != synth_name:
         raise AssertionError(f"SynthDef name mismatch: {binary_name_in_file}")
     if controls != {name: index for index, name in enumerate(expected_control_names)}:
         raise AssertionError(f"{synth_name} does not match the VST's control-index ABI: {controls}")
-    if ugen_name not in ugen_names:
-        raise AssertionError(f"{synth_name} does not contain the expected {ugen_name} UGen.")
+    if not {ugen_name, "In", "Out"}.issubset(ugen_names):
+        raise AssertionError(
+            f"{synth_name} must read stereo input and contain {ugen_name} plus Out: {ugen_names}"
+        )
+    if unit_inputs.get("Out") != 3:
+        raise AssertionError(
+            f"{synth_name} must write two audio channels plus the Out bus index."
+        )
+    if unit_inputs.get("In") != 1:
+        raise AssertionError(
+            f"{synth_name} must read its stereo input from one inbus control."
+        )
     report = compatibility_report(script_text, synth_names)
     if "No unsupported constructs detected" not in report:
         raise AssertionError(f"{filename} failed compatibility checking:\n{report}")
@@ -215,3 +230,25 @@ for player, expected in expected_by_player.items():
                                            for value, target in zip(actual, expected)):
         raise AssertionError(f"Combined example controls mismatch for player {player + 1}: {actual}")
 print("PASS 97-airwindows-effects-together.py: both effects run on separate players concurrently")
+
+chord_path = portable_path / "98-airwindows-chord-tails.py"
+chord_script = chord_path.read_text(encoding="utf-8")
+chord_names = ("AirwindowsTapeDelay2", "AirwindowsEchojam")
+chord_report = compatibility_report(chord_script, chord_names)
+if "No unsupported constructs detected" not in chord_report:
+    raise AssertionError(f"Chord/tails example failed compatibility checking:\n{chord_report}")
+chord_rows, chord_controls = evaluate(chord_script, chord_names)
+if len(chord_rows) != 2 or [int(row[6]) for row in chord_rows] != [58, 59]:
+    raise AssertionError(f"Chord/tails example did not start both effects: {chord_rows}")
+processor_source = runtime_path.with_name("processor.cpp").read_text(encoding="utf-8")
+for required in (
+    "playerEffectGraphs_[player]",
+    "Graph_Calc(graph)",
+    "kAirwindowsInputBusBase",
+    "playerLeftBlock[player]",
+    "std::array<bool, 7>{{true, true, true, true, true, false, true}}",
+    "std::array<bool, 7>{{true, true, true, false, false, false, true}}",
+):
+    if required not in processor_source:
+        raise AssertionError(f"Persistent stereo insert path is missing {required!r}.")
+print("PASS 98-airwindows-chord-tails.py: polyphonic example and persistent insert path")
