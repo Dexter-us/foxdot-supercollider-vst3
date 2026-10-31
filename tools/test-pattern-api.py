@@ -250,6 +250,25 @@ assert namespace['PZip2']([0, 1, 2], [1, 2], rule=lambda a, b: a != b) == [
     (0, 1), (1, 2), (2, 1), (0, 2)]
 assert namespace['PZip2']([0, 1], [3, 4]) == [(0, 3), (1, 4)]
 assert namespace['PZip2']([1], [1], rule=lambda a, b: False) == []
+assert namespace['PZip'](namespace['P']["x", " "],
+                         namespace['P']["o", "-", " "]) == [
+    ("x", "o"), "-", "x", "o", ("x", "-"), " "]
+assert namespace['PZip'](
+    namespace['PZip'](namespace['P']["x", "o"],
+                      namespace['P']["-", " "]),
+    namespace['P']["a"]) == [("x", "-", "a"), ("o", "a")]
+assert namespace['PZip2'](
+    namespace['P']["x", "o", "-"],
+    namespace['P']["x", "-", " "],
+    rule=lambda a, b: a != b) == [("o", "-"), "-"]
+assert namespace['PZip'](
+    [("x", "o", "a", "b")], [("c", "d", "e", "f")]) == [
+        ("x", "o", "a", "b", "c", "d", "e", "f")]
+assert namespace['PZip'](*[
+    namespace['P'][symbol] for symbol in "abcdefgh"]) == [tuple("abcdefgh")]
+assert namespace['PZip2'](
+    namespace['P']["x"], namespace['P']["o"],
+    rule=lambda a, b: False) == []
 assert namespace['PRhythm']([2, (3, 8)]) == [2.0, (2.0, 0.75, 1.5)]
 assert namespace['PRhythm']([(3, 8)]) == [0.75, 0.75, 0.5]
 assert namespace['PRhythm']([2, (3, 8, 1, 0.25)]) == [
@@ -290,7 +309,13 @@ for badRhythm in (
         lambda: namespace['PZip']([1] * 257, [2]),
         lambda: namespace['PZip']([1], 'xo'),
         lambda: namespace['PZip']([1], [(2, 3)]),
+        lambda: namespace['PZip'](["x"] * 16, ["o"] * 17),
+        lambda: namespace['PZip'](*[[symbol] for symbol in "abcdefghi"]),
+        lambda: namespace['PZip']([("x", "o", "a", "b")], [("c", "d", "e", "f", "g")]),
+        lambda: namespace['PZip']([1], namespace['P']["x"]),
+        lambda: namespace['PZip'](["x", 1], ["o"]),
         lambda: namespace['PZip2']([1] * 16, [2] * 17),
+        lambda: namespace['PZip2'](["x"] * 16, ["o"] * 17),
         lambda: namespace['PZip2']([1], [2], rule=0),
         lambda: namespace['PRhythm']([]),
         lambda: namespace['PRhythm']([0]),
@@ -1269,10 +1294,15 @@ assert 'PQuicken supports only dur, stepsize, and steps keywords' in run_compati
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> saw(PZip(P[0, 2], P[4, 5]), dur=1, sus=0.5)\n'
     'p2 >> sine(PZip2(P[0, 1], P[2, 3], rule=lambda a, b: a != b))')
-assert 'PZip requires 2 to 8 finite numeric patterns' in run_compatibility_check(
+assert 'PZip requires 2 to 8 finite numeric or sample-symbol patterns' in run_compatibility_check(
     'p1 >> saw(PZip(P[0]))')
-assert 'PZip currently supports numeric note patterns and rests' in run_compatibility_check(
-    'p1 >> play(PZip(P["x", "o"], P["-", " "] ))')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(PZip(P["x", " "], P["o", "-"]))\n'
+    'p2 >> play(PZip2(P["x", "-"], P["o", " "], rule=lambda a, b: a != b))')
+assert 'cannot mix numeric note patterns with sample-symbol patterns' in run_compatibility_check(
+    'p1 >> play(PZip(P["x", "o"], P[0, 1]))')
+assert 'cannot mix numeric note patterns with sample-symbol patterns' in run_compatibility_check(
+    'p1 >> play(PZip2(P["x"], P[0]))')
 assert 'PRhythm expects one finite list or P pattern' in run_compatibility_check(
     'p1 >> saw([0], dur=PRhythm())')
 assert 'No unsupported constructs detected' in run_compatibility_check(
@@ -1296,6 +1326,24 @@ _, composedSampleRequests = run_script(
     include_samples=True)
 assert [int(row[1]) for row in composedSampleRequests] == [120, 111, 45, 45, 120]
 assert [int(row[2]) for row in composedSampleRequests] == [0, 0, 1, 1, 0]
+sampleZipText = (
+    'p1 >> play(PZip(P["x", " "], P["o", "-", " "]), dur=1, sample=0)\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(sampleZipText)
+sampleZipRows, sampleZipRequests, sampleZipEvents = run_script(
+    sampleZipText, include_samples=True, include_events=True)
+assert len(sampleZipRows) == 1 and len(sampleZipRequests) == 7
+assert sorted(int(row[1]) for row in sampleZipRequests) == [
+    45, 45, 111, 111, 120, 120, 120]
+assert len(sampleZipEvents) == 7
+example92Text = open(
+    os.path.join(sys.argv[2], '92-sample-pzip-pzip2.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example92Text)
+example92Rows, example92Requests, example92Events = run_script(
+    example92Text, include_samples=True, include_events=True)
+assert len(example92Rows) == 2 and len(example92Requests) == 35
+assert len(example92Events) == 35
 example78Rows, example78Requests = run_script(
     open(os.path.join(sys.argv[2], '78-sample-pattern-concatenation.py'), encoding='utf-8').read(),
     include_samples=True)
@@ -1464,4 +1512,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-91.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-92.')

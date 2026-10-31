@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.67 adds sample-symbol PZip(...) and PZip2(...), matching FoxDot's
+cyclic least-common-multiple lacing for finite patterns. The resulting groups
+flatten into simultaneous sample hits; a space rests only its own lane. Laced
+patterns are limited to 256 items and hits to eight symbols. PZip2 accepts an
+optional two-value rule. Numeric PZip behavior is unchanged; see Example 92.
+OPTIONAL-SAMPLE-SETUP.html explains how to install separately downloaded WAVs.
 Version 0.4.66 adds finite sample-symbol P & P chord-zipping. The patterns cycle
 to their least-common-multiple length (up to 256 steps); each event can play up
 to eight sample symbols, and a space rests only that layer. See Example 91.
@@ -17,9 +23,9 @@ Version 0.4.62 supports overlapping sustains (`sus > dur`) and repeated pitches
 in FoxDot-style players. Voice overlap is bounded to eight simultaneous notes
 per player, with sus capped at eight pattern cycles. Example 87 demonstrates
 overlap. Version 0.4.61 adds bounded numeric-note PZip chord pairing and PZip2 pairing
-with a rule; see Example 86. PZip/PZip2 accept 1D numeric note patterns and
-rests, capped at 8 inputs and 256 laced items. Sample-symbol and nested-chord
-zipping are deferred.
+with a rule; see Example 86. Numeric PZip/PZip2 accept 1D note patterns and
+rests, capped at 8 inputs and 256 laced items. Version 0.4.67 adds sample-symbol
+patterns; nested numeric chords remain unsupported.
 Version 0.4.60 adds PQuicken delay clusters and a bounded PRhythm subset;
 see Example 85. PRhythm accepts positive durations and
 (n, k[, start[, dur]]) Euclidean tuples. A tuple group in dur= plays delayed
@@ -94,8 +100,8 @@ one sample variant for a single hit. Example 77 uses `P["x", "o", " "]` sample
 sequences with `.reverse()` and `.rotate(n)`; the values must be single sample
 symbols or space-rests, and other hits still use `sample=`.
 78-sample-pattern-concatenation.py demonstrates left-to-right sample-pattern
-concatenation with `|`, followed by rotation. Numeric P arithmetic and sample
-PZip/PZip2 remain unsupported.
+concatenation with `|`, followed by rotation. Numeric P arithmetic over
+sample-symbol patterns remains unsupported.
 
 79-sample-pattern-alternation.py demonstrates PAlt cycling patterns to their
 least-common-multiple length, then alternating one item from each input.
@@ -116,6 +122,10 @@ also accepts numeric note patterns and preserves their rests/chords.
 82-sample-pattern-join-shuffle.py joins smaller motifs left-to-right with
 PJoin, then shuffles the complete phrase with PShuf. Both helpers accept numeric
 phrases as well as sample-symbol phrases.
+
+92-sample-pzip-pzip2.py combines finite sample-symbol patterns with PZip and
+filters zipped sample pairs with PZip2. Unequal patterns cycle to their LCM;
+spaces rest their own lane and groups are limited to eight simultaneous hits.
 
 83-pbeat-pdur-rhythm-durations.py uses PBeat pulse strings and PDur Euclidean
 durations to control the timing of portable sample patterns.

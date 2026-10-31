@@ -236,6 +236,16 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             if 'mixed' in kinds or len(kinds) > 1:
                 return 'mixed'
             return next(iter(kinds)) if kinds else None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {'PZip', 'PZip2'}:
+            limit = 8 if node.func.id == 'PZip' else 2
+            arguments = list(node.args[:limit])
+            arguments.extend(keyword.value for keyword in node.keywords
+                             if keyword.arg in {'pat1', 'pat2'})
+            kinds = {kind for kind in (self._pattern_kind(value) for value in arguments)
+                     if kind is not None}
+            if 'mixed' in kinds or len(kinds) > 1:
+                return 'mixed'
+            return next(iter(kinds)) if kinds else None
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             return self._pattern_kind(node.func.value)
         return None
@@ -310,10 +320,15 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if name == 'PZip':
             allowed = {'pat1', 'pat2'}
             if not 2 <= len(node.args) + len(node.keywords) <= 8:
-                self.add(node.lineno, 'PZip requires 2 to 8 finite numeric patterns.')
+                self.add(node.lineno, 'PZip requires 2 to 8 finite numeric or sample-symbol patterns.')
             for keyword in node.keywords:
                 if keyword.arg is None or keyword.arg not in allowed:
                     self.add(keyword.lineno or node.lineno, 'PZip accepts only pat1 and pat2 keywords; add further patterns positionally.')
+            patternArguments = list(node.args[:8])
+            patternArguments.extend(
+                keyword.value for keyword in node.keywords
+                if keyword.arg in {'pat1', 'pat2'})
+            self._check_pattern_kinds(patternArguments, node.lineno, 'PZip')
         if name == 'PZip2':
             allowed = {'pat1', 'pat2', 'rule'}
             if not 2 <= len(node.args) + len(node.keywords) <= 3:
@@ -321,17 +336,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             for keyword in node.keywords:
                 if keyword.arg is None or keyword.arg not in allowed:
                     self.add(keyword.lineno or node.lineno, 'PZip2 accepts only pat1, pat2, and rule keywords.')
-        if name in {'PZip', 'PZip2'}:
-            patternArguments = list(node.args[:8 if name == 'PZip' else 2])
+            patternArguments = list(node.args[:2])
             patternArguments.extend(
                 keyword.value for keyword in node.keywords
                 if keyword.arg in {'pat1', 'pat2'})
-            for argument in patternArguments:
-                if (isinstance(argument, ast.Subscript) and
-                        isinstance(argument.value, ast.Name) and argument.value.id == 'P' and
-                        any(isinstance(value, ast.Constant) and isinstance(value.value, str)
-                            for value in ast.walk(argument.slice))):
-                    self.add(argument.lineno, name + ' currently supports numeric note patterns and rests; sample-symbol zipping is deferred.')
+            self._check_pattern_kinds(patternArguments, node.lineno, 'PZip2')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -1163,18 +1172,26 @@ def _pzip_pattern_values(pattern, name):
                              not isinstance(pattern, bool)):
         values = [pattern]
     else:
-        raise TypeError(name + ' accepts finite numeric note patterns and rests only')
+        raise TypeError(name +
+                        ' accepts finite numeric notes/rests or sample symbols/space-rests')
     if not values:
         raise ValueError(name + ' patterns cannot be empty')
     if len(values) > 256:
         raise ValueError(name + ' input patterns are limited to 256 items')
+    kind = None
     for item in values:
-        if item is None:
-            continue
-        if (isinstance(item, bool) or not isinstance(item, (int, float)) or
-                item != item or item in (float('inf'), float('-inf'))):
-            raise TypeError(name + ' accepts finite numeric notes and rests, not nested chords or sample symbols')
-    return values
+        if item is None or _finite_note_number(item):
+            item_kind = 'numeric'
+        elif _sample_symbols_for_item(item) is not None:
+            item_kind = 'sample'
+        else:
+            raise TypeError(name +
+                            ' accepts finite numeric notes/rests or sample symbols/space-rests, not nested numeric chords')
+        if kind is not None and item_kind != kind:
+            raise TypeError(name +
+                            ' cannot mix numeric note patterns with sample-symbol patterns')
+        kind = item_kind
+    return values, kind
 
 def _pzip_laced_length(patterns, name):
     length = 1
@@ -1189,25 +1206,43 @@ def _pzip_laced_length(patterns, name):
     return length
 
 def PZip(pat1, pat2, *patN):
-    patterns = [_pzip_pattern_values(pattern, 'PZip')
-                for pattern in (pat1, pat2) + patN]
-    if len(patterns) > 8:
+    parsed = [_pzip_pattern_values(pattern, 'PZip')
+              for pattern in (pat1, pat2) + patN]
+    if len(parsed) > 8:
         raise ValueError('PZip accepts 2 to 8 patterns')
+    kinds = {kind for _, kind in parsed}
+    if len(kinds) > 1:
+        raise TypeError('PZip cannot mix numeric note patterns with sample-symbol patterns')
+    patterns = [values for values, _ in parsed]
     length = _pzip_laced_length(patterns, 'PZip')
+    if kinds == {'sample'}:
+        zipper = _FoxDotFinitePattern()
+        zipped = []
+        for index in range(length):
+            item = patterns[0][index % len(patterns[0])]
+            for pattern in patterns[1:]:
+                item = zipper._zip_sample_item(item, pattern[index % len(pattern)])
+            zipped.append(item)
+        return _FoxDotFinitePattern(zipped)
     return _FoxDotFinitePattern([
         tuple(pattern[index % len(pattern)] for pattern in patterns)
         for index in range(length)])
 
 def PZip2(pat1, pat2, rule=None):
-    patterns = [_pzip_pattern_values(pat1, 'PZip2'),
-                _pzip_pattern_values(pat2, 'PZip2')]
+    parsed = [_pzip_pattern_values(pat1, 'PZip2'),
+              _pzip_pattern_values(pat2, 'PZip2')]
+    if parsed[0][1] != parsed[1][1]:
+        raise TypeError('PZip2 cannot mix numeric note patterns with sample-symbol patterns')
+    patterns = [values for values, _ in parsed]
     length = _pzip_laced_length(patterns, 'PZip2')
     result = []
+    sample_zipper = _FoxDotFinitePattern() if parsed[0][1] == 'sample' else None
     for index in range(length):
         left = patterns[0][index % len(patterns[0])]
         right = patterns[1][index % len(patterns[1])]
         if rule is None or rule(left, right):
-            result.append((left, right))
+            result.append(sample_zipper._zip_sample_item(left, right)
+                          if sample_zipper is not None else (left, right))
             if len(result) > 256:
                 raise ValueError('PZip2 output is limited to 256 zipped pairs')
     return _FoxDotFinitePattern(result)
