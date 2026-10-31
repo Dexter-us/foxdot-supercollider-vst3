@@ -228,7 +228,29 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             if 'mixed' in kinds or len(kinds) > 1:
                 return 'mixed'
             return next(iter(kinds)) if kinds else None
+        if isinstance(node, ast.BinOp) and isinstance(
+                node.op, (ast.BitAnd, ast.BitOr)):
+            kinds = {kind for kind in (
+                self._pattern_kind(node.left), self._pattern_kind(node.right))
+                     if kind is not None}
+            if 'mixed' in kinds or len(kinds) > 1:
+                return 'mixed'
+            return next(iter(kinds)) if kinds else None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            return self._pattern_kind(node.func.value)
         return None
+
+    def _finite_pattern_expression(self, node):
+        if isinstance(node, ast.Subscript) and isinstance(
+                node.value, ast.Name) and node.value.id == 'P':
+            return self._pattern_kind(node) is not None
+        if isinstance(node, ast.BinOp) and isinstance(
+                node.op, (ast.BitAnd, ast.BitOr)):
+            return (self._finite_pattern_expression(node.left) and
+                    self._finite_pattern_expression(node.right))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            return self._finite_pattern_expression(node.func.value)
+        return False
 
     def _check_pattern_kinds(self, nodes, line, helper_name):
         kinds = {self._pattern_kind(node) for node in nodes}
@@ -404,7 +426,13 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                           ast.Mod, ast.Pow, ast.BitXor)):
             self.add(node.lineno, 'P arithmetic over sample-symbol patterns is not supported; use reverse(), rotate(), or | to concatenate.')
         if has_sample_pattern and isinstance(node.op, ast.BitAnd):
-            self.add(node.lineno, 'P sample-symbol & is unsupported: FoxDot zips into chord groups, which the sample player cannot play; use | to concatenate.')
+            self._check_pattern_kinds(
+                [node.left, node.right], node.lineno, 'P &')
+            if ((self._pattern_kind(node.left) == 'sample' or
+                 self._pattern_kind(node.right) == 'sample') and
+                    not (self._finite_pattern_expression(node.left) and
+                         self._finite_pattern_expression(node.right))):
+                self.add(node.lineno, 'Sample-symbol & requires two finite P sample-symbol patterns.')
         elif isinstance(node.op, (ast.BitOr, ast.BitAnd)) and any(
                 isinstance(item, ast.Constant) and isinstance(item.value, str)
                 for item in ast.walk(node)) and not has_sample_pattern:
@@ -830,8 +858,7 @@ class _FoxDotFinitePattern(list):
             return None
         if not items:
             return None
-        if all(isinstance(item, str) and len(item) == 1 and
-               (item == ' ' or item in _SAMPLE_SYMBOLS) for item in items):
+        if all(_sample_symbols_for_item(item) is not None for item in items):
             return items
         return None
 
@@ -880,9 +907,42 @@ class _FoxDotFinitePattern(list):
             return None
         return notes[0] if len(notes) == 1 else tuple(notes)
 
+    def _zip_sample_item(self, left, right):
+        symbols = []
+        for item in (left, right):
+            members = _sample_symbols_for_item(item)
+            if members is None:
+                raise TypeError('P sample-symbol & requires finite sample-symbol patterns')
+            symbols.extend(members)
+            if len(symbols) > 8:
+                raise ValueError('zipped sample groups can contain at most 8 symbols')
+        if not symbols:
+            return ' '
+        return symbols[0] if len(symbols) == 1 else tuple(symbols)
+
     def _zip_with(self, other, reflected=False):
-        left = self._composition_items(other) if reflected else self._composition_items(self)
-        right = self._composition_items(self) if reflected else self._composition_items(other)
+        left_value = other if reflected else self
+        right_value = self if reflected else other
+        left_sample = (self._sample_sequence(left_value)
+                       if isinstance(left_value, _FoxDotFinitePattern) else None)
+        right_sample = (self._sample_sequence(right_value)
+                        if isinstance(right_value, _FoxDotFinitePattern) else None)
+        if left_sample is not None or right_sample is not None:
+            if left_sample is None or right_sample is None:
+                raise TypeError('P & cannot mix numeric note patterns with sample-symbol patterns')
+            if not left_sample or not right_sample:
+                return _FoxDotFinitePattern()
+            length = self._laced_length(left_sample, right_sample)
+            if length > 256:
+                raise ValueError('P sample-symbol zipping is limited to 256 expanded items')
+            return _FoxDotFinitePattern([
+                self._zip_sample_item(
+                    left_sample[index % len(left_sample)],
+                    right_sample[index % len(right_sample)])
+                for index in range(length)
+            ])
+        left = self._composition_items(left_value)
+        right = self._composition_items(right_value)
         if not left or not right:
             return _FoxDotFinitePattern()
         length = self._laced_length(left, right)
@@ -2015,6 +2075,17 @@ karp = _make_core_synth('karp')
 _SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
 _dexter_sample_eval_count = 0
 
+def _sample_symbols_for_item(item):
+    if isinstance(item, str) and len(item) == 1 and (
+            item == ' ' or item in _SAMPLE_SYMBOLS):
+        return [] if item == ' ' else [item]
+    if isinstance(item, (list, tuple)) and 1 <= len(item) <= 8:
+        if all(isinstance(symbol, str) and len(symbol) == 1 and
+               (symbol == ' ' or symbol in _SAMPLE_SYMBOLS)
+               for symbol in item):
+            return [symbol for symbol in item if symbol != ' ']
+    return None
+
 def _sample_value(value, index, beat, name):
     if isinstance(value, _DexterTimeVar):
         return value.at(beat)
@@ -2244,15 +2315,40 @@ def _sample_timeline(text, parameterLengths):
                 symbolSlots.append(tuple(symbols))
     return notes, multipliers, symbolSlots
 
+def _sample_timeline_values(values, parameterLengths):
+    if not values or len(values) > 256:
+        raise ValueError('sample-symbol pattern requires 1 to 256 items')
+    period = len(values)
+    for length in parameterLengths:
+        period = _sample_lcm(period, length)
+    if period > 256:
+        raise ValueError('combined sample-symbol pattern exceeds the 256-slot limit')
+    notes = []
+    multipliers = []
+    symbolSlots = []
+    for index in range(period):
+        symbols = _sample_symbols_for_item(values[index % len(values)])
+        if symbols is None:
+            raise TypeError('play(P[...]) requires sample symbols, space-rests, or zipped sample groups')
+        notes.append(None if not symbols else
+                     ord(symbols[0]) if len(symbols) == 1 else
+                     tuple(ord(symbol) for symbol in symbols))
+        multipliers.append(1.0)
+        symbolSlots.append(tuple((symbol, None) for symbol in symbols))
+    return notes, multipliers, symbolSlots
+
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
+    samplePatternValues = None
     if isinstance(text, _FoxDotFinitePattern):
-        if any(not isinstance(item, str) or len(item) != 1 or
-               (item != ' ' and item not in _SAMPLE_SYMBOLS) for item in text):
-            raise TypeError('play(P[...]) sample patterns require one sample symbol or one space-rest per item')
-        text = ''.join(text)
-    if not isinstance(text, str) or not text:
+        if any(_sample_symbols_for_item(item) is None for item in text):
+            raise TypeError('play(P[...]) sample patterns require sample symbols, space-rests, or zipped sample groups')
+        if any(isinstance(item, (list, tuple)) for item in text):
+            samplePatternValues = list(text)
+        else:
+            text = ''.join(text)
+    if samplePatternValues is None and (not isinstance(text, str) or not text):
         raise ValueError('sample pattern cannot be empty')
-    if len(text) > 256:
+    if samplePatternValues is None and len(text) > 256:
         raise ValueError('sample pattern text is limited to 256 characters')
     sampleControl = sample if isinstance(sample, _DexterTimeVar) else None
     rateControl = rate if isinstance(rate, _DexterTimeVar) else None
@@ -2284,7 +2380,10 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
         if not sus:
             raise ValueError('sus pattern cannot be empty')
         lengths.append(len(sus))
-    notes, multipliers, symbolSlots = _sample_timeline(text, lengths)
+    notes, multipliers, symbolSlots = (
+        _sample_timeline_values(samplePatternValues, lengths)
+        if samplePatternValues is not None else
+        _sample_timeline(text, lengths))
     positions = []
     symbolEvents = []
     for position, symbols in enumerate(symbolSlots):

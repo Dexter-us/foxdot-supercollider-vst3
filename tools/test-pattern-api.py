@@ -123,12 +123,30 @@ else:
     raise AssertionError('sample/numeric P concatenation should be rejected')
 assert left & right == [(0, 5), 7, (2, 4, 5), (0, 7), 5, (2, 4, 7)]
 assert namespace['P'][None] & namespace['P'][None] == [None]
+assert namespace['P']['x', ' '] & namespace['P']['o', '-', ' '] == [
+    ('x', 'o'), '-', 'x', 'o', ('x', '-'), ' ']
+sampleChord = namespace['P']['x']
+for symbol in 'abcdefg':
+    sampleChord = sampleChord & namespace['P'][symbol]
+assert sampleChord == [tuple('xabcdefg')]
 try:
-    namespace['P']['x'] & namespace['P']['o']
-except TypeError as error:
-    assert 'numeric notes' in str(error)
+    sampleChord & namespace['P']['h']
+except ValueError as error:
+    assert 'at most 8 symbols' in str(error)
 else:
-    raise AssertionError('sample-symbol P zipping should remain unsupported')
+    raise AssertionError('sample-symbol chord width must be capped at 8')
+try:
+    namespace['P'][*('x' * 16)] & namespace['P'][*('o' * 17)]
+except ValueError as error:
+    assert '256' in str(error)
+else:
+    raise AssertionError('sample-symbol P zipping must cap LCM expansion at 256')
+try:
+    namespace['P']['x'] & namespace['P'][1]
+except TypeError as error:
+    assert 'cannot mix numeric' in str(error)
+else:
+    raise AssertionError('sample-symbol and numeric P patterns must not zip together')
 assert namespace['PAlt'](namespace['P']['x', ' '], namespace['P']['o', '-']) == [
     'x', 'o', ' ', '-']
 assert namespace['PAlt'](
@@ -1156,6 +1174,13 @@ _, sampleIndexRequests = run_script(
     'p1 >> play("|x1|x|x0|x", sample=P[0, 1])', include_samples=True)
 assert [int(row[1]) for row in sampleIndexRequests] == [120, 120, 120, 120]
 assert [int(row[2]) for row in sampleIndexRequests] == [1, 1, 0, 1]
+_, zippedSampleRequests, zippedSampleEvents = run_script(
+    'p1 >> play(P["x", " "] & P["o", "-", " "], dur=0.5, sample=0)',
+    include_samples=True, include_events=True)
+assert [int(row[1]) for row in zippedSampleRequests] == [
+    120, 111, 45, 120, 111, 120, 45], zippedSampleRequests
+assert [float(row[1]) for row in zippedSampleEvents] == [
+    0.0, 0.0, 0.5, 1.0, 1.5, 2.0, 2.0], zippedSampleEvents
 _, nestedSampleIndexRequests, nestedSampleIndexEvents = run_script(
     'p1 >> play("[|x1|x]o", dur=1, sample=0)',
     include_samples=True, include_events=True)
@@ -1187,8 +1212,14 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(P["x", "o", " "].reverse(), sample=P[0, 1])')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(P["x", " "] | P["o", "-"], sample=P[0, 1])')
-assert 'P sample-symbol & is unsupported' in run_compatibility_check(
+assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(P["x"] & P["o"])')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play((P["x", " "] & P["o", "-"]).rotate(1))')
+assert 'cannot mix numeric note patterns with sample-symbol patterns' in run_compatibility_check(
+    'p1 >> play(P["x"] & P[0])')
+assert 'requires two finite P sample-symbol patterns' in run_compatibility_check(
+    'p1 >> play(P["x"] & "o")')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(P["x"] | P["o"])')
 assert 'No unsupported constructs detected' in run_compatibility_check(
@@ -1433,4 +1464,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-90.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-91.')

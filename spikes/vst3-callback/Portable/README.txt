@@ -1,5 +1,8 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.66 adds finite sample-symbol P & P chord-zipping. The patterns cycle
+to their least-common-multiple length (up to 256 steps); each event can play up
+to eight sample symbols, and a space rests only that layer. See Example 91.
 Version 0.4.65 adds grouped sus= values using PGroup(...), laced with chord
 tones and PRhythm offsets. Grouped events count toward the eight-voice and
 256-event limits; see Example 90. Version 0.4.64 added nested PRhythm duration
@@ -91,8 +94,8 @@ one sample variant for a single hit. Example 77 uses `P["x", "o", " "]` sample
 sequences with `.reverse()` and `.rotate(n)`; the values must be single sample
 symbols or space-rests, and other hits still use `sample=`.
 78-sample-pattern-concatenation.py demonstrates left-to-right sample-pattern
-concatenation with `|`, followed by rotation. Numeric P arithmetic and `&`
-chord zipping remain unsupported for sample symbols.
+concatenation with `|`, followed by rotation. Numeric P arithmetic and sample
+PZip/PZip2 remain unsupported.
 
 79-sample-pattern-alternation.py demonstrates PAlt cycling patterns to their
 least-common-multiple length, then alternating one item from each input.
@@ -136,6 +139,10 @@ PJoin on scale-degree notes, including numeric rest/chord support.
 Euclidean tuple and the resulting retrigger offsets.
 90-grouped-sustain.py demonstrates grouped per-voice sustain on chord tones and
 the bundled sample player.
+
+91-sample-symbol-chord-zip.py uses FoxDot's `&` operator to zip finite sample
+patterns into simultaneous hits. Unequal pattern lengths cycle to their
+least-common-multiple; spaces rest only their own layer.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 
