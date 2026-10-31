@@ -206,6 +206,37 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self._seen.add(item)
             self.diagnostics.append(item)
 
+    def _pattern_kind(self, node):
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, str):
+                return 'sample'
+            if node.value is None or (
+                    isinstance(node.value, (int, float)) and
+                    not isinstance(node.value, bool)):
+                return 'numeric'
+            return None
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == 'P':
+            values = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            kinds = {kind for kind in (self._pattern_kind(value) for value in values)
+                     if kind is not None}
+            if 'mixed' in kinds or len(kinds) > 1:
+                return 'mixed'
+            return next(iter(kinds)) if kinds else None
+        if isinstance(node, (ast.List, ast.Tuple)):
+            kinds = {kind for kind in (self._pattern_kind(value) for value in node.elts)
+                     if kind is not None}
+            if 'mixed' in kinds or len(kinds) > 1:
+                return 'mixed'
+            return next(iter(kinds)) if kinds else None
+        return None
+
+    def _check_pattern_kinds(self, nodes, line, helper_name):
+        kinds = {self._pattern_kind(node) for node in nodes}
+        kinds.discard(None)
+        if 'mixed' in kinds or len(kinds) > 1:
+            self.add(line, helper_name +
+                     ' cannot mix numeric note patterns with sample-symbol patterns.')
+
     def visit_Import(self, node):
         self.add(node.lineno, 'Python imports are disabled in the portable editor; use the built-in API.')
 
@@ -218,37 +249,22 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self.add(node.lineno, "Call '" + name + "()' is not in the embedded API (often an unsupported FoxDot synth or pattern helper).")
         if name == 'PAlt':
             if len(node.args) < 2:
-                self.add(node.lineno, 'PAlt requires at least two sample-symbol patterns.')
-            for argument in node.args:
-                if (isinstance(argument, ast.Subscript) and
-                        isinstance(argument.value, ast.Name) and argument.value.id == 'P' and
-                        not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
-                                for value in ast.walk(argument.slice))):
-                    self.add(argument.lineno, 'This PAlt implementation accepts sample-symbol patterns only; numeric PAlt is deferred.')
+                self.add(node.lineno, 'PAlt requires at least two finite patterns.')
+            self._check_pattern_kinds(node.args, node.lineno, 'PAlt')
         if name in {'PStretch', 'PStutter', 'PShuf'}:
             if name == 'PStretch' and len(node.args) != 2:
-                self.add(node.lineno, 'PStretch requires a sample-symbol pattern and a target length.')
+                self.add(node.lineno, 'PStretch requires a finite pattern and a target length.')
             if name == 'PStutter' and not 1 <= len(node.args) <= 2:
-                self.add(node.lineno, 'PStutter requires a sample-symbol pattern and optional repeat counts.')
+                self.add(node.lineno, 'PStutter requires a finite pattern and optional repeat counts.')
             if name == 'PShuf' and len(node.args) != 1:
-                self.add(node.lineno, 'PShuf requires exactly one sample-symbol pattern.')
+                self.add(node.lineno, 'PShuf requires exactly one finite pattern.')
             if node.args:
-                argument = node.args[0]
-                if (isinstance(argument, ast.Subscript) and
-                        isinstance(argument.value, ast.Name) and argument.value.id == 'P' and
-                        not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
-                                for value in ast.walk(argument.slice))):
-                    self.add(argument.lineno, name + ' currently accepts sample-symbol patterns only.')
+                self._check_pattern_kinds(node.args[:1], node.lineno, name)
         if name == 'PJoin':
             if len(node.args) != 1:
-                self.add(node.lineno, 'PJoin requires one list or pattern of sample-symbol phrases.')
-            elif node.args:
-                for argument in ast.walk(node.args[0]):
-                    if (isinstance(argument, ast.Subscript) and
-                            isinstance(argument.value, ast.Name) and argument.value.id == 'P' and
-                            not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
-                                    for value in ast.walk(argument.slice))):
-                        self.add(argument.lineno, 'PJoin currently accepts sample-symbol phrases only.')
+                self.add(node.lineno, 'PJoin requires one list or pattern of finite phrases.')
+            else:
+                self._check_pattern_kinds(node.args, node.lineno, 'PJoin')
         if name in {'PBeat', 'PDur'}:
             minimum = 1 if name == 'PBeat' else 2
             maximum = 3 if name == 'PBeat' else 4
@@ -889,51 +905,80 @@ class _FoxDotFinitePattern(list):
     def __rand__(self, other):
         return self._zip_with(other, True)
 
-def PAlt(*patterns):
-    if len(patterns) < 2:
-        raise ValueError('PAlt requires at least two sample-symbol patterns')
-    probe = _FoxDotFinitePattern()
+def _finite_note_number(value):
+    return (isinstance(value, (int, float)) and not isinstance(value, bool) and
+            value == value and value not in (float('inf'), float('-inf')))
+
+def _numeric_pattern_item(value):
+    if value is None or _finite_note_number(value):
+        return True
+    if isinstance(value, (list, tuple)):
+        return 1 <= len(value) <= 8 and all(_finite_note_number(note) for note in value)
+    return False
+
+def _pattern_items(pattern, name):
+    if isinstance(pattern, str):
+        values = list(pattern)
+    elif isinstance(pattern, (list, tuple, _FoxDotFinitePattern)):
+        values = list(pattern)
+    else:
+        raise TypeError(name + ' expects a finite numeric or sample-symbol pattern')
+    if len(values) > 256:
+        raise ValueError(name + ' input patterns are limited to 256 items')
+    if not values:
+        return values, None
+    if all(isinstance(item, str) and len(item) == 1 and
+           (item == ' ' or item in _SAMPLE_SYMBOLS) for item in values):
+        return values, 'sample'
+    if all(_numeric_pattern_item(item) for item in values):
+        return values, 'numeric'
+    raise TypeError(name +
+                    ' requires either numeric notes/rests/chords or sample symbols/space-rests; do not mix them')
+
+def _compatible_pattern_sequences(patterns, name, minimum=1):
+    if len(patterns) < minimum:
+        raise ValueError(name + ' requires at least ' + str(minimum) + ' finite patterns')
     sequences = []
+    kind = None
     for pattern in patterns:
-        if isinstance(pattern, (str, list, tuple, _FoxDotFinitePattern)) and len(pattern) > 256:
-            raise ValueError('PAlt input patterns are limited to 256 items')
-        values = probe._sample_sequence(pattern)
-        if values is None or not values:
-            raise TypeError('PAlt accepts only non-empty sample-symbol patterns and space-rests')
+        values, patternKind = _pattern_items(pattern, name)
+        if not values:
+            raise ValueError(name + ' patterns cannot be empty')
+        if kind is not None and patternKind != kind:
+            raise TypeError(name + ' cannot mix numeric note patterns with sample-symbol patterns')
+        kind = patternKind
         sequences.append(values)
+    return sequences, kind
+
+def PAlt(*patterns):
+    sequences, kind = _compatible_pattern_sequences(patterns, 'PAlt', 2)
+    probe = _FoxDotFinitePattern()
     length = 1
     for values in sequences:
         length = length * len(values) // probe._gcd(length, len(values))
         if length * len(sequences) > 256:
-            raise ValueError('PAlt is limited to 256 expanded sample symbols')
+            raise ValueError('PAlt is limited to 256 expanded items')
     return _FoxDotFinitePattern([
-        sequences[pattern_index][step % len(sequences[pattern_index])]
+        sequences[patternIndex][step % len(sequences[patternIndex])]
         for step in range(length)
-        for pattern_index in range(len(sequences))
+        for patternIndex in range(len(sequences))
     ])
-
-def _sample_pattern_items(pattern, name):
-    probe = _FoxDotFinitePattern()
-    if isinstance(pattern, (str, list, tuple, _FoxDotFinitePattern)) and len(pattern) > 256:
-        raise ValueError(name + ' input patterns are limited to 256 items')
-    values = probe._sample_sequence(pattern)
-    if values is None:
-        raise TypeError(name + ' accepts only sample-symbol patterns and space-rests')
-    return values
 
 def PJoin(patterns):
     if not isinstance(patterns, (str, list, tuple, _FoxDotFinitePattern)):
-        raise TypeError('PJoin expects a list or pattern of sample-symbol phrases')
+        raise TypeError('PJoin expects a list or pattern of finite phrases')
     if len(patterns) > 256:
         raise ValueError('PJoin is limited to 256 input phrases')
     result = []
+    kind = None
     for pattern in patterns:
-        if isinstance(pattern, (str, list, tuple, _FoxDotFinitePattern)) and not pattern:
-            values = []
-        else:
-            values = _sample_pattern_items(pattern, 'PJoin')
+        values, patternKind = _pattern_items(pattern, 'PJoin')
+        if patternKind is not None and kind is not None and patternKind != kind:
+            raise TypeError('PJoin cannot mix numeric note patterns with sample-symbol patterns')
+        if patternKind is not None:
+            kind = patternKind
         if len(result) + len(values) > 256:
-            raise ValueError('PJoin output is limited to 256 sample symbols')
+            raise ValueError('PJoin output is limited to 256 items')
         result.extend(values)
     return _FoxDotFinitePattern(result)
 
@@ -1178,7 +1223,7 @@ def PRhythm(durations):
     return _FoxDotFinitePattern(output)
 
 def PStretch(pattern, size):
-    values = _sample_pattern_items(pattern, 'PStretch')
+    values, kind = _pattern_items(pattern, 'PStretch')
     if isinstance(size, bool) or not isinstance(size, int):
         raise TypeError('PStretch target length must be an integer')
     if size < 0:
@@ -1186,13 +1231,13 @@ def PStretch(pattern, size):
     if size > 256:
         raise ValueError('PStretch output is limited to 256 items')
     if size and not values:
-        raise ValueError('PStretch cannot stretch an empty sample pattern')
+        raise ValueError('PStretch cannot stretch an empty pattern')
     return _FoxDotFinitePattern([
         values[index % len(values)] for index in range(size)
     ]) if size else _FoxDotFinitePattern()
 
 def PStutter(pattern, counts=2):
-    values = _sample_pattern_items(pattern, 'PStutter')
+    values, kind = _pattern_items(pattern, 'PStutter')
     if isinstance(counts, _FoxDotFinitePattern):
         repeats = list(counts)
     elif isinstance(counts, (list, tuple)):
@@ -1208,8 +1253,13 @@ def PStutter(pattern, counts=2):
             raise ValueError('PStutter counts must be whole numbers from 0 to 16')
     if len(repeats) > 256:
         raise ValueError('PStutter repeat-count patterns are limited to 256 items')
+    if not values:
+        return _FoxDotFinitePattern()
+    iterationCount = _FoxDotFinitePattern()._laced_length(values, repeats)
+    if iterationCount > 256:
+        raise ValueError('PStutter is limited to 256 source/count pattern steps')
     result = []
-    for index in range(max(len(values), len(repeats))):
+    for index in range(iterationCount):
         repeat_count = repeats[index % len(repeats)]
         if len(result) + repeat_count > 256:
             raise ValueError('PStutter output is limited to 256 items')
@@ -1218,13 +1268,15 @@ def PStutter(pattern, counts=2):
 
 def PShuf(pattern):
     global _dexter_shuffle_counter
-    values = _sample_pattern_items(pattern, 'PShuf')
+    values, kind = _pattern_items(pattern, 'PShuf')
     shuffled = list(values)
     _dexter_shuffle_counter += 1
     state = (int(_dexter_shuffle_seed) +
              _dexter_shuffle_counter * 1013904223) & 0xffffffff
-    for character in values:
-        state = ((state ^ ord(character)) * 16777619) & 0xffffffff
+    for item in values:
+        encoded = item if isinstance(item, str) else str(item)
+        for character in encoded:
+            state = ((state ^ ord(character)) * 16777619) & 0xffffffff
     for index in range(len(shuffled) - 1, 0, -1):
         state = (1664525 * state + 1013904223) & 0xffffffff
         target = state % (index + 1)

@@ -2,7 +2,11 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.62 allows FoxDot-style overlapping sustains and repeated pitches,
+Version 0.4.63 extends `PAlt`, `PStretch`, `PStutter`, `PShuf`, and `PJoin`
+to finite numeric note patterns, including rests and chord groups, as well as
+sample-symbol patterns. `PStutter` now uses FoxDot's least-common-multiple
+cycling for source/count patterns; see Example 88. Version 0.4.62 allows
+FoxDot-style overlapping sustains and repeated pitches,
 with a bounded eight-voice safety limit; see Example 87. Version 0.4.61 added
 bounded numeric-note `PZip(...)` and filtered `PZip2(...)`
 chord patterns; see Example 86. Version 0.4.60 added FoxDot-style
@@ -16,8 +20,7 @@ Version 0.4.57 added bounded FoxDot-compatible `PBeat(...)` and `PDur(...)`
 duration patterns. Version 0.4.56 added sample-symbol `PShuf(...)`
 and `PJoin(...)`: shuffle a complete phrase or join small motifs before shuffling.
 Version 0.4.55 added sample-symbol `PStretch(...)`
-and `PStutter(...)` transforms;
-numeric-source variants remain deferred and are reported by the compatibility checker.
+and `PStutter(...)` transforms; numeric-note forms were added in 0.4.63.
 Version 0.4.54 added FoxDot-compatible `PAlt(...)` alternation for sample-symbol
 patterns. Version 0.4.53 added FoxDot-style `|` concatenation for finite sample-symbol
 `P[...]` patterns, followed by transforms such as `.rotate(n)`. Version 0.4.52
@@ -28,7 +31,7 @@ bounded eight-cycle `{}` variations, and adjacent `<>` layers. Numeric P
 arithmetic and sample-symbol `&` chord-zipping remain unsupported and are
 reported by the compatibility checker. Playback uses the
 bundled native SC PlayBuf UGen; no SC/UGen rebuild, libsndfile DLL, external
-process or OSC is added. Portable examples 70–87 include six generated CC0
+process or OSC is added. Portable examples 70–88 include six generated CC0
 diagnostic WAVs, not a third-party sound library. See
 `Portable/Samples/README.txt` for syntax, folder layout and file-format/safety
 limits.

@@ -143,10 +143,10 @@ assert namespace['PStutter'](namespace['P']['x', 'o']) == [
     'x', 'x', 'o', 'o']
 assert namespace['PStutter'](
     namespace['P']['x', 'o'], namespace['P'][1, 3, 2]) == [
-        'x', 'o', 'o', 'o', 'x', 'x']
+        'x', 'o', 'o', 'o', 'x', 'x', 'o', 'x', 'x', 'x', 'o', 'o']
 assert namespace['PStutter'](
     namespace['P']['x', 'o', ' '], namespace['P'][1, 2]) == [
-        'x', 'o', 'o', ' ']
+        'x', 'o', 'o', ' ', 'x', 'x', 'o', ' ', ' ']
 shufSource = namespace['P']['x', 'o', 'x', ' ', '-']
 shufBefore = list(shufSource)
 shufResult = namespace['PShuf'](shufSource)
@@ -162,8 +162,29 @@ assert namespace['PJoin']([
     namespace['P']['x'], [], namespace['P']['o']]) == ['x', 'o']
 assert namespace['PJoin'](namespace['P']['x', 'o']) == ['x', 'o']
 assert len(namespace['PJoin'](['x' * 128, 'o' * 128])) == 256
+assert namespace['PAlt'](namespace['P'][0, 2], namespace['P'][4, 6, 7]) == [
+    0, 4, 2, 6, 0, 7, 2, 4, 0, 6, 2, 7]
+assert namespace['PAlt'](
+    namespace['P'][0, (2, 4), None], namespace['P'][7, 5, 3]) == [
+        0, 7, (2, 4), 5, None, 3]
+assert namespace['PStretch'](namespace['P'][0, (2, 4), None], 7) == [
+    0, (2, 4), None, 0, (2, 4), None, 0]
+assert namespace['PStutter'](
+    namespace['P'][0, 2, 4], namespace['P'][1, 3]) == [
+        0, 2, 2, 2, 4, 0, 0, 0, 2, 4, 4, 4]
+numericShuffleSource = namespace['P'][0, (2, 4), None, 7, 2]
+numericShuffleBefore = list(numericShuffleSource)
+numericShuffle = namespace['PShuf'](numericShuffleSource)
+assert sorted(map(repr, numericShuffle)) == sorted(map(repr, numericShuffleBefore))
+assert list(numericShuffleSource) == numericShuffleBefore
+assert namespace['PJoin']([
+    namespace['P'][0, (2, 4)], namespace['P'][None, 7]]) == [
+        0, (2, 4), None, 7]
+assert len(namespace['PJoin']([
+    namespace['P'][*range(128)], namespace['P'][*range(128, 256)] ])) == 256
 for badJoin in (lambda: namespace['PJoin']([namespace['P'][0, 1], namespace['P']['x']]),
                 lambda: namespace['PJoin'](['x' * 128, 'o' * 129]),
+                lambda: namespace['PJoin']([[0] * 128, [1] * 129]),
                 lambda: namespace['PJoin'](['x'] * 257),
                 lambda: namespace['PJoin'](5)):
     try:
@@ -262,14 +283,19 @@ assert namespace['PStretch'](namespace['P']['x', 'o'], 256) == (
     list(namespace['P']['x', 'o']) * 128)
 assert len(namespace['PStutter'](['x'] * 16, 16)) == 256
 for badCall in (
-        lambda: namespace['PStretch'](namespace['P'][0, 1], 4),
-        lambda: namespace['PStutter'](namespace['P'][0, 1]),
-        lambda: namespace['PShuf'](namespace['P'][0, 1]),
+        lambda: namespace['PStretch'](namespace['P'][0, 'x'], 4),
+        lambda: namespace['PStutter'](namespace['P'][0, 'x']),
+        lambda: namespace['PShuf'](namespace['P'][0, 'x']),
         lambda: namespace['PStretch'](namespace['P']['x'], 257),
+        lambda: namespace['PStretch']([0], 257),
         lambda: namespace['PShuf']('x' * 257),
+        lambda: namespace['PShuf']([0] * 257),
         lambda: namespace['PStutter'](['x'] * 17, 16),
+        lambda: namespace['PStutter']([0] * 17, 16),
         lambda: namespace['PStutter'](namespace['P']['x'], namespace['P'][1, 1.5]),
-        lambda: namespace['PStutter'](namespace['P']['x'], [1] * 257)):
+        lambda: namespace['PStutter'](namespace['P']['x'], [1] * 257),
+        lambda: namespace['PStutter'](
+            namespace['P'][*range(17)], namespace['P'][*([1] * 19)])):
     try:
         badCall()
     except (TypeError, ValueError):
@@ -281,16 +307,23 @@ for badPatterns in ((namespace['P'][0, 1], namespace['P']['x']),
                     (namespace['_FoxDotFinitePattern']([]), namespace['P']['x'])):
     try:
         namespace['PAlt'](*badPatterns)
-    except TypeError as error:
-        assert 'non-empty sample-symbol patterns' in str(error)
+    except (TypeError, ValueError) as error:
+        assert ('patterns cannot be empty' in str(error) or
+                'cannot mix numeric note patterns with sample-symbol patterns' in str(error))
     else:
-        raise AssertionError('PAlt must reject empty or non-sample patterns')
+        raise AssertionError('PAlt must reject empty or mixed-type patterns')
 try:
     namespace['PAlt'](['x'] * 16, ['o'] * 17)
 except ValueError as error:
-    assert '256 expanded sample symbols' in str(error)
+    assert '256 expanded items' in str(error)
 else:
     raise AssertionError('PAlt must enforce the 256-symbol cap')
+try:
+    namespace['PAlt']([0] * 16, [1] * 17)
+except ValueError as error:
+    assert '256 expanded items' in str(error)
+else:
+    raise AssertionError('numeric PAlt must enforce the 256-item cap')
 try:
     namespace['PAlt']('x' * 257, namespace['P']['o'])
 except ValueError as error:
@@ -1136,21 +1169,25 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(P["x"] | P["o"])')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(PAlt(P["x", " "], P["o", "-"]))')
-assert 'numeric PAlt is deferred' in run_compatibility_check(
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> sine(PAlt(P[0, 1], P[4, 5]))')
+assert 'cannot mix numeric note patterns with sample-symbol patterns' in run_compatibility_check(
     'p1 >> play(PAlt(P[0, 1], P["x"]))')
-assert 'at least two sample-symbol patterns' in run_compatibility_check(
+assert 'at least two finite patterns' in run_compatibility_check(
     'p1 >> play(PAlt(P["x"]))')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(PStutter(PStretch(P["x", "o", " "], 6), P[1, 2]))')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(PShuf(P["x", "o", " "]))')
-assert 'PShuf currently accepts sample-symbol patterns only' in run_compatibility_check(
-    'p1 >> play(PShuf(P[0, 1]))')
-assert 'PShuf requires exactly one sample-symbol pattern' in run_compatibility_check(
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> sine(PShuf(P[0, 1]))')
+assert 'PShuf requires exactly one finite pattern' in run_compatibility_check(
     'p1 >> play(PShuf(P["x"], P["o"]))')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(PShuf(PJoin([P["x", " "], P["o", "-"]])))')
-assert 'PJoin currently accepts sample-symbol phrases only' in run_compatibility_check(
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> sine(PShuf(PJoin([P[0, 2], P[4, 7]])))')
+assert 'cannot mix numeric note patterns with sample-symbol patterns' in run_compatibility_check(
     'p1 >> play(PJoin([P[0, 1], P["x"]]))')
 assert 'PJoin requires one list or pattern' in run_compatibility_check(
     'p1 >> play(PJoin())')
@@ -1183,13 +1220,13 @@ assert 'PZip currently supports numeric note patterns and rests' in run_compatib
     'p1 >> play(PZip(P["x", "o"], P["-", " "] ))')
 assert 'PRhythm expects one finite list or P pattern' in run_compatibility_check(
     'p1 >> saw([0], dur=PRhythm())')
-assert 'PStretch currently accepts sample-symbol patterns only' in run_compatibility_check(
-    'p1 >> play(PStretch(P[0, 1], 6))')
-assert 'PStutter currently accepts sample-symbol patterns only' in run_compatibility_check(
-    'p1 >> play(PStutter(P[0, 1], P[1, 2]))')
-assert 'PStretch requires a sample-symbol pattern and a target length' in run_compatibility_check(
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> sine(PStretch(P[0, 1], 6))')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> sine(PStutter(P[0, 1], P[1, 2]))')
+assert 'PStretch requires a finite pattern and a target length' in run_compatibility_check(
     'p1 >> play(PStretch(P["x"]))')
-assert 'PStutter requires a sample-symbol pattern and optional repeat counts' in run_compatibility_check(
+assert 'PStutter requires a finite pattern and optional repeat counts' in run_compatibility_check(
     'p1 >> play(PStutter())')
 assert 'P arithmetic over sample-symbol patterns' in run_compatibility_check(
     'p1 >> play(P["x", "o"] + P["a"])')
@@ -1285,6 +1322,18 @@ assert sorted(round(float(event[7]), 6) for event in example85Events
     0.0, 0.0, 0.0, 0.0, 0.175, 0.175, 0.175, 0.175,
     0.2625, 0.2625, 0.2625, 0.2625,
     0.30625, 0.30625, 0.30625, 0.30625]
+numericTransformText = open(
+    os.path.join(sys.argv[2], '88-numeric-pattern-transforms.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(numericTransformText)
+numericTransformRows, numericTransformEvents = run_script(
+    numericTransformText, include_events=True)
+assert len(numericTransformRows) == 3 and len(numericTransformEvents) == 30
+eventOffset = 0
+for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
+    playerEvents = numericTransformEvents[eventOffset:eventOffset + eventCount]
+    eventOffset += eventCount
+    assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-87.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-88.')

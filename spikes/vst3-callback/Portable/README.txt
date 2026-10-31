@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.63 extends PAlt, PStretch, PStutter, PShuf, and PJoin to bounded
+numeric note patterns, rests and chord groups as well as sample-symbol inputs.
+PStutter cycles source and count patterns to their least-common-multiple length,
+matching FoxDot. Example 88 demonstrates the numeric forms.
+
 Version 0.4.62 supports overlapping sustains (`sus > dur`) and repeated pitches
 in FoxDot-style players. Voice overlap is bounded to eight simultaneous notes
 per player, with sus capped at eight pattern cycles. Example 87 demonstrates
@@ -83,20 +88,23 @@ chord zipping remain unsupported for sample symbols.
 
 79-sample-pattern-alternation.py demonstrates PAlt cycling patterns to their
 least-common-multiple length, then alternating one item from each input.
-Numeric PAlt is deferred; the compatibility checker identifies it clearly.
+PAlt also supports numeric note patterns in 0.4.63.
 
 80-sample-pattern-stretch-stutter.py combines PStretch, which cycles a source
 pattern to the requested length, with PStutter, which repeats each symbol by
-the matching count. Count patterns follow FoxDot's max-input-length iteration.
-Each input and expanded result is limited to 256 items; repeat counts are whole
-numbers from 0 to 16. Numeric source patterns remain deferred.
+the matching count. PStutter count patterns cycle with the source to their
+least-common-multiple length, matching FoxDot. Each input, iteration count and
+expanded result is limited to 256 items; repeat counts are whole numbers 0–16.
+Both helpers also accept numeric notes, rests and chord groups in 0.4.63.
 
 81-sample-pattern-shuffle.py uses PShuf to randomly reorder a finite sample
 pattern while preserving all hits and rests. It uses an internal Fisher-Yates
-shuffle with a per-evaluation seed and adds no third-party dependency.
+shuffle with a per-evaluation seed and adds no third-party dependency. PShuf
+also accepts numeric note patterns and preserves their rests/chords.
 
 82-sample-pattern-join-shuffle.py joins smaller motifs left-to-right with
-PJoin, then shuffles the complete phrase with PShuf.
+PJoin, then shuffles the complete phrase with PShuf. Both helpers accept numeric
+phrases as well as sample-symbol phrases.
 
 83-pbeat-pdur-rhythm-durations.py uses PBeat pulse strings and PDur Euclidean
 durations to control the timing of portable sample patterns.
@@ -112,6 +120,9 @@ PZip2's filtered chord pairs.
 
 87-overlapping-sustain-voices.py demonstrates same-pitch retriggers and chord
 voices sustaining over a pattern loop.
+
+88-numeric-pattern-transforms.py uses PAlt, PStretch, PStutter, PShuf, and
+PJoin on scale-degree notes, including numeric rest/chord support.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

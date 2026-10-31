@@ -1,5 +1,9 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.63 extends `PAlt`, `PStretch`, `PStutter`, `PShuf`, and `PJoin`
+from sample-symbol inputs to bounded numeric note patterns, including rests
+and chord groups. `PStutter` uses FoxDot's least-common-multiple cycling for
+source/count patterns; Example 88 exercises all five transforms.
 Version 0.4.62 supports FoxDot-style `sus > dur` overlap and repeated pitches.
 Each player remains limited to eight simultaneous note voices, and sustain is
 capped at eight pattern cycles for bounded scheduling; Example 87 demonstrates
@@ -19,8 +23,8 @@ duration patterns. Version 0.4.56 added sample-symbol `PShuf(...)` and `PJoin(..
 complete phrase, or join small motifs before shuffling; see Examples 81–82.
 Version 0.4.55 added
 sample-symbol `PStretch(...)` and `PStutter(...)`, with
-FoxDot-style repeat/cycle behavior and a 256-item cap. Numeric source patterns
-remain deferred and are reported by the compatibility checker. Example 80 combines them.
+FoxDot-style repeat/cycle behavior and a 256-item cap. Numeric-note variants
+were added in 0.4.63. Example 80 combines the original sample-symbol forms.
 Version 0.4.54 added `PAlt(...)` for sample-symbol patterns. It cycles each
 input to the least-common-multiple length, then alternates their items, matching
 FoxDot's function behavior; inputs and expanded output are capped at 256 items.
@@ -77,7 +81,7 @@ example 77 tests finite P sample sequences, reversal and rotation, and example
 alternation, 80 combines PStretch/PStutter, 81 tests PShuf, 82 combines
 PJoin/PShuf, 83 tests PBeat/PDur durations, 84 combines PDelay/PStrum, 85
 demonstrates PQuicken/PRhythm, 86 combines PZip/PZip2, and 87 exercises
-overlapping sustains.
+overlapping sustains. Example 88 uses all five transforms on numeric notes.
 `tools/test-portable-samples.py` compiles the
 actual decoder and worker/cache code with undefined-behavior checks, then fills
 an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,
