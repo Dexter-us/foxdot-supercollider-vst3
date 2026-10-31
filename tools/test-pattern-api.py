@@ -108,14 +108,38 @@ left = namespace['P'][0, None, (2, 4)]
 right = namespace['P'][5, 7]
 assert left | right == [0, None, (2, 4), 5, 7]
 assert [9] | namespace['P'][1, 2] == [9, 1, 2]
+assert namespace['P']['x', ' '] | namespace['P']['o', '-'] == ['x', ' ', 'o', '-']
+assert namespace['P']['x'] | 'o ' == ['x', 'o', ' ']
+assert 'o ' | namespace['P']['x'] == ['o', ' ', 'x']
+emptyPattern = namespace['_FoxDotFinitePattern']([])
+assert emptyPattern | namespace['P']['x'] == ['x']
+assert emptyPattern | namespace['P'][1] == [1]
+try:
+    namespace['P']['x'] | namespace['P'][1]
+except TypeError as error:
+    assert 'sample symbols or space-rests on both sides' in str(error)
+else:
+    raise AssertionError('sample/numeric P concatenation should be rejected')
 assert left & right == [(0, 5), 7, (2, 4, 5), (0, 7), 5, (2, 4, 7)]
 assert namespace['P'][None] & namespace['P'][None] == [None]
+try:
+    namespace['P']['x'] & namespace['P']['o']
+except TypeError as error:
+    assert 'numeric notes' in str(error)
+else:
+    raise AssertionError('sample-symbol P zipping should remain unsupported')
 try:
     namespace['P'][*range(129)] | namespace['P'][*range(129)]
 except ValueError as error:
     assert '256' in str(error)
 else:
     raise AssertionError('P concatenation must enforce its size cap')
+try:
+    ['x'] * 256 | namespace['P']['o']
+except ValueError as error:
+    assert '256 items' in str(error)
+else:
+    raise AssertionError('sample P concatenation must enforce its size cap')
 try:
     namespace['P'][*range(17)] & namespace['P'][*range(19)]
 except ValueError as error:
@@ -898,6 +922,12 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play("|x1|x|a1|a", sample=0)')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(P["x", "o", " "].reverse(), sample=P[0, 1])')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(P["x", " "] | P["o", "-"], sample=P[0, 1])')
+assert 'P sample-symbol & is unsupported' in run_compatibility_check(
+    'p1 >> play(P["x"] & P["o"])')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(P["x"] | P["o"])')
 assert 'P arithmetic over sample-symbol patterns' in run_compatibility_check(
     'p1 >> play(P["x", "o"] + P["a"])')
 assert 'P sample-symbol literals' in run_compatibility_check('p1 >> play(P["xx", "o"])')
@@ -906,6 +936,15 @@ for badSelector in ('|x|', '|x10|', '|.1|', '|x1'):
         'p1 >> play("' + badSelector + '")')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play("x[--]o(=[-o])")')
+_, composedSampleRequests = run_script(
+    'p1 >> play((P["x", " ", "x", " "] | P["o", "-", " ", "-"]).rotate(2), dur=0.5, sample=P[0, 1])',
+    include_samples=True)
+assert [int(row[1]) for row in composedSampleRequests] == [120, 111, 45, 45, 120]
+assert [int(row[2]) for row in composedSampleRequests] == [0, 0, 1, 1, 0]
+example78Rows, example78Requests = run_script(
+    open(os.path.join(sys.argv[2], '78-sample-pattern-concatenation.py'), encoding='utf-8').read(),
+    include_samples=True)
+assert len(example78Rows) == 1 and len(example78Requests) == 5
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-77.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-78.')

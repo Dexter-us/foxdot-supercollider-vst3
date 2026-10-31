@@ -306,11 +306,13 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if has_sample_pattern and isinstance(
                 node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv,
                           ast.Mod, ast.Pow, ast.BitXor)):
-            self.add(node.lineno, 'P arithmetic over sample-symbol patterns is not supported; use reverse() or rotate().')
-        if isinstance(node.op, (ast.BitOr, ast.BitAnd)) and any(
+            self.add(node.lineno, 'P arithmetic over sample-symbol patterns is not supported; use reverse(), rotate(), or | to concatenate.')
+        if has_sample_pattern and isinstance(node.op, ast.BitAnd):
+            self.add(node.lineno, 'P sample-symbol & is unsupported: FoxDot zips into chord groups, which the sample player cannot play; use | to concatenate.')
+        elif isinstance(node.op, (ast.BitOr, ast.BitAnd)) and any(
                 isinstance(item, ast.Constant) and isinstance(item.value, str)
-                for item in ast.walk(node)):
-            self.add(node.lineno, 'Pattern | and & do not accept sample strings; use numeric pitches, rests, and chords.')
+                for item in ast.walk(node)) and not has_sample_pattern:
+            self.add(node.lineno, 'Pattern | and & do not accept sample strings; use P sample-symbol patterns for concatenation.')
         if isinstance(node.op, ast.RShift) and isinstance(node.left, ast.Name) and isinstance(node.right, ast.Call):
             player = node.left.id
             if not re.fullmatch(r'p[1-8]', player):
@@ -717,8 +719,43 @@ class _FoxDotFinitePattern(list):
     def _composition_items(self, value):
         items = list(value) if isinstance(value, (list, tuple)) else [value]
         if any(self._contains_string(item) for item in items):
-            raise TypeError('P pattern arithmetic is limited to numeric notes, rests, and chords; use reverse() or rotate() for sample-symbol patterns')
+            raise TypeError('P pattern arithmetic is limited to numeric notes, rests, and chords; use reverse(), rotate(), or | for sample-symbol patterns')
         return items
+
+    def _sample_sequence(self, value):
+        if isinstance(value, _FoxDotFinitePattern):
+            items = list(value)
+        elif isinstance(value, str):
+            items = list(value)
+        elif isinstance(value, (list, tuple)):
+            items = list(value)
+        else:
+            return None
+        if not items:
+            return None
+        if all(isinstance(item, str) and len(item) == 1 and
+               (item == ' ' or item in _SAMPLE_SYMBOLS) for item in items):
+            return items
+        return None
+
+    def _concatenate(self, left_value, right_value):
+        left_sample = self._sample_sequence(left_value)
+        right_sample = self._sample_sequence(right_value)
+        if left_sample is not None or right_sample is not None:
+            if left_sample is None and isinstance(left_value, (list, tuple, str)) and not left_value:
+                left_sample = []
+            if right_sample is None and isinstance(right_value, (list, tuple, str)) and not right_value:
+                right_sample = []
+            if left_sample is None or right_sample is None:
+                raise TypeError('P sample-symbol concatenation requires sample symbols or space-rests on both sides')
+            if len(left_sample) + len(right_sample) > 256:
+                raise ValueError('P sample-symbol concatenation is limited to 256 items')
+            return _FoxDotFinitePattern(left_sample + right_sample)
+        left = self._composition_items(left_value)
+        right = self._composition_items(right_value)
+        if len(left) + len(right) > 256:
+            raise ValueError('P pattern concatenation is limited to 256 items')
+        return _FoxDotFinitePattern(left + right)
 
     def _contains_string(self, item):
         if isinstance(item, str):
@@ -760,18 +797,10 @@ class _FoxDotFinitePattern(list):
         ])
 
     def __or__(self, other):
-        left = self._composition_items(self)
-        right = self._composition_items(other)
-        if len(left) + len(right) > 256:
-            raise ValueError('P pattern concatenation is limited to 256 items')
-        return _FoxDotFinitePattern(left + right)
+        return self._concatenate(self, other)
 
     def __ror__(self, other):
-        left = self._composition_items(other)
-        right = self._composition_items(self)
-        if len(left) + len(right) > 256:
-            raise ValueError('P pattern concatenation is limited to 256 items')
-        return _FoxDotFinitePattern(left + right)
+        return self._concatenate(other, self)
 
     def __and__(self, other):
         return self._zip_with(other)

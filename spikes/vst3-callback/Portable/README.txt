@@ -1,8 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.52 adds finite P-pattern sample-symbol sequences and transforms;
-see Example 77. Version 0.4.51 added per-hit sample-index selectors; see
-Example 76.
+Version 0.4.53 adds FoxDot-style `|` concatenation for sample-symbol P patterns;
+see Example 78. Version 0.4.52 added finite sample-symbol sequences and
+transforms; see Example 77. Version 0.4.51 added per-hit sample-index selectors;
+see Example 76.
 The 0.4.46 synth batch has one isolated synth test per file, examples 43-68:
 43 viola, 44 nylon, 45 arpy, 46 dab, 47 sawbass, 48 dbass,
 49 prophet, 50 pads, 51 pasha, 52 ambi, 53 sinepad, 54 keys,
@@ -53,7 +54,9 @@ adjacent `<>` layers. The compatibility checker reports malformed strings;
 one sample variant for a single hit. Example 77 uses `P["x", "o", " "]` sample
 sequences with `.reverse()` and `.rotate(n)`; the values must be single sample
 symbols or space-rests, and other hits still use `sample=`.
-P arithmetic over sample-symbol patterns remains unsupported.
+78-sample-pattern-concatenation.py demonstrates left-to-right sample-pattern
+concatenation with `|`, followed by rotation. Numeric P arithmetic and `&`
+chord zipping remain unsupported for sample symbols.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

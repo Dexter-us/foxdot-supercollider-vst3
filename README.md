@@ -2,15 +2,16 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.52 adds finite `P[...]` sample-symbol sequences with FoxDot-style
-`.reverse()` and `.rotate(n)` transforms, while preserving the
-existing `sample=` control. Version 0.4.51 added per-hit selectors such as
+Version 0.4.53 adds FoxDot-style `|` concatenation for finite sample-symbol
+`P[...]` patterns, followed by transforms such as `.rotate(n)`. Version 0.4.52
+added `.reverse()` and `.rotate(n)` for sample-symbol sequences, while
+preserving the existing `sample=` control. Version 0.4.51 added per-hit selectors such as
 `|x1|`; 0.4.50 added nested play-string groups: `[]` subdivisions, `()` lacing,
 bounded eight-cycle `{}` variations, and adjacent `<>` layers. Numeric P
-arithmetic and broader P-pattern composition over sample strings remain
-unsupported and are reported by the compatibility checker. Playback uses the
+arithmetic and sample-symbol `&` chord-zipping remain unsupported and are
+reported by the compatibility checker. Playback uses the
 bundled native SC PlayBuf UGen; no SC/UGen rebuild, libsndfile DLL, external
-process or OSC is added. Portable examples 70–77 include six generated CC0
+process or OSC is added. Portable examples 70–78 include six generated CC0
 diagnostic WAVs, not a third-party sound library. See
 `Portable/Samples/README.txt` for syntax, folder layout and file-format/safety
 limits.
