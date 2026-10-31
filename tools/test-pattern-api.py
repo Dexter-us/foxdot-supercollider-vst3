@@ -128,6 +128,34 @@ except TypeError as error:
     assert 'numeric notes' in str(error)
 else:
     raise AssertionError('sample-symbol P zipping should remain unsupported')
+assert namespace['PAlt'](namespace['P']['x', ' '], namespace['P']['o', '-']) == [
+    'x', 'o', ' ', '-']
+assert namespace['PAlt'](
+    namespace['P']['x', ' '], namespace['P']['o', '-', ' ']) == [
+        'x', 'o', ' ', '-', 'x', ' ', ' ', 'o', 'x', '-', ' ', ' ']
+assert namespace['PAlt'](
+    namespace['P']['x'], namespace['P']['o'], namespace['P']['-']) == ['x', 'o', '-']
+for badPatterns in ((namespace['P'][0, 1], namespace['P']['x']),
+                    (namespace['P']['x'], namespace['P'][1]),
+                    (namespace['_FoxDotFinitePattern']([]), namespace['P']['x'])):
+    try:
+        namespace['PAlt'](*badPatterns)
+    except TypeError as error:
+        assert 'non-empty sample-symbol patterns' in str(error)
+    else:
+        raise AssertionError('PAlt must reject empty or non-sample patterns')
+try:
+    namespace['PAlt'](['x'] * 16, ['o'] * 17)
+except ValueError as error:
+    assert '256 expanded sample symbols' in str(error)
+else:
+    raise AssertionError('PAlt must enforce the 256-symbol cap')
+try:
+    namespace['PAlt']('x' * 257, namespace['P']['o'])
+except ValueError as error:
+    assert 'input patterns are limited to 256 items' in str(error)
+else:
+    raise AssertionError('PAlt must enforce the per-input limit')
 try:
     namespace['P'][*range(129)] | namespace['P'][*range(129)]
 except ValueError as error:
@@ -928,6 +956,12 @@ assert 'P sample-symbol & is unsupported' in run_compatibility_check(
     'p1 >> play(P["x"] & P["o"])')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(P["x"] | P["o"])')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(PAlt(P["x", " "], P["o", "-"]))')
+assert 'numeric PAlt is deferred' in run_compatibility_check(
+    'p1 >> play(PAlt(P[0, 1], P["x"]))')
+assert 'at least two sample-symbol patterns' in run_compatibility_check(
+    'p1 >> play(PAlt(P["x"]))')
 assert 'P arithmetic over sample-symbol patterns' in run_compatibility_check(
     'p1 >> play(P["x", "o"] + P["a"])')
 assert 'P sample-symbol literals' in run_compatibility_check('p1 >> play(P["xx", "o"])')
@@ -945,6 +979,11 @@ example78Rows, example78Requests = run_script(
     open(os.path.join(sys.argv[2], '78-sample-pattern-concatenation.py'), encoding='utf-8').read(),
     include_samples=True)
 assert len(example78Rows) == 1 and len(example78Requests) == 5
+example79Rows, example79Requests = run_script(
+    open(os.path.join(sys.argv[2], '79-sample-pattern-alternation.py'), encoding='utf-8').read(),
+    include_samples=True)
+assert len(example79Rows) == 1 and [int(row[1]) for row in example79Requests] == [
+    120, 111, 45, 120, 111, 120, 45]
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-78.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-79.')

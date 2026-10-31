@@ -96,7 +96,7 @@ _COMPAT_CALLS = {
     'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum',
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
-    'interleave', 'transpose', 'euclid',
+    'interleave', 'transpose', 'euclid', 'PAlt',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -214,6 +214,15 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         name = node.func.id if isinstance(node.func, ast.Name) else None
         if name and name not in _COMPAT_CALLS and name not in self.defined:
             self.add(node.lineno, "Call '" + name + "()' is not in the embedded API (often an unsupported FoxDot synth or pattern helper).")
+        if name == 'PAlt':
+            if len(node.args) < 2:
+                self.add(node.lineno, 'PAlt requires at least two sample-symbol patterns.')
+            for argument in node.args:
+                if (isinstance(argument, ast.Subscript) and
+                        isinstance(argument.value, ast.Name) and argument.value.id == 'P' and
+                        not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                                for value in ast.walk(argument.slice))):
+                    self.add(argument.lineno, 'This PAlt implementation accepts sample-symbol patterns only; numeric PAlt is deferred.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -807,6 +816,29 @@ class _FoxDotFinitePattern(list):
 
     def __rand__(self, other):
         return self._zip_with(other, True)
+
+def PAlt(*patterns):
+    if len(patterns) < 2:
+        raise ValueError('PAlt requires at least two sample-symbol patterns')
+    probe = _FoxDotFinitePattern()
+    sequences = []
+    for pattern in patterns:
+        if isinstance(pattern, (str, list, tuple, _FoxDotFinitePattern)) and len(pattern) > 256:
+            raise ValueError('PAlt input patterns are limited to 256 items')
+        values = probe._sample_sequence(pattern)
+        if values is None or not values:
+            raise TypeError('PAlt accepts only non-empty sample-symbol patterns and space-rests')
+        sequences.append(values)
+    length = 1
+    for values in sequences:
+        length = length * len(values) // probe._gcd(length, len(values))
+        if length * len(sequences) > 256:
+            raise ValueError('PAlt is limited to 256 expanded sample symbols')
+    return _FoxDotFinitePattern([
+        sequences[pattern_index][step % len(sequences[pattern_index])]
+        for step in range(length)
+        for pattern_index in range(len(sequences))
+    ])
 
 class _FoxDotPatternLiteral:
     def __getitem__(self, items):

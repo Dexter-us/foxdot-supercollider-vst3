@@ -1,6 +1,7 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.53 adds FoxDot-style `|` concatenation for sample-symbol P patterns;
+Version 0.4.54 adds sample-symbol `PAlt(...)` alternation; see Example 79.
+Version 0.4.53 added FoxDot-style `|` concatenation for sample-symbol P patterns;
 see Example 78. Version 0.4.52 added finite sample-symbol sequences and
 transforms; see Example 77. Version 0.4.51 added per-hit sample-index selectors;
 see Example 76.
@@ -57,6 +58,10 @@ symbols or space-rests, and other hits still use `sample=`.
 78-sample-pattern-concatenation.py demonstrates left-to-right sample-pattern
 concatenation with `|`, followed by rotation. Numeric P arithmetic and `&`
 chord zipping remain unsupported for sample symbols.
+
+79-sample-pattern-alternation.py demonstrates PAlt cycling patterns to their
+least-common-multiple length, then alternating one item from each input.
+Numeric PAlt is deferred; the compatibility checker identifies it clearly.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

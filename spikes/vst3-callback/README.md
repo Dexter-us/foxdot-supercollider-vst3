@@ -1,6 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.53 adds FoxDot-compatible `|` concatenation for finite sample-symbol
+Version 0.4.54 adds `PAlt(...)` for sample-symbol patterns. It cycles each
+input to the least-common-multiple length, then alternates their items, matching
+FoxDot's function behavior; inputs and expanded output are capped at 256 items.
+Version 0.4.53 added
+FoxDot-compatible `|` concatenation for finite sample-symbol
 `P[...]` patterns: items from the left pattern are followed by items from the
 right, and the result can still use `.reverse()` or `.rotate(n)`. Values must be
 one sample symbol or a space-rest; `sample=` still selects the WAV variant.
@@ -48,7 +52,8 @@ The six tiny diagnostic WAVs are generated locally and offered under CC0.
 Examples 70–73 exercise beat symbols, selection, reverse playback and
 time-var sample/rate controls; example 76 tests per-hit sample indices,
 example 77 tests finite P sample sequences, reversal and rotation, and example
-78 demonstrates pattern concatenation followed by rotation.
+78 demonstrates pattern concatenation followed by rotation, and 79 tests
+sample-symbol PAlt alternation.
 `tools/test-portable-samples.py` compiles the
 actual decoder and worker/cache code with undefined-behavior checks, then fills
 an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,
