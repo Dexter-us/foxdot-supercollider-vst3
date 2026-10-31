@@ -1180,10 +1180,10 @@ loadedUserSynthReport = run_compatibility_check(
     'p1 >> userSynth("CustomPluck", P[0, 2, 4], dur=0.5, amp=0.3)\n',
     ('CustomPluck',))
 assert 'No unsupported constructs detected' in loadedUserSynthReport, loadedUserSynthReport
-unmappedUserSynthControlReport = run_compatibility_check(
+mappedUserSynthControlReport = run_compatibility_check(
     'p1 >> userSynth("CustomPluck", [0, 2], vib=0.5)\n',
     ('CustomPluck',))
-assert "Unsupported userSynth control 'vib'" in unmappedUserSynthControlReport
+assert 'No unsupported constructs detected' in mappedUserSynthControlReport, mappedUserSynthControlReport
 missingUserSynthReport = run_compatibility_check(
     'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
 assert 'not present in Portable/SynthDefs' in missingUserSynthReport
