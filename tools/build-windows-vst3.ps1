@@ -297,7 +297,7 @@ if (-not (Test-Path (Join-Path $portableUgenDirectory "README.txt"))) {
     throw "The VST3 bundle is missing its Portable UGen module folder and loader instructions"
 }
 $portableSynthDefDirectory = Join-Path $portableDirectory "SynthDefs"
-foreach ($requiredSynthDefFile in @("README.txt", "DexterPluck.scd", "DexterPluck.scsyndef")) {
+foreach ($requiredSynthDefFile in @("README.txt", "CustomPluck.scd", "CustomPluck.scsyndef")) {
     if (-not (Test-Path (Join-Path $portableSynthDefDirectory $requiredSynthDefFile))) {
         throw "The VST3 bundle is missing Portable/SynthDefs/$requiredSynthDefFile"
     }
