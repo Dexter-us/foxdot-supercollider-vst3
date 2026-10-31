@@ -62,6 +62,7 @@ namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
     '_dexter_root': 60, '_dexter_updates': {}, '_dexter_mutes': {},
+    '_dexter_shuffle_seed': 123456789,
     '_dexter_default_touched': False, '__name__': 'dexter_test',
     '__builtins__': {name: getattr(builtins, name) for name in safe_names},
 }
@@ -146,13 +147,40 @@ assert namespace['PStutter'](
 assert namespace['PStutter'](
     namespace['P']['x', 'o', ' '], namespace['P'][1, 2]) == [
         'x', 'o', 'o', ' ']
+shufSource = namespace['P']['x', 'o', 'x', ' ', '-']
+shufBefore = list(shufSource)
+shufResult = namespace['PShuf'](shufSource)
+assert sorted(shufResult) == sorted(shufBefore) and list(shufSource) == shufBefore
+assert list(shufResult) == [' ', 'x', '-', 'x', 'o']
+shufSecondResult = namespace['PShuf'](shufSource)
+assert list(shufSecondResult) == ['x', 'x', 'o', ' ', '-']
+shufStringResult = namespace['PShuf']('x o-')
+assert len(shufStringResult) == 4 and sorted(shufStringResult) == [' ', '-', 'o', 'x']
+assert namespace['PJoin']([
+    namespace['P']['x', ' '], namespace['P']['o', '-']]) == ['x', ' ', 'o', '-']
+assert namespace['PJoin']([
+    namespace['P']['x'], [], namespace['P']['o']]) == ['x', 'o']
+assert namespace['PJoin'](namespace['P']['x', 'o']) == ['x', 'o']
+assert len(namespace['PJoin'](['x' * 128, 'o' * 128])) == 256
+for badJoin in (lambda: namespace['PJoin']([namespace['P'][0, 1], namespace['P']['x']]),
+                lambda: namespace['PJoin'](['x' * 128, 'o' * 129]),
+                lambda: namespace['PJoin'](['x'] * 257),
+                lambda: namespace['PJoin'](5)):
+    try:
+        badJoin()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('PJoin must reject unsupported or oversized sample patterns')
 assert namespace['PStretch'](namespace['P']['x', 'o'], 256) == (
     list(namespace['P']['x', 'o']) * 128)
 assert len(namespace['PStutter'](['x'] * 16, 16)) == 256
 for badCall in (
         lambda: namespace['PStretch'](namespace['P'][0, 1], 4),
         lambda: namespace['PStutter'](namespace['P'][0, 1]),
+        lambda: namespace['PShuf'](namespace['P'][0, 1]),
         lambda: namespace['PStretch'](namespace['P']['x'], 257),
+        lambda: namespace['PShuf']('x' * 257),
         lambda: namespace['PStutter'](['x'] * 17, 16),
         lambda: namespace['PStutter'](namespace['P']['x'], namespace['P'][1, 1.5]),
         lambda: namespace['PStutter'](namespace['P']['x'], [1] * 257)):
@@ -991,6 +1019,18 @@ assert 'at least two sample-symbol patterns' in run_compatibility_check(
     'p1 >> play(PAlt(P["x"]))')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play(PStutter(PStretch(P["x", "o", " "], 6), P[1, 2]))')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(PShuf(P["x", "o", " "]))')
+assert 'PShuf currently accepts sample-symbol patterns only' in run_compatibility_check(
+    'p1 >> play(PShuf(P[0, 1]))')
+assert 'PShuf requires exactly one sample-symbol pattern' in run_compatibility_check(
+    'p1 >> play(PShuf(P["x"], P["o"]))')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(PShuf(PJoin([P["x", " "], P["o", "-"]])))')
+assert 'PJoin currently accepts sample-symbol phrases only' in run_compatibility_check(
+    'p1 >> play(PJoin([P[0, 1], P["x"]]))')
+assert 'PJoin requires one list or pattern' in run_compatibility_check(
+    'p1 >> play(PJoin())')
 assert 'PStretch currently accepts sample-symbol patterns only' in run_compatibility_check(
     'p1 >> play(PStretch(P[0, 1], 6))')
 assert 'PStutter currently accepts sample-symbol patterns only' in run_compatibility_check(
@@ -1026,6 +1066,16 @@ example80Rows, example80Requests = run_script(
     include_samples=True)
 assert len(example80Rows) == 1 and [int(row[1]) for row in example80Requests] == [
     120, 111, 111, 120, 120, 111]
+example81Rows, example81Requests = run_script(
+    open(os.path.join(sys.argv[2], '81-sample-pattern-shuffle.py'), encoding='utf-8').read(),
+    include_samples=True)
+assert len(example81Rows) == 1 and sorted(int(row[1]) for row in example81Requests) == [
+    45, 111, 111, 120, 120]
+example82Rows, example82Requests = run_script(
+    open(os.path.join(sys.argv[2], '82-sample-pattern-join-shuffle.py'), encoding='utf-8').read(),
+    include_samples=True)
+assert len(example82Rows) == 1 and sorted(int(row[1]) for row in example82Requests) == [
+    45, 111, 120, 120]
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-80.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-82.')

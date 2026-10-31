@@ -97,6 +97,7 @@ _COMPAT_CALLS = {
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
+    'PShuf', 'PJoin',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -223,11 +224,13 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
                                 for value in ast.walk(argument.slice))):
                     self.add(argument.lineno, 'This PAlt implementation accepts sample-symbol patterns only; numeric PAlt is deferred.')
-        if name in {'PStretch', 'PStutter'}:
+        if name in {'PStretch', 'PStutter', 'PShuf'}:
             if name == 'PStretch' and len(node.args) != 2:
                 self.add(node.lineno, 'PStretch requires a sample-symbol pattern and a target length.')
             if name == 'PStutter' and not 1 <= len(node.args) <= 2:
                 self.add(node.lineno, 'PStutter requires a sample-symbol pattern and optional repeat counts.')
+            if name == 'PShuf' and len(node.args) != 1:
+                self.add(node.lineno, 'PShuf requires exactly one sample-symbol pattern.')
             if node.args:
                 argument = node.args[0]
                 if (isinstance(argument, ast.Subscript) and
@@ -235,6 +238,16 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
                                 for value in ast.walk(argument.slice))):
                     self.add(argument.lineno, name + ' currently accepts sample-symbol patterns only.')
+        if name == 'PJoin':
+            if len(node.args) != 1:
+                self.add(node.lineno, 'PJoin requires one list or pattern of sample-symbol phrases.')
+            elif node.args:
+                for argument in ast.walk(node.args[0]):
+                    if (isinstance(argument, ast.Subscript) and
+                            isinstance(argument.value, ast.Name) and argument.value.id == 'P' and
+                            not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                                    for value in ast.walk(argument.slice))):
+                        self.add(argument.lineno, 'PJoin currently accepts sample-symbol phrases only.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -391,6 +404,7 @@ std::string makeEvaluationScript(const std::string& sourcePath,
 _dexter_synth_controls = {}
 _dexter_sample_events = {}
 _dexter_sample_controls = {}
+_dexter_shuffle_counter = 0
 _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
                'klank', 'feel', 'glass', 'soft', 'quin', 'space',
@@ -861,6 +875,22 @@ def _sample_pattern_items(pattern, name):
         raise TypeError(name + ' accepts only sample-symbol patterns and space-rests')
     return values
 
+def PJoin(patterns):
+    if not isinstance(patterns, (str, list, tuple, _FoxDotFinitePattern)):
+        raise TypeError('PJoin expects a list or pattern of sample-symbol phrases')
+    if len(patterns) > 256:
+        raise ValueError('PJoin is limited to 256 input phrases')
+    result = []
+    for pattern in patterns:
+        if isinstance(pattern, (str, list, tuple, _FoxDotFinitePattern)) and not pattern:
+            values = []
+        else:
+            values = _sample_pattern_items(pattern, 'PJoin')
+        if len(result) + len(values) > 256:
+            raise ValueError('PJoin output is limited to 256 sample symbols')
+        result.extend(values)
+    return _FoxDotFinitePattern(result)
+
 def PStretch(pattern, size):
     values = _sample_pattern_items(pattern, 'PStretch')
     if isinstance(size, bool) or not isinstance(size, int):
@@ -899,6 +929,21 @@ def PStutter(pattern, counts=2):
             raise ValueError('PStutter output is limited to 256 items')
         result.extend([values[index % len(values)]] * repeat_count)
     return _FoxDotFinitePattern(result)
+
+def PShuf(pattern):
+    global _dexter_shuffle_counter
+    values = _sample_pattern_items(pattern, 'PShuf')
+    shuffled = list(values)
+    _dexter_shuffle_counter += 1
+    state = (int(_dexter_shuffle_seed) +
+             _dexter_shuffle_counter * 1013904223) & 0xffffffff
+    for character in values:
+        state = ((state ^ ord(character)) * 16777619) & 0xffffffff
+    for index in range(len(shuffled) - 1, 0, -1):
+        state = (1664525 * state + 1013904223) & 0xffffffff
+        target = state % (index + 1)
+        shuffled[index], shuffled[target] = shuffled[target], shuffled[index]
+    return _FoxDotFinitePattern(shuffled)
 
 class _FoxDotPatternLiteral:
     def __getitem__(self, items):
@@ -1943,7 +1988,8 @@ p8 = Player(8)
            << "_dexter_scope['__name__'] = 'dexter'\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
            << "'_dexter_length': 1.0, '_dexter_slots': 0, '_dexter_updates': {}, '_dexter_default_touched': False, "
-           << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, '_dexter_mutes': {}})\n"
+           << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, '_dexter_mutes': {}, "
+           << "'_dexter_shuffle_seed': int(time.monotonic_ns() & 0xffffffff)})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
            << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
            << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', 'ord', 'chr', "

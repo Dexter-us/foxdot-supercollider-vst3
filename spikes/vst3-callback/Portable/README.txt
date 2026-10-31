@@ -1,6 +1,7 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.55 adds sample-symbol `PStretch(...)` and `PStutter(...)`; see Example 80.
+Version 0.4.56 adds sample-symbol `PShuf(...)` and `PJoin(...)`; see Examples 81–82.
+Version 0.4.55 added sample-symbol `PStretch(...)` and `PStutter(...)`; see Example 80.
 Version 0.4.54 added sample-symbol `PAlt(...)` alternation; see Example 79.
 Version 0.4.53 added FoxDot-style `|` concatenation for sample-symbol P patterns;
 see Example 78. Version 0.4.52 added finite sample-symbol sequences and
@@ -69,6 +70,13 @@ pattern to the requested length, with PStutter, which repeats each symbol by
 the matching count. Count patterns follow FoxDot's max-input-length iteration.
 Each input and expanded result is limited to 256 items; repeat counts are whole
 numbers from 0 to 16. Numeric source patterns remain deferred.
+
+81-sample-pattern-shuffle.py uses PShuf to randomly reorder a finite sample
+pattern while preserving all hits and rests. It uses an internal Fisher-Yates
+shuffle with a per-evaluation seed and adds no third-party dependency.
+
+82-sample-pattern-join-shuffle.py joins smaller motifs left-to-right with
+PJoin, then shuffles the complete phrase with PShuf.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

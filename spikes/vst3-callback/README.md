@@ -1,6 +1,9 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.55 adds sample-symbol `PStretch(...)` and `PStutter(...)`, with
+Version 0.4.56 adds sample-symbol `PShuf(...)` and `PJoin(...)`: shuffle a
+complete phrase, or join small motifs before shuffling; see Examples 81–82.
+Version 0.4.55 added
+sample-symbol `PStretch(...)` and `PStutter(...)`, with
 FoxDot-style repeat/cycle behavior and a 256-item cap. Numeric source patterns
 remain deferred and are reported by the compatibility checker. Example 80 combines them.
 Version 0.4.54 added `PAlt(...)` for sample-symbol patterns. It cycles each
@@ -56,7 +59,8 @@ Examples 70–73 exercise beat symbols, selection, reverse playback and
 time-var sample/rate controls; example 76 tests per-hit sample indices,
 example 77 tests finite P sample sequences, reversal and rotation, and example
 78 demonstrates pattern concatenation followed by rotation, 79 tests PAlt
-alternation, and 80 combines PStretch/PStutter.
+alternation, 80 combines PStretch/PStutter, 81 tests PShuf, and 82 combines
+PJoin/PShuf.
 `tools/test-portable-samples.py` compiles the
 actual decoder and worker/cache code with undefined-behavior checks, then fills
 an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,
