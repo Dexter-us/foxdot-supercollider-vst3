@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 struct PythonNoteEvent {
@@ -12,7 +14,20 @@ struct PythonNoteEvent {
     double attackSeconds = 0.01;
     double releaseSeconds = 0.04;
     double delayBeats = 0.0;
+    int sampleSymbol = 0;
+    int sampleIndex = 0;
+    double sampleRate = 1.0;
+    bool sampleGate = false;
+    // Resolved on the script worker; these POD fields are safe to copy in process().
+    int sampleBuffer = -1;
+    double sampleDurationSeconds = 0.0;
+    std::array<int, 8> sampleVariantBuffers{};
+    std::array<double, 8> sampleVariantDurations{};
+    std::size_t sampleVariantCount = 0;
 };
+
+static_assert(std::is_trivially_copyable<PythonNoteEvent>::value,
+              "Audio event handoff must not allocate or copy strings on the audio thread");
 
 struct PythonPlayerUpdate {
     std::string ampControlToken = "-";
@@ -32,12 +47,17 @@ struct PythonPlayerUpdate {
     std::string bprControlToken = "-";
     std::string bpnoiseControlToken = "-";
     std::string swellControlToken = "-";
+    std::string sampleControlToken = "-";
+    std::string sampleRateControlToken = "-";
     int playerIndex = 0;
     bool stopped = false;
     double bpm = 120.0;
     double lengthBeats = 1.0;
     int synthIndex = 0;
     double synthRate = 0.0;
+    double swingSeconds = 0.0;
+    // vib, depth, lforate, lfowidth, rq, fmod, blur
+    std::array<double, 7> synthControls{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
     double amplitude = 1.0;
     double pan = 0.0;
     double cutoffHz = 20000.0;

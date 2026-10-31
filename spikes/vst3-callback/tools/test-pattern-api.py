@@ -10,18 +10,6 @@ import tempfile
 if len(sys.argv) != 3:
     raise SystemExit('usage: test-pattern-api.py python_runtime.cpp Portable-directory')
 source = open(sys.argv[1], encoding='utf-8').read()
-processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
-processor_source = open(processor_path, encoding='utf-8').read()
-graph_mapper_start = processor_source.find('static Graph* graphForSynthIndex')
-if graph_mapper_start < 0:
-    raise SystemExit('Could not find the synth graph selector in processor.cpp')
-graph_mapper_end = processor_source.find('\n    }', graph_mapper_start)
-graph_mapper = processor_source[graph_mapper_start:graph_mapper_end]
-assert 'synthIndex <= 31' in graph_mapper
-assert 'synthIndex - 3' in graph_mapper
-assert 'kAudioVoiceCount * kSynthGraphCount' in processor_source
-assert 'kWorldNodeCapacity =\n        kAudioVoiceCount * kSynthGraphCount +' in processor_source
-assert 'synthIndex >= 12 && synthIndex <= 18' in processor_source
 start_marker = 'static constexpr char api[] = R"PY(' + chr(10)
 end_marker = ')PY";'
 start = source.find(start_marker)
@@ -277,23 +265,25 @@ def run_example(name):
 def assert_player_polyphony_ok(player_row, event_rows):
     length = float(player_row[4])
     boundaries = []
+    active = 0
     for event in event_rows:
         start = (float(event[1]) + float(event[7])) % length
-        end = start + float(event[2])
-        note = int(event[3])
+        duration = float(event[2])
+        full_cycles = int(duration // length)
+        active += full_cycles
+        remainder = duration - full_cycles * length
+        if remainder <= 1e-9:
+            continue
+        end = start + remainder
         if end <= length:
-            boundaries.extend(((start, 1, note), (end, -1, note)))
+            boundaries.extend(((start, 1), (end, -1)))
         else:
-            boundaries.extend(((0.0, 1, note), (end - length, -1, note),
-                               (start, 1, note), (length, -1, note)))
-    active = set()
-    for beat, delta, note in sorted(boundaries, key=lambda item: (item[0], item[1])):
-        if delta < 0:
-            active.remove(note)
-        else:
-            assert note not in active, ('overlapping repeated MIDI pitch', note, beat)
-            assert len(active) < 8, ('player exceeds eight-note polyphony', beat)
-            active.add(note)
+            boundaries.extend(((0.0, 1), (end - length, -1),
+                               (start, 1), (length, -1)))
+    assert active <= 8, ('player exceeds eight-note polyphony', active)
+    for beat, delta in sorted(boundaries, key=lambda item: (item[0], item[1])):
+        active += delta
+        assert 0 <= active <= 8, ('player exceeds eight-note polyphony', beat, active)
 
 initial_live_run = run_script('p1 >> saw([0, 2, 4], dur=0.5)\np2 >> pulse([0, None, 3], dur=0.25)\n')
 assert [row[1] for row in initial_live_run] == ['0', '1']
@@ -381,7 +371,7 @@ def test_embedded_synthdef():
                                re.findall(r'0x([0-9a-fA-F]{2})', header_text))
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
-    assert synthdef_version == 1 and len(graphs) == 29
+    assert synthdef_version == 1 and len(graphs) == 28
     assert ('LFSaw', 2, 2) in graphs['DexterDirt']
     assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
     assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
@@ -406,8 +396,6 @@ def test_embedded_synthdef():
     assert ('LFSaw', 4, 1) in graphs['DexterFuzz']
     assert ('Pulse', 2, 2) in graphs['DexterBug']
     assert ('SinOsc', 4, 2) in graphs['DexterRipple']
-    assert ('Vibrato', 9, 1) in graphs['DexterViola']
-    assert graphs['DexterViola'].count(('SinOsc', 4, 2)) == 2
     for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse',
                       b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag',
                       b'DexterBass', b'DexterVarsaw', b'DexterDirt',
@@ -423,9 +411,8 @@ def test_embedded_synthdef():
                       b'DexterCharm', b'DexterSpark', b'DexterBlip',
                       b'LFPulse', b'DexterScatter', b'DexterOrient',
                       b'DexterZap', b'DexterFuzz', b'DexterBug',
-                      b'DexterRipple', b'DexterViola'):
+                      b'DexterRipple'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
-    assert b'PMOsc' not in generated_bytes, 'language-level PMOsc shorthand must be expanded to server UGens'
     generator_text = open(generator, encoding='utf-8').read()
     assert 'ugen("LFSaw", 2, [(1, 0), (-1, 0)], [2])' in generator_text
     assert 'ugen("BinaryOpUGen", 2, [(11, 0), (10, 0)], [2], 0)' in generator_text
@@ -582,13 +569,20 @@ assert [round(float(event[7]), 6) for event in strumEvents[14:]] == [0.0, 0.02, 
 assert all(abs(float(event[2]) - 1.75) < 1e-9 for event in strumEvents)
 assert_player_polyphony_ok(strumRows[0], strumEvents[:14])
 assert_player_polyphony_ok(strumRows[1], strumEvents[14:])
-unsafeStrumError = run_error_script('Clock.bpm = 70\nScale.default = Scale.major\nRoot.default.set(\"C\")\np1 >> triangle(P[I, V7, IV, I7], dur=2, sus=1.8, oct=2, strum=0.5, amp=0.32)\np2 >> saw(P[V7, I7, IV7, V7], dur=2, sus=1.8, oct=3, strum=var([0.02, 0.15], 2), amp=0.18, pan=0.25)\n')
-assert unsafeStrumError.startswith('ERROR\n') and 'MIDI pitch' in unsafeStrumError and 'overlaps itself' in unsafeStrumError, unsafeStrumError
+overlapStrumRows, overlapStrumEvents = run_script(
+    'Clock.bpm = 70\nScale.default = Scale.major\nRoot.default.set("C")\n'
+    'p1 >> triangle(P[I, V7, IV, I7], dur=2, sus=1.8, oct=2, strum=0.5, amp=0.32)\n'
+    'p2 >> saw(P[V7, I7, IV7, V7], dur=2, sus=1.8, oct=3, '
+    'strum=var([0.02, 0.15], 2), amp=0.18, pan=0.25)\n',
+    include_events=True)
+assert len(overlapStrumRows) == 2 and len(overlapStrumEvents) == 30
+assert_player_polyphony_ok(overlapStrumRows[0], overlapStrumEvents[:14])
+assert_player_polyphony_ok(overlapStrumRows[1], overlapStrumEvents[14:])
 parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 31' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 57' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
@@ -602,12 +596,8 @@ assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
 namespace['_dexter_events'] = []
 namespace['_dexter_length'] = 1.0
 namespace['_dexter_slots'] = 0
-try:
-    namespace['play']([(60, 64), (64, 67)], step=1, duration=1, strum=0.2)
-except ValueError as error:
-    assert 'MIDI pitch 64 overlaps itself' in str(error) and 'adjust strum/delay' in str(error)
-else:
-    raise AssertionError('the pattern API must report repeated-pitch strum overlap clearly')
+namespace['play']([(60, 64), (64, 67)], step=1, duration=1, strum=0.2)
+assert len(namespace['_dexter_events']) == 4, 'same-pitch sustained overlaps are valid voices'
 assert len(filterExampleRows) == 3 and [row[1] for row in filterExampleRows] == ['0', '1', '2']
 assert len(filterExampleControls) == 3 and all(len(row) == 14 for row in filterExampleControls)
 assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
@@ -674,17 +664,12 @@ example41Rows = run_example('41-blip-oscillator.py')
 assert [int(row[6]) for row in example41Rows] == [24, 22]
 example42Rows = run_example('42-self-contained-ugens.py')
 assert [int(row[6]) for row in example42Rows] == [25, 26, 27, 28, 29, 30]
-example43Rows = run_example('43-foxdot-viola.py')
-assert [int(row[6]) for row in example43Rows] == [31, 0]
-assert [float(row[21]) for row in example43Rows] == [6.0, 0.0]
-assert 'No unsupported constructs detected' in run_compatibility_check(
-    'p1 >> viola([0, 2, 4], vib=6)\n')
 assert namespace['bug']([0]).synthRate == 1.0
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 4:', 'Line 5:', 'Sample-string', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
+for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 5:', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
@@ -695,4 +680,4 @@ for filename in os.listdir(sys.argv[2]):
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-43.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-42.')

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Optional sample sounds — Dexter U.S. FoxDot</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #10151d;
+      --panel: #192230;
+      --ink: #eef3f8;
+      --muted: #aab7c5;
+      --accent: #7dd3c7;
+      --line: #334154;
+      --warn: #f3c969;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 880px; margin: 0 auto; padding: 36px 20px 56px; }
+    header { margin-bottom: 26px; }
+    .eyebrow { color: var(--accent); font-size: .82rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 8px 0; font-size: clamp(2rem, 5vw, 3.2rem); line-height: 1.08; }
+    h2 { margin-top: 30px; font-size: 1.35rem; }
+    p, li { color: var(--muted); }
+    strong { color: var(--ink); }
+    a { color: var(--accent); }
+    .card {
+      margin: 18px 0;
+      padding: 18px 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    .notice { border-left: 4px solid var(--warn); }
+    code, pre {
+      font: .92rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    pre {
+      overflow-x: auto;
+      padding: 16px;
+      color: #d8e6f0;
+      background: #0b1017;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+    th { color: var(--ink); }
+    td { color: var(--muted); }
+    .steps { padding-left: 1.35rem; }
+    .steps li { padding: 4px 0 8px; }
+    .small { font-size: .9rem; }
+    footer { margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Dexter U.S. FoxDot · Windows VST3</div>
+    <h1>Add your own sample sounds</h1>
+    <p>Keep a large sample library out of the plugin download. Download a WAV pack separately, place its files in the portable folder, and the plugin can use them by FoxDot-style sample symbol.</p>
+  </header>
+
+  <section class="card notice">
+    <strong>The plugin does not download audio automatically.</strong>
+    The bundled six tiny diagnostic WAVs are only a basic test kit. A larger
+    library is optional; this guide contains no third-party audio.
+  </section>
+
+  <h2>1. Get a sample pack you are allowed to use</h2>
+  <ol class="steps">
+    <li>Choose a source that supplies WAV files and whose license permits your intended use.</li>
+    <li>Download the archive from that source and extract it on your computer. Do not put the ZIP file itself in the Samples folder.</li>
+    <li>Keep the pack's license and attribution notes with your copy. Do not redistribute the audio unless its terms allow it.</li>
+  </ol>
+  <p class="small">
+    One community reference is
+    <a href="https://github.com/joenio/foxdot-sounds">joenio/foxdot-sounds</a>.
+    Its README describes a GPLv3 sample pack and points to Debian packaging
+    sources, but the GitHub repository currently contains the README rather
+    than WAV files. Check the current source availability and license yourself;
+    this link is information, not a direct WAV download.
+  </p>
+
+  <h2>2. Copy WAV files into the plugin's Portable folder</h2>
+  <p>The folder belongs <strong>inside</strong> the VST3 bundle, next to
+  <code>Contents</code>:</p>
+  <pre>dexter_sc_tone.vst3\
+├── Contents\
+└── Portable\
+    └── Samples\
+        ├── x\
+        │   └── lower\
+        │       ├── kick_01.wav
+        │       └── kick_02.wav
+        ├── o\
+        │   └── lower\
+        │       └── snare_01.wav
+        └── _\
+            └── hyphen\
+                └── hat_01.wav</pre>
+  <p>In this example, the full path is
+  <code>dexter_sc_tone.vst3\Portable\Samples\x\lower\kick_01.wav</code>.
+  Keep the plugin bundle and its <code>Portable</code> folder together.</p>
+
+  <h2>3. Match a folder to the symbol in your code</h2>
+  <table>
+    <thead><tr><th>Code symbol</th><th>Folder under <code>Portable\Samples</code></th><th>Typical use</th></tr></thead>
+    <tbody>
+      <tr><td><code>x</code></td><td><code>x\lower\</code></td><td>Kick</td></tr>
+      <tr><td><code>o</code></td><td><code>o\lower\</code></td><td>Snare</td></tr>
+      <tr><td><code>-</code></td><td><code>_\hyphen\</code></td><td>Closed hat; it is not a rest</td></tr>
+      <tr><td><code>a</code> / <code>A</code></td><td><code>a\lower\</code> / <code>a\upper\</code></td><td>Separate lowercase and uppercase banks</td></tr>
+      <tr><td>Any other letter</td><td><code>letter\lower\</code> or <code>letter\upper\</code></td><td>One folder per letter bank</td></tr>
+    </tbody>
+  </table>
+  <p>Other supported symbols use these named folders under
+  <code>Portable\Samples\_</code>:</p>
+  <pre>&amp; → ampersand    * → asterix      @ → at
+^ → caret         : → colon         $ → dollar
+= → equals        ! → exclamation   / → forwardslash
+# → hash          - → hyphen        % → percent
++ → plus          ? → question      ~ → tilde
+\ → backslash     1 → 1             2 → 2
+3 → 3             4 → 4</pre>
+  <p>For example, a file for <code>&amp;</code> goes in
+  <code>Portable\Samples\_\ampersand\</code>. Spaces in a play string are rests
+  and do not need a sample file.</p>
+
+  <h2>4. Use and refresh the samples</h2>
+  <ul>
+    <li>Place one or more <code>.wav</code> or <code>.wave</code> files in the symbol's folder.</li>
+    <li>Files are sorted by filename: <code>sample=0</code> selects the first, <code>sample=1</code> the second, and so on. Zero-padded names such as <code>kick_01.wav</code> keep the order predictable.</li>
+    <li>Example: <code>p1 &gt;&gt; play("x-o-", sample=0)</code>.</li>
+    <li>Close and reopen the plugin after adding or changing a WAV; loaded audio is cached for the current plugin instance.</li>
+  </ul>
+  <div class="card">
+    <strong>Supported WAVs:</strong> PCM 8/16/24/32-bit or IEEE float32;
+    mono or stereo; 8–192 kHz; no more than 64 MiB per file. Decoded sample
+    cache is limited to 128 MiB. Stereo is downmixed to mono before player
+    panning.
+  </div>
+
+  <footer>
+    Optional files stay on your computer and are not required in a redistributed
+    plugin ZIP. The plugin bundle still includes its six small CC0 diagnostic
+    WAVs unless a package explicitly omits them. Sample source licenses are
+    separate from the plugin's and FoxDot's code licenses.
+  </footer>
+</main>
+</body>
+</html>

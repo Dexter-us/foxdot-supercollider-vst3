@@ -5,7 +5,6 @@ on:
     paths:
       - "spikes/vst3-callback/**"
       - "tools/build-windows-vst3.ps1"
-      - "tools/invoke-build-windows-vst3-stage.ps1"
       - ".github/workflows/windows-vst3.yml"
   workflow_dispatch:
 
@@ -15,7 +14,7 @@ permissions:
 jobs:
   windows-vst3:
     runs-on: windows-latest
-    timeout-minutes: 180
+    timeout-minutes: 30
     steps:
       - name: Check out the project
         uses: actions/checkout@v4
@@ -35,62 +34,73 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\dexter-windows-vst3\supercollider-build
-          key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-build-v1
+          key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
           restore-keys: |
             windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-
-      - name: Restore pinned dependency checkouts
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}\dexter-windows-vst3\deps
-          key: windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-deps-v1
-          restore-keys: |
-            windows-deps-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-
-      - name: Prepare Python and pinned source checkouts
+      - name: Build VST3 from cached SuperCollider outputs
+        id: build_vst3
         shell: pwsh
         run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage prepare -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+          $buildLog = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3-build.log"
+          try {
+            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" -UseCachedSuperColliderBuild -SkipValidator *>&1 |
+              Tee-Object -FilePath $buildLog
+            if ($LASTEXITCODE -ne 0) {
+              throw "Build script exited with code $LASTEXITCODE"
+            }
+          }
+          catch {
+            Write-Host "Build failed. Last 160 log lines:"
+            if (Test-Path $buildLog) {
+              Get-Content $buildLog -Tail 160
+            }
+            throw
+          }
 
-      - name: Configure SuperCollider
+      - name: Required VST3 validator (five-minute limit)
+        if: always() && steps.build_vst3.outcome == 'success'
         shell: pwsh
         run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          $bundle = Join-Path $pluginBuild "VST3\Release\dexter_sc_tone.vst3"
+          $validator = Get-ChildItem -Path $pluginBuild -Filter "validator.exe" -File -Recurse |
+            Select-Object -First 1
+          if (-not (Test-Path $bundle)) { throw "The built VST3 bundle was not found: $bundle" }
+          if (-not $validator) { throw "The VST3 validator executable was not produced." }
+          $stdout = Join-Path $env:RUNNER_TEMP "vst3-validator.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "vst3-validator.stderr.log"
+          $argument = '"' + $bundle + '"'
+          $process = Start-Process -FilePath $validator.FullName -ArgumentList $argument `
+            -WorkingDirectory $pluginBuild -NoNewWindow -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr -PassThru
+          if (-not $process.WaitForExit(300000)) {
+            Write-Warning "VST3 validator exceeded five minutes; failing validation and preserving diagnostic logs."
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $process.WaitForExit()
+            if (Test-Path $stdout) { Get-Content $stdout -Tail 80 }
+            if (Test-Path $stderr) { Get-Content $stderr -Tail 80 }
+            throw "VST3 validator timed out after five minutes."
+          }
+          if (Test-Path $stdout) { Get-Content $stdout }
+          if (Test-Path $stderr) { Get-Content $stderr }
+          if ($process.ExitCode -ne 0) { throw "VST3 validator failed with exit code $($process.ExitCode)." }
 
-      - name: Compile SuperCollider engine and UGen modules
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-sc -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Configure the VST3 plugin
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage configure-plugin -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Compile the VST3 plugin
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage build-plugin -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Package and validate the Windows bundle
-        shell: pwsh
-        run: |
-          .\tools\invoke-build-windows-vst3-stage.ps1 -Stage package -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3"
-
-      - name: Upload Windows VST3 bundle
+      - name: Upload lifecycle diagnostics
         uses: actions/upload-artifact@v4
         if: always()
+        with:
+          name: dexter-lifecycle-diagnostics
+          path: |
+            ${{ runner.temp }}/vst3-validator.stdout.log
+            ${{ runner.temp }}/vst3-validator.stderr.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Windows VST3 diagnostic bundle
+        uses: actions/upload-artifact@v4
+        if: always() && steps.build_vst3.outcome == 'success'
         with:
           name: dexter-foxdot-live-vst3-windows-x64
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Upload separate Windows UGen pack
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: dexter-supercollider-ugens-windows-x64
-          path: ${{ runner.temp }}/dexter-windows-vst3/ugen-pack
-          if-no-files-found: warn
-          retention-days: 90
