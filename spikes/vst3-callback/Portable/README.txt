@@ -1,5 +1,7 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.57 adds bounded FoxDot-compatible `PBeat(...)` and `PDur(...)`
+duration patterns; see Example 83.
 Version 0.4.56 adds sample-symbol `PShuf(...)` and `PJoin(...)`; see Examples 81–82.
 Version 0.4.55 added sample-symbol `PStretch(...)` and `PStutter(...)`; see Example 80.
 Version 0.4.54 added sample-symbol `PAlt(...)` alternation; see Example 79.
@@ -77,6 +79,9 @@ shuffle with a per-evaluation seed and adds no third-party dependency.
 
 82-sample-pattern-join-shuffle.py joins smaller motifs left-to-right with
 PJoin, then shuffles the complete phrase with PShuf.
+
+83-pbeat-pdur-rhythm-durations.py uses PBeat pulse strings and PDur Euclidean
+durations to control the timing of portable sample patterns.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

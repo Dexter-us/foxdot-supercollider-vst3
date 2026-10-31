@@ -97,7 +97,7 @@ _COMPAT_CALLS = {
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
-    'PShuf', 'PJoin',
+    'PShuf', 'PJoin', 'PBeat', 'PDur',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -248,6 +248,13 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                             not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
                                     for value in ast.walk(argument.slice))):
                         self.add(argument.lineno, 'PJoin currently accepts sample-symbol phrases only.')
+        if name in {'PBeat', 'PDur'}:
+            minimum = 1 if name == 'PBeat' else 2
+            maximum = 3 if name == 'PBeat' else 4
+            if not minimum <= len(node.args) + len(node.keywords) <= maximum:
+                self.add(node.lineno, name + ' expects ' +
+                         ('a pulse string' if name == 'PBeat' else 'pulse and step counts') +
+                         ' with optional start and dur values.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -890,6 +897,98 @@ def PJoin(patterns):
             raise ValueError('PJoin output is limited to 256 sample symbols')
         result.extend(values)
     return _FoxDotFinitePattern(result)
+
+def _pulses_to_durations(pulses):
+    count = 1
+    result = []
+    for pulse in pulses[1:]:
+        if pulse == 1:
+            result.append(count)
+            count = 1
+        else:
+            count += 1
+    result.append(count)
+    return result
+
+def _scale_foxdot_durations(values, dur, name):
+    if isinstance(dur, _DexterTimeVar):
+        raise TypeError(name + ' dur must be a positive number or finite numeric pattern')
+    if isinstance(dur, (list, tuple, _FoxDotFinitePattern)):
+        scales = list(dur)
+        if not scales or len(scales) > 256:
+            raise ValueError(name + ' dur pattern must contain 1 to 256 values')
+    else:
+        scales = [dur]
+    for scale in scales:
+        if not isinstance(scale, (int, float)):
+            raise TypeError(name + ' dur must be a positive number or finite numeric pattern')
+        numeric = float(scale)
+        if numeric != numeric or numeric in (float('inf'), float('-inf')) or numeric <= 0.0:
+            raise ValueError(name + ' dur values must be finite and positive')
+    result = _FoxDotFinitePattern(values) * dur
+    if not result or len(result) > 256:
+        raise ValueError(name + ' output is limited to 256 duration values')
+    total = 0.0
+    for value in result:
+        numeric = float(value)
+        if numeric != numeric or numeric in (float('inf'), float('-inf')) or not 0.001 <= numeric <= 4096.0:
+            raise ValueError(name + ' durations must be between 0.001 and 4096 beats')
+        total += numeric
+    if total > 4096.0:
+        raise ValueError(name + ' total duration is limited to 4096 beats')
+    return _FoxDotFinitePattern(result)
+
+def PBeat(string, start=0, dur=0.5):
+    if not isinstance(string, str):
+        raise TypeError('PBeat expects a pulse string')
+    if len(string) > 256:
+        raise ValueError('PBeat pulse strings are limited to 256 characters')
+    try:
+        rotation = int(start)
+    except (TypeError, ValueError, OverflowError):
+        raise TypeError('PBeat start must be an integer')
+    pulses = [1 if character != ' ' else 0 for character in string]
+    durations = _pulses_to_durations(pulses)
+    return _scale_foxdot_durations(
+        _FoxDotFinitePattern(durations).rotate(rotation), dur, 'PBeat')
+
+def _foxdot_euclidean_pulses(hits, steps):
+    if hits == 0:
+        return [0 for _ in range(steps)]
+    groups = [[1 if index < hits else 0] for index in range(steps)]
+    remaining = steps
+    while True:
+        remaining -= hits
+        if remaining <= 1:
+            break
+        if remaining < hits:
+            hits, remaining = remaining, hits
+        for index in range(hits):
+            groups[index].extend(groups[-1])
+            del groups[-1]
+    return [pulse for group in groups for pulse in group]
+
+def PDur(n, k, start=0, dur=0.25):
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError('PDur pulse count must be an integer')
+    if isinstance(k, bool) or not isinstance(k, int):
+        raise TypeError('PDur step count must be an integer')
+    if n < 0 or n > 256 or k < 1 or k > 256:
+        raise ValueError('PDur requires 0 <= pulses <= 256 and 1 <= steps <= 256')
+    scale = 1.0
+    while n > k:
+        k *= 2
+        scale *= 0.5
+        if k > 256:
+            raise ValueError('PDur expansion is limited to 256 steps')
+    try:
+        rotation = int(start)
+    except (TypeError, ValueError, OverflowError):
+        raise TypeError('PDur start must be an integer')
+    durations = _pulses_to_durations(_foxdot_euclidean_pulses(n, k))
+    durations = [value * scale for value in durations]
+    return _scale_foxdot_durations(
+        _FoxDotFinitePattern(durations).rotate(rotation), dur, 'PDur')
 
 def PStretch(pattern, size):
     values = _sample_pattern_items(pattern, 'PStretch')

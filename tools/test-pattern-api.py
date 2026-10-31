@@ -172,6 +172,31 @@ for badJoin in (lambda: namespace['PJoin']([namespace['P'][0, 1], namespace['P']
         pass
     else:
         raise AssertionError('PJoin must reject unsupported or oversized sample patterns')
+assert namespace['PBeat']('x xxx x') == [1.0, 0.5, 0.5, 1.0, 0.5]
+assert namespace['PBeat']('x xx', 1, 0.25) == [0.25, 0.25, 0.5]
+assert namespace['PBeat']('x x', dur=namespace['P'][0.25, 0.5]) == [0.5, 0.5]
+assert namespace['PBeat']('') == [0.5]
+assert namespace['PDur'](3, 8) == [0.75, 0.75, 0.5]
+assert namespace['PDur'](5, 16) == [0.75, 0.75, 0.75, 0.75, 1.0]
+assert namespace['PDur'](0, 8) == [2.0]
+assert namespace['PDur'](3, 2) == [0.125, 0.125, 0.25]
+assert namespace['PDur'](3, 8, 1, 0.25) == [0.75, 0.5, 0.75]
+for badRhythm in (
+        lambda: namespace['PBeat'](123),
+        lambda: namespace['PBeat']('x' * 257),
+        lambda: namespace['PBeat']('x', dur=0),
+        lambda: namespace['PBeat']('x', dur=namespace['P'][0.25, 0]),
+        lambda: namespace['PDur'](3.0, 8),
+        lambda: namespace['PDur'](1, 0),
+        lambda: namespace['PDur'](-1, 8),
+        lambda: namespace['PDur'](256, 129),
+        lambda: namespace['PDur'](0, 256, dur=17)):
+    try:
+        badRhythm()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('PBeat/PDur must reject invalid or unbounded rhythm inputs')
 assert namespace['PStretch'](namespace['P']['x', 'o'], 256) == (
     list(namespace['P']['x', 'o']) * 128)
 assert len(namespace['PStutter'](['x'] * 16, 16)) == 256
@@ -1031,6 +1056,13 @@ assert 'PJoin currently accepts sample-symbol phrases only' in run_compatibility
     'p1 >> play(PJoin([P[0, 1], P["x"]]))')
 assert 'PJoin requires one list or pattern' in run_compatibility_check(
     'p1 >> play(PJoin())')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play("x", dur=PBeat("x xx", start=1, dur=0.25))\n'
+    'p2 >> play("o", dur=PDur(3, 8))')
+assert 'PBeat expects a pulse string' in run_compatibility_check(
+    'p1 >> play("x", dur=PBeat())')
+assert 'PDur expects pulse and step counts' in run_compatibility_check(
+    'p1 >> play("x", dur=PDur(3))')
 assert 'PStretch currently accepts sample-symbol patterns only' in run_compatibility_check(
     'p1 >> play(PStretch(P[0, 1], 6))')
 assert 'PStutter currently accepts sample-symbol patterns only' in run_compatibility_check(
@@ -1076,6 +1108,12 @@ example82Rows, example82Requests = run_script(
     include_samples=True)
 assert len(example82Rows) == 1 and sorted(int(row[1]) for row in example82Requests) == [
     45, 111, 120, 120]
+example83Rows, example83Requests, example83Events = run_script(
+    open(os.path.join(sys.argv[2], '83-pbeat-pdur-rhythm-durations.py'), encoding='utf-8').read(),
+    include_samples=True, include_events=True)
+assert len(example83Rows) == 2 and len(example83Requests) == 7 and len(example83Events) == 7
+assert sorted(round(float(row[1]), 6) for row in example83Events) == [
+    0.0, 0.0, 0.5, 0.75, 1.25, 1.5, 1.5]
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-82.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-83.')
