@@ -191,6 +191,18 @@ assert namespace['PStrum']() == [
     1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 1.5, 0.5, 0.5, 0.5, 0.5, 1.0]
 assert namespace['PStrum'](0) == [1.0, 0.5, 1.5, 1.0]
 assert len(namespace['PStrum'](15)) == 34
+assert [round(value, 6) for value in namespace['PQuicken']()] == [
+    0.0, 0.166667, 0.333333, 0.388889, 0.444444, 0.462963,
+    0.481481, 0.487654, 0.493827, 0.495885, 0.497942, 0.498628]
+assert [round(value, 6) for value in namespace['PQuicken'](0.35, 2, 4)] == [
+    0.0, 0.175, 0.2625, 0.30625]
+assert len(namespace['PQuicken'](0.5, 17, 16)) == 256
+assert namespace['PRhythm']([2, (3, 8)]) == [2.0, (2.0, 0.75, 1.5)]
+assert namespace['PRhythm']([(3, 8)]) == [0.75, 0.75, 0.5]
+assert namespace['PRhythm']([2, (3, 8, 1, 0.25)]) == [
+    2.0, (2.0, 0.75, 1.25)]
+assert namespace['PRhythm'](namespace['P'][1, (3, 8)]) == [
+    1.0, (2.0, 0.75, 1.5)]
 for badRhythm in (
         lambda: namespace['PBeat'](123),
         lambda: namespace['PBeat']('x' * 257),
@@ -204,7 +216,20 @@ for badRhythm in (
         lambda: namespace['PDelay'](300, 128),
         lambda: namespace['PStrum'](-1),
         lambda: namespace['PStrum'](16),
-        lambda: namespace['PStrum'](4.0)):
+        lambda: namespace['PStrum'](4.0),
+        lambda: namespace['PQuicken'](0),
+        lambda: namespace['PQuicken'](9),
+        lambda: namespace['PQuicken'](0.5, 1, 4),
+        lambda: namespace['PQuicken'](0.5, 17, 17),
+        lambda: namespace['PQuicken'](0.5, 3.0, 4),
+        lambda: namespace['PRhythm']([]),
+        lambda: namespace['PRhythm']([0]),
+        lambda: namespace['PRhythm']([True]),
+        lambda: namespace['PRhythm']([1, (3,)]),
+        lambda: namespace['PRhythm']([1, (3.0, 8)]),
+        lambda: namespace['PRhythm']([1, (3, 64)]),
+        lambda: namespace['PRhythm']([[1, 2]]),
+        lambda: namespace['PRhythm']([1] * 257)):
     try:
         badRhythm()
     except (TypeError, ValueError):
@@ -364,7 +389,8 @@ def run_script(script_text, include_events=False, include_effects=False, include
         wrapper_globals = {'__name__': '__main__'}
         exec(wrapper, wrapper_globals, wrapper_globals)
         lines = open(result_path, encoding='utf-8').read().splitlines()
-        assert lines[0].startswith('OK\t') and 0 <= int(lines[0].split('\t')[1]) <= 8, lines[0]
+        assert (lines[0].startswith('OK\t') and
+                0 <= int(lines[0].split('\t')[1]) <= 8), '\n'.join(lines[:20])
         player_rows = [line.split('\t') for line in lines if line.startswith('P\t')]
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
@@ -1101,6 +1127,15 @@ assert 'PDelay expects pulse and step counts' in run_compatibility_check(
     'p1 >> saw([0], delay=PDelay(3))')
 assert 'PStrum accepts one optional subdivision count' in run_compatibility_check(
     'p1 >> saw([0], dur=PStrum(2, 3))')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw([0, 2], dur=PRhythm([1, (3, 8)]), sus=0.1)\n'
+    'p2 >> sine([0, 2], delay=PQuicken(0.35, stepsize=2, steps=4))')
+assert 'PQuicken accepts dur, stepsize, and steps' in run_compatibility_check(
+    'p1 >> saw([0], delay=PQuicken(0.5, 2, 4, 5))')
+assert 'PQuicken supports only dur, stepsize, and steps keywords' in run_compatibility_check(
+    'p1 >> saw([0], delay=PQuicken(speed=2))')
+assert 'PRhythm expects one finite list or P pattern' in run_compatibility_check(
+    'p1 >> saw([0], dur=PRhythm())')
 assert 'PStretch currently accepts sample-symbol patterns only' in run_compatibility_check(
     'p1 >> play(PStretch(P[0, 1], 6))')
 assert 'PStutter currently accepts sample-symbol patterns only' in run_compatibility_check(
@@ -1161,6 +1196,30 @@ assert [round(float(event[7]), 6) for event in example84Events] == [
 assert [round(float(event[1]), 6) for event in example84Events] == [
     beat for beat in (0.0, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 5.0, 5.5, 6.0, 6.5, 7.0)
     for _ in range(3)]
+rhythmGroupRows, rhythmGroupEvents = run_script(
+    'p1 >> triangle(P[0, 2], dur=PRhythm([1, (3, 8)]), sus=0.1)\n',
+    include_events=True)
+assert len(rhythmGroupRows) == 1 and len(rhythmGroupEvents) == 4
+assert [round(float(event[1]), 6) for event in rhythmGroupEvents] == [
+    0.0, 1.0, 1.0, 1.0]
+assert [round(float(event[7]), 6) for event in rhythmGroupEvents] == [
+    0.0, 0.0, 0.75, 1.5]
+quickenRows, quickenEvents = run_script(
+    'p1 >> sine(P[0, 2], dur=1, sus=0.02, delay=PQuicken(0.4, 2, 3))\n',
+    include_events=True)
+assert len(quickenRows) == 1 and len(quickenEvents) == 6
+assert [round(float(event[7]), 6) for event in quickenEvents] == [
+    0.0, 0.2, 0.3, 0.0, 0.2, 0.3]
+example85Rows, example85Requests, example85Events = run_script(
+    open(os.path.join(sys.argv[2], '85-pquicken-prhythm.py'), encoding='utf-8').read(),
+    include_samples=True, include_events=True)
+assert len(example85Rows) == 2 and len(example85Requests) == 16
+assert len(example85Events) == 32
+assert sorted(round(float(event[7]), 6) for event in example85Events
+              if abs(float(event[2]) - 0.02) < 1e-9) == [
+    0.0, 0.0, 0.0, 0.0, 0.175, 0.175, 0.175, 0.175,
+    0.2625, 0.2625, 0.2625, 0.2625,
+    0.30625, 0.30625, 0.30625, 0.30625]
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-84.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-85.')

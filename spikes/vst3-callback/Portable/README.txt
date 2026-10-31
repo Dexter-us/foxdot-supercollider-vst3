@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.60 adds PQuicken delay clusters and a bounded PRhythm subset;
+see Example 85. PRhythm accepts a flat pattern of positive durations and
+(n, k[, start[, dur]]) Euclidean tuples. A tuple group in dur= plays delayed
+repeats at the cumulative Euclidean offsets. Nested PRhythm patterns and
+grouped sus= are deferred. PQuicken output and each player are capped at 256
+expanded note events; delay offsets are limited to 8 beats.
 Version 0.4.59 adds bounded PDelay groups and the FoxDot PStrum rhythm
 pattern; see Example 84. A PDelay group repeats each note at its cumulative
 beat offsets and is limited to 256 expanded note events per player.
@@ -90,6 +96,9 @@ durations to control the timing of portable sample patterns.
 
 84-pdelay-pstrum-combination.py combines PDelay's cumulative beat offsets with
 the PStrum rhythm pattern on a melodic player.
+
+85-pquicken-prhythm.py demonstrates a Euclidean duration group on sample
+patterns and a PQuicken delay cluster on a melodic player.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

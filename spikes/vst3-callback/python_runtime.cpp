@@ -97,7 +97,7 @@ _COMPAT_CALLS = {
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
-    'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum',
+    'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -259,6 +259,15 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self.add(node.lineno, 'PDelay expects pulse and step counts with optional start and dur values.')
         if name == 'PStrum' and len(node.args) + len(node.keywords) > 1:
             self.add(node.lineno, 'PStrum accepts one optional subdivision count.')
+        if name == 'PQuicken':
+            allowed = {'dur', 'stepsize', 'steps'}
+            if len(node.args) + len(node.keywords) > 3:
+                self.add(node.lineno, 'PQuicken accepts dur, stepsize, and steps.')
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(keyword.lineno or node.lineno, 'PQuicken supports only dur, stepsize, and steps keywords.')
+        if name == 'PRhythm' and (len(node.args) != 1 or node.keywords):
+            self.add(node.lineno, 'PRhythm expects one finite list or P pattern.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -1014,6 +1023,76 @@ def PStrum(n=4):
     second = _FoxDotFinitePattern([1.5, 0.5]).stutter([1, n])
     return first | second | 1.0
 
+class _FoxDotDurationGroup(tuple):
+    def __new__(cls, values):
+        return tuple.__new__(cls, values)
+
+def PQuicken(dur=0.5, stepsize=3, steps=6):
+    if isinstance(dur, bool) or not isinstance(dur, (int, float)):
+        raise TypeError('PQuicken dur must be a positive number of beats')
+    dur = float(dur)
+    if dur != dur or dur in (float('inf'), float('-inf')) or not 0.0 < dur <= 8.0:
+        raise ValueError('PQuicken dur must be greater than 0 and at most 8 beats')
+    if isinstance(stepsize, bool) or not isinstance(stepsize, int):
+        raise TypeError('PQuicken stepsize must be an integer')
+    if isinstance(steps, bool) or not isinstance(steps, int):
+        raise TypeError('PQuicken steps must be an integer')
+    if stepsize < 2 or stepsize > 257 or steps < 1 or steps > 256:
+        raise ValueError('PQuicken requires 2 <= stepsize <= 257 and 1 <= steps <= 256')
+    if (stepsize - 1) * steps > 256:
+        raise ValueError('PQuicken output is limited to 256 delay offsets')
+    delays = []
+    count = 0.0
+    for _ in range(steps):
+        for _ in range(stepsize - 1):
+            delays.append(count)
+            count += dur / stepsize
+        dur /= stepsize
+    return _FoxDotFinitePattern(delays)
+
+def PRhythm(durations):
+    if not isinstance(durations, (list, tuple, _FoxDotFinitePattern)):
+        raise TypeError('PRhythm expects a finite list or P pattern')
+    values = list(durations)
+    if not values or len(values) > 256:
+        raise ValueError('PRhythm requires 1 to 256 duration items')
+    if len(values) == 1 and isinstance(values[0], tuple):
+        if not 2 <= len(values[0]) <= 4:
+            raise ValueError('PRhythm Euclidean tuples require 2 to 4 PDur arguments')
+        return PDur(*values[0])
+    output = []
+    expandedItems = 0
+    totalBeats = 0.0
+    for item in values:
+        if isinstance(item, tuple):
+            if not 2 <= len(item) <= 4:
+                raise ValueError('PRhythm Euclidean tuples require 2 to 4 PDur arguments')
+            euclideanDurations = PDur(*item)
+            baseDuration = sum(euclideanDurations)
+            offsets = []
+            elapsed = 0.0
+            for duration in euclideanDurations[:-1]:
+                elapsed += duration
+                offsets.append(elapsed)
+            if baseDuration > 4096.0 or any(value > 8.0 for value in offsets):
+                raise ValueError('PRhythm grouped offsets must fit the 8-beat delay range')
+            output.append(_FoxDotDurationGroup(
+                [baseDuration] + offsets))
+            expandedItems += 1 + len(offsets)
+            totalBeats += baseDuration
+        elif isinstance(item, (int, float)) and not isinstance(item, bool):
+            value = float(item)
+            if value != value or value in (float('inf'), float('-inf')) or not 0.001 <= value <= 4096.0:
+                raise ValueError('PRhythm durations must be finite values from 0.001 to 4096 beats')
+            output.append(value)
+            expandedItems += 1
+            totalBeats += value
+        else:
+            raise TypeError('PRhythm supports flat numeric durations and (n, k[, start[, dur]]) tuples only')
+        if expandedItems > 256 or totalBeats > 4096.0:
+            raise ValueError('PRhythm is limited to 256 expanded items and 4096 total beats')
+    return _FoxDotFinitePattern(output)
+
 def PStretch(pattern, size):
     values = _sample_pattern_items(pattern, 'PStretch')
     if isinstance(size, bool) or not isinstance(size, int):
@@ -1197,13 +1276,33 @@ def euclid(hits, steps, note=60, rotation=0):
             values.append(None)
     return rotate(values, rotation)
 
-def _timing_pattern(value, count, name):
+def _timing_pattern(value, count, name, allowGroups=False):
     if count == 0:
-        return []
+        return ([], []) if allowGroups else []
     values = [value] if isinstance(value, (int, float)) else list(value)
     if not values:
         raise ValueError(name + ' pattern cannot be empty')
-    return [float(values[index % len(values)]) for index in range(count)]
+    result = []
+    groupOffsets = []
+    for index in range(count):
+        item = values[index % len(values)]
+        if isinstance(item, _FoxDotDurationGroup):
+            if not allowGroups:
+                raise TypeError('PRhythm duration groups are supported in dur=, not sus=')
+            if not item:
+                raise ValueError('PRhythm duration groups cannot be empty')
+            base = float(item[0])
+            offsets = [float(offset) for offset in item[1:]]
+            if (len(offsets) > 255 or
+                    any(offset != offset or offset < 0.0 or offset > 8.0 or offset > base
+                        for offset in offsets)):
+                raise ValueError('PRhythm group offsets must be within the 8-beat delay range and its base duration')
+            result.append(base)
+            groupOffsets.append(offsets)
+        else:
+            result.append(float(item))
+            groupOffsets.append([])
+    return (result, groupOffsets) if allowGroups else result
 
 def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False,
          strum=0.0,
@@ -1224,7 +1323,12 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
     if len(timeMultipliers) != len(notes):
         raise ValueError('internal sample timing map does not match the event slots')
     stepIsVar = isinstance(step, _DexterTimeVar)
-    steps = None if stepIsVar else _timing_pattern(step, len(notes), 'dur')
+    if stepIsVar:
+        steps = None
+        stepGroupOffsets = [[] for _ in notes]
+    else:
+        steps, stepGroupOffsets = _timing_pattern(
+            step, len(notes), 'dur', allowGroups=True)
     durationSource = duration
     durationIsVar = isinstance(durationSource, _DexterTimeVar)
     durations = None if durationIsVar or durationSource is None else \
@@ -1270,6 +1374,8 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
             raise ValueError('internal sample timing subdivisions must be in (0, 1]')
         baseStepValue = step.at(start) if stepIsVar else steps[i]
         stepValue = baseStepValue * multiplier
+        stepGroupOffsets[i] = [
+            delayOffset * multiplier for delayOffset in stepGroupOffsets[i]]
         durationValue = stepValue if durationSource is None else \
             durationSource.at(start) if durationIsVar else durations[i]
         if stepValue != stepValue or stepValue < 0.001 or stepValue > 4096.0:
@@ -1311,9 +1417,14 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                 raise ValueError('atk must be between 0 and 3 seconds')
             if releaseValue != releaseValue or not 0.0 <= releaseValue <= 3.0:
                 raise ValueError('rel must be between 0 and 3 seconds')
-            additions.append((start, durationValues[i], note, noteVelocity, attackValue,
-                              releaseValue, strumValue * chordIndex,
-                              bool(_allow_repeated_notes)))
+            offsets = [0.0] + stepGroupOffsets[i]
+            for groupOffset in offsets:
+                additions.append((start, durationValues[i], note, noteVelocity,
+                                  attackValue, releaseValue,
+                                  strumValue * chordIndex + groupOffset,
+                                  bool(_allow_repeated_notes or
+                                       stepGroupOffsets[i]),
+                                  i, chordIndex))
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
@@ -1561,7 +1672,7 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     if isinstance(notes, str):
         raise ValueError('FoxDot sample strings are not included yet; sample support is deferred')
     notes = [shift_note(note) for note in notes]
-    return PlayerPattern(notes, dur, dur if sus is None else sus, velocity,
+    return PlayerPattern(notes, dur, sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
                          scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave,
                           reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell)
@@ -2022,12 +2133,14 @@ class Player:
                 compiledEvents = []
                 for event in _dexter_events:
                     for delayValue in delayValues:
-                        compiledEvents.append(event[:6] + (event[6] + delayValue,))
+                        compiledEvents.append(
+                            event[:6] + (event[6] + delayValue,) + event[7:])
                 serializedDelayControl = None
             else:
                 compiledEvents = [
                     event[:6] + (event[6] +
-                                 (0.0 if pattern.delayControl is not None else pattern.delayBeats),)
+                                 (0.0 if pattern.delayControl is not None else pattern.delayBeats),) +
+                    event[7:]
                     for event in _dexter_events
                 ]
                 serializedDelayControl = pattern.delayControl
@@ -2052,8 +2165,14 @@ class Player:
             adjusted = []
             assignedMidiIntervals = []
             selection, rates, gate, positions, sampleControl, rateControl, symbolEvents = pattern.sampleSpec
-            for index, event in enumerate(compiledEvents):
-                symbol, position, sampleOverride = symbolEvents[index]
+            symbolsByPosition = {}
+            for symbolEvent in symbolEvents:
+                symbolsByPosition.setdefault(symbolEvent[1], []).append(symbolEvent)
+            for event in compiledEvents:
+                sourcePosition = event[8]
+                chordIndex = event[9]
+                symbol, position, sampleOverride = \
+                    symbolsByPosition[sourcePosition][chordIndex]
                 symbol = ord(symbol)
                 sampleIndex = (sampleOverride if sampleOverride is not None else
                                _sample_timevar_value(sampleControl, event[0])
@@ -2082,7 +2201,7 @@ class Player:
                     raise ValueError('sample layers exceed the available MIDI pitch range')
                 assignedMidiIntervals.append((midiNote, startBeat, endBeat))
                 note[2] = midiNote
-                adjusted.append(tuple(note))
+                adjusted.append(tuple(note[:7]))
             compiledEvents = adjusted
             _dexter_sample_events[playerIndex] = requests
             _dexter_sample_controls[playerIndex] = (
