@@ -15,8 +15,6 @@
 #include "SC_GraphDef.h"
 #include "SC_Group.h"
 #include "SC_Graph.h"
-#include "SC_UnitDef.h"
-#include "SC_UnitSpec.h"
 #include "SC_Lib_Cintf.h"
 #include "tone_synthdef.h"
 #include "foxdot_synthdefs.h"
@@ -56,6 +54,9 @@
 #else
 #include <dlfcn.h>
 #endif
+
+#include "SC_UnitDef.h"
+#include "SC_UnitSpec.h"
 
 namespace {
 std::mutex scLibraryLifecycleMutex;
