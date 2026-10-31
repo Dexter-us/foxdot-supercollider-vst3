@@ -30,6 +30,6 @@ any UGen module's license before distributing it.
 The folder accepts at most 256 definitions, with an 8 MiB per-file and
 64 MiB total size limit.
 
-The included DexterPluck source and compiled example are CC0-1.0:
+The included CustomPluck source and compiled example are CC0-1.0:
 https://creativecommons.org/publicdomain/zero/1.0/
-Example source for offline compilation: DexterPluck.scd
+Example source for offline compilation: CustomPluck.scd

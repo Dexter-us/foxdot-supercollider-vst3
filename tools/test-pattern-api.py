@@ -558,7 +558,12 @@ def run_example(name, user_synth_names=()):
     return run_script(open(example_path, encoding='utf-8').read(),
                       user_synth_names=user_synth_names)
 
-userSynthRows = run_example('94-user-synthdef-loader.py', ('DexterPluck',))
+userSynthBinaryPath = os.path.join(sys.argv[2], 'SynthDefs', 'CustomPluck.scsyndef')
+userSynthBinary = open(userSynthBinaryPath, 'rb').read()
+assert b'CustomPluck' in userSynthBinary
+assert b'DexterPluck' not in userSynthBinary
+assert not os.path.exists(os.path.join(sys.argv[2], 'SynthDefs', 'DexterPluck.scsyndef'))
+userSynthRows = run_example('94-user-synthdef-loader.py', ('CustomPluck',))
 assert [int(row[6]) for row in userSynthRows] == [58, 58]
 missingUserSynth = run_error_script(
     'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
@@ -705,15 +710,15 @@ def test_embedded_synthdef():
     sample_version, sample_graphs = read_synthdef_manifest(sample_bytes)
     assert sample_version == 2 and set(sample_graphs) == {'DexterSample'}
     assert any(ugen[0] == 'PlayBuf' for ugen in sample_graphs['DexterSample'])
-    user_def_path = os.path.join(plugin_dir, 'Portable', 'SynthDefs', 'DexterPluck.scsyndef')
+    user_def_path = os.path.join(plugin_dir, 'Portable', 'SynthDefs', 'CustomPluck.scsyndef')
     user_version, user_graphs, user_controls = read_synthdef_manifest(
         open(user_def_path, 'rb').read(), validate_builtin_controls=False,
         return_controls=True)
-    assert user_version == 2 and set(user_graphs) == {'DexterPluck'}
-    assert user_controls['DexterPluck'] == {
+    assert user_version == 2 and set(user_graphs) == {'CustomPluck'}
+    assert user_controls['CustomPluck'] == {
         'out': 0, 'freq': 1, 'amp': 2, 'gate': 3, 'atk': 4, 'rel': 5}
-    assert any(ugen[0] == 'Out' for ugen in user_graphs['DexterPluck'])
-    assert any(ugen[0] == 'SinOsc' for ugen in user_graphs['DexterPluck'])
+    assert any(ugen[0] == 'Out' for ugen in user_graphs['CustomPluck'])
+    assert any(ugen[0] == 'SinOsc' for ugen in user_graphs['CustomPluck'])
     assert not set(graphs).intersection(core_graphs)
     for graph, ugens in core_graphs.items():
         assert any(name == 'EnvGen' for name, _, _ in ugens), graph
@@ -1172,12 +1177,12 @@ supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 loadedUserSynthReport = run_compatibility_check(
-    'p1 >> userSynth("DexterPluck", P[0, 2, 4], dur=0.5, amp=0.3)\n',
-    ('DexterPluck',))
+    'p1 >> userSynth("CustomPluck", P[0, 2, 4], dur=0.5, amp=0.3)\n',
+    ('CustomPluck',))
 assert 'No unsupported constructs detected' in loadedUserSynthReport, loadedUserSynthReport
 unmappedUserSynthControlReport = run_compatibility_check(
-    'p1 >> userSynth("DexterPluck", [0, 2], vib=0.5)\n',
-    ('DexterPluck',))
+    'p1 >> userSynth("CustomPluck", [0, 2], vib=0.5)\n',
+    ('CustomPluck',))
 assert "Unsupported userSynth control 'vib'" in unmappedUserSynthControlReport
 missingUserSynthReport = run_compatibility_check(
     'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
@@ -1189,7 +1194,7 @@ syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
 for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
-        example_names = ('DexterPluck',) if filename == '94-user-synthdef-loader.py' else ()
+        example_names = ('CustomPluck',) if filename == '94-user-synthdef-loader.py' else ()
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)

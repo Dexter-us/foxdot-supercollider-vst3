@@ -2,8 +2,8 @@ Dexter U.S. FoxDot portable scripts
 
 Version 0.4.69 adds external precompiled SynthDef loading. Put one
 name-matched `.scsyndef` file per synth in `SynthDefs`; the included
-`DexterPluck.scd` is source to compile offline with sclang. The editor call is
-`userSynth("DexterPluck", P[0, 2, 4], dur=0.5)`. The embedded engine loads the
+`CustomPluck.scd` is source to compile offline with sclang. The editor call is
+`userSynth("CustomPluck", P[0, 2, 4], dur=0.5)`. The embedded engine loads the
 binary directly—no sclang process, scsynth server, or OSC. Compatible added
 UGen modules belong in `SCPlugins`; install them before using SynthDefs that
 depend on them, then restart the DAW. See `SynthDefs/README.txt` and Example 94.

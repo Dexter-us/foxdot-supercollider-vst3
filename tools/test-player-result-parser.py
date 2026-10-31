@@ -70,7 +70,7 @@ with tempfile.TemporaryDirectory() as directory:
     examples = sorted((plugin / "Portable").glob("*.py"))
     for example in examples:
         result = directory / "result.out"
-        user_synth_names = ("DexterPluck",) if example.name == "94-user-synthdef-loader.py" else ()
+        user_synth_names = ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else ()
         wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory() as directory:
             assert parsed.stdout.count("W:0.04") == 2, parsed.stdout
     user_synth_example = plugin / "Portable" / "94-user-synthdef-loader.py"
     user_synth_wrapper = api_tests["make_wrapper"](
-        str(user_synth_example), str(result), ("DexterPluck",))
+        str(user_synth_example), str(result), ("CustomPluck",))
     exec(user_synth_wrapper, {"__name__": "__main__"})
     rejected_user_synth = subprocess.run([str(binary), str(result), "0"],
                                          capture_output=True, text=True)
