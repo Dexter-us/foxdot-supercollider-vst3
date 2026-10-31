@@ -28,12 +28,14 @@ cpp = r"""
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <utility>
 """
+cpp += "constexpr std::size_t kEmbeddedSynthCount = 58;\n"
 cpp += source[parse_start:parse_end]
 cpp += r"""
 int main(int argc, char** argv) {
-    if (argc != 2) return 3;
+    if (argc != 3) return 3;
     if (std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.0)) > 1e-9 ||
         std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.25)) > 1e-9 ||
         std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.5) - 0.2) > 1e-9 ||
@@ -44,7 +46,8 @@ int main(int argc, char** argv) {
         return 4;
     PythonPattern pattern;
     std::string error;
-    if (!parseResult(argv[1], pattern, error)) {
+    if (!parseResult(argv[1], pattern,
+                     static_cast<std::size_t>(std::stoul(argv[2])), error)) {
         std::cerr << error << '\n';
         return 1;
     }
@@ -67,9 +70,11 @@ with tempfile.TemporaryDirectory() as directory:
     examples = sorted((plugin / "Portable").glob("*.py"))
     for example in examples:
         result = directory / "result.out"
-        wrapper = api_tests["make_wrapper"](str(example), str(result))
+        user_synth_names = ("DexterPluck",) if example.name == "94-user-synthdef-loader.py" else ()
+        wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
-        parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+        parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
+                                capture_output=True, text=True)
         assert parsed.returncode == 0, (example.name, parsed.stderr)
         if example.name == "72-var-sample-and-rate.py":
             assert "Q:v:0.0,1.0:4.0,4.0:v:1.0,-1.0:4.0,4.0" in parsed.stdout
@@ -77,6 +82,14 @@ with tempfile.TemporaryDirectory() as directory:
             assert "Q:l:0.0,1.0:4.0,4.0:l:0.75,1.5:4.0,4.0" in parsed.stdout
         if example.name == "93-clock-swing.py":
             assert parsed.stdout.count("W:0.04") == 2, parsed.stdout
+    user_synth_example = plugin / "Portable" / "94-user-synthdef-loader.py"
+    user_synth_wrapper = api_tests["make_wrapper"](
+        str(user_synth_example), str(result), ("DexterPluck",))
+    exec(user_synth_wrapper, {"__name__": "__main__"})
+    rejected_user_synth = subprocess.run([str(binary), str(result), "0"],
+                                         capture_output=True, text=True)
+    assert rejected_user_synth.returncode == 1
+    assert "synth" in rejected_user_synth.stderr.lower(), rejected_user_synth.stderr
     swing_example = plugin / "Portable" / "93-clock-swing.py"
     swing_wrapper = api_tests["make_wrapper"](str(swing_example), str(result))
     exec(swing_wrapper, {"__name__": "__main__"})
@@ -88,7 +101,7 @@ with tempfile.TemporaryDirectory() as directory:
         columns[-1] = bad_value
         lines[player_line] = "\t".join(columns)
         result.write_text("\n".join(lines) + "\n")
-        parsed = subprocess.run([str(binary), str(result)],
+        parsed = subprocess.run([str(binary), str(result), "0"],
                                 capture_output=True, text=True)
         assert parsed.returncode == 1, (bad_value, parsed.stderr)
     sample_example = plugin / "Portable" / "83-pbeat-pdur-rhythm-durations.py"
@@ -99,13 +112,13 @@ with tempfile.TemporaryDirectory() as directory:
                         r"\g<1>10000", valid, count=1, flags=re.M)
     assert high_tempo != valid
     result.write_text(high_tempo)
-    parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+    parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
     assert parsed.returncode == 0, parsed.stderr
     low_tempo = re.sub(r"^(P\t[^\t]+\t[^\t]+\t)[^\t]+",
                        r"\g<1>0.001", valid, count=1, flags=re.M)
     assert low_tempo != valid
     result.write_text(low_tempo)
-    parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+    parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
     assert parsed.returncode == 0, parsed.stderr
     for bad_tempo in (
             re.sub(r"^(P\t[^\t]+\t[^\t]+\t)[^\t]+",
@@ -116,7 +129,7 @@ with tempfile.TemporaryDirectory() as directory:
                    r"\g<1>0.0009", valid, count=1, flags=re.M)):
         assert bad_tempo != valid
         result.write_text(bad_tempo)
-        parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+        parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
         assert parsed.returncode == 1, parsed.stdout
     for bad in (re.sub(r"^S\t0\t", "S\t9\t", valid, flags=re.M),
                 re.sub(r"^S\t0\t[^\n]+", "S\t0\tnan\t0.5\t1\t0.5\t0.5\t0\t1", valid, flags=re.M),
@@ -128,14 +141,14 @@ with tempfile.TemporaryDirectory() as directory:
                 re.sub(r"^B\t[^\n]+", "B\t120\t0\t1\t2", valid, count=1, flags=re.M)):
         assert bad != valid
         result.write_text(bad)
-        parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+        parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
         assert parsed.returncode == 1, parsed.stdout
     for bad in (re.sub(r"^Q\t[^\n]+\n", "", valid, count=1, flags=re.M),
                 re.sub(r"^Q\t[^\n]+", "Q\t9\tv:0,1:2,2\t-", valid, count=1, flags=re.M),
                 re.sub(r"^Q\t[^\n]+", "Q\t0\tinvalid\t-", valid, count=1, flags=re.M)):
         assert bad != valid
         result.write_text(bad)
-        parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+        parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
         assert parsed.returncode == 1, parsed.stdout
 
     safe_overlap_source = directory / "safe-overlap.py"
@@ -153,6 +166,6 @@ with tempfile.TemporaryDirectory() as directory:
         fields[2] = "1.5"
         overlap_lines[index] = "\t".join(fields)
     result.write_text("\n".join(overlap_lines) + "\n")
-    parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+    parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
     assert parsed.returncode == 1 and "exceeds 8-note polyphony" in parsed.stderr, parsed.stderr
 print(f"PASS: {len(examples)} example results accepted by compiled C++ parser; malformed synth/sample records rejected")

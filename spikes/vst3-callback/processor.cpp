@@ -15,6 +15,8 @@
 #include "SC_GraphDef.h"
 #include "SC_Group.h"
 #include "SC_Graph.h"
+#include "SC_UnitDef.h"
+#include "SC_UnitSpec.h"
 #include "SC_Lib_Cintf.h"
 #include "tone_synthdef.h"
 #include "foxdot_synthdefs.h"
@@ -37,13 +39,16 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
@@ -59,6 +64,21 @@ Steinberg::ModuleTerminator cleanupSuperCollider([] {
     LifecycleTrace trace("deinitialize_library");
     deinitialize_library();
 });
+static constexpr std::array<std::string_view, 58> kEmbeddedFoxDotSynthNames = {
+    "sine", "triangle", "saw", "square", "bass", "varsaw", "dirt", "jbass",
+    "noise", "dub", "growl", "soprano", "crunch", "lazer", "rave", "bell",
+    "gong", "marimba", "pluck", "twang", "donk", "squish", "charm", "spark",
+    "blip", "scatter", "orient", "zap", "fuzz", "bug", "ripple", "viola",
+    "nylon", "arpy", "dab", "sawbass", "dbass", "prophet", "pads", "pasha",
+    "ambi", "sinepad", "keys", "klank", "feel", "glass", "soft", "quin",
+    "space", "scratch", "creep", "snick", "swell", "razz", "sitar", "star",
+    "karp", "sample"};
+
+bool isEmbeddedFoxDotSynthName(std::string_view name) {
+    return std::find(kEmbeddedFoxDotSynthNames.begin(),
+                     kEmbeddedFoxDotSynthNames.end(), name) !=
+           kEmbeddedFoxDotSynthNames.end();
+}
 
 std::filesystem::path pluginBinaryPath() {
 #if defined(_WIN32)
@@ -94,6 +114,97 @@ std::filesystem::path portableUGenPath() {
     if (binaryPath.empty())
         return {};
     return binaryPath.parent_path().parent_path().parent_path() / "Portable" / "SCPlugins";
+}
+
+std::filesystem::path portableSynthDefPath() {
+    const auto binaryPath = pluginBinaryPath();
+    if (binaryPath.empty())
+        return {};
+    return binaryPath.parent_path().parent_path().parent_path() / "Portable" / "SynthDefs";
+}
+
+struct UserSynthFile {
+    std::string name;
+    std::filesystem::path path;
+};
+
+bool validUserSynthName(const std::string& name) {
+    if (name.empty() || name.size() > 15 ||
+        !(std::isalpha(static_cast<unsigned char>(name.front())) || name.front() == '_'))
+        return false;
+    return std::all_of(name.begin() + 1, name.end(), [](unsigned char character) {
+        return std::isalnum(character) || character == '_';
+    });
+}
+
+std::vector<UserSynthFile> discoverUserSynthFiles(std::string& error) {
+    constexpr std::size_t kMaxUserSynthDefCount = 256;
+    constexpr std::uintmax_t kMaxUserSynthDefFileBytes = 8u * 1024u * 1024u;
+    constexpr std::uintmax_t kMaxUserSynthDefTotalBytes = 64u * 1024u * 1024u;
+    std::vector<UserSynthFile> files;
+    const auto directory = portableSynthDefPath();
+    if (directory.empty())
+        return files;
+
+    std::error_code filesystemError;
+    if (!std::filesystem::exists(directory, filesystemError))
+        return files;
+    if (filesystemError || !std::filesystem::is_directory(directory, filesystemError)) {
+        error = "Portable/SynthDefs exists but cannot be read as a folder.";
+        return {};
+    }
+
+    std::uintmax_t totalBytes = 0;
+    std::filesystem::directory_iterator iterator(directory, filesystemError);
+    const std::filesystem::directory_iterator end;
+    for (; !filesystemError && iterator != end; iterator.increment(filesystemError)) {
+        std::error_code entryError;
+        if (!iterator->is_regular_file(entryError) || entryError)
+            continue;
+        auto extension = iterator->path().extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (extension != ".scsyndef")
+            continue;
+        if (files.size() >= kMaxUserSynthDefCount) {
+            error = "Portable/SynthDefs exceeds the supported 256-definition safety limit.";
+            return {};
+        }
+
+        const auto name = iterator->path().stem().string();
+        if (!validUserSynthName(name)) {
+            error = "SynthDef filename must use a simple Python-safe name (letters, digits, underscore): " +
+                    iterator->path().filename().string();
+            return {};
+        }
+        if (isEmbeddedFoxDotSynthName(name)) {
+            error = "SynthDef filename conflicts with an embedded FoxDot synth name: " + name;
+            return {};
+        }
+        const auto bytes = iterator->file_size(entryError);
+        if (entryError || bytes < 10 || bytes > kMaxUserSynthDefFileBytes ||
+            bytes > kMaxUserSynthDefTotalBytes - totalBytes) {
+            error = "SynthDef file is unreadable, truncated, or exceeds the portable loader size limit: " +
+                    iterator->path().filename().string();
+            return {};
+        }
+        totalBytes += bytes;
+        files.push_back({name, iterator->path()});
+    }
+    if (filesystemError) {
+        error = "Portable/SynthDefs could not be fully scanned.";
+        return {};
+    }
+    std::sort(files.begin(), files.end(), [](const auto& left, const auto& right) {
+        return left.name < right.name;
+    });
+    for (std::size_t index = 1; index < files.size(); ++index) {
+        if (files[index - 1].name == files[index].name) {
+            error = "Two SynthDef files have the same name: " + files[index].name;
+            return {};
+        }
+    }
+    return files;
 }
 
 std::vector<std::string> discoverUGenModuleFiles() {
@@ -395,10 +506,15 @@ public:
         if (scriptThread_.joinable())
             scriptThread_.join();
 
+        std::string synthScanError;
+        const auto userSynthNames = availableUserSynthNames(synthScanError);
+        if (!synthScanError.empty())
+            return "SynthDef scan failed: " + synthScanError;
+
         std::string report;
         std::string error;
         if (!PortablePython::instance().checkCompatibility(bundledPythonPath(), source,
-                                                          report, error)) {
+                                                          userSynthNames, report, error)) {
             return error.empty() ? "FoxDot compatibility check failed." : error;
         }
         setEditorStatus("Static compatibility check complete; the script was not run.");
@@ -417,13 +533,22 @@ public:
         const auto generation = scriptGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
         scriptRunning_.store(true, std::memory_order_release);
         setEditorStatus("Evaluating Python...");
+        std::string synthScanError;
+        auto userSynthNames = availableUserSynthNames(synthScanError);
+        if (!synthScanError.empty()) {
+            setEditorStatus("SynthDef scan failed: " + synthScanError);
+            scriptRunning_.store(false, std::memory_order_release);
+            return;
+        }
         try {
-            scriptThread_ = std::thread([this, source, generation] {
+            scriptThread_ = std::thread([this, source, generation,
+                                         userSynthNames = std::move(userSynthNames)] {
                 try {
                     PythonPattern pattern;
                     std::string error;
                     if (!PortablePython::instance().evaluate(bundledPythonPath(),
                                                              scriptNamespace_, source,
+                                                              userSynthNames,
                                                              pattern, error)) {
                         auto message = error;
                         while (!message.empty() &&
@@ -531,7 +656,8 @@ public:
                             scriptRunning_.store(false, std::memory_order_release);
                             return;
                         }
-                        if (!prepareSynthGraphs(updates, updateMask, graphError)) {
+                        if (!prepareSynthGraphs(updates, updateMask, userSynthNames,
+                                                graphError)) {
                             setEditorStatus(graphError.empty()
                                                 ? "Could not prepare the selected synth graphs."
                                                 : graphError);
@@ -804,6 +930,19 @@ private:
         bool active = false;
     };
 
+    struct UserSynthDefinition {
+        std::string name;
+        GraphDef* definition = nullptr;
+        int outControl = -1;
+        int frequencyControl = -1;
+        int amplitudeControl = -1;
+        int panControl = -1;
+        int gateControl = -1;
+        int attackControl = -1;
+        int releaseControl = -1;
+        int sustainControl = -1;
+    };
+
     struct TimedMidiEvent {
         std::uint64_t sample = 0;
         int32 noteId = -1;
@@ -843,6 +982,7 @@ private:
 
     struct AudioVoice {
         std::array<Graph*, kSynthGraphCount> synthGraphs{};
+        std::vector<Graph*> userSynthGraphs;
         Graph* activeSynth = nullptr;
         int playerIndex = -1;
         int midiNote = -1;
@@ -881,6 +1021,7 @@ private:
         std::uint64_t sustainEndSample = 0;
         std::uint64_t endSample = 0;
         bool foxDotNativeEnvelope = false;
+        bool userSynthGateReleased = false;
         bool releasing = false;
         bool reverbTail = false;
         std::uint64_t releaseStartSample = 0;
@@ -1257,6 +1398,8 @@ private:
     }
 
     static float foxDotAmplitude(int synthIndex, float amplitude) {
+        if (synthIndex >= static_cast<int>(kSynthIndexToGraphIndex.size()))
+            return amplitude;
         if (synthIndex >= 31)
             return 1.0f; // amp arithmetic is inside the original SC graph.
         if (synthIndex == 4)
@@ -1307,8 +1450,10 @@ private:
         if (voice.activeSynth)
             Node_SetRun(&voice.activeSynth->mNode, 0);
         const auto synthGraphs = voice.synthGraphs;
+        auto userSynthGraphs = std::move(voice.userSynthGraphs);
         voice = {};
         voice.synthGraphs = synthGraphs;
+        voice.userSynthGraphs = std::move(userSynthGraphs);
     }
 
     void beginReverbTail(AudioVoice& voice, std::uint64_t tailStartSample) {
@@ -1321,15 +1466,50 @@ private:
         voice.releaseStartGain = 0.0f;
     }
 
-    static Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
-        if (synthIndex < 0 ||
-            static_cast<std::size_t>(synthIndex) >= kSynthIndexToGraphIndex.size())
+    Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
+        if (synthIndex < 0)
             return nullptr;
+        if (static_cast<std::size_t>(synthIndex) >= kSynthIndexToGraphIndex.size()) {
+            const auto userIndex = static_cast<std::size_t>(synthIndex) -
+                                  kSynthIndexToGraphIndex.size();
+            return userIndex < voice.userSynthGraphs.size()
+                ? voice.userSynthGraphs[userIndex] : nullptr;
+        }
         const auto graphIndex =
             kSynthIndexToGraphIndex[static_cast<std::size_t>(synthIndex)];
         return graphIndex < voice.synthGraphs.size()
             ? voice.synthGraphs[graphIndex]
             : nullptr;
+    }
+
+    bool makeSynthGraphCacheRoom(AudioVoice& voice, std::string& error) {
+        const auto builtinCount = static_cast<std::size_t>(std::count_if(
+            voice.synthGraphs.begin(), voice.synthGraphs.end(),
+            [](const Graph* cached) { return cached != nullptr; }));
+        const auto userCount = static_cast<std::size_t>(std::count_if(
+            voice.userSynthGraphs.begin(), voice.userSynthGraphs.end(),
+            [](const Graph* cached) { return cached != nullptr; }));
+        if (builtinCount + userCount < kMaxCachedSynthGraphsPerVoice)
+            return true;
+
+        auto evict = [&](Graph*& cached) {
+            if (!cached || cached == voice.activeSynth)
+                return false;
+            Node_SetRun(&cached->mNode, 0);
+            Node_End(&cached->mNode);
+            cached = nullptr;
+            return true;
+        };
+        for (auto& cached : voice.synthGraphs) {
+            if (evict(cached))
+                return true;
+        }
+        for (auto& cached : voice.userSynthGraphs) {
+            if (evict(cached))
+                return true;
+        }
+        error = "No inactive synth graph is available for replacement.";
+        return false;
     }
 
     Graph* createSynthGraph(std::size_t voiceIndex, std::size_t graphIndex,
@@ -1349,21 +1529,8 @@ private:
         if (graph)
             return graph;
 
-        const auto cachedCount = static_cast<std::size_t>(std::count_if(
-            voice.synthGraphs.begin(), voice.synthGraphs.end(),
-            [](const Graph* cached) { return cached != nullptr; }));
-        if (cachedCount >= kMaxCachedSynthGraphsPerVoice) {
-            const auto evict = std::find_if(
-                voice.synthGraphs.begin(), voice.synthGraphs.end(),
-                [&](Graph* cached) { return cached && cached != voice.activeSynth; });
-            if (evict == voice.synthGraphs.end()) {
-                error = "No inactive synth graph is available for replacement.";
-                return nullptr;
-            }
-            Node_SetRun(&(*evict)->mNode, 0);
-            Node_End(&(*evict)->mNode);
-            *evict = nullptr;
-        }
+        if (!makeSynthGraphCacheRoom(voice, error))
+            return nullptr;
 
         sc_msg_iter noControls(0, "");
         Graph* created = nullptr;
@@ -1392,6 +1559,63 @@ private:
         Group_AddTail(rootGroup_, &created->mNode);
         // SC cannot resume Graph_NullFirstCalc until it has had a world tick.
         // A fresh note must keep Graph_FirstCalc until its first render.
+        if (!startImmediately)
+            Node_SetRun(&created->mNode, 0);
+        graph = created;
+        return created;
+    }
+
+    Graph* createUserSynthGraph(std::size_t voiceIndex, std::size_t userIndex,
+                                std::string& error, bool startImmediately = false) {
+        if (!world_ || !rootGroup_ || userIndex >= userSynthDefinitions_.size()) {
+            error = "The requested Portable SynthDef is not registered.";
+            return nullptr;
+        }
+        if (voiceIndex >= audioVoices_.size()) {
+            error = "The selected synth voice is outside the supported range.";
+            return nullptr;
+        }
+        auto& voice = audioVoices_[voiceIndex];
+        if (userIndex >= voice.userSynthGraphs.size()) {
+            error = "The Portable SynthDef graph cache is not initialized.";
+            return nullptr;
+        }
+        auto*& graph = voice.userSynthGraphs[userIndex];
+        if (graph)
+            return graph;
+        if (!makeSynthGraphCacheRoom(voice, error))
+            return nullptr;
+
+        auto& userDefinition = userSynthDefinitions_[userIndex];
+        sc_msg_iter noControls(0, "");
+        Graph* created = nullptr;
+        const auto graphError = Graph_New(world_, userDefinition.definition,
+                                          nextDynamicGraphNodeId_++, &noControls,
+                                          &created, true);
+        if (graphError != 0 || !created) {
+            error = "SuperCollider could not create user synth " + userDefinition.name +
+                    " (error " + std::to_string(static_cast<int>(graphError)) + ").";
+            return nullptr;
+        }
+        const auto outputBus = kFirstAudioBus +
+                               kAudioBusStride * static_cast<int>(voiceIndex);
+        Graph_SetControl(created, userDefinition.outControl,
+                         static_cast<float>(outputBus));
+        if (userDefinition.frequencyControl >= 0)
+            Graph_SetControl(created, userDefinition.frequencyControl, 440.0f);
+        if (userDefinition.amplitudeControl >= 0)
+            Graph_SetControl(created, userDefinition.amplitudeControl, 1.0f);
+        if (userDefinition.panControl >= 0)
+            Graph_SetControl(created, userDefinition.panControl, 0.0f);
+        if (userDefinition.gateControl >= 0)
+            Graph_SetControl(created, userDefinition.gateControl, 0.0f);
+        if (userDefinition.attackControl >= 0)
+            Graph_SetControl(created, userDefinition.attackControl, 0.01f);
+        if (userDefinition.releaseControl >= 0)
+            Graph_SetControl(created, userDefinition.releaseControl, 0.04f);
+        if (userDefinition.sustainControl >= 0)
+            Graph_SetControl(created, userDefinition.sustainControl, 1.0f);
+        Group_AddTail(rootGroup_, &created->mNode);
         if (!startImmediately)
             Node_SetRun(&created->mNode, 0);
         graph = created;
@@ -1531,7 +1755,9 @@ private:
 
     bool prepareSynthGraphs(
         const std::array<PatternState, kPlayerCount>& updates,
-        std::uint8_t updateMask, std::string& error) {
+        std::uint8_t updateMask,
+        const std::vector<std::string>& expectedUserSynthNames,
+        std::string& error) {
         // Run may follow a failed host setup (e.g. a previously missing UGen
         // folder). Retry once on this worker, never on the audio callback.
         if (!initializeWorld()) {
@@ -1544,6 +1770,23 @@ private:
             error = "The audio engine changed during Run. Enable host audio processing and press Run again.";
             return false;
         }
+        bool usesUserSynth = false;
+        for (std::size_t player = 0; player < kPlayerCount; ++player)
+            usesUserSynth |=
+                (updateMask & static_cast<std::uint8_t>(1u << player)) != 0 &&
+                updates[player].active &&
+                static_cast<std::size_t>(updates[player].synthIndex) >=
+                    kSynthIndexToGraphIndex.size();
+        if (usesUserSynth) {
+            std::vector<std::string> loadedNames;
+            loadedNames.reserve(userSynthDefinitions_.size());
+            for (const auto& definition : userSynthDefinitions_)
+                loadedNames.push_back(definition.name);
+            if (loadedNames != expectedUserSynthNames) {
+                error = "The Portable SynthDef list changed while the script was being evaluated. Restart the DAW and run it again.";
+                return false;
+            }
+        }
 
         for (std::size_t player = 0; player < kPlayerCount; ++player) {
             if ((updateMask & static_cast<std::uint8_t>(1u << player)) == 0 ||
@@ -1551,7 +1794,8 @@ private:
                 continue;
             const auto synthIndex = updates[player].synthIndex;
             if (synthIndex < 0 ||
-                static_cast<std::size_t>(synthIndex) >= kSynthIndexToGraphIndex.size()) {
+                static_cast<std::size_t>(synthIndex) >=
+                    kSynthIndexToGraphIndex.size() + userSynthDefinitions_.size()) {
                 error = "The selected synth index is outside the registered synth bank.";
                 return false;
             }
@@ -1791,20 +2035,28 @@ private:
                                 event.durationBeats * 60.0 / pattern.bpm);
                     }
                     const double sustainEndBeat = absoluteStartBeat + event.durationBeats;
-                    const bool foxDotNativeEnvelope = usesFoxDotNativeEnvelope(
-                        pattern.synthIndex, event.attackSeconds, event.releaseSeconds);
+                    const bool isUserSynth =
+                        static_cast<std::size_t>(pattern.synthIndex) >=
+                        kSynthIndexToGraphIndex.size();
+                    const bool foxDotNativeEnvelope = !isUserSynth &&
+                        usesFoxDotNativeEnvelope(pattern.synthIndex,
+                                                 event.attackSeconds,
+                                                 event.releaseSeconds);
                     const double sustainSeconds =
                         event.durationBeats * 60.0 / pattern.bpm;
                     // File-based upstream patches except sinepad do not apply blur.
-                    const bool appliesBlur = pattern.synthIndex >= 31 &&
+                    const bool appliesBlur = !isUserSynth && pattern.synthIndex >= 31 &&
                         !(pattern.synthIndex >= 35 && pattern.synthIndex <= 40) &&
                         pattern.synthIndex != 42 && pattern.synthIndex != 48;
                     const double envelopeSustain = sustainSeconds *
                         (appliesBlur ? pattern.synthControls[6] : 1.0);
-                    const double sourceEnvelopeSeconds = isSample ? selectedSampleSeconds : foxDotNativeEnvelope
-                        ? foxDotEnvelopeDurationSeconds(pattern.synthIndex, envelopeSustain,
-                                                        event.attackSeconds)
-                        : sustainSeconds;
+                    const double sourceEnvelopeSeconds = isSample ? selectedSampleSeconds
+                        : foxDotNativeEnvelope
+                            ? foxDotEnvelopeDurationSeconds(pattern.synthIndex,
+                                                            envelopeSustain,
+                                                            event.attackSeconds)
+                            : sustainSeconds + (isUserSynth
+                                ? std::max(0.005, event.releaseSeconds) : 0.0);
                     const double absoluteEndBeat = absoluteStartBeat +
                         sourceEnvelopeSeconds * pattern.bpm / 60.0;
                     if (beat < absoluteStartBeat || beat >= absoluteEndBeat)
@@ -1900,7 +2152,12 @@ private:
                 found->swellState = {};
                 const double maxCutoff = sampleRate_ * 0.45;
                 const double clampedCutoff = std::min<double>(note.cutoffHz, maxCutoff);
-                found->filterCoefficient = note.synthIndex >= 31 || clampedCutoff >= maxCutoff
+                const bool isUserSynth =
+                    static_cast<std::size_t>(note.synthIndex) >=
+                    kSynthIndexToGraphIndex.size();
+                found->filterCoefficient =
+                    (note.synthIndex >= 31 && !isUserSynth) ||
+                    clampedCutoff >= maxCutoff
                     ? 1.0f
                     : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
                 found->frequencyHz = safeSynthFrequency(note.synthIndex,
@@ -1909,6 +2166,7 @@ private:
                 found->sustainEndSample = note.sustainEndSample;
                 found->endSample = note.endSample;
                 found->foxDotNativeEnvelope = note.foxDotNativeEnvelope;
+                found->userSynthGateReleased = false;
                 found->releasing = false;
                 found->reverbTail = false;
                 auto* selectedSynth = graphForSynthIndex(*found, note.synthIndex);
@@ -1917,19 +2175,34 @@ private:
                     // Reusing oscillator state is observably wrong for e.g.
                     // pads (zero-Hz Pulse state), and impulse-driven patches.
                     // Graph_New/Node_End use SC's bounded RT memory pool.
-                    const auto graphIndex = kSynthIndexToGraphIndex[
-                        static_cast<std::size_t>(note.synthIndex)];
+                    std::string graphError;
+                    const auto voiceIndex =
+                        static_cast<std::size_t>(std::distance(audioVoices_.begin(), found));
                     if (selectedSynth) {
                         if (found->activeSynth == selectedSynth)
                             found->activeSynth = nullptr;
                         Node_SetRun(&selectedSynth->mNode, 0);
                         Node_End(&selectedSynth->mNode);
-                        found->synthGraphs[graphIndex] = nullptr;
+                        if (isUserSynth) {
+                            found->userSynthGraphs[static_cast<std::size_t>(note.synthIndex) -
+                                kSynthIndexToGraphIndex.size()] = nullptr;
+                        } else {
+                            const auto graphIndex = kSynthIndexToGraphIndex[
+                                static_cast<std::size_t>(note.synthIndex)];
+                            found->synthGraphs[graphIndex] = nullptr;
+                        }
                     }
-                    std::string graphError;
-                    selectedSynth = createSynthGraph(
-                        static_cast<std::size_t>(std::distance(audioVoices_.begin(), found)),
-                        graphIndex, graphError, true);
+                    if (isUserSynth) {
+                        const auto userIndex = static_cast<std::size_t>(note.synthIndex) -
+                                               kSynthIndexToGraphIndex.size();
+                        selectedSynth = createUserSynthGraph(voiceIndex, userIndex,
+                                                             graphError, true);
+                    } else {
+                        const auto graphIndex = kSynthIndexToGraphIndex[
+                            static_cast<std::size_t>(note.synthIndex)];
+                        selectedSynth = createSynthGraph(voiceIndex, graphIndex,
+                                                         graphError, true);
+                    }
                     if (!selectedSynth) {
                         found->midiNote = -1;
                         found->velocity = 0;
@@ -1940,16 +2213,56 @@ private:
                     Node_SetRun(&found->activeSynth->mNode, 0);
                 found->activeSynth = selectedSynth;
                 if (found->activeSynth) {
-                    Graph_SetControl(found->activeSynth, 1, found->frequencyHz);
-                    const auto playerBus = kReverbBaseBus + note.playerIndex * kReverbBusStride;
-                    Graph_SetControl(found->activeSynth, 6, static_cast<float>(playerBus));
-                    Graph_SetControl(found->activeSynth, 7, reverbEnabled(activePatterns_[static_cast<std::size_t>(note.playerIndex)]) ? 1.0f : 0.0f);
-                    Graph_SetControl(found->activeSynth, 8, found->cutoffHz);
-                    if (note.synthIndex <= 3) {
-                        for (int mode = 0; mode < 4; ++mode)
-                            Graph_SetControl(found->activeSynth, 2 + mode,
-                                         note.synthIndex == mode ? 1.0f : 0.0f);
+                    if (isUserSynth) {
+                        const auto userIndex = static_cast<std::size_t>(note.synthIndex) -
+                                               kSynthIndexToGraphIndex.size();
+                        const auto& definition = userSynthDefinitions_[userIndex];
+                        if (definition.frequencyControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.frequencyControl,
+                                             found->frequencyHz);
+                        if (definition.amplitudeControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.amplitudeControl, 1.0f);
+                        if (definition.panControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.panControl, 0.0f);
+                        if (definition.gateControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.gateControl, 1.0f);
+                        if (definition.attackControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.attackControl,
+                                             static_cast<float>(note.attackSeconds));
+                        if (definition.releaseControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.releaseControl,
+                                             static_cast<float>(note.releaseSeconds));
+                        if (definition.sustainControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.sustainControl,
+                                             static_cast<float>(
+                                                 note.sustainEndSample > note.startSample
+                                                     ? static_cast<double>(
+                                                           note.sustainEndSample -
+                                                           note.startSample) /
+                                                           sampleRate_
+                                                     : 0.0));
                     } else {
+                        Graph_SetControl(found->activeSynth, 1, found->frequencyHz);
+                        const auto playerBus = kReverbBaseBus +
+                                               note.playerIndex * kReverbBusStride;
+                        Graph_SetControl(found->activeSynth, 6,
+                                         static_cast<float>(playerBus));
+                        Graph_SetControl(found->activeSynth, 7,
+                            reverbEnabled(activePatterns_[static_cast<std::size_t>(
+                                note.playerIndex)]) ? 1.0f : 0.0f);
+                        Graph_SetControl(found->activeSynth, 8, found->cutoffHz);
+                        if (note.synthIndex <= 3) {
+                            for (int mode = 0; mode < 4; ++mode)
+                                Graph_SetControl(found->activeSynth, 2 + mode,
+                                             note.synthIndex == mode ? 1.0f : 0.0f);
+                        } else {
                         Graph_SetControl(found->activeSynth, 2, note.synthRate);
                         if (note.synthIndex == 57)
                             Graph_SetControl(found->activeSynth, 22, static_cast<float>(note.sampleBuffer));
@@ -1991,6 +2304,7 @@ private:
                             Graph_SetControl(found->activeSynth, 9, 1.0f);
                             found->triggerControlPendingReset = true;
                         }
+                    }
                     }
                     Node_SetRun(&found->activeSynth->mNode, 1);
                 }
@@ -2131,12 +2445,158 @@ private:
             Node_SetRun(&graph->mNode, enabled && type == pattern.reverbIndex - 1 ? 1 : 0);
         }
         for (auto& voice : audioVoices_) {
-            if (voice.activeSynth && voice.playerIndex == static_cast<int>(player)) {
+            if (voice.activeSynth && voice.playerIndex == static_cast<int>(player) &&
+                static_cast<std::size_t>(voice.synthIndex) <
+                    kSynthIndexToGraphIndex.size()) {
                 Graph_SetControl(voice.activeSynth, 6, static_cast<float>(bus));
                 Graph_SetControl(voice.activeSynth, 7, enabled ? 1.0f : 0.0f);
                 Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
             }
         }
+    }
+
+    static std::string synthDefName(GraphDef* definition) {
+        if (!definition)
+            return {};
+        const auto* bytes = reinterpret_cast<const char*>(definition->mNodeDef.mName);
+        std::size_t length = 0;
+        while (length < sizeof(definition->mNodeDef.mName) && bytes[length] != '\0')
+            ++length;
+        return std::string(bytes, length);
+    }
+
+    static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
+        if (!definition || !definition->mParamSpecs)
+            return -1;
+        for (uint32 index = 0; index < definition->mNumParamSpecs; ++index) {
+            const auto& spec = definition->mParamSpecs[index];
+            const auto* bytes = reinterpret_cast<const char*>(spec.mName);
+            std::size_t length = 0;
+            while (length < sizeof(spec.mName) && bytes[length] != '\0')
+                ++length;
+            if (std::string_view(bytes, length) == wanted)
+                return spec.mIndex;
+        }
+        return -1;
+    }
+
+    static bool hasMonoOutUnit(GraphDef* definition) {
+        if (!definition || !definition->mUnitSpecs)
+            return false;
+        for (uint32 index = 0; index < definition->mNumUnitSpecs; ++index) {
+            const auto& unit = definition->mUnitSpecs[index];
+            if (!unit.mUnitDef)
+                continue;
+            const auto* bytes =
+                reinterpret_cast<const char*>(unit.mUnitDef->mUnitDefName);
+            std::size_t length = 0;
+            while (length < sizeof(unit.mUnitDef->mUnitDefName) && bytes[length] != '\0')
+                ++length;
+            if (std::string_view(bytes, length) == "Out" && unit.mNumInputs == 2)
+                return true;
+        }
+        return false;
+    }
+
+    std::vector<std::string> availableUserSynthNames(std::string& error) {
+        const auto files = discoverUserSynthFiles(error);
+        if (!error.empty())
+            return {};
+        std::vector<std::string> names;
+        names.reserve(files.size());
+        for (const auto& file : files)
+            names.push_back(file.name);
+
+        std::vector<std::string> loadedNames;
+        bool worldIsReady = false;
+        {
+            std::lock_guard<std::mutex> lock(worldAccessMutex_);
+            worldIsReady = world_ != nullptr;
+            if (worldIsReady) {
+                loadedNames.reserve(userSynthDefinitions_.size());
+                for (const auto& definition : userSynthDefinitions_)
+                    loadedNames.push_back(definition.name);
+            }
+        }
+        if (worldIsReady && names != loadedNames) {
+            error = "Portable/SynthDefs changed after the engine started. Close and reopen the DAW to load the updated SynthDef list.";
+            return {};
+        }
+        return worldIsReady ? loadedNames : names;
+    }
+
+    bool loadUserSynthDefinitions(std::string& error) {
+        userSynthDefinitions_.clear();
+        for (const auto& synthFile : userSynthFiles_) {
+            const bool conflictsWithBuiltin =
+                isEmbeddedFoxDotSynthName(synthFile.name) ||
+                std::any_of(kSynthGraphNames.begin(), kSynthGraphNames.end(),
+                            [&](const char* name) { return synthFile.name == name; });
+            if (conflictsWithBuiltin || synthFile.name == "DexRevFree" ||
+                synthFile.name == "DexRevFree2" || synthFile.name == "DexRevGverb") {
+                error = "SynthDef name is reserved by the embedded engine: " + synthFile.name;
+                return false;
+            }
+
+            auto* loaded = GraphDef_Load(world_, synthFile.path, nullptr);
+            if (!loaded) {
+                error = "SuperCollider could not parse " + synthFile.path.filename().string() +
+                        ". Check that it is a valid, compatible .scsyndef file.";
+                return false;
+            }
+            // Let the World own even definitions that fail later validation;
+            // discardPartialWorld then reclaims them on the startup error path.
+            GraphDef_Define(world_, loaded);
+            if (loaded->mNext) {
+                error = synthFile.path.filename().string() +
+                        " contains multiple SynthDefs; place one definition in each file.";
+                return false;
+            }
+            const auto internalName = synthDefName(loaded);
+            if (internalName != synthFile.name) {
+                error = "SynthDef filename and embedded name must match: expected " +
+                        synthFile.name + ", found " + internalName + ".";
+                return false;
+            }
+
+            UserSynthDefinition userDefinition;
+            userDefinition.name = synthFile.name;
+            userDefinition.definition = loaded;
+            userDefinition.outControl = synthControlIndex(loaded, "out");
+            userDefinition.frequencyControl = synthControlIndex(loaded, "freq");
+            userDefinition.amplitudeControl = synthControlIndex(loaded, "amp");
+            userDefinition.panControl = synthControlIndex(loaded, "pan");
+            userDefinition.gateControl = synthControlIndex(loaded, "gate");
+            userDefinition.attackControl = synthControlIndex(loaded, "atk");
+            userDefinition.releaseControl = synthControlIndex(loaded, "rel");
+            userDefinition.sustainControl = synthControlIndex(loaded, "sustain");
+            if (userDefinition.sustainControl < 0)
+                userDefinition.sustainControl = synthControlIndex(loaded, "sus");
+            if (userDefinition.outControl < 0) {
+                error = synthFile.path.filename().string() +
+                        " needs an 'out' control so the plugin can route it to a private voice bus.";
+                return false;
+            }
+            if (!hasMonoOutUnit(loaded)) {
+                error = synthFile.path.filename().string() +
+                        " needs an Out UGen that writes exactly one mono signal to its 'out' control.";
+                return false;
+            }
+
+            int32 nameKey[4]{};
+            std::memcpy(nameKey, synthFile.name.data(),
+                        std::min(synthFile.name.size(), sizeof(nameKey)));
+            userDefinition.definition = World_GetGraphDef(world_, nameKey);
+            if (!userDefinition.definition) {
+                error = "SuperCollider did not register SynthDef " + synthFile.name + ".";
+                return false;
+            }
+            userSynthDefinitions_.push_back(std::move(userDefinition));
+        }
+
+        for (auto& voice : audioVoices_)
+            voice.userSynthGraphs.assign(userSynthDefinitions_.size(), nullptr);
+        return true;
     }
 
     bool initializeWorld(double hostSampleRate = 0.0) {
@@ -2171,6 +2631,16 @@ private:
             return fail("SuperCollider startup failed: the bundled SCPlugins folder is missing or inaccessible. Restore the UGen files, restart the host, and press Run.");
         }
         ugenPluginPath_ = ugenModuleSearchPath();
+        std::string synthScanError;
+        userSynthFiles_ = discoverUserSynthFiles(synthScanError);
+        if (!synthScanError.empty())
+            return fail("Portable SynthDef scan failed: " + synthScanError);
+        if (userSynthFiles_.size() >
+            static_cast<std::size_t>(std::numeric_limits<uint32>::max()) -
+                (kSynthGraphCount + kReverbGraphCount))
+            return fail("Too many SynthDefs are installed for SuperCollider's graph-definition table.");
+        const auto graphDefinitionCapacity =
+            scPoolCapacity(kSynthGraphCount + kReverbGraphCount + userSynthFiles_.size());
 
         try {
             LifecycleTrace allocationTrace("echo buffer allocation", this);
@@ -2185,7 +2655,7 @@ private:
         options.mPreferredSampleRate = sampleRate_;
         options.mBufLength = kSCBlockSize;
         options.mMaxNodes = static_cast<uint32>(kWorldNodeCapacity);
-        options.mMaxGraphDefs = static_cast<uint32>(kWorldGraphDefCapacity);
+        options.mMaxGraphDefs = static_cast<uint32>(graphDefinitionCapacity);
         // Size both SuperCollider pools from the actual embedded graph bank,
         // voice slots, and reverb bank; adding a registered synth grows them.
         options.mRealTimeMemorySize = 65536;
@@ -2244,6 +2714,13 @@ private:
             return fail("SuperCollider startup failed: native sample playback definitions could not be loaded.");
         }
         GraphDef_Define(world_, sampleDefs);
+        std::string userSynthError;
+        if (!loadUserSynthDefinitions(userSynthError)) {
+            std::fprintf(stderr, "Dexter VST3: external SynthDef load failed: %s\n",
+                         userSynthError.c_str());
+            discardPartialWorld();
+            return fail("Portable SynthDef loading failed: " + userSynthError);
+        }
 
         for (std::size_t index = 0; index < kSynthGraphNames.size(); ++index) {
             int32 synthName[4]{};
@@ -2336,6 +2813,11 @@ private:
         nextDynamicGraphNodeId_ = reverbNodeId;
         cursor_ = kSCBlockSize;
         worldInitializationError_.clear();
+        moduleStatus += " User SynthDefs loaded (" +
+                        std::to_string(userSynthDefinitions_.size()) + "):";
+        for (const auto& definition : userSynthDefinitions_)
+            moduleStatus += " " + definition.name;
+        moduleStatus += ".";
         setEditorStatus("SuperCollider ready. Press Run to evaluate the script. " + moduleStatus);
         return true;
     }
@@ -2350,6 +2832,8 @@ private:
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
         synthDefinitions_.fill(nullptr);
+        userSynthDefinitions_.clear();
+        userSynthFiles_.clear();
         rootGroup_ = nullptr;
         nextDynamicGraphNodeId_ = 100;
     }
@@ -2367,7 +2851,28 @@ private:
                 continue;
             const auto player = static_cast<std::size_t>(voice.playerIndex);
             const auto& pattern = activePatterns_[player];
-            if (voice.synthIndex >= 31) {
+            const bool isUserSynth =
+                static_cast<std::size_t>(voice.synthIndex) >=
+                kSynthIndexToGraphIndex.size();
+            if (isUserSynth) {
+                const auto userIndex = static_cast<std::size_t>(voice.synthIndex) -
+                                       kSynthIndexToGraphIndex.size();
+                if (userIndex >= userSynthDefinitions_.size())
+                    continue;
+                const auto& definition = userSynthDefinitions_[userIndex];
+                if (definition.frequencyControl >= 0)
+                    Graph_SetControl(voice.activeSynth, definition.frequencyControl,
+                                     voice.frequencyHz);
+                if (definition.amplitudeControl >= 0)
+                    Graph_SetControl(voice.activeSynth, definition.amplitudeControl, 1.0f);
+                if (definition.panControl >= 0)
+                    Graph_SetControl(voice.activeSynth, definition.panControl, 0.0f);
+                if (definition.gateControl >= 0 && !voice.userSynthGateReleased &&
+                    blockStart >= voice.sustainEndSample) {
+                    Graph_SetControl(voice.activeSynth, definition.gateControl, 0.0f);
+                    voice.userSynthGateReleased = true;
+                }
+            } else if (voice.synthIndex >= 31) {
                 const auto start = patternStartSamples_[player];
                 const double beat = blockStart >= start
                     ? static_cast<double>(blockStart - start) * pattern.bpm /
@@ -2377,12 +2882,14 @@ private:
                 Graph_SetControl(voice.activeSynth, 18,
                     evaluateTimeVar(pattern.cutoffControl, beat, pattern.cutoffHz));
             }
-            const float level = reverbEnabled(pattern)
-                ? voiceEnvelopeAt(voice, blockStart) *
-                      (static_cast<float>(voice.velocity) / 127.0f) * voice.amplitude
-                : 0.0f;
-            Graph_SetControl(voice.activeSynth, 7, level);
-            Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
+            if (!isUserSynth) {
+                const float level = reverbEnabled(pattern)
+                    ? voiceEnvelopeAt(voice, blockStart) *
+                          (static_cast<float>(voice.velocity) / 127.0f) * voice.amplitude
+                    : 0.0f;
+                Graph_SetControl(voice.activeSynth, 7, level);
+                Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
+            }
         }
         World_Run(world_);
         for (auto& voice : audioVoices_) {
@@ -2422,7 +2929,10 @@ private:
                     ? static_cast<double>(absoluteSample - patternStart) * livePattern.bpm /
                           (60.0 * sampleRate_)
                     : 0.0;
-                if (livePattern.ampControl.active && voice.synthIndex < 31) {
+                if (livePattern.ampControl.active &&
+                    (voice.synthIndex < 31 ||
+                     static_cast<std::size_t>(voice.synthIndex) >=
+                         kSynthIndexToGraphIndex.size())) {
                     const float patternAmp = evaluateTimeVar(livePattern.ampControl, beat,
                                                              livePattern.amplitude);
                     const float targetAmp = foxDotAmplitude(voice.synthIndex, patternAmp);
@@ -2474,7 +2984,9 @@ private:
                 }
                 // New source graphs own cutoff filtering; do not apply a
                 // second plugin-only low-pass at the same cutoff.
-                if (voice.synthIndex >= 31)
+                if (voice.synthIndex >= 31 &&
+                    static_cast<std::size_t>(voice.synthIndex) <
+                        kSynthIndexToGraphIndex.size())
                     voice.filterState = source;
                 else
                     voice.filterState += voice.filterCoefficient * (source - voice.filterState);
@@ -2683,6 +3195,8 @@ private:
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
         synthDefinitions_.fill(nullptr);
+        userSynthDefinitions_.clear();
+        userSynthFiles_.clear();
         rootGroup_ = nullptr;
         nextDynamicGraphNodeId_ = 100;
         cursor_ = kSCBlockSize;
@@ -2713,6 +3227,8 @@ private:
     World* world_ = nullptr;
     Group* rootGroup_ = nullptr;
     std::array<GraphDef*, kSynthGraphCount> synthDefinitions_{};
+    std::vector<UserSynthFile> userSynthFiles_;
+    std::vector<UserSynthDefinition> userSynthDefinitions_;
     int32 nextDynamicGraphNodeId_ = 100;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
@@ -2771,7 +3287,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-      "0.4.68",
+      "0.4.69",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

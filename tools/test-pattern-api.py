@@ -39,13 +39,16 @@ if wrapper_start < 0 or wrapper_end < 0:
     raise SystemExit('Could not find makeEvaluationScript in python_runtime.cpp')
 wrapper_cpp = source[wrapper_start:wrapper_end]
 
-def make_wrapper(source_path, result_path):
+def make_wrapper(source_path, result_path, user_synth_names=()):
     parts = []
     placeholders = {'namespaceName': 'test_scope', 'api': api,
-                    'sourcePath': source_path, 'resultPath': result_path}
-    for token in re.findall(r'<<\s*("(?:\\.|[^"\\])*"|pythonLiteral\([^)]*\))', wrapper_cpp):
+                    'sourcePath': source_path, 'resultPath': result_path,
+                    'userSynthNames': tuple(user_synth_names)}
+    for token in re.findall(r'<<\s*("(?:\\.|[^"\\])*"|pythonLiteral\([^)]*\)|pythonStringTuple\([^)]*\))', wrapper_cpp):
         if token.startswith('"'):
             parts.append(ast.literal_eval(token))
+        elif token.startswith('pythonStringTuple('):
+            parts.append(repr(placeholders['userSynthNames']))
         else:
             argument = token[len('pythonLiteral('):-1]
             if argument not in placeholders:
@@ -485,13 +488,13 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
         with open(source_path, 'w', encoding='utf-8') as target:
             target.write(script_text)
-        wrapper = make_wrapper(source_path, result_path)
+        wrapper = make_wrapper(source_path, result_path, user_synth_names)
         try:
             compile(wrapper, '<generated evaluation wrapper>', 'exec')
         except SyntaxError as error:
@@ -550,9 +553,16 @@ def run_error_script(script_text):
         exec(make_wrapper(source_path, result_path), wrapper_globals, wrapper_globals)
         return open(result_path, encoding='utf-8').read()
 
-def run_example(name):
+def run_example(name, user_synth_names=()):
     example_path = os.path.join(sys.argv[2], name)
-    return run_script(open(example_path, encoding='utf-8').read())
+    return run_script(open(example_path, encoding='utf-8').read(),
+                      user_synth_names=user_synth_names)
+
+userSynthRows = run_example('94-user-synthdef-loader.py', ('DexterPluck',))
+assert [int(row[6]) for row in userSynthRows] == [58, 58]
+missingUserSynth = run_error_script(
+    'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
+assert 'not a loaded Portable/SynthDefs entry' in missingUserSynth
 
 def assert_player_polyphony_ok(player_row, event_rows):
     length = float(player_row[4])
@@ -584,17 +594,18 @@ assert [row[1] for row in edit_one_player] == ['0']
 stop_one_player = run_script('p2.stop()\n')
 assert [row[1] for row in stop_one_player] == ['1'] and stop_one_player[0][2] == '1'
 
-def run_compatibility_check(script_text):
+def run_compatibility_check(script_text, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         report_path = os.path.join(directory, 'report.txt')
         with open(source_path, 'w', encoding='utf-8') as target:
             target.write(script_text)
-        namespace = {'_compat_source_path': source_path, '_compat_report_path': report_path}
+        namespace = {'_compat_source_path': source_path, '_compat_report_path': report_path,
+                     '_USER_SYNTH_NAMES': tuple(user_synth_names)}
         exec(compile(compatibility_checker, '<embedded compatibility checker>', 'exec'), namespace, namespace)
         return open(report_path, encoding='utf-8').read()
 
-def read_synthdef_manifest(data):
+def read_synthdef_manifest(data, validate_builtin_controls=True, return_controls=False):
     offset = 0
 
     def read(fmt):
@@ -618,6 +629,7 @@ def read_synthdef_manifest(data):
     index_format = '>i' if version == 2 else '>h'
     graph_count = read('>H')
     graphs = {}
+    controls = {}
     for _ in range(graph_count):
         name = read_string()
         constant_count = read(count_format)
@@ -629,7 +641,7 @@ def read_synthdef_manifest(data):
         for _ in range(parameter_name_count):
             parameter_name = read_string()
             parameter_names[parameter_name] = read(count_format)
-        if version == 2:
+        if version == 2 and validate_builtin_controls:
             expected_controls = (
                 'out freq rate sus unused4 unused5 wetbus wetgain wetcutoff trigger '
                 'amp vib depth lforate lfowidth rq fmod blur cutoff atk rel beat_dur'
@@ -638,6 +650,7 @@ def read_synthdef_manifest(data):
                 expected_controls.append('buf')
             assert parameter_names == {key: index for index, key in enumerate(expected_controls)}, (
                 name, 'C++ control-number ABI mismatch', parameter_names)
+        controls[name] = parameter_names
         ugen_count = read(count_format)
         ugens = []
         for _ in range(ugen_count):
@@ -658,7 +671,7 @@ def read_synthdef_manifest(data):
         assert read('>H') == 0, 'unexpected SynthDef variants'
         graphs[name] = ugens
     assert offset == len(data), 'SynthDef parser did not consume the complete file'
-    return version, graphs
+    return (version, graphs, controls) if return_controls else (version, graphs)
 
 
 def test_embedded_synthdef():
@@ -692,6 +705,15 @@ def test_embedded_synthdef():
     sample_version, sample_graphs = read_synthdef_manifest(sample_bytes)
     assert sample_version == 2 and set(sample_graphs) == {'DexterSample'}
     assert any(ugen[0] == 'PlayBuf' for ugen in sample_graphs['DexterSample'])
+    user_def_path = os.path.join(plugin_dir, 'Portable', 'SynthDefs', 'DexterPluck.scsyndef')
+    user_version, user_graphs, user_controls = read_synthdef_manifest(
+        open(user_def_path, 'rb').read(), validate_builtin_controls=False,
+        return_controls=True)
+    assert user_version == 2 and set(user_graphs) == {'DexterPluck'}
+    assert user_controls['DexterPluck'] == {
+        'out': 0, 'freq': 1, 'amp': 2, 'gate': 3, 'atk': 4, 'rel': 5}
+    assert any(ugen[0] == 'Out' for ugen in user_graphs['DexterPluck'])
+    assert any(ugen[0] == 'SinOsc' for ugen in user_graphs['DexterPluck'])
     assert not set(graphs).intersection(core_graphs)
     for graph, ugens in core_graphs.items():
         assert any(name == 'EnvGen' for name, _, _ in ugens), graph
@@ -707,11 +729,19 @@ def test_embedded_synthdef():
     assert set(registered_graphs) == set(graphs), \
         'the C++ graph registry must match the embedded SynthDef bank'
     synth_names_match = re.search(
-        r'synthIndex\s*=\s*\((.*?)\)\.index\(pattern\.synth\)', api, re.S)
+        r'_DEXTER_BUILTIN_SYNTHS\s*=\s*\((.*?)\)', api, re.S)
     assert synth_names_match, 'could not find the Python synth selector'
     synth_names = ast.literal_eval('(' + synth_names_match.group(1) + ')')
     assert len(synth_names) == len(registered_graphs) + 3, \
         'four base waveforms share DexterTone; every other player synth needs one graph'
+    reserved_names_match = re.search(
+        r'kEmbeddedFoxDotSynthNames\s*=\s*\{(.*?)\};', processor_source, re.S)
+    assert reserved_names_match, 'could not find the C++ reserved synth-name list'
+    reserved_names = tuple(re.findall(r'"([^"]+)"', reserved_names_match.group(1)))
+    assert reserved_names == synth_names, \
+        'C++ must reject every filename that collides with a built-in FoxDot synth'
+    assert ('len(_DEXTER_BUILTIN_SYNTHS) +' in api and
+            '_dexter_user_synth_names.index(pattern.synth)' in api)
     assert 'kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1' in processor_source
     assert 'kPlayerCount * kVoiceSlotsPerPlayer' in processor_source
     assert 'kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice' in processor_source
@@ -720,11 +750,14 @@ def test_embedded_synthdef():
     assert 'static_assert(kWorldNodeCapacity >= 2048' in processor_source
     assert 'scPoolCapacity(kSynthGraphCount + kReverbGraphCount)' in processor_source
     assert 'scPoolCapacity(kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity)' in processor_source
-    assert 'prepareSynthGraphs(updates, updateMask, graphError)' in processor_source
+    assert 'prepareSynthGraphs(updates, updateMask, userSynthNames,' in processor_source
+    assert 'static bool hasMonoOutUnit(GraphDef* definition)' in processor_source
+    assert 'std::string_view(bytes, length) == "Out" && unit.mNumInputs == 2' in processor_source
+    assert 'needs an Out UGen that writes exactly one mono signal' in processor_source
     assert 'Graph_New(world_, synthDefinitions_[graphIndex]' in processor_source
     assert 'bool startImmediately = false' in processor_source
     assert 'if (!startImmediately)\n            Node_SetRun(&created->mNode, 0)' in processor_source
-    assert 'graphIndex, graphError, true)' in processor_source
+    assert 'graphError, true);' in processor_source and 'createUserSynthGraph' in processor_source
     assert 'worldAccessMutex_, std::try_to_lock' in processor_source
     init_block = re.search(
         r'bool initializeWorld\([^)]*\)\s*\{(.*?)\n    void discardPartialWorld',
@@ -740,7 +773,7 @@ def test_embedded_synthdef():
     assert 'kSynthIndexToGraphIndex.back() == kSynthGraphCount - 1' in processor_source
     assert 'kSynthIndexToGraphIndex.size()' in processor_source
     graph_selector_match = re.search(
-        r'static Graph\* graphForSynthIndex\(AudioVoice& voice, int synthIndex\)\s*\{(.*?)\n    \}',
+        r'Graph\* graphForSynthIndex\(AudioVoice& voice, int synthIndex\)\s*\{(.*?)\n    \}',
         processor_source, re.S)
     assert graph_selector_match, 'could not find the synth-to-graph selector'
     assert 'synthIndex <= 24' not in graph_selector_match.group(1), \
@@ -1013,7 +1046,7 @@ parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 57' in parse_source
+assert 'update.synthRate' in parse_source and 'kEmbeddedSynthCount + userSynthCount' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
@@ -1138,6 +1171,17 @@ for keyword, value in [('vib', float('inf')), ('rq', 0), ('blur', 0), ('lfowidth
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
+loadedUserSynthReport = run_compatibility_check(
+    'p1 >> userSynth("DexterPluck", P[0, 2, 4], dur=0.5, amp=0.3)\n',
+    ('DexterPluck',))
+assert 'No unsupported constructs detected' in loadedUserSynthReport, loadedUserSynthReport
+unmappedUserSynthControlReport = run_compatibility_check(
+    'p1 >> userSynth("DexterPluck", [0, 2], vib=0.5)\n',
+    ('DexterPluck',))
+assert "Unsupported userSynth control 'vib'" in unmappedUserSynthControlReport
+missingUserSynthReport = run_compatibility_check(
+    'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
+assert 'not present in Portable/SynthDefs' in missingUserSynthReport
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
 for phrase in ('Line 1:', 'Line 2:', 'Line 5:', 'P sample-symbol literals', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
@@ -1145,7 +1189,10 @@ syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
 for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
-        example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
+        example_names = ('DexterPluck',) if filename == '94-user-synthdef-loader.py' else ()
+        example_report = run_compatibility_check(
+            open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
+            example_names)
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
@@ -1541,4 +1588,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-93.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Examples 01-93, and user SynthDef Example 94.')

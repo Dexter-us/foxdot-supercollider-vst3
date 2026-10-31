@@ -103,12 +103,14 @@ public:
 
     bool checkCompatibility(const std::filesystem::path& runtimeDirectory,
                             const std::string& source,
+                            const std::vector<std::string>& userSynthNames,
                             std::string& report,
                             std::string& error);
 
     bool evaluate(const std::filesystem::path& runtimeDirectory,
                   const std::string& namespaceName,
                   const std::string& source,
+                  const std::vector<std::string>& userSynthNames,
                   PythonPattern& pattern,
                   std::string& error);
 

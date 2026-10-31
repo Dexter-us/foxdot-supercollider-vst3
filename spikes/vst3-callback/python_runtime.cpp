@@ -18,6 +18,7 @@
 
 namespace {
 std::atomic<unsigned long long> gScriptNumber{0};
+constexpr std::size_t kEmbeddedSynthCount = 58;
 
 #if defined(_WIN32)
 using PySetPythonHome = void(__cdecl*)(const wchar_t*);
@@ -75,6 +76,20 @@ std::string pythonLiteral(const std::string& value) {
     return result;
 }
 
+std::string pythonStringTuple(const std::vector<std::string>& values) {
+    std::ostringstream result;
+    result << "(";
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0)
+            result << ", ";
+        result << pythonLiteral(values[index]);
+    }
+    if (values.size() == 1)
+        result << ",";
+    result << ")";
+    return result.str();
+}
+
 std::string pathAsUtf8(const std::filesystem::path& path) {
 #if defined(_WIN32)
     const auto value = path.u8string();
@@ -85,11 +100,13 @@ std::string pathAsUtf8(const std::filesystem::path& path) {
 }
 
 std::string makeCompatibilityScript(const std::string& sourcePath,
-                                    const std::string& reportPath) {
+                                    const std::string& reportPath,
+                                    const std::vector<std::string>& userSynthNames) {
     static constexpr char compatibilityChecker[] = R"PY(
 import ast
 import re
 
+_USER_SYNTH_NAMES = globals().get('_USER_SYNTH_NAMES', ())
 _COMPAT_CALLS = {
     'abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter',
     'float', 'int', 'isinstance', 'len', 'list', 'map', 'max', 'min',
@@ -108,7 +125,8 @@ _COMPAT_CALLS = {
     'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
     'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
     'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
-    'Player', 'PlayerPattern', 'MouseX', 'MouseY', '__build_class__'
+    'Player', 'PlayerPattern', 'MouseX', 'MouseY', 'userSynth',
+    '__build_class__'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
                  'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
@@ -123,6 +141,13 @@ _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum',
     'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur'
+}
+_USER_SYNTH_KEYWORDS = {
+    'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
+    'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'velocity',
+    'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime',
+    'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell',
+    'strum'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -277,6 +302,16 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = node.func.id if isinstance(node.func, ast.Name) else None
+        if name == 'userSynth':
+            if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
+                self.add(node.lineno, 'userSynth requires the literal name of a loaded .scsyndef, for example userSynth(\"MyPluck\", notes).')
+            elif node.args[0].value not in _USER_SYNTH_NAMES:
+                self.add(node.lineno, 'userSynth name is not present in Portable/SynthDefs: ' + node.args[0].value)
+            for keyword in node.keywords:
+                if keyword.arg is None:
+                    self.add(keyword.lineno or node.lineno, 'Dynamic keyword expansion cannot be checked; use explicit userSynth controls.')
+                elif keyword.arg not in _USER_SYNTH_KEYWORDS:
+                    self.add(keyword.lineno or node.lineno, "Unsupported userSynth control '" + keyword.arg + "'.")
         if (isinstance(node.func, ast.Attribute) and
                 isinstance(node.func.value, ast.Name) and
                 node.func.value.id == 'Clock' and node.func.attr == 'swing'):
@@ -492,7 +527,7 @@ def _dexter_run_compatibility_check():
             lines.extend('Line ' + str(line) + ': ' + message for line, message in shown)
             if len(diagnostics) > len(shown):
                 lines.append('...and ' + str(len(diagnostics) - len(shown)) + ' more item(s).')
-            lines.append('Supported synth calls: ' + ', '.join(sorted(_COMPAT_WAVES)) + '. WAV play strings support symbols, rests, [], (), {}, adjacent <> layers, and per-hit sample selectors like |x1|.')
+            lines.append('Supported synth calls: ' + ', '.join(sorted(_COMPAT_WAVES)) + '. Loaded external SynthDefs: ' + ', '.join(_USER_SYNTH_NAMES) + '. WAV play strings support symbols, rests, [], (), {}, adjacent <> layers, and per-hit sample selectors like |x1|.')
             report_text = '\n'.join(lines)
     except BaseException as exc:
         report_text = 'Compatibility check could not complete: ' + str(exc)
@@ -504,6 +539,7 @@ _dexter_run_compatibility_check()
     std::ostringstream script;
     script << "_compat_source_path = " << pythonLiteral(sourcePath) << "\n"
            << "_compat_report_path = " << pythonLiteral(reportPath) << "\n"
+           << "_USER_SYNTH_NAMES = " << pythonStringTuple(userSynthNames) << "\n"
            << "exec(compile(" << pythonLiteral(compatibilityChecker)
            << ", '<Dexter compatibility checker>', 'exec'), globals(), globals())\n";
     return script.str();
@@ -511,7 +547,8 @@ _dexter_run_compatibility_check()
 
 std::string makeEvaluationScript(const std::string& sourcePath,
                                 const std::string& resultPath,
-                                const std::string& namespaceName) {
+                                const std::string& namespaceName,
+                                const std::vector<std::string>& userSynthNames) {
     static constexpr char api[] = R"PY(
 _dexter_synth_controls = {}
 _dexter_sample_events = {}
@@ -523,6 +560,15 @@ _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'klank', 'feel', 'glass', 'soft', 'quin', 'space',
                'scratch', 'creep', 'snick', 'swell', 'razz', 'sitar',
                'star', 'karp')
+_DEXTER_BUILTIN_SYNTHS = (
+    'sine', 'triangle', 'saw', 'square', 'bass', 'varsaw', 'dirt', 'jbass',
+    'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave', 'bell',
+    'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
+    'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug', 'ripple', 'viola',
+    'nylon', 'arpy', 'dab', 'sawbass', 'dbass', 'prophet', 'pads', 'pasha',
+    'ambi', 'sinepad', 'keys', 'klank', 'feel', 'glass', 'soft', 'quin',
+    'space', 'scratch', 'creep', 'snick', 'swell', 'razz', 'sitar', 'star',
+    'karp', 'sample')
 def tempo(bpm):
     global _dexter_bpm
     bpm = float(bpm)
@@ -1889,12 +1935,9 @@ class PlayerPattern:
         self.offset = offset
         self.degrees = degrees
         self.rootMidi = None if root is None else _root_midi(root)
-        if synth not in ('sine', 'triangle', 'saw', 'square', 'bass', 'varsaw',
-                         'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano',
-                         'crunch', 'lazer', 'rave', 'bell', 'gong', 'marimba',
-                         'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
-                         'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
-                         'ripple') + _NEW_SYNTHS:
+        if synth not in _DEXTER_BUILTIN_SYNTHS and \
+                synth not in _NEW_SYNTHS and \
+                synth not in _dexter_user_synth_names:
             raise ValueError('Unknown embedded synth: ' + str(synth))
         self.synth = synth
         self.synthControls = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
@@ -2054,6 +2097,11 @@ def _make_named_synth(name, defaultRate):
         kwargs.setdefault('rate', defaultRate)
         return _fox_wave(name, notes, **kwargs)
     return synth
+
+def userSynth(name, notes=0, **kwargs):
+    if not isinstance(name, str) or name not in _dexter_user_synth_names:
+        raise ValueError('userSynth name is not a loaded Portable/SynthDefs entry')
+    return _fox_wave(name, notes, **kwargs)
 
 bass = _make_named_synth('bass', 8.0)
 varsaw = _make_named_synth('varsaw', 0.0)
@@ -2531,16 +2579,10 @@ class Player:
         playerIndex = self.number - 1
         if not 0 <= playerIndex < 8:
             raise ValueError('player number must be 1..8')
-        synthIndex = ('sine', 'triangle', 'saw', 'square', 'bass', 'varsaw',
-                      'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano',
-                      'crunch', 'lazer', 'rave', 'bell', 'gong', 'marimba',
-                      'pluck', 'twang', 'donk', 'squish', 'charm', 'spark',
-                      'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
-                      'ripple', 'viola', 'nylon', 'arpy', 'dab', 'sawbass',
-                      'dbass', 'prophet', 'pads', 'pasha', 'ambi', 'sinepad',
-                      'keys', 'klank', 'feel', 'glass', 'soft', 'quin',
-                      'space', 'scratch', 'creep', 'snick', 'swell',
-                      'razz', 'sitar', 'star', 'karp', 'sample').index(pattern.synth)
+        synthIndex = (_DEXTER_BUILTIN_SYNTHS.index(pattern.synth)
+                      if pattern.synth in _DEXTER_BUILTIN_SYNTHS else
+                      len(_DEXTER_BUILTIN_SYNTHS) +
+                      _dexter_user_synth_names.index(pattern.synth))
         if pattern.synth == 'sample':
             requests = []
             adjusted = []
@@ -2648,7 +2690,9 @@ p8 = Player(8)
            << "'zip', 'ValueError', 'TypeError', 'ZeroDivisionError', "
            << "'__build_class__')}\n"
            << "exec(compile(" << pythonLiteral(api) << ", '<Dexter API>', 'exec'), "
-           << "_dexter_scope, _dexter_scope)\n"
+            << "_dexter_scope, _dexter_scope)\n"
+            << "_dexter_scope['_dexter_user_synth_names'] = "
+            << pythonStringTuple(userSynthNames) << "\n"
            << "_dexter_deadline = time.monotonic() + 2.0\n"
            << "def _dexter_time_limit(frame, event, arg):\n"
            << "    if time.monotonic() > _dexter_deadline:\n"
@@ -2697,6 +2741,7 @@ p8 = Player(8)
 
 bool parseResult(const std::filesystem::path& resultPath,
                  PythonPattern& pattern,
+                 std::size_t userSynthCount,
                  std::string& error) {
     std::ifstream input(resultPath, std::ios::binary);
     if (!input) {
@@ -2746,8 +2791,10 @@ bool parseResult(const std::filesystem::path& resultPath,
             stopped < 0 || stopped > 1 ||
             seenPlayers[static_cast<std::size_t>(update.playerIndex)] || eventCount > 256 ||
             !std::isfinite(update.bpm) || update.bpm < 0.001 ||
-            !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
-              update.lengthBeats > 4096.0 || update.synthIndex < 0 || update.synthIndex > 57 ||
+             !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
+               update.lengthBeats > 4096.0 || update.synthIndex < 0 ||
+               static_cast<std::size_t>(update.synthIndex) >=
+                   kEmbeddedSynthCount + userSynthCount ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
              update.synthRate > 10.0 ||
               (update.synthIndex == 5 && update.synthRate > 1.0) ||
@@ -3032,6 +3079,7 @@ bool PortablePython::initialize(const std::filesystem::path& runtimeDirectory,
 bool PortablePython::evaluate(const std::filesystem::path& runtimeDirectory,
                              const std::string& namespaceName,
                              const std::string& source,
+                              const std::vector<std::string>& userSynthNames,
                              PythonPattern& pattern,
                              std::string& error) {
     if (source.size() > 64 * 1024) {
@@ -3060,7 +3108,8 @@ bool PortablePython::evaluate(const std::filesystem::path& runtimeDirectory,
 
     const auto sourceUtf8 = pathAsUtf8(sourcePath);
     const auto resultUtf8 = pathAsUtf8(resultPath);
-    const auto script = makeEvaluationScript(sourceUtf8, resultUtf8, namespaceName);
+    const auto script = makeEvaluationScript(sourceUtf8, resultUtf8, namespaceName,
+                                             userSynthNames);
     int result = -1;
     {
         std::lock_guard<std::mutex> lock(gPythonMutex);
@@ -3071,7 +3120,7 @@ bool PortablePython::evaluate(const std::filesystem::path& runtimeDirectory,
 
     bool success = false;
     if (result == 0)
-        success = parseResult(resultPath, pattern, error);
+        success = parseResult(resultPath, pattern, userSynthNames.size(), error);
     else
         error = "Python could not evaluate the editor script.";
 
@@ -3089,6 +3138,7 @@ bool PortablePython::evaluate(const std::filesystem::path& runtimeDirectory,
 
 bool PortablePython::checkCompatibility(const std::filesystem::path& runtimeDirectory,
                                        const std::string& source,
+                                       const std::vector<std::string>& userSynthNames,
                                        std::string& report,
                                        std::string& error) {
     if (source.size() > 64 * 1024) {
@@ -3115,7 +3165,8 @@ bool PortablePython::checkCompatibility(const std::filesystem::path& runtimeDire
     }
 
     const auto script = makeCompatibilityScript(pathAsUtf8(sourcePath),
-                                                pathAsUtf8(reportPath));
+                                                pathAsUtf8(reportPath),
+                                                userSynthNames);
     int result = -1;
     {
         std::lock_guard<std::mutex> lock(gPythonMutex);
