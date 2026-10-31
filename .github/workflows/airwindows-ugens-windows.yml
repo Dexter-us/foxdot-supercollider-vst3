@@ -1,0 +1,78 @@
+name: Windows Airwindows UGen add-on pack
+
+on:
+  pull_request:
+    paths:
+      - "UGens/Airwindows/**"
+      - ".github/workflows/airwindows-ugens-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-airwindows-pack:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v4
+
+      - name: Check out pinned SuperCollider headers only
+        uses: actions/checkout@v4
+        with:
+          repository: supercollider/supercollider
+          ref: ef5771bce3d1c9c780cafd58cf032ec4a3f36d10
+          path: sc-source
+          submodules: false
+          fetch-depth: 1
+
+      - name: Set up Python for the embedded-language regression suite
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test both Portable examples with the real embedded parser
+        shell: pwsh
+        run: |
+          python .\UGens\Airwindows\test-examples.py `
+            .\spikes\vst3-callback\python_runtime.cpp `
+            .\UGens\Airwindows\Portable
+
+      - name: Configure the standalone UGen module
+        shell: pwsh
+        run: |
+          cmake -S .\UGens\Airwindows -B "$env:RUNNER_TEMP\airwindows-ugens-build" `
+            -DSC_SOURCE_DIR="$env:GITHUB_WORKSPACE\sc-source"
+
+      - name: Build module and collect pinned source
+        shell: pwsh
+        run: |
+          cmake --build "$env:RUNNER_TEMP\airwindows-ugens-build" `
+            --config Release --parallel 2 --target AirwindowsFX AirwindowsSources
+          $module = Get-ChildItem "$env:RUNNER_TEMP\airwindows-ugens-build" `
+            -Filter "AirwindowsFX.scx" -File -Recurse | Select-Object -First 1
+          if (-not $module) { throw "AirwindowsFX.scx was not built." }
+          $pack = Join-Path $env:RUNNER_TEMP "dexter-airwindows-ugens"
+          New-Item -ItemType Directory -Force -Path `
+            "$pack\Portable\SCPlugins", "$pack\Sources", "$pack\Licenses" | Out-Null
+          Copy-Item $module.FullName "$pack\Portable\SCPlugins\AirwindowsFX.scx"
+          Copy-Item ".\UGens\Airwindows\Portable\*" "$pack\Portable" -Recurse -Force
+          Copy-Item "$env:RUNNER_TEMP\airwindows-ugens-build\Sources\*" "$pack\Sources" -Force
+          Copy-Item ".\UGens\Airwindows\LICENSE-Airwindows.txt" "$pack\LICENSE-Airwindows.txt"
+          if (-not (Test-Path "$pack\Portable\SynthDefs\AirwindowsTapeDelay2.scsyndef")) {
+            throw "TapeDelay2 SynthDef missing from the add-on pack."
+          }
+          if (-not (Test-Path "$pack\Portable\SynthDefs\AirwindowsEchojam.scsyndef")) {
+            throw "Echojam SynthDef missing from the add-on pack."
+          }
+          Compress-Archive -Path "$pack\*" `
+            -DestinationPath "$env:RUNNER_TEMP\dexter-airwindows-ugens-win-x64.zip" -Force
+
+      - name: Upload separate Windows UGen pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: dexter-airwindows-ugens-win-x64
+          path: ${{ runner.temp }}/dexter-airwindows-ugens-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -147,7 +147,7 @@ _USER_SYNTH_KEYWORDS = {
     'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'velocity',
     'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime',
     'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell',
-    'strum'
+    'strum', 'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -2101,7 +2101,20 @@ def _make_named_synth(name, defaultRate):
 def userSynth(name, notes=0, **kwargs):
     if not isinstance(name, str) or name not in _dexter_user_synth_names:
         raise ValueError('userSynth name is not a loaded Portable/SynthDefs entry')
-    return _fox_wave(name, notes, **kwargs)
+    controls = []
+    specifications = (
+        ('vib', 0.0, 0.0, 100.0),
+        ('depth', 0.5, 0.0, 10.0), ('lforate', 1.0, 0.0, 100.0),
+        ('lfowidth', 0.5, 0.0, 1.0), ('rq', 0.5, 0.01, 3.0),
+        ('fmod', 0.0, -2000.0, 2000.0), ('blur', 1.0, 0.01, 8.0))
+    for key, default, minimum, maximum in specifications:
+        value = float(kwargs.pop(key, default))
+        if value != value or not minimum <= value <= maximum:
+            raise ValueError(key + ' must be a finite scalar in the supported range')
+        controls.append(value)
+    pattern = _fox_wave(name, notes, **kwargs)
+    pattern.synthControls = tuple(controls)
+    return pattern
 
 bass = _make_named_synth('bass', 8.0)
 varsaw = _make_named_synth('varsaw', 0.0)
