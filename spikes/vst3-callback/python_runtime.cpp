@@ -129,6 +129,7 @@ _COMPAT_SEQUENCE_KEYWORDS = {
 _COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum'}
 _COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample'}
 _COMPAT_PLAY_KEYWORDS = _COMPAT_NOTE_PLAY_KEYWORDS | _COMPAT_SAMPLE_PLAY_KEYWORDS
+_COMPAT_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
 _COMPAT_SCALE_NAMES = {
     'chromatic', 'major', 'minor', 'natural_minor', 'aeolian', 'dorian',
     'dorian2', 'mixolydian', 'major_pentatonic', 'majorPentatonic',
@@ -285,10 +286,27 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     elif len(range(start, stop, step)) > 256:
                         self.add(node.lineno, 'P range slices are limited to 256 generated items.')
             elif any(isinstance(item, ast.Constant) and isinstance(item.value, str) for item in ast.walk(node.slice)):
-                self.add(node.lineno, 'String sample patterns are not included yet; sample support is deferred.')
+                items = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+                valid_sample_symbols = all(
+                    isinstance(item, ast.Constant) and isinstance(item.value, str) and
+                    len(item.value) == 1 and
+                    (item.value == ' ' or item.value in _COMPAT_SAMPLE_SYMBOLS)
+                    for item in items)
+                if not valid_sample_symbols:
+                    self.add(node.lineno, 'P sample-symbol literals require one sample symbol or a single-space rest per item.')
         self.generic_visit(node)
 
     def visit_BinOp(self, node):
+        has_sample_pattern = any(
+            isinstance(item, ast.Subscript) and
+            isinstance(item.value, ast.Name) and item.value.id == 'P' and
+            any(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                for value in ast.walk(item.slice))
+            for item in ast.walk(node))
+        if has_sample_pattern and isinstance(
+                node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv,
+                          ast.Mod, ast.Pow, ast.BitXor)):
+            self.add(node.lineno, 'P arithmetic over sample-symbol patterns is not supported; use reverse() or rotate().')
         if isinstance(node.op, (ast.BitOr, ast.BitAnd)) and any(
                 isinstance(item, ast.Constant) and isinstance(item.value, str)
                 for item in ast.walk(node)):
@@ -699,7 +717,7 @@ class _FoxDotFinitePattern(list):
     def _composition_items(self, value):
         items = list(value) if isinstance(value, (list, tuple)) else [value]
         if any(self._contains_string(item) for item in items):
-            raise TypeError('P pattern composition supports numeric notes, rests, and chords; sample strings are deferred')
+            raise TypeError('P pattern arithmetic is limited to numeric notes, rests, and chords; use reverse() or rotate() for sample-symbol patterns')
         return items
 
     def _contains_string(self, item):
@@ -1599,6 +1617,11 @@ def _sample_timeline(text, parameterLengths):
     return notes, multipliers, symbolSlots
 
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
+    if isinstance(text, _FoxDotFinitePattern):
+        if any(not isinstance(item, str) or len(item) != 1 or
+               (item != ' ' and item not in _SAMPLE_SYMBOLS) for item in text):
+            raise TypeError('play(P[...]) sample patterns require one sample symbol or one space-rest per item')
+        text = ''.join(text)
     if not isinstance(text, str) or not text:
         raise ValueError('sample pattern cannot be empty')
     if len(text) > 256:
@@ -1654,7 +1677,7 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
     return pattern
 
 def play(notes, *args, **kwargs):
-    if isinstance(notes, str):
+    if isinstance(notes, (str, _FoxDotFinitePattern)):
         return _sample_pattern(notes, *args, **kwargs)
     return _play_notes(notes, *args, **kwargs)
 

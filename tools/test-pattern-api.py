@@ -788,7 +788,7 @@ supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 5:', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
+for phrase in ('Line 1:', 'Line 2:', 'Line 5:', 'P sample-symbol literals', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
@@ -815,6 +815,8 @@ example75 = run_example('75-random-and-layered-strings.py')
 assert [int(row[6]) for row in example75 if row[2] == '0'] == [57, 57, 57]
 example76 = run_example('76-sample-index-selection.py')
 assert [int(row[6]) for row in example76 if row[2] == '0'] == [57]
+example77 = run_example('77-pattern-sample-sequences.py')
+assert len(example77) == 2
 _, duplicateLayerRequests, duplicateLayerEvents = run_script(
     'p1 >> play("<x><x>", dur=1)', include_samples=True, include_events=True)
 assert [int(row[1]) for row in duplicateLayerRequests] == [120, 120]
@@ -872,6 +874,20 @@ _, nestedSampleIndexRequests, nestedSampleIndexEvents = run_script(
     include_samples=True, include_events=True)
 assert [int(row[2]) for row in nestedSampleIndexRequests] == [1, 0, 0]
 assert [float(row[1]) for row in nestedSampleIndexEvents] == [0.0, 0.5, 1.0]
+_, reverseSampleRequests = run_script(
+    'p1 >> play(P["x", "o", " "].reverse(), sample=0)', include_samples=True)
+assert [int(row[1]) for row in reverseSampleRequests] == [111, 120]
+_, rotateSampleRequests = run_script(
+    'p1 >> play(P["x", "o", " "].rotate(1), sample=0)', include_samples=True)
+assert [int(row[1]) for row in rotateSampleRequests] == [111, 120]
+_, repeatSampleRequests = run_script(
+    'p1 >> play(P["x", "o"].repeat(2), sample=0)', include_samples=True)
+assert [int(row[1]) for row in repeatSampleRequests] == [120, 111, 120, 111]
+failure = run_error_script('p1 >> play(P["x", "o"] + P["a"])')
+assert failure.startswith('ERROR\n') and 'TypeError' in failure
+for badPattern in ('P["xx", "o"]', 'P[1, "x"]'):
+    failure = run_error_script('p1 >> play(' + badPattern + ')')
+    assert failure.startswith('ERROR\n') and 'TypeError' in failure, (badPattern, failure)
 for badSelector in ('|x|', '|x10|', '|.1|', '|x1'):
     failure = run_error_script('p1 >> play("' + badSelector + '")')
     assert failure.startswith('ERROR\n') and 'ValueError' in failure, (badSelector, failure)
@@ -880,6 +896,11 @@ assert 'missing closing delimiter' in malformed_string
 assert 'empty group' in run_compatibility_check('p1 >> play("x[]")')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play("|x1|x|a1|a", sample=0)')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(P["x", "o", " "].reverse(), sample=P[0, 1])')
+assert 'P arithmetic over sample-symbol patterns' in run_compatibility_check(
+    'p1 >> play(P["x", "o"] + P["a"])')
+assert 'P sample-symbol literals' in run_compatibility_check('p1 >> play(P["xx", "o"])')
 for badSelector in ('|x|', '|x10|', '|.1|', '|x1'):
     assert 'sample-index selector' in run_compatibility_check(
         'p1 >> play("' + badSelector + '")')
@@ -887,4 +908,4 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play("x[--]o(=[-o])")')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-76.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-77.')

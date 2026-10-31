@@ -1,6 +1,8 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.51 adds per-hit FoxDot sample-index selectors; see Example 76.
+Version 0.4.52 adds finite P-pattern sample-symbol sequences and transforms;
+see Example 77. Version 0.4.51 added per-hit sample-index selectors; see
+Example 76.
 The 0.4.46 synth batch has one isolated synth test per file, examples 43-68:
 43 viola, 44 nylon, 45 arpy, 46 dab, 47 sawbass, 48 dbass,
 49 prophet, 50 pads, 51 pasha, 52 ambi, 53 sinepad, 54 keys,
@@ -48,9 +50,10 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 75-random-and-layered-strings.py demonstrates bounded `{}` variations and
 adjacent `<>` layers. The compatibility checker reports malformed strings;
 76-sample-index-selection.py demonstrates FoxDot's `|x1|` notation to choose
-one sample variant for a single hit. The selector contains one sample symbol
-and a one-digit sample index; other hits still use the `sample=` control.
-General P-pattern operations over sample strings remain unsupported.
+one sample variant for a single hit. Example 77 uses `P["x", "o", " "]` sample
+sequences with `.reverse()` and `.rotate(n)`; the values must be single sample
+symbols or space-rests, and other hits still use `sample=`.
+P arithmetic over sample-symbol patterns remains unsupported.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

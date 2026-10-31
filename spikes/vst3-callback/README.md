@@ -1,17 +1,19 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.51 adds FoxDot's per-hit sample-index selectors to the timed
-portable WAV player. A selector such as `|x1|` chooses the second WAV in the
-`x` bank for that hit; non-selector hits continue using the `sample=` pattern.
-The 0.4.50 nested groups remain supported: `[]` subdivides a step, `()` laces
-one item across successive pattern cycles, `{}` generates a bounded eight-cycle
-variation, and adjacent `<>` groups layer matching beats. The documented behavior was checked against
+Version 0.4.52 adds finite `P[...]` sample-symbol sequences and their
+`.reverse()` and `.rotate(n)` transforms. Values must be one
+sample symbol or a space-rest; `sample=` still selects the WAV variant. Version
+0.4.51 added per-hit selectors such as `|x1|`; 0.4.50 added nested play-string
+groups: `[]` subdivides a step, `()` laces one item across successive pattern
+cycles, `{}` generates a bounded eight-cycle variation, and adjacent `<>`
+groups layer matching beats. The documented behavior was checked against
 FoxDot's [sample-play demo](https://github.com/Qirky/FoxDot/blob/master/FoxDot/demo/03_playing_samples.py)
 and [parser/player documentation](https://github.com/Qirky/FoxDot/blob/master/FoxDot/lib/Patterns/Parse.py);
 the embedded parser is an independent implementation. Selectors currently
 accept one sample symbol and a single digit (0–9), matching FoxDot's
-single-character parser behavior. General P-pattern composition over sample
-strings remains unsupported and is reported by the compatibility checker.
+single-character parser behavior. P arithmetic over sample-symbol patterns and
+more complex P/sample composition remain unsupported and are reported by the
+compatibility checker.
 
 Use `p1 >> play("x-o-", dur=0.5)` with FoxDot's symbol-folder mapping under
 `Portable/Samples`. A hyphen selects a closed-hat sample; whitespace is a
@@ -40,7 +42,8 @@ P-pattern composition over sample strings, streaming, loops/slicing, time stretc
 non-WAV codecs and third-party sample-library redistribution remain deferred.
 The six tiny diagnostic WAVs are generated locally and offered under CC0.
 Examples 70–73 exercise beat symbols, selection, reverse playback and
-time-var sample/rate controls; example 76 tests per-hit sample indices.
+time-var sample/rate controls; example 76 tests per-hit sample indices, and
+example 77 exercises finite P sample sequences, reversal and rotation.
 `tools/test-portable-samples.py` compiles the
 actual decoder and worker/cache code with undefined-behavior checks, then fills
 an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,
@@ -95,9 +98,9 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - The host owns the audio callback; each VST block is split into SuperCollider's fixed 64-sample blocks and buffered for variable host block sizes.
 - The plugin bundles 26 official SuperCollider UGen modules in `Contents/Resources/SCPlugins` and also scans the portable `Portable/SCPlugins` folder for additional compatible Windows `.scx` modules at startup. The bundle includes `DiskIO_UGens` (`DiskIn`, `DiskOut`, and `VDiskIn`) plus the libsndfile 1.2.2 runtime DLL; its LGPL-2.1 license is included. `UIUGens` is included too: `MouseX`, `MouseY`, and `MouseButton` read global desktop input, while `KeyState` is registered but keyboard polling is disabled in SuperCollider's Windows implementation. Six tiny CC0 diagnostic WAVs in `Portable/Samples` exercise the separate native PlayBuf sample player; this does not use the DiskIO UGen or libsndfile. Restart the DAW after adding modules. Ableton Link and Bela-specific modules remain excluded. The bundled SuperCollider modules use GPL terms; Boost headers used at build time are covered by the included Boost Software License notice.
 - The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
-- The editor supports `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independent players (`p1`-`p8`). It accepts direct FoxDot-style `Clock.bpm`, `Scale.default.set(...)`, `p1 >> saw(...)`, and `p1 >> play(...)` notation, with nested play-string subdivisions, lacing, bounded random variations, simultaneous layers, and per-hit selectors such as `|x1|`. The source text stays unchanged; embedded Python maps it to bounded VST events with no OSC or external server. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and Euclidean rhythm generation with `euclid(hits, steps, note=60, rotation=0)`. Finite `P[...]` literals convert to note lists with rests and chords; `+` and `-` support numeric transposition and FoxDot-style cyclic pattern lacing. Finite P patterns also support `.reverse()`, `.rotate()`, `.stutter()`, `.palindrome()`, plus whole-pattern `.repeat()`. General P-pattern operations over sample strings remain unsupported. Examples 74–76 cover nested and indexed sample notation; see Portable examples 70–73 for the WAV player and time-varying controls. Other milestones and controls are documented below.
+- The editor supports `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independent players (`p1`-`p8`). It accepts direct FoxDot-style `Clock.bpm`, `Scale.default.set(...)`, `p1 >> saw(...)`, and `p1 >> play(...)` notation, with nested play-string subdivisions, lacing, bounded random variations, simultaneous layers, and per-hit selectors such as `|x1|`. The source text stays unchanged; embedded Python maps it to bounded VST events with no OSC or external server. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and Euclidean rhythm generation with `euclid(hits, steps, note=60, rotation=0)`. Finite `P[...]` literals convert to note lists with rests and chords; `+` and `-` support numeric transposition and FoxDot-style cyclic pattern lacing. Finite P patterns also support `.reverse()`, `.rotate()`, `.stutter()`, `.palindrome()`, plus whole-pattern `.repeat()`. For samples, finite `P[...]` literals accept one-character symbols and space-rests; `.reverse()` and `.rotate(n)` work with `sample=`. P arithmetic and nested P/sample composition remain unsupported. Examples 74–77 cover nested, indexed, and transformed sample notation; see Portable examples 70–73 for the WAV player and time-varying controls. Other milestones and controls are documented below.
 - The scale bank now includes 44 equal-tempered FoxDot scale names plus custom ascending semitone scales. `Scale.default = ...`, `Scale.default.set(...)`, `Root.default.set(...)`, and per-player `root=` support key and scale selection; Example 26 covers scale/chord groups, Example 27 tests global and per-player roots, Example 28 demonstrates FoxDot's Roman-numeral triads/seventh chords and `PGroup(...)`, and Example 29 demonstrates a gentler two-layer per-note chord strum, and Example 30 demonstrates player mute/unmute while patterns keep running. Just-intonation/frequency scales remain unsupported.
-- The Windows editor has visible Run, Stop, Open, Save, and Save As controls for UTF-8 Python scripts. Run performs a static compatibility check first; known unsupported FoxDot calls, player aliases, controls, Clock/Scale/Root attributes, imports, malformed sample strings, and deferred sample syntax are reported with line numbers. Playback does not start until reported issues are addressed. The static check does not execute code and cannot guarantee dynamically computed values. The Copy Error button copies complete runtime exceptions and compatibility reports. Runtime diagnostics distinguish repeated-pitch overlap from the eight-note polyphony limit and identify the player, MIDI pitch, and beat. Seventy-five starter patterns are separate `.py` files in `Portable`; Open/Save As start there and Save writes to the current script path. The editor prompts before replacing unsaved edits, and shows version and filename.
+- The Windows editor has visible Run, Stop, Open, Save, and Save As controls for UTF-8 Python scripts. Run performs a static compatibility check first; known unsupported FoxDot calls, player aliases, controls, Clock/Scale/Root attributes, imports, malformed sample strings, and deferred sample syntax are reported with line numbers. Playback does not start until reported issues are addressed. The static check does not execute code and cannot guarantee dynamically computed values. The Copy Error button copies complete runtime exceptions and compatibility reports. Runtime diagnostics distinguish repeated-pitch overlap from the eight-note polyphony limit and identify the player, MIDI pitch, and beat. Seventy-seven starter patterns are separate `.py` files in `Portable`; Open/Save As start there and Save writes to the current script path. The editor prompts before replacing unsaved edits, and shows version and filename.
 - VST3 project state stores the editor code. Loading a project restores the script in the editor but does not execute user code automatically.
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
 - A MIDI output event bus is exposed to the host.
