@@ -3,8 +3,9 @@ Portable user SynthDefs
 
 Place one precompiled SuperCollider .scsyndef file in this folder for each
 custom sound. Its filename (without .scsyndef) must exactly match the
-SynthDef's internal name. Names are case-sensitive and limited to 15
-letters, digits, or underscores, with a letter/underscore first.
+SynthDef's internal name. Names are case-sensitive Python identifiers using
+letters, digits, or underscores, with a letter/underscore first; the maximum
+length is 255 bytes (SuperCollider's SynthDef name limit).
 
 This VST does not launch sclang or a SuperCollider server. Compile the
 SynthDef offline with sclang, then the embedded SuperCollider engine loads

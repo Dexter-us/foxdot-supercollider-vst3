@@ -130,7 +130,7 @@ struct UserSynthFile {
 };
 
 bool validUserSynthName(const std::string& name) {
-    if (name.empty() || name.size() > 15 ||
+    if (name.empty() || name.size() > kSCNodeDefNameByteLen - 1 ||
         !(std::isalpha(static_cast<unsigned char>(name.front())) || name.front() == '_'))
         return false;
     return std::all_of(name.begin() + 1, name.end(), [](unsigned char character) {
@@ -174,7 +174,8 @@ std::vector<UserSynthFile> discoverUserSynthFiles(std::string& error) {
 
         const auto name = iterator->path().stem().string();
         if (!validUserSynthName(name)) {
-            error = "SynthDef filename must use a simple Python-safe name (letters, digits, underscore): " +
+            error = "SynthDef filename must be a Python-safe identifier (start with a letter or underscore; "
+                    "letters, digits, underscore only; max 255 characters): " +
                     iterator->path().filename().string();
             return {};
         }
@@ -2584,10 +2585,9 @@ private:
                 return false;
             }
 
-            int32 nameKey[4]{};
-            std::memcpy(nameKey, synthFile.name.data(),
-                        std::min(synthFile.name.size(), sizeof(nameKey)));
-            userDefinition.definition = World_GetGraphDef(world_, nameKey);
+            std::array<int32, kSCNodeDefNameLen> nameKey{};
+            std::memcpy(nameKey.data(), synthFile.name.data(), synthFile.name.size());
+            userDefinition.definition = World_GetGraphDef(world_, nameKey.data());
             if (!userDefinition.definition) {
                 error = "SuperCollider did not register SynthDef " + synthFile.name + ".";
                 return false;
@@ -3288,7 +3288,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-      "0.4.70",
+      "0.4.71",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

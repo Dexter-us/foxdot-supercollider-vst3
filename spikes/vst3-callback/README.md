@@ -1,6 +1,6 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.70 adds runtime loading of one precompiled SuperCollider `.scsyndef`
+Version 0.4.71 adds runtime loading of one precompiled SuperCollider `.scsyndef`
 per file from `Portable/SynthDefs`, with filename/name checks and named control
 mapping for `out`, `freq`, `amp`, `pan`, `gate`, `atk`, `rel`, and `sus`/
 `sustain`. The editor exposes `userSynth("Name", notes, ...)`; it runs inside

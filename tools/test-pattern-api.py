@@ -760,6 +760,10 @@ def test_embedded_synthdef():
     assert 'std::string_view(bytes, length) == "Out" && unit.mNumInputs == 2' in processor_source
     assert 'needs an Out UGen that writes exactly one mono signal' in processor_source
     assert 'Graph_New(world_, synthDefinitions_[graphIndex]' in processor_source
+    assert 'name.size() > kSCNodeDefNameByteLen - 1' in processor_source, \
+        'user SynthDef identifiers must allow SuperCollider names up to 255 bytes'
+    assert 'std::array<int32, kSCNodeDefNameLen> nameKey{}' in processor_source
+    assert 'World_GetGraphDef(world_, nameKey.data())' in processor_source
     assert 'bool startImmediately = false' in processor_source
     assert 'if (!startImmediately)\n            Node_SetRun(&created->mNode, 0)' in processor_source
     assert 'graphError, true);' in processor_source and 'createUserSynthGraph' in processor_source

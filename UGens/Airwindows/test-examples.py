@@ -163,6 +163,11 @@ examples = (
 )
 for filename, synth_names, ugen_name, expected_controls in examples:
     synth_name = synth_names[0]
+    if (not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", synth_name) or
+            len(synth_name.encode("ascii")) > 255):
+        raise AssertionError(f"{synth_name} is not a valid SuperCollider/Python SynthDef name.")
+    if len(synth_name) <= 15:
+        raise AssertionError(f"{synth_name} no longer exercises the long-name regression.")
     example_path = portable_path / filename
     binary_path = portable_path / "SynthDefs" / f"{synth_name}.scsyndef"
     script_text = example_path.read_text(encoding="utf-8")
