@@ -1452,17 +1452,27 @@ def euclid(hits, steps, note=60, rotation=0):
             values.append(None)
     return rotate(values, rotation)
 
-def _timing_pattern(value, count, name, allowGroups=False):
+def _timing_pattern(value, count, name, allowGroups=False,
+                    allowSustainGroups=False):
     if count == 0:
-        return ([], []) if allowGroups else []
-    values = [value] if isinstance(value, (int, float)) else list(value)
+        return ([], []) if allowGroups or allowSustainGroups else []
+    values = ([value] if allowSustainGroups and isinstance(value, _FoxDotChord)
+              else [value] if isinstance(value, (int, float)) else list(value))
     if not values:
         raise ValueError(name + ' pattern cannot be empty')
     result = []
     groupOffsets = []
+    sustainGroups = []
     for index in range(count):
         item = values[index % len(values)]
-        if isinstance(item, _FoxDotDurationGroup):
+        if allowSustainGroups and isinstance(item, _FoxDotChord):
+            group = [float(member) for member in item]
+            if not group:
+                raise ValueError('sus groups cannot be empty')
+            result.append(min(group))
+            sustainGroups.append(group)
+            groupOffsets.append([])
+        elif isinstance(item, _FoxDotDurationGroup):
             if not allowGroups:
                 raise TypeError('PRhythm duration groups are supported in dur=, not sus=')
             if not item:
@@ -1476,8 +1486,13 @@ def _timing_pattern(value, count, name, allowGroups=False):
             result.append(base)
             groupOffsets.append(offsets)
         else:
-            result.append(float(item))
+            numeric = float(item)
+            result.append(numeric)
             groupOffsets.append([])
+            if allowSustainGroups:
+                sustainGroups.append([numeric])
+    if allowSustainGroups:
+        return result, sustainGroups
     return (result, groupOffsets) if allowGroups else result
 
 def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False,
@@ -1507,8 +1522,10 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
             step, len(notes), 'dur', allowGroups=True)
     durationSource = duration
     durationIsVar = isinstance(durationSource, _DexterTimeVar)
-    durations = None if durationIsVar or durationSource is None else \
-        _timing_pattern(durationSource, len(notes), 'sus')
+    sustainGroups = None
+    if not durationIsVar and durationSource is not None:
+        _, sustainGroups = _timing_pattern(
+            durationSource, len(notes), 'sus', allowSustainGroups=True)
     offset = float(offset)
     if offset != offset or offset < 0.0 or offset > 4096.0:
         raise ValueError('offset must be between 0 and 4096 beats')
@@ -1542,7 +1559,7 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
         raise ValueError('a pattern is limited to 256 step slots')
     starts = []
     stepValues = []
-    durationValues = []
+    sustainGroupValues = []
     start = offset
     for i in range(len(notes)):
         multiplier = float(timeMultipliers[i])
@@ -1552,22 +1569,30 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
         stepValue = baseStepValue * multiplier
         stepGroupOffsets[i] = [
             delayOffset * multiplier for delayOffset in stepGroupOffsets[i]]
-        durationValue = stepValue if durationSource is None else \
-            durationSource.at(start) if durationIsVar else durations[i]
+        if durationSource is None:
+            durationValue = stepValue
+            sustainValues = [durationValue]
+        elif durationIsVar:
+            durationValue = durationSource.at(start)
+            sustainValues = [durationValue]
+        else:
+            sustainValues = sustainGroups[i]
         if stepValue != stepValue or stepValue < 0.001 or stepValue > 4096.0:
             raise ValueError('subdivided dur values must be between 0.001 and 4096 beats')
-        if durationValue != durationValue or durationValue < 0.02:
-            raise ValueError('each sus value must be at least 0.02 beats')
+        if any(value != value or value in (float('inf'), float('-inf')) or
+               value < 0.02 for value in sustainValues):
+            raise ValueError('each sus value must be finite and at least 0.02 beats')
         starts.append(start)
         stepValues.append(stepValue)
-        durationValues.append(durationValue)
+        sustainGroupValues.append(sustainValues)
         start += stepValue
     totalBeats = sum(stepValues)
     if offset + totalBeats > 4096.0:
         raise ValueError('offset and pattern length must fit within 4096 beats')
     polyphonyLength = max(_dexter_length, offset + totalBeats)
     maxSustain = min(4096.0, polyphonyLength * 8.0)
-    if any(durationValue > maxSustain + 1e-9 for durationValue in durationValues):
+    if any(value > maxSustain + 1e-9
+           for group in sustainGroupValues for value in group):
         raise ValueError('sus cannot exceed 8 cycles of the pattern or 4096 beats')
     additions = []
     for i, item in enumerate(notes):
@@ -1584,7 +1609,12 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
         if len(chord) > 8:
             raise ValueError('a chord can contain at most 8 notes')
         strumValue = strum.at(start) if strumIsVar else strum
-        for chordIndex, note in enumerate(chord):
+        offsets = [0.0] + stepGroupOffsets[i]
+        sustainValues = sustainGroupValues[i]
+        groupCount = max(len(chord), len(offsets), len(sustainValues))
+        for groupIndex in range(groupCount):
+            chordIndex = groupIndex % len(chord)
+            note = chord[chordIndex]
             note = int(note)
             if _octave_control is not None:
                 octave = int(round(_octave_control.at(start)))
@@ -1600,14 +1630,15 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                 raise ValueError('atk must be between 0 and 3 seconds')
             if releaseValue != releaseValue or not 0.0 <= releaseValue <= 3.0:
                 raise ValueError('rel must be between 0 and 3 seconds')
-            offsets = [0.0] + stepGroupOffsets[i]
-            for groupOffset in offsets:
-                additions.append((start, durationValues[i], note, noteVelocity,
-                                  attackValue, releaseValue,
-                                  strumValue * chordIndex + groupOffset,
-                                  bool(_allow_repeated_notes or
-                                       stepGroupOffsets[i]),
-                                  i, chordIndex))
+            groupOffset = offsets[groupIndex % len(offsets)]
+            sustainValue = sustainValues[groupIndex % len(sustainValues)]
+            additions.append((start, sustainValue, note, noteVelocity,
+                              attackValue, releaseValue,
+                              strumValue * chordIndex + groupOffset,
+                              bool(_allow_repeated_notes or
+                                   stepGroupOffsets[i] or
+                                   len(sustainValues) > 1),
+                              i, chordIndex))
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
@@ -2247,7 +2278,8 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
         if not dur:
             raise ValueError('dur pattern cannot be empty')
         lengths.append(len(dur))
-    if sus is not None and not isinstance(sus, (int, float, _DexterTimeVar)):
+    if sus is not None and not isinstance(
+            sus, (int, float, _DexterTimeVar, _FoxDotChord)):
         sus = list(sus)
         if not sus:
             raise ValueError('sus pattern cannot be empty')

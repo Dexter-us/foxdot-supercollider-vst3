@@ -1358,6 +1358,67 @@ assert [round(float(event[1]) + float(event[7]), 6)
 assert [round(float(event[2]), 6) for event in example89Events] == [
     0.35] * 6
 assert_player_polyphony_ok(example89Rows[0], example89Events)
+groupedSustainText = (
+    'p1 >> triangle(P[PGroup(0, 2, 4), PGroup(4, 6)], dur=1, '
+    'sus=P[PGroup(0.25, 0.45), PGroup(0.35, 0.65)], oct=4, amp=0.14)\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    groupedSustainText)
+groupedSustainRows, groupedSustainEvents = run_script(
+    groupedSustainText, include_events=True)
+assert len(groupedSustainRows) == 1 and len(groupedSustainEvents) == 5
+assert [round(float(event[1]), 6) for event in groupedSustainEvents] == [
+    0.0, 0.0, 0.0, 1.0, 1.0]
+assert [round(float(event[2]), 6) for event in groupedSustainEvents] == [
+    0.25, 0.45, 0.25, 0.35, 0.65]
+assert_player_polyphony_ok(groupedSustainRows[0], groupedSustainEvents)
+groupedRhythmText = (
+    'p1 >> triangle(P[PGroup(0, 2, 4), PGroup(0, 2, 4)], '
+    'dur=PRhythm([1, (3, 8)]), sus=PGroup(0.2, 0.4, 0.6))\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    groupedRhythmText)
+groupedRhythmRows, groupedRhythmEvents = run_script(
+    groupedRhythmText, include_events=True)
+assert len(groupedRhythmRows) == 1 and len(groupedRhythmEvents) == 6
+assert [round(float(event[7]), 6) for event in groupedRhythmEvents] == [
+    0.0, 0.0, 0.0, 0.0, 0.75, 1.5]
+assert [round(float(event[2]), 6) for event in groupedRhythmEvents] == [
+    0.2, 0.4, 0.6, 0.2, 0.4, 0.6]
+sampleGroupedSustainRows, sampleGroupedSustainRequests, sampleGroupedSustainEvents = run_script(
+    'p1 >> play("x o ", dur=1, sus=PGroup(0.25, 0.5), sample=0)\n',
+    include_samples=True, include_events=True)
+assert len(sampleGroupedSustainRows) == 1
+assert len(sampleGroupedSustainRequests) == len(sampleGroupedSustainEvents) == 4
+assert [int(row[1]) for row in sampleGroupedSustainRequests] == [
+    120, 120, 111, 111]
+assert [round(float(event[2]), 6) for event in sampleGroupedSustainEvents] == [
+    0.25, 0.5, 0.25, 0.5]
+badGroupedSustain = run_error_script(
+    'p1 >> sine([0], dur=1, sus=PGroup(0, 0.5))\n')
+assert 'each sus value must be finite and at least 0.02 beats' in badGroupedSustain
+tooManyGroupedEvents = run_error_script(
+    'p1 >> sine(P[0:33], dur=1, '
+    'sus=PGroup(0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09))\n')
+assert 'limited to 256 note events' in tooManyGroupedEvents
+groupedSustainPolyphony = run_error_script(
+    'p1 >> sine(P[0, 2], dur=1, '
+    'sus=PGroup(1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5))\n')
+assert 'pattern exceeds 8-note polyphony' in groupedSustainPolyphony
+example90Text = open(
+    os.path.join(sys.argv[2], '90-grouped-sustain.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example90Text)
+example90Rows, example90Requests, example90Events = run_script(
+    example90Text, include_samples=True, include_events=True)
+assert len(example90Rows) == 2 and len(example90Requests) == 4
+assert len(example90Events) == 9
+assert [round(float(event[2]), 6) for event in example90Events[:5]] == [
+    0.25, 0.45, 0.25, 0.35, 0.65]
+assert [round(float(event[1]), 6) for event in example90Events[5:]] == [
+    0.0, 0.0, 2.0, 2.0]
+assert [round(float(event[2]), 6) for event in example90Events[5:]] == [
+    0.25, 0.5, 0.25, 0.5]
+assert_player_polyphony_ok(example90Rows[0], example90Events[:5])
 numericTransformText = open(
     os.path.join(sys.argv[2], '88-numeric-pattern-transforms.py'),
     encoding='utf-8').read()
@@ -1372,4 +1433,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-89.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-90.')

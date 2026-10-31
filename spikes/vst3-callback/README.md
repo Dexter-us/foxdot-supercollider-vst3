@@ -1,8 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.64 adds bounded nested `PRhythm(...)` groups. Nested duration lists
-expand into note offsets, with nesting limited to eight levels and expanded
-events limited to 256; see Example 89. Version 0.4.63 extends
+Version 0.4.65 adds FoxDot-style grouped `sus=` values via `PGroup(...)`.
+Sustain groups lace with chord tones and rhythm offsets, and expanded events
+remain limited to 256 with eight simultaneous voices per player; see Example 90.
+Version 0.4.64 added bounded nested `PRhythm(...)` groups, limited to eight
+nesting levels; see Example 89. Version 0.4.63 extends
 `PAlt`, `PStretch`, `PStutter`, `PShuf`, and `PJoin`
 from sample-symbol inputs to bounded numeric note patterns, including rests
 and chord groups. `PStutter` uses FoxDot's least-common-multiple cycling for
@@ -16,7 +18,8 @@ chord patterns; Example 86 demonstrates both. Version 0.4.60 added
 `PQuicken(...)` delay clusters and a bounded `PRhythm(...)`
 subset matching FoxDot's documented flat-list and Euclidean-tuple behavior;
 Example 85 demonstrates both. Tuple groups in `dur=` create delayed repeats.
-Nested duration patterns now create bounded groups; grouped `sus=` remains deferred.
+Nested duration patterns create bounded groups; grouped `sus=` values are now
+supported through `PGroup(...)` and count toward the same event/polyphony caps.
 Version 0.4.59 adds bounded `PDelay(...)` beat offsets and FoxDot's `PStrum(...)`
 rhythm pattern; Example 84 combines them. Version 0.4.58 matches FoxDot's
 slice-based `start` rotations for `PBeat(...)` and `PDur(...)`, including
@@ -86,6 +89,7 @@ PJoin/PShuf, 83 tests PBeat/PDur durations, 84 combines PDelay/PStrum, 85
 demonstrates PQuicken/PRhythm, 86 combines PZip/PZip2, and 87 exercises
 overlapping sustains. Example 88 uses all five transforms on numeric notes;
 Example 89 demonstrates nested PRhythm timing groups.
+Example 90 demonstrates grouped sustain lacing across chord tones and sample hits.
 `tools/test-portable-samples.py` compiles the
 actual decoder and worker/cache code with undefined-behavior checks, then fills
 an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,
@@ -142,7 +146,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
 - The editor supports `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independent players (`p1`-`p8`). It accepts direct FoxDot-style `Clock.bpm`, `Scale.default.set(...)`, `p1 >> saw(...)`, and `p1 >> play(...)` notation, with nested play-string subdivisions, lacing, bounded random variations, simultaneous layers, and per-hit selectors such as `|x1|`. The source text stays unchanged; embedded Python maps it to bounded VST events with no OSC or external server. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and Euclidean rhythm generation with `euclid(hits, steps, note=60, rotation=0)`. Finite `P[...]` literals convert to note lists with rests and chords; `+` and `-` support numeric transposition and FoxDot-style cyclic pattern lacing. Finite P patterns also support `.reverse()`, `.rotate()`, `.stutter()`, `.palindrome()`, plus whole-pattern `.repeat()`. For samples, finite `P[...]` literals accept one-character symbols and space-rests; `.reverse()`, `.rotate(n)`, and FoxDot's left-to-right `|` concatenation work with sample-symbol patterns, followed by `play(...)`. Numeric P arithmetic and sample-symbol `&` chord zipping remain unsupported. Examples 74–78 cover nested, indexed, transformed, and concatenated sample notation; see Portable examples 70–73 for the WAV player and time-varying controls. Other milestones and controls are documented below.
 - The scale bank now includes 44 equal-tempered FoxDot scale names plus custom ascending semitone scales. `Scale.default = ...`, `Scale.default.set(...)`, `Root.default.set(...)`, and per-player `root=` support key and scale selection; Example 26 covers scale/chord groups, Example 27 tests global and per-player roots, Example 28 demonstrates FoxDot's Roman-numeral triads/seventh chords and `PGroup(...)`, and Example 29 demonstrates a gentler two-layer per-note chord strum, and Example 30 demonstrates player mute/unmute while patterns keep running. Just-intonation/frequency scales remain unsupported.
-- The Windows editor has visible Run, Stop, Open, Save, and Save As controls for UTF-8 Python scripts. Run performs a static compatibility check first; known unsupported FoxDot calls, player aliases, controls, Clock/Scale/Root attributes, imports, malformed sample strings, and deferred sample syntax are reported with line numbers. Playback does not start until reported issues are addressed. The static check does not execute code and cannot guarantee dynamically computed values. The Copy Error button copies complete runtime exceptions and compatibility reports. FoxDot-style overlapping sustains and repeated pitches are accepted under the eight-note per-player safety limit; exceeding it identifies the player and beat. Eighty-seven starter patterns are separate `.py` files in `Portable`; Open/Save As start there and Save writes to the current script path. The editor prompts before replacing unsaved edits, and shows version and filename.
+- The Windows editor has visible Run, Stop, Open, Save, and Save As controls for UTF-8 Python scripts. Run performs a static compatibility check first; known unsupported FoxDot calls, player aliases, controls, Clock/Scale/Root attributes, imports, malformed sample strings, and deferred sample syntax are reported with line numbers. Playback does not start until reported issues are addressed. The static check does not execute code and cannot guarantee dynamically computed values. The Copy Error button copies complete runtime exceptions and compatibility reports. FoxDot-style overlapping sustains, grouped `sus=` values, and repeated pitches are accepted under the eight-note per-player safety limit; exceeding it identifies the player and beat. Ninety starter patterns are separate `.py` files in `Portable`; Open/Save As start there and Save writes to the current script path. The editor prompts before replacing unsaved edits, and shows version and filename.
 - VST3 project state stores the editor code. Loading a project restores the script in the editor but does not execute user code automatically.
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
 - A MIDI output event bus is exposed to the host.

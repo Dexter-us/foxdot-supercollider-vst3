@@ -1,8 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.64 adds nested PRhythm duration groups, flattened to bounded note
-offsets. Nesting is limited to eight levels and expanded note events to 256;
-see Example 89. Grouped sus= remains deferred.
+Version 0.4.65 adds grouped sus= values using PGroup(...), laced with chord
+tones and PRhythm offsets. Grouped events count toward the eight-voice and
+256-event limits; see Example 90. Version 0.4.64 added nested PRhythm duration
+groups, flattened to bounded note offsets with nesting limited to eight levels;
+see Example 89.
 Version 0.4.63 extends PAlt, PStretch, PStutter, PShuf, and PJoin to bounded
 numeric note patterns, rests and chord groups as well as sample-symbol inputs.
 PStutter cycles source and count patterns to their least-common-multiple length,
@@ -18,8 +20,10 @@ zipping are deferred.
 Version 0.4.60 adds PQuicken delay clusters and a bounded PRhythm subset;
 see Example 85. PRhythm accepts positive durations and
 (n, k[, start[, dur]]) Euclidean tuples. A tuple group in dur= plays delayed
-repeats at the cumulative Euclidean offsets. Nested lists now create bounded
-groups using cumulative child-duration offsets; grouped sus= remains deferred.
+repeats at the cumulative Euclidean offsets. Nested lists create bounded groups
+using cumulative child-duration offsets. Grouped sus= accepts PGroup(...) and
+laces sustain values across chord, duration-group and sustain-group lengths;
+shorter groups cycle to the longest.
 PQuicken output and each player are capped at 256
 expanded note events; delay offsets are limited to 8 beats.
 Version 0.4.59 adds bounded PDelay groups and the FoxDot PStrum rhythm
@@ -130,6 +134,8 @@ PJoin on scale-degree notes, including numeric rest/chord support.
 
 89-nested-prhythm.py demonstrates nested duration groups, including a nested
 Euclidean tuple and the resulting retrigger offsets.
+90-grouped-sustain.py demonstrates grouped per-voice sustain on chord tones and
+the bundled sample player.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 
