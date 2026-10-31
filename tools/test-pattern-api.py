@@ -197,6 +197,20 @@ assert [round(value, 6) for value in namespace['PQuicken']()] == [
 assert [round(value, 6) for value in namespace['PQuicken'](0.35, 2, 4)] == [
     0.0, 0.175, 0.2625, 0.30625]
 assert len(namespace['PQuicken'](0.5, 17, 16)) == 256
+assert namespace['PZip']([0, 1, 2], [3, 4]) == [
+    (0, 3), (1, 4), (2, 3), (0, 4), (1, 3), (2, 4)]
+assert namespace['PZip'](
+    namespace['P'][0, 1], namespace['P'][3, 4],
+    namespace['P'][5, 6, 7]) == [
+        (0, 3, 5), (1, 4, 6), (0, 3, 7),
+        (1, 4, 5), (0, 3, 6), (1, 4, 7)]
+assert namespace['PZip'](2, [4, 5]) == [(2, 4), (2, 5)]
+assert namespace['PZip']([None, 1], [3, 4]) == [
+    (None, 3), (1, 4)]
+assert namespace['PZip2']([0, 1, 2], [1, 2], rule=lambda a, b: a != b) == [
+    (0, 1), (1, 2), (2, 1), (0, 2)]
+assert namespace['PZip2']([0, 1], [3, 4]) == [(0, 3), (1, 4)]
+assert namespace['PZip2']([1], [1], rule=lambda a, b: False) == []
 assert namespace['PRhythm']([2, (3, 8)]) == [2.0, (2.0, 0.75, 1.5)]
 assert namespace['PRhythm']([(3, 8)]) == [0.75, 0.75, 0.5]
 assert namespace['PRhythm']([2, (3, 8, 1, 0.25)]) == [
@@ -222,6 +236,14 @@ for badRhythm in (
         lambda: namespace['PQuicken'](0.5, 1, 4),
         lambda: namespace['PQuicken'](0.5, 17, 17),
         lambda: namespace['PQuicken'](0.5, 3.0, 4),
+        lambda: namespace['PZip']([1]),
+        lambda: namespace['PZip']([], [1]),
+        lambda: namespace['PZip']([1] * 16, [2] * 17),
+        lambda: namespace['PZip']([1] * 257, [2]),
+        lambda: namespace['PZip']([1], 'xo'),
+        lambda: namespace['PZip']([1], [(2, 3)]),
+        lambda: namespace['PZip2']([1] * 16, [2] * 17),
+        lambda: namespace['PZip2']([1], [2], rule=0),
         lambda: namespace['PRhythm']([]),
         lambda: namespace['PRhythm']([0]),
         lambda: namespace['PRhythm']([True]),
@@ -1134,6 +1156,13 @@ assert 'PQuicken accepts dur, stepsize, and steps' in run_compatibility_check(
     'p1 >> saw([0], delay=PQuicken(0.5, 2, 4, 5))')
 assert 'PQuicken supports only dur, stepsize, and steps keywords' in run_compatibility_check(
     'p1 >> saw([0], delay=PQuicken(speed=2))')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw(PZip(P[0, 2], P[4, 5]), dur=1, sus=0.5)\n'
+    'p2 >> sine(PZip2(P[0, 1], P[2, 3], rule=lambda a, b: a != b))')
+assert 'PZip requires 2 to 8 finite numeric patterns' in run_compatibility_check(
+    'p1 >> saw(PZip(P[0]))')
+assert 'PZip currently supports numeric note patterns and rests' in run_compatibility_check(
+    'p1 >> play(PZip(P["x", "o"], P["-", " "] ))')
 assert 'PRhythm expects one finite list or P pattern' in run_compatibility_check(
     'p1 >> saw([0], dur=PRhythm())')
 assert 'PStretch currently accepts sample-symbol patterns only' in run_compatibility_check(
@@ -1210,6 +1239,14 @@ quickenRows, quickenEvents = run_script(
 assert len(quickenRows) == 1 and len(quickenEvents) == 6
 assert [round(float(event[7]), 6) for event in quickenEvents] == [
     0.0, 0.2, 0.3, 0.0, 0.2, 0.3]
+zipRows, zipEvents = run_script(
+    'p1 >> sine(PZip(P[None, 2], P[3, 4]), dur=1, sus=0.5)\n',
+    include_events=True)
+assert len(zipRows) == 1 and len(zipEvents) == 3
+example86Rows, example86Events = run_script(
+    open(os.path.join(sys.argv[2], '86-pzip-pzip2-chords.py'), encoding='utf-8').read(),
+    include_events=True)
+assert len(example86Rows) == 2 and len(example86Events) == 28
 example85Rows, example85Requests, example85Events = run_script(
     open(os.path.join(sys.argv[2], '85-pquicken-prhythm.py'), encoding='utf-8').read(),
     include_samples=True, include_events=True)
@@ -1222,4 +1259,4 @@ assert sorted(round(float(event[7]), 6) for event in example85Events
     0.30625, 0.30625, 0.30625, 0.30625]
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-85.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-86.')

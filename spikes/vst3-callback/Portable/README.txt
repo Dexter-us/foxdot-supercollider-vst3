@@ -1,5 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.61 adds bounded numeric-note PZip chord pairing and PZip2 pairing
+with a rule; see Example 86. PZip/PZip2 accept 1D numeric note patterns and
+rests, capped at 8 inputs and 256 laced items. Sample-symbol and nested-chord
+zipping are deferred.
 Version 0.4.60 adds PQuicken delay clusters and a bounded PRhythm subset;
 see Example 85. PRhythm accepts a flat pattern of positive durations and
 (n, k[, start[, dur]]) Euclidean tuples. A tuple group in dur= plays delayed
@@ -99,6 +103,9 @@ the PStrum rhythm pattern on a melodic player.
 
 85-pquicken-prhythm.py demonstrates a Euclidean duration group on sample
 patterns and a PQuicken delay cluster on a melodic player.
+
+86-pzip-pzip2-chords.py demonstrates PZip's rotating chord combinations and
+PZip2's filtered chord pairs.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

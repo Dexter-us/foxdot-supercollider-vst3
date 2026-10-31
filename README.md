@@ -2,8 +2,10 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.60 adds FoxDot-style `PQuicken(...)` delay clusters and a bounded
-`PRhythm(...)` subset; see Example 85. Version 0.4.59 added bounded
+Version 0.4.61 adds bounded numeric-note `PZip(...)` and filtered `PZip2(...)`
+chord patterns; see Example 86. Version 0.4.60 added FoxDot-style
+`PQuicken(...)` delay clusters and a bounded `PRhythm(...)` subset; see Example 85.
+Version 0.4.59 added bounded
 `PDelay(...)` beat offsets and FoxDot's `PStrum(...)` rhythm pattern; Example 84
 combines them. Version 0.4.58 matches FoxDot's
 slice-based `start` rotations for `PBeat(...)` and `PDur(...)`, including
@@ -24,7 +26,7 @@ bounded eight-cycle `{}` variations, and adjacent `<>` layers. Numeric P
 arithmetic and sample-symbol `&` chord-zipping remain unsupported and are
 reported by the compatibility checker. Playback uses the
 bundled native SC PlayBuf UGen; no SC/UGen rebuild, libsndfile DLL, external
-process or OSC is added. Portable examples 70–85 include six generated CC0
+process or OSC is added. Portable examples 70–86 include six generated CC0
 diagnostic WAVs, not a third-party sound library. See
 `Portable/Samples/README.txt` for syntax, folder layout and file-format/safety
 limits.

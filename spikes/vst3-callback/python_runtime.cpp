@@ -98,6 +98,7 @@ _COMPAT_CALLS = {
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
+    'PZip', 'PZip2',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -268,6 +269,31 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     self.add(keyword.lineno or node.lineno, 'PQuicken supports only dur, stepsize, and steps keywords.')
         if name == 'PRhythm' and (len(node.args) != 1 or node.keywords):
             self.add(node.lineno, 'PRhythm expects one finite list or P pattern.')
+        if name == 'PZip':
+            allowed = {'pat1', 'pat2'}
+            if not 2 <= len(node.args) + len(node.keywords) <= 8:
+                self.add(node.lineno, 'PZip requires 2 to 8 finite numeric patterns.')
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(keyword.lineno or node.lineno, 'PZip accepts only pat1 and pat2 keywords; add further patterns positionally.')
+        if name == 'PZip2':
+            allowed = {'pat1', 'pat2', 'rule'}
+            if not 2 <= len(node.args) + len(node.keywords) <= 3:
+                self.add(node.lineno, 'PZip2 requires two finite patterns and an optional rule.')
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(keyword.lineno or node.lineno, 'PZip2 accepts only pat1, pat2, and rule keywords.')
+        if name in {'PZip', 'PZip2'}:
+            patternArguments = list(node.args[:8 if name == 'PZip' else 2])
+            patternArguments.extend(
+                keyword.value for keyword in node.keywords
+                if keyword.arg in {'pat1', 'pat2'})
+            for argument in patternArguments:
+                if (isinstance(argument, ast.Subscript) and
+                        isinstance(argument.value, ast.Name) and argument.value.id == 'P' and
+                        any(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                            for value in ast.walk(argument.slice))):
+                    self.add(argument.lineno, name + ' currently supports numeric note patterns and rests; sample-symbol zipping is deferred.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -1023,6 +1049,64 @@ def PStrum(n=4):
     second = _FoxDotFinitePattern([1.5, 0.5]).stutter([1, n])
     return first | second | 1.0
 
+def _pzip_pattern_values(pattern, name):
+    if isinstance(pattern, _FoxDotFinitePattern):
+        values = list(pattern)
+    elif isinstance(pattern, (list, tuple)):
+        values = list(pattern)
+    elif pattern is None or (isinstance(pattern, (int, float)) and
+                             not isinstance(pattern, bool)):
+        values = [pattern]
+    else:
+        raise TypeError(name + ' accepts finite numeric note patterns and rests only')
+    if not values:
+        raise ValueError(name + ' patterns cannot be empty')
+    if len(values) > 256:
+        raise ValueError(name + ' input patterns are limited to 256 items')
+    for item in values:
+        if item is None:
+            continue
+        if (isinstance(item, bool) or not isinstance(item, (int, float)) or
+                item != item or item in (float('inf'), float('-inf'))):
+            raise TypeError(name + ' accepts finite numeric notes and rests, not nested chords or sample symbols')
+    return values
+
+def _pzip_laced_length(patterns, name):
+    length = 1
+    for pattern in patterns:
+        other = len(pattern)
+        left, right = length, other
+        while right:
+            left, right = right, left % right
+        length = (length // left) * other
+        if length > 256:
+            raise ValueError(name + ' output is limited to 256 laced items')
+    return length
+
+def PZip(pat1, pat2, *patN):
+    patterns = [_pzip_pattern_values(pattern, 'PZip')
+                for pattern in (pat1, pat2) + patN]
+    if len(patterns) > 8:
+        raise ValueError('PZip accepts 2 to 8 patterns')
+    length = _pzip_laced_length(patterns, 'PZip')
+    return _FoxDotFinitePattern([
+        tuple(pattern[index % len(pattern)] for pattern in patterns)
+        for index in range(length)])
+
+def PZip2(pat1, pat2, rule=None):
+    patterns = [_pzip_pattern_values(pat1, 'PZip2'),
+                _pzip_pattern_values(pat2, 'PZip2')]
+    length = _pzip_laced_length(patterns, 'PZip2')
+    result = []
+    for index in range(length):
+        left = patterns[0][index % len(patterns[0])]
+        right = patterns[1][index % len(patterns[1])]
+        if rule is None or rule(left, right):
+            result.append((left, right))
+            if len(result) > 256:
+                raise ValueError('PZip2 output is limited to 256 zipped pairs')
+    return _FoxDotFinitePattern(result)
+
 class _FoxDotDurationGroup(tuple):
     def __new__(cls, values):
         return tuple.__new__(cls, values)
@@ -1398,6 +1482,9 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
         if item is None:
             continue
         chord = list(item) if isinstance(item, (list, tuple)) else [item]
+        chord = [note for note in chord if note is not None]
+        if not chord:
+            continue
         if len(chord) > 8:
             raise ValueError('a chord can contain at most 8 notes')
         strumValue = strum.at(start) if strumIsVar else strum
