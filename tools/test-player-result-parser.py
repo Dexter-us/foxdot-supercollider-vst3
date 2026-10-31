@@ -88,4 +88,22 @@ with tempfile.TemporaryDirectory() as directory:
         result.write_text(bad)
         parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
         assert parsed.returncode == 1, parsed.stdout
+
+    safe_overlap_source = directory / "safe-overlap.py"
+    safe_overlap_source.write_text(
+        "p1 >> sine([(0, 1, 2, 3, 4), (5, 6, 7, 8)], dur=1, sus=0.5)\n")
+    overlap_wrapper = api_tests["make_wrapper"](
+        str(safe_overlap_source), str(result))
+    exec(overlap_wrapper, {"__name__": "__main__"})
+    overlap_lines = result.read_text().splitlines()
+    note_indexes = [index for index, line in enumerate(overlap_lines)
+                    if line.startswith("N\t")]
+    assert len(note_indexes) == 9
+    for index in note_indexes[:5]:
+        fields = overlap_lines[index].split("\t")
+        fields[2] = "1.5"
+        overlap_lines[index] = "\t".join(fields)
+    result.write_text("\n".join(overlap_lines) + "\n")
+    parsed = subprocess.run([str(binary), str(result)], capture_output=True, text=True)
+    assert parsed.returncode == 1 and "exceeds 8-note polyphony" in parsed.stderr, parsed.stderr
 print(f"PASS: {len(examples)} example results accepted by compiled C++ parser; malformed synth/sample records rejected")

@@ -803,10 +803,17 @@ private:
 
     struct TimedMidiEvent {
         std::uint64_t sample = 0;
+        int32 noteId = -1;
         int playerIndex = 0;
         int midiNote = 60;
         int velocity = 100;
         bool noteOn = false;
+    };
+
+    struct ActiveMidiGate {
+        int32 noteId = -1;
+        int midiNote = -1;
+        bool emitted = false;
     };
 
     struct BiquadState {
@@ -1049,7 +1056,8 @@ private:
     }
 
     static void addMidiNoteEvent(IEventList* outputEvents, int32 sampleOffset,
-                                 int midiNote, int velocity, bool noteOn, int channel = 0) {
+                                 int midiNote, int velocity, bool noteOn, int channel = 0,
+                                 int32 noteId = -1) {
         if (!outputEvents)
             return;
         Event event{};
@@ -1064,13 +1072,13 @@ private:
             event.noteOn.tuning = 0.0f;
             event.noteOn.velocity = static_cast<float>(velocity) / 127.0f;
             event.noteOn.length = 0;
-            event.noteOn.noteId = -1;
+            event.noteOn.noteId = noteId;
         } else {
             event.type = Event::kNoteOffEvent;
             event.noteOff.channel = static_cast<int16>(channel);
             event.noteOff.pitch = static_cast<int16>(midiNote);
             event.noteOff.velocity = static_cast<float>(velocity) / 127.0f;
-            event.noteOff.noteId = -1;
+            event.noteOff.noteId = noteId;
             event.noteOff.tuning = 0.0f;
         }
         outputEvents->addEvent(event);
@@ -1079,13 +1087,12 @@ private:
     void stopPlayerMidiNotes(IEventList* outputEvents, int32 sampleOffset, int playerIndex) {
         if (playerIndex < 0 || playerIndex >= static_cast<int>(kPlayerCount))
             return;
-        auto& notes = activeMidiNotes_[static_cast<std::size_t>(playerIndex)];
-        for (std::size_t note = 0; note < notes.size(); ++note) {
-            if (!notes[note])
-                continue;
-            addMidiNoteEvent(outputEvents, sampleOffset, static_cast<int>(note), 0, false,
-                             playerIndex);
-            notes[note] = false;
+        auto& gates = activeMidiGates_[static_cast<std::size_t>(playerIndex)];
+        for (auto& gate : gates) {
+            if (gate.emitted)
+                addMidiNoteEvent(outputEvents, sampleOffset, gate.midiNote, 0, false,
+                                 playerIndex, gate.noteId);
+            gate = {};
         }
     }
 
@@ -1584,11 +1591,12 @@ private:
                            std::array<TimedMidiEvent, kMaxMidiEventsPerBlock>& result,
                            std::size_t& resultCount) const {
         resultCount = 0;
-        auto append = [&](std::uint64_t sample, int playerIndex, int note,
+        auto append = [&](std::uint64_t sample, int32 noteId, int playerIndex, int note,
                           int velocity, bool noteOn) {
             if (sample < blockStart || sample >= blockEnd || resultCount >= result.size())
                 return;
-            result[resultCount++] = TimedMidiEvent{sample, playerIndex, note, velocity, noteOn};
+            result[resultCount++] = TimedMidiEvent{
+                sample, noteId, playerIndex, note, velocity, noteOn};
         };
 
         for (std::size_t player = 0; player < kPlayerCount; ++player) {
@@ -1622,8 +1630,13 @@ private:
                         std::llround(onsetBeat * samplesPerBeat));
                     const auto offSample = patternStart + static_cast<std::uint64_t>(
                         std::llround(offsetBeat * samplesPerBeat));
-                    append(onSample, static_cast<int>(player), note.midiNote, note.velocity, true);
-                    append(offSample, static_cast<int>(player), note.midiNote, 0, false);
+                    const auto noteId = static_cast<int32>(
+                        ((player * kMaxPatternEvents + i) << 16) |
+                        (static_cast<std::uint64_t>(cycle) & 0xffffu));
+                    append(onSample, noteId, static_cast<int>(player),
+                           note.midiNote, note.velocity, true);
+                    append(offSample, noteId, static_cast<int>(player),
+                           note.midiNote, 0, false);
                 }
             }
         }
@@ -1644,22 +1657,38 @@ private:
         for (std::size_t i = 0; i < count; ++i) {
             const auto& event = events[i];
             const auto player = static_cast<std::size_t>(event.playerIndex);
-            const auto pitch = static_cast<std::size_t>(event.midiNote);
-            auto& active = activeMidiNotes_[player][pitch];
-            if (event.noteOn && mutedPlayers_[player])
-                continue;
             if (event.noteOn) {
-                if (!active) {
+                auto& gates = activeMidiGates_[player];
+                auto gate = std::find_if(gates.begin(), gates.end(),
+                                         [](const ActiveMidiGate& item) {
+                                             return item.noteId < 0;
+                                         });
+                if (gate == gates.end())
+                    continue;
+                gate->noteId = event.noteId;
+                gate->midiNote = event.midiNote;
+                gate->emitted = !mutedPlayers_[player];
+                if (gate->emitted) {
                     addMidiNoteEvent(data.outputEvents,
                                      static_cast<int32>(event.sample - sampleClock_),
-                                     event.midiNote, event.velocity, true, event.playerIndex);
-                    active = true;
+                                     event.midiNote, event.velocity, true,
+                                     event.playerIndex, event.noteId);
                 }
-            } else if (active) {
-                addMidiNoteEvent(data.outputEvents,
-                                 static_cast<int32>(event.sample - sampleClock_),
-                                 event.midiNote, 0, false, event.playerIndex);
-                active = false;
+            } else {
+                auto& gates = activeMidiGates_[player];
+                auto gate = std::find_if(gates.begin(), gates.end(),
+                                         [&](const ActiveMidiGate& item) {
+                                             return item.noteId == event.noteId &&
+                                                    item.midiNote == event.midiNote;
+                                         });
+                if (gate == gates.end())
+                    continue;
+                if (gate->emitted)
+                    addMidiNoteEvent(data.outputEvents,
+                                     static_cast<int32>(event.sample - sampleClock_),
+                                     event.midiNote, 0, false,
+                                     event.playerIndex, event.noteId);
+                *gate = {};
             }
         }
     }
@@ -2657,8 +2686,8 @@ private:
         mixGain_ = 0.0f;
         for (auto& pattern : activePatterns_)
             pattern = {};
-        for (auto& playerNotes : activeMidiNotes_)
-            playerNotes.fill(false);
+        for (auto& playerGates : activeMidiGates_)
+            playerGates.fill({});
         pendingPlayerMask_ = 0;
         pendingMuteMask_ = 0;
         pendingMuteStates_.fill(false);
@@ -2708,7 +2737,7 @@ private:
     }();
     std::array<std::uint64_t, kPlayerCount> patternStartSamples_{};
     std::uint64_t sampleClock_ = 0;
-    std::array<std::array<bool, 128>, kPlayerCount> activeMidiNotes_{};
+    std::array<std::array<ActiveMidiGate, kMaxPolyphony>, kPlayerCount> activeMidiGates_{};
     std::atomic<bool> stopRequested_{false};
     std::mutex scriptThreadMutex_;
     std::thread scriptThread_;
@@ -2732,7 +2761,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-     "0.4.61",
+     "0.4.62",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

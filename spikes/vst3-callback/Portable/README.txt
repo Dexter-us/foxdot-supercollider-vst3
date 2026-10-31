@@ -1,6 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.61 adds bounded numeric-note PZip chord pairing and PZip2 pairing
+Version 0.4.62 supports overlapping sustains (`sus > dur`) and repeated pitches
+in FoxDot-style players. Voice overlap is bounded to eight simultaneous notes
+per player, with sus capped at eight pattern cycles. Example 87 demonstrates
+overlap. Version 0.4.61 adds bounded numeric-note PZip chord pairing and PZip2 pairing
 with a rule; see Example 86. PZip/PZip2 accept 1D numeric note patterns and
 rests, capped at 8 inputs and 256 laced items. Sample-symbol and nested-chord
 zipping are deferred.
@@ -107,6 +110,9 @@ patterns and a PQuicken delay cluster on a melodic player.
 86-pzip-pzip2-chords.py demonstrates PZip's rotating chord combinations and
 PZip2's filtered chord pairs.
 
+87-overlapping-sustain-voices.py demonstrates same-pitch retriggers and chord
+voices sustaining over a pattern loop.
+
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 
 18-ui-mouse-controls.py is a Dexter-specific extension: MouseX() pans a player left/right, while MouseY() sweeps another player's cutoff. These wrappers use SuperCollider's UIUGens module; they are not standard FoxDot player controls.
@@ -131,9 +137,9 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 
 28-roman-numeral-chords.py demonstrates FoxDot's I–VII triad and seventh-chord names, plus custom chords made with PGroup(...).
 
-29-strummed-chords.py demonstrates chord-note staggering with strum in beats, including a time-varying strum value. Its sus=1.8 setting prevents each chord tail from overlapping the next chord's repeated pitches.
+29-strummed-chords.py demonstrates chord-note staggering with strum in beats, including a time-varying strum value. Its sus=1.8 controls the note tails; overlaps into following chord notes are valid.
 
-29-strummed-chords.py uses a moderate 0.04-beat spread at 84 BPM, with a softer second layer whose strum varies over time. Strum is spacing per chord tone; high values with long sus can overlap a repeated MIDI pitch, so keep the total spread shorter than the gap between chords.
+29-strummed-chords.py uses a moderate 0.04-beat spread at 84 BPM, with a softer second layer whose strum varies over time. Strum is spacing per chord tone; larger spreads create more overlap, up to the player's eight-voice safety limit.
 
 31-bass-varsaw-synths.py tests the embedded FoxDot bass and variable-width saw patches with explicit softer note releases; no sample files or separate server are used.
 32-dirt-jbass-noise.py pairs a clearer jbass riff with quieter dirt and noise accents. Dirt and noise are intentionally rougher than the stable bass voices.

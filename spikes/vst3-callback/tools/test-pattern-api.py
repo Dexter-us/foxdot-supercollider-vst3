@@ -265,23 +265,25 @@ def run_example(name):
 def assert_player_polyphony_ok(player_row, event_rows):
     length = float(player_row[4])
     boundaries = []
+    active = 0
     for event in event_rows:
         start = (float(event[1]) + float(event[7])) % length
-        end = start + float(event[2])
-        note = int(event[3])
+        duration = float(event[2])
+        full_cycles = int(duration // length)
+        active += full_cycles
+        remainder = duration - full_cycles * length
+        if remainder <= 1e-9:
+            continue
+        end = start + remainder
         if end <= length:
-            boundaries.extend(((start, 1, note), (end, -1, note)))
+            boundaries.extend(((start, 1), (end, -1)))
         else:
-            boundaries.extend(((0.0, 1, note), (end - length, -1, note),
-                               (start, 1, note), (length, -1, note)))
-    active = set()
-    for beat, delta, note in sorted(boundaries, key=lambda item: (item[0], item[1])):
-        if delta < 0:
-            active.remove(note)
-        else:
-            assert note not in active, ('overlapping repeated MIDI pitch', note, beat)
-            assert len(active) < 8, ('player exceeds eight-note polyphony', beat)
-            active.add(note)
+            boundaries.extend(((0.0, 1), (end - length, -1),
+                               (start, 1), (length, -1)))
+    assert active <= 8, ('player exceeds eight-note polyphony', active)
+    for beat, delta in sorted(boundaries, key=lambda item: (item[0], item[1])):
+        active += delta
+        assert 0 <= active <= 8, ('player exceeds eight-note polyphony', beat, active)
 
 initial_live_run = run_script('p1 >> saw([0, 2, 4], dur=0.5)\np2 >> pulse([0, None, 3], dur=0.25)\n')
 assert [row[1] for row in initial_live_run] == ['0', '1']
@@ -567,13 +569,20 @@ assert [round(float(event[7]), 6) for event in strumEvents[14:]] == [0.0, 0.02, 
 assert all(abs(float(event[2]) - 1.75) < 1e-9 for event in strumEvents)
 assert_player_polyphony_ok(strumRows[0], strumEvents[:14])
 assert_player_polyphony_ok(strumRows[1], strumEvents[14:])
-unsafeStrumError = run_error_script('Clock.bpm = 70\nScale.default = Scale.major\nRoot.default.set(\"C\")\np1 >> triangle(P[I, V7, IV, I7], dur=2, sus=1.8, oct=2, strum=0.5, amp=0.32)\np2 >> saw(P[V7, I7, IV7, V7], dur=2, sus=1.8, oct=3, strum=var([0.02, 0.15], 2), amp=0.18, pan=0.25)\n')
-assert unsafeStrumError.startswith('ERROR\n') and 'MIDI pitch' in unsafeStrumError and 'overlaps itself' in unsafeStrumError, unsafeStrumError
+overlapStrumRows, overlapStrumEvents = run_script(
+    'Clock.bpm = 70\nScale.default = Scale.major\nRoot.default.set("C")\n'
+    'p1 >> triangle(P[I, V7, IV, I7], dur=2, sus=1.8, oct=2, strum=0.5, amp=0.32)\n'
+    'p2 >> saw(P[V7, I7, IV7, V7], dur=2, sus=1.8, oct=3, '
+    'strum=var([0.02, 0.15], 2), amp=0.18, pan=0.25)\n',
+    include_events=True)
+assert len(overlapStrumRows) == 2 and len(overlapStrumEvents) == 30
+assert_player_polyphony_ok(overlapStrumRows[0], overlapStrumEvents[:14])
+assert_player_polyphony_ok(overlapStrumRows[1], overlapStrumEvents[14:])
 parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 30' in parse_source
+assert 'update.synthRate' in parse_source and 'update.synthIndex > 57' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
@@ -587,12 +596,8 @@ assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
 namespace['_dexter_events'] = []
 namespace['_dexter_length'] = 1.0
 namespace['_dexter_slots'] = 0
-try:
-    namespace['play']([(60, 64), (64, 67)], step=1, duration=1, strum=0.2)
-except ValueError as error:
-    assert 'MIDI pitch 64 overlaps itself' in str(error) and 'adjust strum/delay' in str(error)
-else:
-    raise AssertionError('the pattern API must report repeated-pitch strum overlap clearly')
+namespace['play']([(60, 64), (64, 67)], step=1, duration=1, strum=0.2)
+assert len(namespace['_dexter_events']) == 4, 'same-pitch sustained overlaps are valid voices'
 assert len(filterExampleRows) == 3 and [row[1] for row in filterExampleRows] == ['0', '1', '2']
 assert len(filterExampleControls) == 3 and all(len(row) == 14 for row in filterExampleControls)
 assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
@@ -664,7 +669,7 @@ supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 4:', 'Line 5:', 'Sample-string', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
+for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 5:', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report

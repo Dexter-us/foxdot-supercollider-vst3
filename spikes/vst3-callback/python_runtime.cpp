@@ -1464,8 +1464,8 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
             durationSource.at(start) if durationIsVar else durations[i]
         if stepValue != stepValue or stepValue < 0.001 or stepValue > 4096.0:
             raise ValueError('subdivided dur values must be between 0.001 and 4096 beats')
-        if durationValue != durationValue or durationValue < 0.02 or durationValue > stepValue + 1e-9:
-            raise ValueError('each sus value must be at least 0.02 beats and fit within dur')
+        if durationValue != durationValue or durationValue < 0.02:
+            raise ValueError('each sus value must be at least 0.02 beats')
         starts.append(start)
         stepValues.append(stepValue)
         durationValues.append(durationValue)
@@ -1473,6 +1473,10 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
     totalBeats = sum(stepValues)
     if offset + totalBeats > 4096.0:
         raise ValueError('offset and pattern length must fit within 4096 beats')
+    polyphonyLength = max(_dexter_length, offset + totalBeats)
+    maxSustain = min(4096.0, polyphonyLength * 8.0)
+    if any(durationValue > maxSustain + 1e-9 for durationValue in durationValues):
+        raise ValueError('sus cannot exceed 8 cycles of the pattern or 4096 beats')
     additions = []
     for i, item in enumerate(notes):
         start = starts[i]
@@ -1515,24 +1519,28 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
-    points = sorted([(event[0] + event[6], 1, event[2], event[7]) for event in candidate] +
-                    [(event[0] + event[6] + event[1], -1, event[2], event[7]) for event in candidate],
-                    key=lambda item: (item[0], item[1]))
+    boundaries = []
     active = 0
-    active_pitches = {}
-    for beat, delta, note, allowRepeated in points:
-        if delta < 0:
-            active -= 1
-            active_pitches[note] -= 1
-            if active_pitches[note] <= 0:
-                del active_pitches[note]
+    for event in candidate:
+        durationValue = event[1]
+        fullCycles = int(durationValue // polyphonyLength)
+        active += fullCycles
+        if active > 8:
+            raise ValueError('pattern exceeds 8-note polyphony across overlapping sustains')
+        remainder = durationValue - fullCycles * polyphonyLength
+        if remainder <= 1e-9:
+            continue
+        startBeat = (event[0] + event[6]) % polyphonyLength
+        endBeat = startBeat + remainder
+        if endBeat <= polyphonyLength:
+            boundaries.extend(((startBeat, 1), (endBeat, -1)))
         else:
-            if note in active_pitches and not allowRepeated:
-                raise ValueError('MIDI pitch ' + str(note) + ' overlaps itself near beat ' + str(round(beat, 3)) + '; shorten sus or adjust strum/delay')
-            if active >= 8:
-                raise ValueError('pattern exceeds 8-note polyphony near beat ' + str(round(beat, 3)) + '; reduce chord size or shorten sus')
-            active += 1
-            active_pitches[note] = active_pitches.get(note, 0) + 1
+            boundaries.extend(((0.0, 1), (endBeat - polyphonyLength, -1),
+                               (startBeat, 1), (polyphonyLength, -1)))
+    for beat, delta in sorted(boundaries, key=lambda item: (item[0], item[1])):
+        active += delta
+        if active > 8:
+            raise ValueError('pattern exceeds 8-note polyphony near beat ' + str(round(beat, 3)))
     _dexter_events.extend(additions)
     _dexter_slots += len(notes)
     _dexter_length = max(_dexter_length, offset + totalBeats)
@@ -2582,7 +2590,7 @@ bool parseResult(const std::filesystem::path& resultPath,
                 !std::isfinite(event.delayBeats) || event.delayBeats < 0.0 || event.delayBeats > 15.0 ||
                 event.beat < 0.0 || event.beat > update.lengthBeats ||
                 event.durationBeats < 0.02 ||
-                event.beat + event.durationBeats > update.lengthBeats + 1e-9 ||
+                event.durationBeats > std::min(4096.0, update.lengthBeats * 8.0) + 1e-9 ||
                 event.midiNote < 0 || event.midiNote > 127 ||
                 event.velocity < 1 || event.velocity > 127 ||
                 !std::isfinite(event.attackSeconds) || event.attackSeconds < 0.0 ||
@@ -2612,55 +2620,49 @@ bool parseResult(const std::filesystem::path& resultPath,
                   [](const PythonNoteEvent& a, const PythonNoteEvent& b) {
                       return a.beat < b.beat;
                   });
-        struct Boundary { double beat; int note; int delta; };
-        std::vector<Boundary> boundaries;
+        std::vector<std::pair<double, int>> boundaries;
         boundaries.reserve(update.events.size() * 4);
+        int activeNotes = 0;
         for (const auto& event : update.events) {
             double startBeat = std::fmod(event.beat + event.delayBeats, update.lengthBeats);
             if (startBeat < 0.0) startBeat += update.lengthBeats;
-            const double endBeat = startBeat + event.durationBeats;
+            const double fullCycles = std::floor(event.durationBeats / update.lengthBeats);
+            if (fullCycles > 8.0 || activeNotes + static_cast<int>(fullCycles) > 8) {
+                std::ostringstream message;
+                message << "Player " << (update.playerIndex + 1)
+                        << " exceeds 8-note polyphony across overlapping sustains.";
+                error = message.str();
+                return false;
+            }
+            activeNotes += static_cast<int>(fullCycles);
+            const double remainder =
+                event.durationBeats - fullCycles * update.lengthBeats;
+            if (remainder <= 1e-9)
+                continue;
+            const double endBeat = startBeat + remainder;
             if (endBeat <= update.lengthBeats) {
-                boundaries.push_back({startBeat, event.midiNote, 1});
-                boundaries.push_back({endBeat, event.midiNote, -1});
+                boundaries.emplace_back(startBeat, 1);
+                boundaries.emplace_back(endBeat, -1);
             } else {
-                boundaries.push_back({0.0, event.midiNote, 1});
-                boundaries.push_back({endBeat - update.lengthBeats, event.midiNote, -1});
-                boundaries.push_back({startBeat, event.midiNote, 1});
-                boundaries.push_back({update.lengthBeats, event.midiNote, -1});
+                boundaries.emplace_back(0.0, 1);
+                boundaries.emplace_back(endBeat - update.lengthBeats, -1);
+                boundaries.emplace_back(startBeat, 1);
+                boundaries.emplace_back(update.lengthBeats, -1);
             }
         }
         std::sort(boundaries.begin(), boundaries.end(),
-                  [](const Boundary& a, const Boundary& b) {
-                      if (a.beat != b.beat) return a.beat < b.beat;
-                      return a.delta < b.delta;
+                  [](const auto& a, const auto& b) {
+                      if (a.first != b.first) return a.first < b.first;
+                      return a.second < b.second;
                   });
-        std::array<bool, 128> activePitches{};
-        int activeNotes = 0;
         for (const auto& boundary : boundaries) {
-            if (boundary.delta < 0) {
-                --activeNotes;
-                activePitches[static_cast<std::size_t>(boundary.note)] = false;
-            } else {
-                const auto pitch = static_cast<std::size_t>(boundary.note);
-                if (activePitches[pitch]) {
-                    std::ostringstream message;
-                    message << "Player " << (update.playerIndex + 1)
-                            << " overlaps MIDI pitch " << boundary.note
-                            << " near beat " << boundary.beat
-                            << "; shorten sus or adjust strum/delay.";
-                    error = message.str();
-                    return false;
-                }
-                if (activeNotes >= 8) {
-                    std::ostringstream message;
-                    message << "Player " << (update.playerIndex + 1)
-                            << " exceeds 8-note polyphony near beat " << boundary.beat
-                            << "; reduce chord size or shorten sus.";
-                    error = message.str();
-                    return false;
-                }
-                ++activeNotes;
-                activePitches[pitch] = true;
+            activeNotes += boundary.second;
+            if (activeNotes > 8) {
+                std::ostringstream message;
+                message << "Player " << (update.playerIndex + 1)
+                        << " exceeds 8-note polyphony near beat " << boundary.first << '.';
+                error = message.str();
+                return false;
             }
         }
         pattern.players.push_back(std::move(update));
