@@ -96,7 +96,7 @@ _COMPAT_CALLS = {
     'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum',
     'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
-    'interleave', 'transpose', 'euclid', 'PAlt',
+    'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -223,6 +223,18 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
                                 for value in ast.walk(argument.slice))):
                     self.add(argument.lineno, 'This PAlt implementation accepts sample-symbol patterns only; numeric PAlt is deferred.')
+        if name in {'PStretch', 'PStutter'}:
+            if name == 'PStretch' and len(node.args) != 2:
+                self.add(node.lineno, 'PStretch requires a sample-symbol pattern and a target length.')
+            if name == 'PStutter' and not 1 <= len(node.args) <= 2:
+                self.add(node.lineno, 'PStutter requires a sample-symbol pattern and optional repeat counts.')
+            if node.args:
+                argument = node.args[0]
+                if (isinstance(argument, ast.Subscript) and
+                        isinstance(argument.value, ast.Name) and argument.value.id == 'P' and
+                        not any(isinstance(value, ast.Constant) and isinstance(value.value, str)
+                                for value in ast.walk(argument.slice))):
+                    self.add(argument.lineno, name + ' currently accepts sample-symbol patterns only.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -839,6 +851,54 @@ def PAlt(*patterns):
         for step in range(length)
         for pattern_index in range(len(sequences))
     ])
+
+def _sample_pattern_items(pattern, name):
+    probe = _FoxDotFinitePattern()
+    if isinstance(pattern, (str, list, tuple, _FoxDotFinitePattern)) and len(pattern) > 256:
+        raise ValueError(name + ' input patterns are limited to 256 items')
+    values = probe._sample_sequence(pattern)
+    if values is None:
+        raise TypeError(name + ' accepts only sample-symbol patterns and space-rests')
+    return values
+
+def PStretch(pattern, size):
+    values = _sample_pattern_items(pattern, 'PStretch')
+    if isinstance(size, bool) or not isinstance(size, int):
+        raise TypeError('PStretch target length must be an integer')
+    if size < 0:
+        raise ValueError('PStretch target length cannot be negative')
+    if size > 256:
+        raise ValueError('PStretch output is limited to 256 items')
+    if size and not values:
+        raise ValueError('PStretch cannot stretch an empty sample pattern')
+    return _FoxDotFinitePattern([
+        values[index % len(values)] for index in range(size)
+    ]) if size else _FoxDotFinitePattern()
+
+def PStutter(pattern, counts=2):
+    values = _sample_pattern_items(pattern, 'PStutter')
+    if isinstance(counts, _FoxDotFinitePattern):
+        repeats = list(counts)
+    elif isinstance(counts, (list, tuple)):
+        repeats = list(counts)
+    else:
+        repeats = [counts]
+    if not repeats:
+        raise ValueError('PStutter repeat counts cannot be empty')
+    for repeat_count in repeats:
+        if isinstance(repeat_count, bool) or not isinstance(repeat_count, int):
+            raise TypeError('PStutter counts must be whole numbers from 0 to 16')
+        if not 0 <= repeat_count <= 16:
+            raise ValueError('PStutter counts must be whole numbers from 0 to 16')
+    if len(repeats) > 256:
+        raise ValueError('PStutter repeat-count patterns are limited to 256 items')
+    result = []
+    for index in range(max(len(values), len(repeats))):
+        repeat_count = repeats[index % len(repeats)]
+        if len(result) + repeat_count > 256:
+            raise ValueError('PStutter output is limited to 256 items')
+        result.extend([values[index % len(values)]] * repeat_count)
+    return _FoxDotFinitePattern(result)
 
 class _FoxDotPatternLiteral:
     def __getitem__(self, items):

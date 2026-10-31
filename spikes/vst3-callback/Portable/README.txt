@@ -1,6 +1,7 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.54 adds sample-symbol `PAlt(...)` alternation; see Example 79.
+Version 0.4.55 adds sample-symbol `PStretch(...)` and `PStutter(...)`; see Example 80.
+Version 0.4.54 added sample-symbol `PAlt(...)` alternation; see Example 79.
 Version 0.4.53 added FoxDot-style `|` concatenation for sample-symbol P patterns;
 see Example 78. Version 0.4.52 added finite sample-symbol sequences and
 transforms; see Example 77. Version 0.4.51 added per-hit sample-index selectors;
@@ -62,6 +63,12 @@ chord zipping remain unsupported for sample symbols.
 79-sample-pattern-alternation.py demonstrates PAlt cycling patterns to their
 least-common-multiple length, then alternating one item from each input.
 Numeric PAlt is deferred; the compatibility checker identifies it clearly.
+
+80-sample-pattern-stretch-stutter.py combines PStretch, which cycles a source
+pattern to the requested length, with PStutter, which repeats each symbol by
+the matching count. Count patterns follow FoxDot's max-input-length iteration.
+Each input and expanded result is limited to 256 items; repeat counts are whole
+numbers from 0 to 16. Numeric source patterns remain deferred.
 
 The SCPlugins subfolder contains module-loader instructions for adding compatible SuperCollider UGen modules.
 

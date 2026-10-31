@@ -135,6 +135,33 @@ assert namespace['PAlt'](
         'x', 'o', ' ', '-', 'x', ' ', ' ', 'o', 'x', '-', ' ', ' ']
 assert namespace['PAlt'](
     namespace['P']['x'], namespace['P']['o'], namespace['P']['-']) == ['x', 'o', '-']
+assert namespace['PStretch'](namespace['P']['x', ' '], 5) == [
+    'x', ' ', 'x', ' ', 'x']
+assert namespace['PStretch']('xo', 0) == []
+assert namespace['PStutter'](namespace['P']['x', 'o']) == [
+    'x', 'x', 'o', 'o']
+assert namespace['PStutter'](
+    namespace['P']['x', 'o'], namespace['P'][1, 3, 2]) == [
+        'x', 'o', 'o', 'o', 'x', 'x']
+assert namespace['PStutter'](
+    namespace['P']['x', 'o', ' '], namespace['P'][1, 2]) == [
+        'x', 'o', 'o', ' ']
+assert namespace['PStretch'](namespace['P']['x', 'o'], 256) == (
+    list(namespace['P']['x', 'o']) * 128)
+assert len(namespace['PStutter'](['x'] * 16, 16)) == 256
+for badCall in (
+        lambda: namespace['PStretch'](namespace['P'][0, 1], 4),
+        lambda: namespace['PStutter'](namespace['P'][0, 1]),
+        lambda: namespace['PStretch'](namespace['P']['x'], 257),
+        lambda: namespace['PStutter'](['x'] * 17, 16),
+        lambda: namespace['PStutter'](namespace['P']['x'], namespace['P'][1, 1.5]),
+        lambda: namespace['PStutter'](namespace['P']['x'], [1] * 257)):
+    try:
+        badCall()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('PStretch/PStutter must reject invalid or oversized inputs')
 for badPatterns in ((namespace['P'][0, 1], namespace['P']['x']),
                     (namespace['P']['x'], namespace['P'][1]),
                     (namespace['_FoxDotFinitePattern']([]), namespace['P']['x'])):
@@ -962,6 +989,16 @@ assert 'numeric PAlt is deferred' in run_compatibility_check(
     'p1 >> play(PAlt(P[0, 1], P["x"]))')
 assert 'at least two sample-symbol patterns' in run_compatibility_check(
     'p1 >> play(PAlt(P["x"]))')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(PStutter(PStretch(P["x", "o", " "], 6), P[1, 2]))')
+assert 'PStretch currently accepts sample-symbol patterns only' in run_compatibility_check(
+    'p1 >> play(PStretch(P[0, 1], 6))')
+assert 'PStutter currently accepts sample-symbol patterns only' in run_compatibility_check(
+    'p1 >> play(PStutter(P[0, 1], P[1, 2]))')
+assert 'PStretch requires a sample-symbol pattern and a target length' in run_compatibility_check(
+    'p1 >> play(PStretch(P["x"]))')
+assert 'PStutter requires a sample-symbol pattern and optional repeat counts' in run_compatibility_check(
+    'p1 >> play(PStutter())')
 assert 'P arithmetic over sample-symbol patterns' in run_compatibility_check(
     'p1 >> play(P["x", "o"] + P["a"])')
 assert 'P sample-symbol literals' in run_compatibility_check('p1 >> play(P["xx", "o"])')
@@ -984,6 +1021,11 @@ example79Rows, example79Requests = run_script(
     include_samples=True)
 assert len(example79Rows) == 1 and [int(row[1]) for row in example79Requests] == [
     120, 111, 45, 120, 111, 120, 45]
+example80Rows, example80Requests = run_script(
+    open(os.path.join(sys.argv[2], '80-sample-pattern-stretch-stutter.py'), encoding='utf-8').read(),
+    include_samples=True)
+assert len(example80Rows) == 1 and [int(row[1]) for row in example80Requests] == [
+    120, 111, 111, 120, 120, 111]
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-79.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-80.')
