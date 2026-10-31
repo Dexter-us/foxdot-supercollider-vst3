@@ -910,6 +910,10 @@ def _pulses_to_durations(pulses):
     result.append(count)
     return result
 
+def _rotate_foxdot_durations(values, amount):
+    items = list(values)
+    return _FoxDotFinitePattern(items[amount:] + items[:amount])
+
 def _scale_foxdot_durations(values, dur, name):
     if isinstance(dur, _DexterTimeVar):
         raise TypeError(name + ' dur must be a positive number or finite numeric pattern')
@@ -950,7 +954,7 @@ def PBeat(string, start=0, dur=0.5):
     pulses = [1 if character != ' ' else 0 for character in string]
     durations = _pulses_to_durations(pulses)
     return _scale_foxdot_durations(
-        _FoxDotFinitePattern(durations).rotate(rotation), dur, 'PBeat')
+        _rotate_foxdot_durations(durations, rotation), dur, 'PBeat')
 
 def _foxdot_euclidean_pulses(hits, steps):
     if hits == 0:
@@ -988,7 +992,7 @@ def PDur(n, k, start=0, dur=0.25):
     durations = _pulses_to_durations(_foxdot_euclidean_pulses(n, k))
     durations = [value * scale for value in durations]
     return _scale_foxdot_durations(
-        _FoxDotFinitePattern(durations).rotate(rotation), dur, 'PDur')
+        _rotate_foxdot_durations(durations, rotation), dur, 'PDur')
 
 def PStretch(pattern, size):
     values = _sample_pattern_items(pattern, 'PStretch')

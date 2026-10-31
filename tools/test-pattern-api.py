@@ -174,6 +174,8 @@ for badJoin in (lambda: namespace['PJoin']([namespace['P'][0, 1], namespace['P']
         raise AssertionError('PJoin must reject unsupported or oversized sample patterns')
 assert namespace['PBeat']('x xxx x') == [1.0, 0.5, 0.5, 1.0, 0.5]
 assert namespace['PBeat']('x xx', 1, 0.25) == [0.25, 0.25, 0.5]
+assert namespace['PBeat']('x xxx x', 6) == [1.0, 0.5, 0.5, 1.0, 0.5]
+assert namespace['PBeat']('x xxx x', -1) == [0.5, 1.0, 0.5, 0.5, 1.0]
 assert namespace['PBeat']('x x', dur=namespace['P'][0.25, 0.5]) == [0.5, 0.5]
 assert namespace['PBeat']('') == [0.5]
 assert namespace['PDur'](3, 8) == [0.75, 0.75, 0.5]
@@ -181,6 +183,7 @@ assert namespace['PDur'](5, 16) == [0.75, 0.75, 0.75, 0.75, 1.0]
 assert namespace['PDur'](0, 8) == [2.0]
 assert namespace['PDur'](3, 2) == [0.125, 0.125, 0.25]
 assert namespace['PDur'](3, 8, 1, 0.25) == [0.75, 0.5, 0.75]
+assert namespace['PDur'](3, 8, 4) == [0.75, 0.75, 0.5]
 for badRhythm in (
         lambda: namespace['PBeat'](123),
         lambda: namespace['PBeat']('x' * 257),

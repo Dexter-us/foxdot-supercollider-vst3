@@ -1,7 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.58 matches FoxDot's slice-based `start` rotations for PBeat and
+PDur, including negative and over-length offsets; see Example 83.
 Version 0.4.57 adds bounded FoxDot-compatible `PBeat(...)` and `PDur(...)`
-duration patterns; see Example 83.
+duration patterns.
 Version 0.4.56 adds sample-symbol `PShuf(...)` and `PJoin(...)`; see Examples 81–82.
 Version 0.4.55 added sample-symbol `PStretch(...)` and `PStutter(...)`; see Example 80.
 Version 0.4.54 added sample-symbol `PAlt(...)` alternation; see Example 79.

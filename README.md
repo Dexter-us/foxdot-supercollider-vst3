@@ -2,8 +2,10 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.57 adds bounded FoxDot-compatible `PBeat(...)` and `PDur(...)`
-duration patterns; see Example 83. Version 0.4.56 added sample-symbol `PShuf(...)`
+Version 0.4.58 matches FoxDot's slice-based `start` rotations for `PBeat(...)`
+and `PDur(...)`, including negative and over-length offsets; see Example 83.
+Version 0.4.57 added bounded FoxDot-compatible `PBeat(...)` and `PDur(...)`
+duration patterns. Version 0.4.56 added sample-symbol `PShuf(...)`
 and `PJoin(...)`: shuffle a complete phrase or join small motifs before shuffling.
 Version 0.4.55 added sample-symbol `PStretch(...)`
 and `PStutter(...)` transforms;
