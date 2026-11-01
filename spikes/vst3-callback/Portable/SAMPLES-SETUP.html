@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dexter U.S. FoxDot — Portable WAV samples</title>
+  <style>
+    :root { color-scheme: dark; --bg:#10151b; --panel:#19222c; --text:#e7edf3;
+      --muted:#a9b7c5; --accent:#77c6ff; --line:#2c3b49; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:32px 18px; background:var(--bg); color:var(--text);
+      font:16px/1.6 system-ui,Segoe UI,Arial,sans-serif; }
+    main { max-width:850px; margin:0 auto; }
+    h1,h2 { line-height:1.2; }
+    h1 { font-size:2rem; margin:0 0 8px; }
+    h2 { font-size:1.25rem; margin:0 0 12px; }
+    p { margin:10px 0; }
+    .subtle { color:var(--muted); }
+    section { margin:18px 0; padding:20px; border:1px solid var(--line);
+      border-radius:12px; background:var(--panel); }
+    code,pre { font:0.94em/1.55 Consolas,ui-monospace,monospace; }
+    code { color:#c7e6ff; }
+    pre { overflow:auto; padding:14px; border-radius:8px; background:#0b1015;
+      border:1px solid var(--line); }
+    a { color:var(--accent); }
+    .note { border-left:4px solid var(--accent); padding:10px 14px;
+      background:#132432; }
+    ul { padding-left:22px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Portable WAV samples</h1>
+  <p class="subtle">Dexter U.S. FoxDot · version 0.4.74</p>
+  <p>This guide explains how to add your own legally licensed WAV files without
+     including the demo samples in your plugin update.</p>
+
+  <section>
+    <h2>Where the files go</h2>
+    <p>Inside the VST3 bundle, create or use <code>Portable/Samples</code>.
+       Keep the folder next to the bundle’s <code>Contents</code> folder:</p>
+    <pre>Dexter U.S FoxDot.vst3/
+├── Contents/
+└── Portable/
+    └── Samples/
+        ├── x/
+        │   └── lower/
+        │       └── 00-kick.wav
+        ├── o/
+        │   └── lower/
+        │       └── 00-snare.wav
+        └── _/
+            └── hyphen/
+                └── 00-hat.wav</pre>
+    <p>For a portable install, use the bundle’s existing <code>Portable</code>
+       folder. If the bundle is under <code>Program Files</code>, Windows may
+       require administrator permission to add files; install a per-user copy
+       or approve the file operation rather than changing the plugin path.</p>
+  </section>
+
+  <section>
+    <h2>Match folders to play symbols</h2>
+    <ul>
+      <li><code>x/lower/</code> contains sounds triggered by <code>x</code>.</li>
+      <li><code>o/lower/</code> contains sounds triggered by <code>o</code>.</li>
+      <li><code>_/hyphen/</code> contains sounds triggered by <code>-</code>;
+          a space is a rest.</li>
+      <li><code>a/lower/</code> is the lowercase <code>a</code> bank;
+          <code>a/upper/</code> is the uppercase <code>A</code> bank.</li>
+      <li>Other letter symbols use their matching letter folder. The simpler
+          <code>Samples/x/*.wav</code> layout is also accepted for letters.</li>
+    </ul>
+    <p>Put alternate hits in the same symbol folder and name them so they sort
+       in the desired order, such as <code>00-kick.wav</code> and
+       <code>01-kick-soft.wav</code>. Indexes start at zero:
+       <code>sample=0</code> picks the first sorted file,
+       <code>sample=1</code> the second. A per-hit marker such as
+       <code>|x1|</code> selects the second <code>x</code> sample just for that
+       hit.</p>
+  </section>
+
+  <section>
+    <h2>Use a properly licensed WAV</h2>
+    <p>Download or export a WAV from a source whose license permits your
+       intended use, and keep its attribution/license terms if required. No
+       third-party sample pack is included or endorsed by this guide. The
+       plugin accepts PCM 8/16/24/32-bit or IEEE float32 WAV, mono or stereo,
+       at 8–192 kHz; files are limited to 64 MiB each. Stereo is downmixed to
+       mono before player panning.</p>
+    <p>To use your own samples instead of the demo sounds, replace the matching
+       files under <code>Portable/Samples</code> or add a new symbol folder. The
+       demo files are optional and separately licensed CC0.</p>
+  </section>
+
+  <section>
+    <h2>Try it in the editor</h2>
+    <pre>Clock.bpm = 90
+p1 >> play("x-o-", dur=0.5, sample=0, amp=0.3)</pre>
+    <p>For a bounded slice, use normalized positions from 0 to 1. A loop stops
+       at <code>sus=</code>, or at <code>dur=</code> when <code>sus</code> is
+       omitted:</p>
+    <pre>p1 >> play("x", dur=2, start=0.15, end=0.55, loop=True, sus=1.8)</pre>
+    <p>After changing a WAV that the current plugin instance has already
+       loaded, close and reopen the plugin so its in-memory sample cache is
+       refreshed. The player does not read samples from disk in the audio
+       callback.</p>
+  </section>
+
+  <section class="note">
+    <strong>Keeping the update small:</strong> you can omit the
+    <code>Portable/Samples</code> demo folder from an update package and add
+    only the legal WAVs you need. Keep the <code>Portable/Samples</code>
+    directory structure shown above; the portable scripts and sample files can
+    be managed separately.
+  </section>
+</main>
+</body>
+</html>

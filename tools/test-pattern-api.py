@@ -570,6 +570,10 @@ def run_example(name, user_synth_names=()):
     return run_script(open(example_path, encoding='utf-8').read(),
                       user_synth_names=user_synth_names)
 
+sampleSetupPath = os.path.join(sys.argv[2], 'SAMPLES-SETUP.html')
+sampleSetupHtml = open(sampleSetupPath, encoding='utf-8').read()
+assert 'Portable/Samples' in sampleSetupHtml and 'properly licensed WAV' in sampleSetupHtml
+
 userSynthBinaryPath = os.path.join(sys.argv[2], 'SynthDefs', 'CustomPluck.scsyndef')
 userSynthBinary = open(userSynthBinaryPath, 'rb').read()
 assert b'CustomPluck' in userSynthBinary
@@ -664,7 +668,7 @@ def read_synthdef_manifest(data, validate_builtin_controls=True, return_controls
                 'amp vib depth lforate lfowidth rq fmod blur cutoff atk rel beat_dur'
             ).split()
             if name == 'DexterSample':
-                expected_controls.append('buf')
+                expected_controls.extend(('buf', 'start', 'end', 'loop'))
             assert parameter_names == {key: index for index, key in enumerate(expected_controls)}, (
                 name, 'C++ control-number ABI mismatch', parameter_names)
         controls[name] = parameter_names
@@ -719,9 +723,14 @@ def test_embedded_synthdef():
     assert core_version == 2 and len(core_graphs) == 26
     sample_header = open(os.path.join(plugin_dir, 'sample_synthdef.h'), encoding='utf-8').read()
     sample_bytes = bytes(int(value, 16) for value in re.findall(r'0x([0-9a-fA-F]{2})', sample_header))
-    sample_version, sample_graphs = read_synthdef_manifest(sample_bytes)
+    sample_version, sample_graphs, sample_controls = read_synthdef_manifest(
+        sample_bytes, return_controls=True)
     assert sample_version == 2 and set(sample_graphs) == {'DexterSample'}
     assert any(ugen[0] == 'PlayBuf' for ugen in sample_graphs['DexterSample'])
+    assert any(ugen[0] == 'Phasor' for ugen in sample_graphs['DexterSample'])
+    assert any(ugen[0] == 'BufRd' for ugen in sample_graphs['DexterSample'])
+    assert sample_controls['DexterSample']['buf'] == 22
+    assert [sample_controls['DexterSample'][name] for name in ('start', 'end', 'loop')] == [23, 24, 25]
     user_def_path = os.path.join(plugin_dir, 'Portable', 'SynthDefs', 'CustomPluck.scsyndef')
     user_version, user_graphs, user_controls = read_synthdef_manifest(
         open(user_def_path, 'rb').read(), validate_builtin_controls=False,
@@ -1239,6 +1248,8 @@ example76 = run_example('76-sample-index-selection.py')
 assert [int(row[6]) for row in example76 if row[2] == '0'] == [57]
 example77 = run_example('77-pattern-sample-sequences.py')
 assert len(example77) == 2
+example100 = run_example('100-sample-loop-and-slicing.py')
+assert [int(row[6]) for row in example100 if row[2] == '0'] == [57, 57]
 _, duplicateLayerRequests, duplicateLayerEvents = run_script(
     'p1 >> play("<x><x>", dur=1)', include_samples=True, include_events=True)
 assert [int(row[1]) for row in duplicateLayerRequests] == [120, 120]
@@ -1269,6 +1280,17 @@ assert float(linRequests[0][3]) == 0.75
 for bad in ('rate=0', 'rate=9', 'sample=0.5', 'sample=[]', 'rate=[]',
             'sample=var([0, 0.5], 4)', 'sample=linvar([0, 1.5], 4)',
             'rate=var([0.01, 1], 4)', 'rate=linvar([-1, 1], 4)'):
+    failure = run_error_script('p1 >> play("x", ' + bad + ')')
+    assert failure.startswith('ERROR\n') and 'ValueError' in failure, (bad, failure)
+_, slicedRequests = run_script(
+    'p1 >> play("x-o", start=0.2, end=0.65, loop=False)', include_samples=True)
+assert all(float(row[5]) == 0.2 and float(row[6]) == 0.65 and row[7] == '0'
+           for row in slicedRequests)
+_, loopRequests = run_script(
+    'p1 >> play("x", dur=2, loop=True)', include_samples=True)
+assert loopRequests[0][4:] == ['1', '0.0', '1.0', '1']
+for bad in ('start=-0.1', 'end=1.1', 'start=0.5, end=0.5',
+            'start=float("nan")', 'loop=1'):
     failure = run_error_script('p1 >> play("x", ' + bad + ')')
     assert failure.startswith('ERROR\n') and 'ValueError' in failure, (bad, failure)
 _, nestedRequests, nestedEvents = run_script(

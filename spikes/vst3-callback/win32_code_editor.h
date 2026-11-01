@@ -15,6 +15,8 @@ public:
     virtual void submitCode(const std::string& source) = 0;
     virtual void stopPattern() = 0;
     virtual std::string editorStatus() = 0;
+    virtual float masterOutputGain() = 0;
+    virtual void setMasterOutputGain(float gain) = 0;
 };
 
 Steinberg::IPlugView* createCodeEditorView(ICodeEditorHost* host,

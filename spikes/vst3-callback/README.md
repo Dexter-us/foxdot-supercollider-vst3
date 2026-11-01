@@ -1,6 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.73 fixes the Airwindows persistent SynthDef startup rejection by
+Version 0.4.74 adds a smoothed, state-persisted master output-gain slider and
+bounded WAV slicing/looping. Existing sample playback remains one-shot by
+default; `start`/`end` are normalized slice fractions, and `loop=True` is
+gated by `sus=` or, when omitted, `dur=`. Version 0.4.73 fixes the Airwindows
+persistent SynthDef startup rejection by
 using their tested fixed control-index ABI instead of relying on runtime name
 lookup. Version 0.4.72 added per-player stereo TapeDelay2 and Echojam inserts.
 Note voices are summed before the insert, so delay state carries across
@@ -93,7 +97,12 @@ the nearest WAV at each segment midpoint); playback-rate linvar glides between
 same-sign rates, while var() can switch direction. Rate=1 is natural speed;
 negative rates reverse the native PlayBuf start and direction. A voice's rate
 is evaluated at its trigger; it does not pitch-glide mid-sample. Unspecified
-sus allows natural one-shot length, and explicit sus crops it.
+sus allows natural one-shot length, and explicit sus crops it. `start=0.0` and
+`end=1.0` select the full file; smaller fractions slice within it. `loop=True`
+loops only that slice and is bounded by `sus=` or `dur=`. All new controls are
+optional; leaving them out preserves the earlier one-shot behavior. The editor's
+Master slider scales the final stereo output from 0% (silence) to 200% and
+smooths changes over 10 ms; older saved states restore at unity gain.
 Amp/pan, player stop/mute, basic effects and MIDI note output remain available.
 
 The standalone C++ reader accepts PCM 8/16/24/32 and IEEE float32 mono/stereo
@@ -108,8 +117,8 @@ being published. Errors leave active players unchanged.
 File limit is 64 MiB, decoded cache budget 128 MiB, rate magnitude 0.0625–8;
 the eight-note per-player polyphony limit still applies. Buffers are retained until
 engine reset/unload; reopen after editing an already cached WAV. Further
-P-pattern composition over sample strings, streaming, loops/slicing, time stretching,
-non-WAV codecs and third-party sample-library redistribution remain deferred.
+P-pattern composition over sample strings, streaming, time stretching, non-WAV
+codecs and third-party sample-library redistribution remain deferred.
 The six tiny diagnostic WAVs are generated locally and offered under CC0.
 Examples 70–73 exercise beat symbols, selection, reverse playback and
 time-var sample/rate controls; example 76 tests per-hit sample indices,
@@ -121,6 +130,9 @@ demonstrates PQuicken/PRhythm, 86 combines PZip/PZip2, and 87 exercises
 overlapping sustains. Example 88 uses all five transforms on numeric notes;
 Example 89 demonstrates nested PRhythm timing groups.
 Example 90 demonstrates grouped sustain lacing across chord tones and sample hits.
+Example 100 demonstrates one-shot slicing and a bounded loop over a selected WAV
+region. The UI master gain is a plugin-state control, not a DAW-automatable VST
+parameter in this milestone.
 `tools/test-portable-samples.py` compiles the
 actual decoder and worker/cache code with undefined-behavior checks, then fills
 an SC buffer from decoded floats and checks five native PlayBuf notes, direction/rate,
@@ -190,7 +202,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - SuperCollider is pinned at `ef5771bce3d1c9c780cafd58cf032ec4a3f36d10`; the VST3 SDK checkout is 3.8.1. The Windows script bundles CPython 3.12.10. GitHub Actions builds and validates the Windows VST3; audio, editor, and MIDI behavior still require testing in a real Windows DAW.
   - The engine uses `WorldOptions::mRealTime = false` so SuperCollider does not initialize its own audio driver. One hundred thirty-six fixed voice slots provide 17 slots per player for active notes and overlapping release tails. All four voice modes (sine, triangle, saw, and pulse/square) use the embedded SuperCollider SynthDef and bundled UGen modules. This is not a real-time-safety guarantee for every UGen or third-party module; only load trusted, compatible modules and test them in a DAW. Audit allocations, locks, and thread behavior before treating it as a production instrument.
 - Audio pitch follows scheduled MIDI notes in 64-sample SuperCollider blocks, so audio onset is quantized to that block size; MIDI events retain sample offsets. Audio uses raised-cosine 10 ms attacks and up to 40 ms releases for natural note ends and explicit stops, plus smoothed voice-count mix adjustment. The envelope duration is unchanged; only the fade curve is smoother.
-- Each player supports up to eight simultaneous notes, and up to eight players can run independently. MIDI is emitted on a separate channel per player. The four starter oscillator modes and twenty-seven embedded FoxDot-derived patches are available. Each player can set amplitude, stereo pan, low-pass cutoff, echo, and reverb. FoxDot-style `strum` staggers chord tones; `delay` offsets note starts in beats. Plugin-only `delaytime`, `echomix`, and `feedback` remain distinct extensions. Room/mix uses FreeVerb; the selector also offers FreeVerb2 and GVerb. Portable WAV sample playback is a basic one-shot engine using the already bundled PlayBuf UGen; it does not stream from disk, pitch-preserve time stretch, record, or preserve stereo sample width. The DiskIO UGens and libsndfile are not used by this player. Player aliases beyond eight remain deferred. Unsupported calls and sample-string syntax produce explicit diagnostics instead of silent fallbacks. Arbitrary SynthDef evaluation and DAW transport following are not supported; the editor is Windows-only.
+- Each player supports up to eight simultaneous notes, and up to eight players can run independently. MIDI is emitted on a separate channel per player. The four starter oscillator modes and twenty-seven embedded FoxDot-derived patches are available. Each player can set amplitude, stereo pan, low-pass cutoff, echo, and reverb. FoxDot-style `strum` staggers chord tones; `delay` offsets note starts in beats. Plugin-only `delaytime`, `echomix`, and `feedback` remain distinct extensions. Room/mix uses FreeVerb; the selector also offers FreeVerb2 and GVerb. Portable WAV playback uses the bundled PlayBuf, BufRd, and Phasor UGens for one-shots, normalized start/end slices, and loops bounded by `sus=` or `dur=`. It still does not stream from disk, pitch-preserve time stretch, record, or preserve stereo sample width. The DiskIO UGens and libsndfile are not used by this player. Player aliases beyond eight remain deferred. Unsupported calls and sample-string syntax produce explicit diagnostics instead of silent fallbacks. Arbitrary SynthDef evaluation and DAW transport following are not supported; the editor is Windows-only.
 - User code is intentionally constrained but not a security sandbox. Pattern evaluation has a two-second Python loop guard; avoid untrusted scripts.
 - SuperCollider is GPL-3.0, the Python runtime uses the PSF license, the VST3 SDK is MIT-licensed, and FoxDot-derived compatibility material is attributed and distributed under CC BY-SA 4.0. Package notices and license texts are included; binary distribution must comply with the relevant source and notice requirements. Review remaining transitive dependency terms before release.
 

@@ -18,6 +18,9 @@ struct PythonNoteEvent {
     int sampleIndex = 0;
     double sampleRate = 1.0;
     bool sampleGate = false;
+    double sampleStart = 0.0;
+    double sampleEnd = 1.0;
+    bool sampleLoop = false;
     // Resolved on the script worker; these POD fields are safe to copy in process().
     int sampleBuffer = -1;
     double sampleDurationSeconds = 0.0;

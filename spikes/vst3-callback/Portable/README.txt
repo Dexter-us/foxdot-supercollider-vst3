@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.74 adds normalized sample start/end slicing, bounded loop=True
+playback, and a smooth master output gain. Defaults preserve one-shot samples
+and unity output; see Example 100 for slice and loop syntax.
+SAMPLES-SETUP.html explains how to install your own properly licensed WAV files
+without bundling the optional demo-sample directory.
 Version 0.4.73 fixes startup validation for the bundled Airwindows persistent
 effects. Their checked-in SynthDefs use a fixed, tested control-index layout.
 Version 0.4.72 added persistent per-player stereo inserts for TapeDelay2 and
@@ -117,6 +122,8 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 17-live-player-edits.py demonstrates updating just p1 while p2 continues. Run both assignments once; then edit p1, comment out p2's assignment, and press Run. Unmentioned players keep playing; run p2.stop() alone to stop p2.
 
 70-73 demonstrate portable WAV playback, sample/rate controls and var()/linvar().
+100-sample-loop-and-slicing.py demonstrates fractional start/end positions and
+a loop limited by sus= (or dur= when sus is omitted).
 74-nested-play-strings.py demonstrates `[]` step subdivisions and `()` lacing.
 75-random-and-layered-strings.py demonstrates bounded `{}` variations and
 adjacent `<>` layers. The compatibility checker reports malformed strings;

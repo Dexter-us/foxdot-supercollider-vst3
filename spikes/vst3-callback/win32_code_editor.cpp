@@ -6,6 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <commctrl.h>
 #include <shobjidl.h>
 
 #include "base/source/fobject.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -26,6 +28,7 @@
 #include "ILexer.h"
 #include "Lexilla.h"
 #include "SciLexer.h"
+#include "master_output_gain.h"
 
 
 namespace {
@@ -40,10 +43,14 @@ constexpr int kSaveAsId = 108;
 constexpr int kBrandId = 109;
 constexpr int kCopyErrorId = 110;
 constexpr int kFileNameId = 111;
+constexpr int kMasterGainSliderId = 112;
+constexpr int kMasterGainValueId = 113;
+constexpr int kMasterGainLabelId = 114;
 constexpr int kViewWidth = 720;
 constexpr int kViewHeight = 480;
 constexpr int kMargin = 10;
 constexpr int kToolbarHeight = 32;
+constexpr int kGainRowHeight = 28;
 constexpr int kStatusHeight = 24;
 constexpr std::size_t kMaxScriptBytes = 256 * 1024;
 constexpr std::size_t kMaxScriptCharacters = 65536;
@@ -59,7 +66,7 @@ constexpr char kFoxDotApiKeywords[] =
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
     "vib depth lforate lfowidth rq fmod blur sample "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
-    "echo delay mute unmute rate";
+    "echo delay mute unmute rate start end loop";
 constexpr char kFoxDotCompletions[] =
     "Clock P PGroup Player Root Scale amp cutoff delay dur echo linvar mute oct pan "
     "play p1 p2 p3 p4 p5 p6 p7 p8 pulse reverb resonance room saw sine stop strum "
@@ -67,7 +74,7 @@ constexpr char kFoxDotCompletions[] =
     "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple rate "
     "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
-    "vib depth lforate lfowidth rq fmod blur sample";
+    "vib depth lforate lfowidth rq fmod blur sample start end loop";
 
 std::mutex gScintillaMutex;
 std::size_t gScintillaViewCount = 0;
@@ -209,7 +216,8 @@ public:
             DestroyWindow(window_);
             window_ = nullptr;
             editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ = saveAsButton_ =
-                status_ = brand_ = fileName_ = copyErrorButton_ = nullptr;
+                status_ = brand_ = fileName_ = copyErrorButton_ =
+                    masterGainSlider_ = masterGainValue_ = masterGainLabel_ = nullptr;
         }
         if (scintillaClassesAcquired_) {
             releaseScintillaClasses();
@@ -358,6 +366,17 @@ private:
             }
             break;
         }
+        case WM_HSCROLL:
+            if (reinterpret_cast<HWND>(lParam) == view->masterGainSlider_) {
+                const int position = static_cast<int>(
+                    SendMessageW(view->masterGainSlider_, TBM_GETPOS, 0, 0));
+                if (view->host_)
+                    view->host_->setMasterOutputGain(
+                        dexterMasterGainFromPercent(position));
+                view->updateMasterGainText(position);
+                return 0;
+            }
+            break;
         case WM_COMMAND:
             if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kRunId) {
                 view->runSource();
@@ -400,13 +419,19 @@ private:
             view->window_ = nullptr;
             view->editor_ = view->runButton_ = view->stopButton_ =
                 view->openButton_ = view->saveButton_ = view->saveAsButton_ =
-                    view->status_ = view->brand_ = view->fileName_ = view->copyErrorButton_ = nullptr;
+                    view->status_ = view->brand_ = view->fileName_ =
+                        view->copyErrorButton_ = view->masterGainSlider_ =
+                        view->masterGainValue_ = view->masterGainLabel_ = nullptr;
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
     }
 
     void createChildren() {
+        INITCOMMONCONTROLSEX controls{};
+        controls.dwSize = sizeof(controls);
+        controls.dwICC = ICC_BAR_CLASSES;
+        InitCommonControlsEx(&controls);
         runButton_ = CreateWindowExW(0, L"BUTTON", L"Run",
                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                                      0, 0, 56, 26, window_,
@@ -443,7 +468,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.73",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.74",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -453,6 +478,33 @@ private:
                                     0, 0, 300, kStatusHeight, window_,
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFileNameId)),
                                     moduleInstance(), nullptr);
+        masterGainLabel_ = CreateWindowExW(
+            0, L"STATIC", L"Master",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+            0, 0, 64, 22, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMasterGainLabelId)),
+            moduleInstance(), nullptr);
+        masterGainSlider_ = CreateWindowExW(
+            0, TRACKBAR_CLASSW, L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_AUTOTICKS,
+            0, 0, 210, 24, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMasterGainSliderId)),
+            moduleInstance(), nullptr);
+        masterGainValue_ = CreateWindowExW(
+            0, L"STATIC", L"100%",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+            0, 0, 64, 22, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMasterGainValueId)),
+            moduleInstance(), nullptr);
+        if (masterGainSlider_) {
+            SendMessageW(masterGainSlider_, TBM_SETRANGE, TRUE, MAKELONG(0, 200));
+            SendMessageW(masterGainSlider_, TBM_SETTICFREQ, 50, 0);
+            const int position = host_
+                ? static_cast<int>(std::lround(host_->masterOutputGain() * 100.0f))
+                : 100;
+            SendMessageW(masterGainSlider_, TBM_SETPOS, TRUE, position);
+            updateMasterGainText(position);
+        }
         if (!sourceInitialized_) {
             currentSource_ = host_ && host_->hasEditorSource()
                                  ? fromUtf8(host_->editorSource())
@@ -690,7 +742,15 @@ private:
         MoveWindow(copyErrorButton_, kMargin + 330, buttonY, 82, kToolbarHeight - 4, TRUE);
         MoveWindow(status_, kMargin + 420, buttonY, std::max(100, width - 440),
                    kToolbarHeight - 4, TRUE);
-        const int editorTop = kMargin + kToolbarHeight;
+        const int gainRowY = kMargin + kToolbarHeight;
+        if (masterGainSlider_) {
+            MoveWindow(masterGainLabel_, kMargin, gainRowY + 2, 60, 22, TRUE);
+            MoveWindow(masterGainSlider_, kMargin + 68, gainRowY,
+                       210, 24, TRUE);
+            MoveWindow(masterGainValue_, kMargin + 286, gainRowY + 2,
+                       64, 22, TRUE);
+        }
+        const int editorTop = kMargin + kToolbarHeight + kGainRowHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
         MoveWindow(editor_, kMargin, editorTop, std::max(160, width - 2 * kMargin), editorHeight, TRUE);
         const int footerY = height - kStatusHeight - kMargin;
@@ -714,6 +774,13 @@ private:
         if (documentDirty_)
             name += L"  *";
         SetWindowTextW(fileName_, name.c_str());
+    }
+
+    void updateMasterGainText(int position) {
+        if (!masterGainValue_)
+            return;
+        const auto text = std::to_wstring(std::clamp(position, 0, 200)) + L"%";
+        SetWindowTextW(masterGainValue_, text.c_str());
     }
 
     std::string editorUtf8Source() const {
@@ -1037,6 +1104,11 @@ private:
     void refreshStatus() {
         if (!host_ || !status_)
             return;
+        const int gainPosition = static_cast<int>(
+            std::lround(std::clamp(host_->masterOutputGain(), 0.0f, 2.0f) * 100.0f));
+        if (masterGainSlider_)
+            SendMessageW(masterGainSlider_, TBM_SETPOS, TRUE, gainPosition);
+        updateMasterGainText(gainPosition);
         const auto restoredSource = fromUtf8(host_->editorSource());
         if (!documentDirty_ && host_->hasEditorSource() &&
             restoredSource != currentSource_) {
@@ -1083,6 +1155,9 @@ private:
     HWND status_ = nullptr;
     HWND brand_ = nullptr;
     HWND fileName_ = nullptr;
+    HWND masterGainSlider_ = nullptr;
+    HWND masterGainValue_ = nullptr;
+    HWND masterGainLabel_ = nullptr;
     std::wstring lastDiagnostic_;
     bool copyDiagnosticPinned_ = false;
     std::wstring currentFilePath_;

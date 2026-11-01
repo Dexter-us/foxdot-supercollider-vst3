@@ -252,3 +252,19 @@ for required in (
     if required not in processor_source:
         raise AssertionError(f"Persistent stereo insert path is missing {required!r}.")
 print("PASS 98-airwindows-chord-tails.py: polyphonic example and persistent insert path")
+
+drum_path = portable_path / "99-echojam-drum-delay-demo.py"
+drum_script = drum_path.read_text(encoding="utf-8")
+drum_report = compatibility_report(drum_script, ("AirwindowsEchojam",))
+if "No unsupported constructs detected" not in drum_report:
+    raise AssertionError(f"Drum-delay demo failed compatibility checking:\n{drum_report}")
+drum_rows, drum_controls = evaluate(drum_script, ("AirwindowsEchojam",))
+if len(drum_rows) != 2 or int(drum_rows[0][6]) != 58:
+    raise AssertionError(f"Drum-delay demo did not start the delayed voice and dry tick: {drum_rows}")
+expected_echojam_controls = (0.29, 0.62, 0.48, 0.5, 0.5, 0.0, 0.82)
+actual_echojam_controls = drum_controls.get(0, ())
+if (len(actual_echojam_controls) != len(expected_echojam_controls) or
+        any(abs(actual - expected) > 1e-9
+            for actual, expected in zip(actual_echojam_controls, expected_echojam_controls))):
+    raise AssertionError(f"Drum-delay demo Echojam controls mismatch: {drum_controls}")
+print("PASS 99-echojam-drum-delay-demo.py: compatibility, embedded evaluation, delay controls and dry tick")

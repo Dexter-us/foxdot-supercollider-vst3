@@ -23,6 +23,7 @@
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
 #include "clock_swing.h"
+#include "master_output_gain.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
@@ -305,14 +306,21 @@ public:
         if (source.size() > kMaxEditorSourceBytes)
             return kResultFalse;
 
-        std::array<char, 4> magic{'D', 'X', 'C', '1'};
+        std::array<char, 4> magic{'D', 'X', 'C', '2'};
         std::array<char, 4> length{};
         encodeUint32(static_cast<std::uint32_t>(source.size()), length);
+        std::array<char, 4> gainBytes{};
+        const float gain = masterGainTarget_.load(std::memory_order_acquire);
+        std::uint32_t gainBits = 0;
+        std::memcpy(&gainBits, &gain, sizeof(gainBits));
+        encodeUint32(gainBits, gainBytes);
 
         if (!writeStreamBytes(stream, magic.data(), static_cast<int32>(magic.size())) ||
             !writeStreamBytes(stream, length.data(), static_cast<int32>(length.size())) ||
             (!source.empty() &&
-             !writeStreamBytes(stream, source.data(), static_cast<int32>(source.size()))))
+             !writeStreamBytes(stream, source.data(), static_cast<int32>(source.size()))) ||
+            !writeStreamBytes(stream, gainBytes.data(),
+                              static_cast<int32>(gainBytes.size())))
             return kResultFalse;
         return kResultOk;
     }
@@ -333,7 +341,9 @@ public:
                 return bytesRead == 0 ? kResultOk : kResultFalse;
             bytesRead += chunkRead;
         }
-        if (magic != std::array<char, 4>{'D', 'X', 'C', '1'})
+        const bool oldState = magic == std::array<char, 4>{'D', 'X', 'C', '1'};
+        const bool hasGain = magic == std::array<char, 4>{'D', 'X', 'C', '2'};
+        if (!oldState && !hasGain)
             return kResultFalse;
 
         std::array<char, 4> length{};
@@ -350,11 +360,25 @@ public:
         if (source.find('\0') != std::string::npos)
             return kResultFalse;
 
+        float restoredGain = 1.0f;
+        if (hasGain) {
+            std::array<char, 4> gainBytes{};
+            if (!readStreamBytes(stream, gainBytes.data(),
+                                 static_cast<int32>(gainBytes.size())))
+                return kResultFalse;
+            const auto gainBits = decodeUint32(gainBytes);
+            std::memcpy(&restoredGain, &gainBits, sizeof(restoredGain));
+            if (!std::isfinite(restoredGain) ||
+                restoredGain < 0.0f || restoredGain > 2.0f)
+                return kResultFalse;
+        }
+
         {
             std::lock_guard<std::mutex> lock(editorStateMutex_);
             editorSource_ = std::move(source);
             hasEditorSource_ = true;
         }
+        masterGainTarget_.store(restoredGain, std::memory_order_release);
         stopPattern();
         return kResultOk;
     }
@@ -483,8 +507,13 @@ public:
                 renderSCBlock(blockStart);
             }
             const auto outputSample = static_cast<std::size_t>(cursor_++);
-            const float leftSample = outputBlock_[0][outputSample];
-            const float rightSample = outputBlock_[1][outputSample];
+            masterGainCurrent_ = dexterMasterGainStep(
+                masterGainCurrent_,
+                masterGainTarget_.load(std::memory_order_relaxed), sampleRate_);
+            const float leftSample =
+                outputBlock_[0][outputSample] * masterGainCurrent_;
+            const float rightSample =
+                outputBlock_[1][outputSample] * masterGainCurrent_;
             for (int32 channel = 0; channel < output.numChannels; ++channel) {
                 if (!output.channelBuffers32[channel])
                     continue;
@@ -746,6 +775,17 @@ public:
     std::string editorStatus() override {
         std::lock_guard<std::mutex> lock(statusMutex_);
         return editorStatus_;
+    }
+
+    float masterOutputGain() override {
+        return masterGainTarget_.load(std::memory_order_acquire);
+    }
+
+    void setMasterOutputGain(float gain) override {
+        if (!std::isfinite(gain))
+            return;
+        masterGainTarget_.store(std::clamp(gain, 0.0f, 2.0f),
+                                std::memory_order_release);
     }
 
     OBJ_METHODS(DexterSCTone, SingleComponentEffect)
@@ -1065,6 +1105,9 @@ private:
         std::uint64_t sustainEndSample = 0;
         bool foxDotNativeEnvelope = false;
         int sampleBuffer = -1;
+        double sampleStart = 0.0;
+        double sampleEnd = 1.0;
+        bool sampleLoop = false;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -2081,6 +2124,12 @@ private:
                 }
                 double sampleSeconds = isSample && minimumSampleRate > 0.0
                     ? longestSampleSeconds / minimumSampleRate : 0.0;
+                if (isSample) {
+                    if (event.sampleLoop)
+                        sampleSeconds = event.durationBeats * 60.0 / pattern.bpm;
+                    else
+                        sampleSeconds *= event.sampleEnd - event.sampleStart;
+                }
                 if (isSample && event.sampleGate)
                     sampleSeconds = std::min(sampleSeconds, event.durationBeats * 60.0 / pattern.bpm);
                 const double lookback = isSample ? sampleSeconds * pattern.bpm / 60.0 : event.durationBeats;
@@ -2130,9 +2179,11 @@ private:
                             std::abs(selectedSampleRate) < 0.0625 ||
                             std::abs(selectedSampleRate) > 8.0)
                             continue;
-                        selectedSampleSeconds =
-                            event.sampleVariantDurations[selectedVariant] /
-                            std::abs(selectedSampleRate);
+                        selectedSampleSeconds = event.sampleLoop
+                            ? event.durationBeats * 60.0 / pattern.bpm
+                            : event.sampleVariantDurations[selectedVariant] *
+                                  (event.sampleEnd - event.sampleStart) /
+                                  std::abs(selectedSampleRate);
                         if (event.sampleGate)
                             selectedSampleSeconds = std::min(
                                 selectedSampleSeconds,
@@ -2180,7 +2231,8 @@ private:
                             std::llround(absoluteEndBeat * samplesPerBeat)),
                         patternStart + static_cast<std::uint64_t>(
                             std::llround(sustainEndBeat * samplesPerBeat)),
-                        foxDotNativeEnvelope, selectedSampleBuffer};
+                        foxDotNativeEnvelope, selectedSampleBuffer,
+                        event.sampleStart, event.sampleEnd, event.sampleLoop};
                     ++playerVoices;
                 }
             }
@@ -2401,8 +2453,15 @@ private:
                                              note.synthIndex == mode ? 1.0f : 0.0f);
                         } else {
                         Graph_SetControl(found->activeSynth, 2, note.synthRate);
-                        if (note.synthIndex == 57)
+                        if (note.synthIndex == 57) {
                             Graph_SetControl(found->activeSynth, 22, static_cast<float>(note.sampleBuffer));
+                            Graph_SetControl(found->activeSynth, 23,
+                                             static_cast<float>(note.sampleStart));
+                            Graph_SetControl(found->activeSynth, 24,
+                                             static_cast<float>(note.sampleEnd));
+                            Graph_SetControl(found->activeSynth, 25,
+                                             note.sampleLoop ? 1.0f : 0.0f);
+                        }
                         if (note.synthIndex == 10) {
                             const auto sustainSamples = note.endSample - note.startSample;
                             Graph_SetControl(found->activeSynth, 3,
@@ -3559,6 +3618,8 @@ private:
         return initial;
     }();
     float mixGain_ = 0.0f;
+    std::atomic<float> masterGainTarget_{1.0f};
+    float masterGainCurrent_ = 1.0f;
     int cursor_ = kSCBlockSize;
     std::mutex patternMutex_;
     std::vector<std::unique_ptr<CachedSample>> sampleCache_;
@@ -3601,7 +3662,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-        "0.4.73",
+           "0.4.74",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

@@ -215,7 +215,8 @@ with tempfile.TemporaryDirectory() as temporary:
              QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-gpu")
     compiled=subprocess.run(["sclang"],input=probe_code,text=True,capture_output=True,env=env,timeout=30)
     assert compiled.returncode==0,compiled.stdout+compiled.stderr
-    score=[bundle(0,message("/d_recv",blob),message("/d_recv",(directory/"DexterSampleProbe.scsyndef").read_bytes()),
+    score=[bundle(0,message("/d_recv",blob),
+                  message("/d_recv",(directory/"DexterSampleProbe.scsyndef").read_bytes()),
                   message("/b_alloc",1,frames,1))]
     for i in range(0,frames,1024):
         score.append(bundle(.05,message("/b_setn",1,i,min(1024,frames-i),*source[i:i+1024])))
@@ -227,7 +228,24 @@ with tempfile.TemporaryDirectory() as temporary:
         score.append(bundle(start_time,message("/s_new","DexterSample",100+index,0,0),
                             message("/n_set",100+index,0,16.,2,rate,6,64.,7,0.,10,.4,22,1.)))
         score.append(bundle(start_time+1.,message("/n_free",100+index)))
-    score.append(bundle(6.5,message("/c_set",0,0)))
+    slice_start, slice_end = .2, .5
+    slice_first_frame, slice_end_frame = int(frames*slice_start), int(frames*slice_end)
+    slice_duration = (slice_end_frame-slice_first_frame)/sample_rate
+    score.append(bundle(7.0,message("/s_new","DexterSample",200,0,0),
+                        message("/n_set",200,0,16.,2,1.,6,64.,7,0.,10,.4,
+                                22,1.,23,slice_start,24,slice_end,25,0.)))
+    score.append(bundle(7.0+slice_duration,message("/n_free",200)))
+    loop_start, loop_end = .25, .75
+    loop_period = int(frames*loop_end)-int(frames*loop_start)
+    score.append(bundle(8.0,message("/s_new","DexterSample",201,0,0,
+                                    0,16.,2,1.,6,64.,7,0.,10,.4,22,1.,
+                                    23,loop_start,24,loop_end,25,1.)))
+    score.append(bundle(8.9,message("/n_free",201)))
+    score.append(bundle(9.0,message("/s_new","DexterSample",203,0,0),
+                        message("/n_set",203,0,16.,2,-1.,6,64.,7,0.,10,.4,
+                                22,1.,23,loop_start,24,loop_end,25,1.)))
+    score.append(bundle(9.9,message("/n_free",203)))
+    score.append(bundle(10.0,message("/c_set",0,0)))
     score_path,wav_path=directory/"score.osc",directory/"render.wav"
     score_path.write_bytes(b"".join(score))
     rendered=subprocess.run(["scsynth","-D","0","-R","0","-i","0","-o","2","-z","64",
@@ -236,6 +254,10 @@ with tempfile.TemporaryDirectory() as temporary:
     assert rendered.returncode==0 and "FAILURE" not in rendered.stdout,rendered.stdout+rendered.stderr
     output,channels,rate=audio.read_float_wav(wav_path)
     mono=output[::channels]
+    def normalized_correlation(left, right):
+        dot = sum(a*b for a,b in zip(left,right))
+        energy = sum(a*a for a in left)*sum(b*b for b in right)
+        return dot/math.sqrt(energy) if energy else 0.0
     assert all(math.isfinite(value) for value in mono)
     for start_time,rate in starts:
         start=int(start_time*48000)
@@ -253,4 +275,34 @@ with tempfile.TemporaryDirectory() as temporary:
         end=start+round(frames/abs(rate))
         assert max(abs(v) for v in mono[end+128:end+512])<1e-5,(rate,"did not stop at natural length")
         print(f"PASS: native PlayBuf rate={rate:+g}, decoded-buffer correlation={best:.5f}, natural stop")
+    sliced_start_sample = int(7.0*48000) + 64
+    sliced_end_sample = sliced_start_sample + int(slice_duration*48000)
+    assert max(abs(value) for value in mono[sliced_start_sample:sliced_end_sample]) > .02
+    assert max(abs(value) for value in mono[sliced_end_sample+128:sliced_end_sample+512]) < 1e-5
+    print("PASS: fractional one-shot slice stops at its selected end")
+    loop_start_sample = int(8.0*48000) + 64
+    loop_first = mono[loop_start_sample:loop_start_sample+loop_period]
+    loop_second = mono[loop_start_sample+loop_period:loop_start_sample+2*loop_period]
+    assert len(loop_first) == loop_period and len(loop_second) == loop_period
+    loop_correlation, loop_lag = 0.0, 0
+    for lag in range(-64,65):
+        left = loop_first[max(0,lag):min(loop_period,loop_period+lag)]
+        right = loop_second[max(0,-lag):min(loop_period,loop_period-lag)]
+        dot = sum(a*b for a,b in zip(left,right))
+        energy = sum(a*a for a in left)*sum(b*b for b in right)
+        correlation = dot/math.sqrt(energy) if energy else 0.0
+        if correlation > loop_correlation:
+            loop_correlation, loop_lag = correlation, lag
+    assert loop_correlation > .995,("looped sample slice did not repeat cleanly",
+                                    loop_correlation,loop_lag)
+    assert max(abs(value) for value in loop_first) > .02
+    print(f"PASS: sliced one-shot and bounded looping slice correlation={loop_correlation:.5f} lag={loop_lag}")
+    reverse_start_sample = int(9.0*48000) + 64
+    reverse_first = mono[reverse_start_sample:reverse_start_sample+loop_period]
+    reverse_second = mono[reverse_start_sample+loop_period:reverse_start_sample+2*loop_period]
+    assert len(reverse_first) == loop_period and len(reverse_second) == loop_period
+    reverse_correlation = normalized_correlation(reverse_first, reverse_second)
+    assert reverse_correlation > .995,("reverse loop slice did not repeat cleanly",
+                                       reverse_correlation)
+    print(f"PASS: reverse bounded loop slice correlation={reverse_correlation:.5f}")
 print("PASS: sample buffer playback, reverse, pitch/rate, repeated fresh nodes; no disk UGen or libsndfile reader used")

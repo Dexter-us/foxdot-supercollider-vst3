@@ -154,7 +154,7 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate'
 }
 _COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum'}
-_COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample'}
+_COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop'}
 _COMPAT_PLAY_KEYWORDS = _COMPAT_NOTE_PLAY_KEYWORDS | _COMPAT_SAMPLE_PLAY_KEYWORDS
 _COMPAT_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
 _COMPAT_SCALE_NAMES = {
@@ -2461,7 +2461,16 @@ def _sample_timeline_values(values, parameterLengths):
         symbolSlots.append(tuple((symbol, None) for symbol in symbols))
     return notes, multipliers, symbolSlots
 
-def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
+def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
+                    start=0.0, end=1.0, loop=False, **controls):
+    if (isinstance(start, bool) or not isinstance(start, (int, float)) or
+            start != start or start in (float('inf'), float('-inf')) or
+            isinstance(end, bool) or not isinstance(end, (int, float)) or
+            end != end or end in (float('inf'), float('-inf')) or
+            not 0.0 <= start < end <= 1.0):
+        raise ValueError('sample start/end must be finite fractions with 0 <= start < end <= 1')
+    if not isinstance(loop, bool):
+        raise ValueError('sample loop must be True or False')
     samplePatternValues = None
     if isinstance(text, _FoxDotFinitePattern):
         if any(_sample_symbols_for_item(item) is None for item in text):
@@ -2524,8 +2533,9 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0, **controls):
                        _allow_repeated_notes=True, **controls)
     pattern.synth = 'sample'
     pattern.synthRate = 1.0
-    pattern.sampleSpec = (selections, rates, sus is not None, positions,
-                          sampleControl, rateControl, symbolEvents)
+    pattern.sampleSpec = (selections, rates, sus is not None or loop, positions,
+                          sampleControl, rateControl, symbolEvents,
+                          float(start), float(end), loop)
     return pattern
 
 def play(notes, *args, **kwargs):
@@ -2600,7 +2610,8 @@ class Player:
             requests = []
             adjusted = []
             assignedMidiIntervals = []
-            selection, rates, gate, positions, sampleControl, rateControl, symbolEvents = pattern.sampleSpec
+            (selection, rates, gate, positions, sampleControl, rateControl,
+             symbolEvents, sampleStart, sampleEnd, sampleLoop) = pattern.sampleSpec
             symbolsByPosition = {}
             for symbolEvent in symbolEvents:
                 symbolsByPosition.setdefault(symbolEvent[1], []).append(symbolEvent)
@@ -2619,7 +2630,8 @@ class Player:
                     raise ValueError('sample selection must be an integer from -1000000 to 1000000')
                 if playbackRate != playbackRate or not 0.0625 <= abs(playbackRate) <= 8.0:
                     raise ValueError('sample rate magnitude must be 0.0625 to 8; negative plays backwards')
-                requests.append((symbol, int(sampleIndex), playbackRate, int(gate)))
+                requests.append((symbol, int(sampleIndex), playbackRate, int(gate),
+                                 sampleStart, sampleEnd, int(sampleLoop)))
                 note = list(event)
                 baseMidiNote = {120: 36, 88: 36, 111: 38, 79: 38,
                                 45: 42, 61: 46, 42: 39}.get(symbol, symbol)
@@ -2743,7 +2755,7 @@ p8 = Player(8)
             << "            for _event_index, _e in enumerate(_events):\n"
             << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\t{}\\n'.format(*_e))\n"
             << "                if _synth == 57:\n"
-            << "                    _f.write('B\\t{}\\t{}\\t{}\\t{}\\n'.format(*_dexter_scope['_dexter_sample_events'][_player][_event_index]))\n"
+            << "                    _f.write('B\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(*_dexter_scope['_dexter_sample_events'][_player][_event_index]))\n"
             << "        for _player, _muted in sorted(_mutes.items()):\n"
             << "            _f.write('M\\t{}\\t{}\\n'.format(_player, int(_muted)))\n"
             << "except BaseException:\n"
@@ -2954,17 +2966,29 @@ bool parseResult(const std::filesystem::path& resultPath,
             if (update.synthIndex == 57) {
                 char bufferRecord = 0;
                 int gate = 0;
+                int loop = 0;
                 if (!(input >> bufferRecord >> event.sampleSymbol >> event.sampleIndex >>
-                      event.sampleRate >> gate) || bufferRecord != 'B' ||
+                      event.sampleRate >> gate >> event.sampleStart >> event.sampleEnd >>
+                      loop) || bufferRecord != 'B' ||
                     event.sampleSymbol < 33 || event.sampleSymbol > 126 ||
                     event.sampleIndex < -1000000 || event.sampleIndex > 1000000 ||
                     !std::isfinite(event.sampleRate) ||
                     std::abs(event.sampleRate) < 0.0625 || std::abs(event.sampleRate) > 8.0 ||
-                    (gate != 0 && gate != 1)) {
+                    (gate != 0 && gate != 1) ||
+                    !std::isfinite(event.sampleStart) ||
+                    !std::isfinite(event.sampleEnd) ||
+                    event.sampleStart < 0.0 || event.sampleEnd > 1.0 ||
+                    event.sampleStart >= event.sampleEnd ||
+                    (loop != 0 && loop != 1)) {
                     error = "Python returned a malformed sample event.";
                     return false;
                 }
                 event.sampleGate = gate != 0;
+                event.sampleLoop = loop != 0;
+                if (event.sampleLoop && !event.sampleGate) {
+                    error = "Python returned a looping sample without a bounded gate.";
+                    return false;
+                }
             }
             update.events.push_back(event);
         }

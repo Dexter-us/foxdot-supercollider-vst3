@@ -135,10 +135,13 @@ with tempfile.TemporaryDirectory() as directory:
                 re.sub(r"^S\t0\t[^\n]+", "S\t0\tnan\t0.5\t1\t0.5\t0.5\t0\t1", valid, flags=re.M),
                 re.sub(r"^S\t[^\n]+\n", "", valid, flags=re.M),
                 re.sub(r"^B\t[^\n]+\n", "", valid, count=1, flags=re.M),
-                re.sub(r"^B\t[^\n]+", "B\t120\t0\tnan\t0", valid, count=1, flags=re.M),
-                re.sub(r"^B\t[^\n]+", "B\t120\t0\t0\t0", valid, count=1, flags=re.M),
-                re.sub(r"^B\t[^\n]+", "B\t32\t0\t1\t0", valid, count=1, flags=re.M),
-                re.sub(r"^B\t[^\n]+", "B\t120\t0\t1\t2", valid, count=1, flags=re.M)):
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\tnan\t0\t0\t1\t0", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\t0\t0\t0\t1\t0", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t32\t0\t1\t0\t0\t1\t0", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\t1\t2\t0\t1\t0", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\t1\t0\t0.8\t0.2\t0", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\t1\t0\t0\t1\t2", valid, count=1, flags=re.M),
+                re.sub(r"^B\t[^\n]+", "B\t120\t0\t1\t0\t0\t1\t1", valid, count=1, flags=re.M)):
         assert bad != valid
         result.write_text(bad)
         parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
