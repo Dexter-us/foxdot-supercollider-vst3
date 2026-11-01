@@ -66,7 +66,8 @@ def make_wrapper(source_path, result_path, user_synth_names=()):
             if argument not in placeholders:
                 raise SystemExit('Unknown generated-wrapper placeholder: ' + argument)
             parts.append(repr(placeholders[argument]))
-    return ''.join(parts)
+    return ''.join(parts).replace(
+        'int(time.monotonic_ns() & 0xffffffff)', '123456789')
 
 safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter',
               'float', 'int', 'isinstance', 'len', 'list', 'map', 'max', 'min',
@@ -590,6 +591,18 @@ def run_script(script_text, include_events=False, include_effects=False, include
         if include_effects:
             return player_rows, effect_rows
         return (player_rows, event_rows) if include_events else player_rows
+
+def run_script_with_schedule_seed(script_text, seed):
+    global wrapper_cpp
+    original = wrapper_cpp
+    marker = 'int(time.monotonic_ns() & 0xffffffff)'
+    if marker not in original:
+        raise AssertionError('Could not find the runtime shuffle seed in wrapper')
+    wrapper_cpp = original.replace(marker, str(int(seed)))
+    try:
+        return run_script(script_text, include_events=True)
+    finally:
+        wrapper_cpp = original
 
 newSynthRows = run_script('p1 >> bass([0, 3, 5], dur=0.5)\np2 >> varsaw([0, 4], dur=1, rate=0.25)\np3 >> varsaw([0])\np4 >> dirt([0, 3])\np5 >> jbass([0, 5])\np6 >> noise([0, 2])\n')
 assert len(newSynthRows) == 6
@@ -1860,22 +1873,71 @@ assert len(sometimesRows) == 2
 assert 2 < len(sometimesEvents) <= 256
 assert int(sometimesRows[1][5]) <= 256
 assert 8.0 <= float(sometimesRows[1][4]) <= 128.0
-assert 'Scheduled transforms currently need a dense' in run_error_script(
+shuffleRows, shuffleEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\np1.every(1, "shuffle")\n',
+    include_events=True)
+assert len(shuffleRows) == 1 and len(shuffleEvents) == 4
+assert set(int(event[3]) for event in shuffleEvents) <= {60, 62, 64, 65}
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\np1.often("shuffle")\n')
+oftenRows, oftenEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\np1.often("shuffle")\n',
+    include_events=True)
+assert len(oftenRows) == 1 and 4 <= len(oftenEvents) <= 256
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\np1.rarely("reverse")\n')
+rarelyRows, rarelyEvents = run_script(
+    'p1 >> sine([0, 1], dur=0.25)\np1.rarely("reverse")\n',
+    include_events=True)
+assert len(rarelyRows) == 1 and 4 <= len(rarelyEvents) <= 256
+stutterRows, stutterEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5, sus=0.4)\n'
+    'p1.every(1, "stutter", 3)\n',
+    include_events=True)
+assert len(stutterRows) == 1 and len(stutterEvents) == 8
+assert sorted(int(event[3]) for event in stutterEvents) == [
+    60, 60, 60, 62, 64, 64, 64, 65]
+assert_player_polyphony_ok(stutterRows[0], stutterEvents)
+defaultStutterRows, defaultStutterEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5, sus=0.4)\n'
+    'p1.every(1, "stutter")\n',
+    include_events=True)
+assert len(defaultStutterRows) == 1 and len(defaultStutterEvents) == 6
+scheduleShortcutText = open(
+    os.path.join(sys.argv[2], '111-player-schedule-shortcuts.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    scheduleShortcutText)
+scheduleRows, scheduleEvents = run_script(
+    scheduleShortcutText, include_events=True)
+assert len(scheduleRows) == 3 and len(scheduleEvents) <= 256
+assert int(scheduleRows[2][5]) > 4
+assert_player_polyphony_ok(scheduleRows[2], scheduleEvents[
+    int(scheduleRows[0][5]) + int(scheduleRows[1][5]):])
+for scheduleSeed in range(16):
+    seededRows, seededEvents = run_script_with_schedule_seed(
+        scheduleShortcutText, scheduleSeed)
+    assert len(seededRows) == 3 and len(seededEvents) <= 256
+    assert all(int(row[5]) <= 256 for row in seededRows)
+assert 'Scheduled player operations currently need a dense' in run_error_script(
     'p1 >> sine([0, None, 2, None], dur=0.5)\n'
     'p1.every(2, "reverse")\n')
 assert 'Scheduled transforms and degree-follow relationships cannot be combined' in run_error_script(
     'p1 >> sine([0, 2, 4, 6], dur=0.5)\n'
     'p2 >> bass([0, 2, 4, 6], dur=0.5)\n'
     'p2.follow(p1)\np2.every(2, "reverse")\n')
+assert 'Only one scheduled player operation' in run_error_script(
+    'p1 >> sine([0, 2, 4, 6], dur=0.5)\n'
+    'p1.every(2, "reverse")\np1.often("shuffle")\n')
 assert 'cannot follow itself' in run_compatibility_check(
     'p1 >> sine([0, 2], dur=0.5)\np1.follow(p1)\n')
 assert 'degree assignment supports only' in run_compatibility_check(
     'p1 >> sine([0, 2], dur=0.5)\np1.degree = 3\n')
-assert 'Use bounded degree transforms' in run_compatibility_check(
-    'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(2, "stutter")\n')
+assert 'Use bounded transforms' in run_compatibility_check(
+    'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(2, "stutter", 17)\n')
 assert 'accepts positional arguments only' in run_compatibility_check(
     'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(2, "reverse", cycle=8)\n')
-assert 'Use bounded degree transforms' in run_compatibility_check(
+assert 'Use bounded transforms' in run_compatibility_check(
     'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(var([2, 4], 2), "reverse")\n')
 dense_degrees = ', '.join(str(index % 4) for index in range(100))
 assert 'beyond the 256-event limit' in run_error_script(
@@ -1886,4 +1948,4 @@ assert 'Circular player degree reference' in run_error_script(
     'p1.follow(p2)\np2.follow(p1)\n')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded .every()/.sometimes() transforms, static FoxDot compatibility checks, line diagnostics, Portable examples through 110, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded .every()/.often()/.sometimes()/.rarely() transforms, static FoxDot compatibility checks, line diagnostics, Portable examples through 111, and user SynthDef examples 94, 103, 104, and 105.')

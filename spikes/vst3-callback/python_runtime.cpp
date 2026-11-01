@@ -399,13 +399,14 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if (isinstance(node.func, ast.Attribute) and
                 isinstance(node.func.value, ast.Name) and
                 node.func.value.id in {'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'} and
-                node.func.attr in {'every', 'sometimes'}):
+                node.func.attr in {'every', 'often', 'sometimes', 'rarely'}):
             validCount = (2 <= len(node.args) <= 3 if node.func.attr == 'every'
                           else 1 <= len(node.args) <= 2)
             commandIndex = 1 if node.func.attr == 'every' else 0
             validCommand = (len(node.args) > commandIndex and
                             isinstance(node.args[commandIndex], ast.Constant) and
-                            node.args[commandIndex].value in {'reverse', 'rotate'})
+                            node.args[commandIndex].value in
+                            {'reverse', 'rotate', 'shuffle', 'stutter'})
             validInterval = (
                 node.func.attr != 'every' or
                 (node.args and isinstance(node.args[0], ast.Constant) and
@@ -414,15 +415,17 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                  0.05 <= node.args[0].value <= 4096.0))
             command = (node.args[commandIndex].value if validCommand else None)
             hasAmount = len(node.args) == commandIndex + 2
+            amount = node.args[-1].value if (
+                hasAmount and isinstance(node.args[-1], ast.Constant)) else None
             validAmount = (not hasAmount or
-                           (command == 'rotate' and
-                            isinstance(node.args[-1], ast.Constant) and
-                            isinstance(node.args[-1].value, int) and
-                            not isinstance(node.args[-1].value, bool)))
+                           (isinstance(amount, int) and
+                            not isinstance(amount, bool) and
+                            ((command == 'rotate' and -256 <= amount <= 256) or
+                             (command == 'stutter' and 1 <= amount <= 16))))
             if node.keywords:
-                self.add(node.lineno, 'Embedded .every()/.sometimes() accepts positional arguments only; cycle= and ident= are not implemented.')
+                self.add(node.lineno, 'Embedded player scheduling accepts positional arguments only; cycle= and ident= are not implemented.')
             if not validCount or not validCommand or not validInterval or not validAmount:
-                self.add(node.lineno, "Use bounded degree transforms such as p1.every(8, 'reverse'), p1.every(8, 'rotate', 1), or p1.sometimes('reverse').")
+                self.add(node.lineno, "Use bounded transforms such as p1.every(8, 'reverse'), p1.every(8, 'rotate', 1), p1.often('shuffle'), or p1.rarely('stutter', 2).")
         if name in {'PRand', 'PWhite'}:
             parameters = ('start', 'stop') if name == 'PRand' else ('lo', 'hi')
             allowed = set(parameters) | {'length', 'seed'}
@@ -499,8 +502,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Name) and re.fullmatch(r'p[0-9]+', node.value.id):
             if not re.fullmatch(r'p[1-8]', node.value.id):
                 self.add(node.lineno, 'Use one of the supported player names p1 through p8.')
-            elif node.attr not in {'stop', 'mute', 'unmute', 'follow', 'degree', 'every', 'sometimes'}:
-                self.add(node.lineno, "Player " + node.value.id + ' supports .stop(), .mute(), .unmute(), .follow(), degree references, and bounded .every()/.sometimes() degree transforms.')
+            elif node.attr not in {'stop', 'mute', 'unmute', 'follow', 'degree', 'every', 'often', 'sometimes', 'rarely'}:
+                self.add(node.lineno, "Player " + node.value.id + ' supports .stop(), .mute(), .unmute(), .follow(), degree references, and bounded .every()/.often()/.sometimes()/.rarely() transforms.')
         self.generic_visit(node)
 
     def visit_Assign(self, node):
@@ -2989,11 +2992,11 @@ class Player:
         if pattern is None or base is None:
             raise ValueError('Assign a note pattern before scheduling a player transform.')
         if pattern.synth == 'sample':
-            raise ValueError('Scheduled degree transforms currently support numeric note players, not sample players.')
+            raise ValueError('Scheduled player operations currently support numeric note players, not sample players.')
         if (pattern.octaveControl is not None or pattern.strumControl is not None or
                 pattern.strumBeats != 0.0 or pattern.delayControl is not None or
                 pattern.delayBeats != 0.0):
-            raise ValueError('Scheduled degree transforms currently require fixed-octave, unstrummed notes without per-note delay.')
+            raise ValueError('Scheduled player operations currently require fixed-octave, unstrummed notes without per-note delay.')
 
         def noteItems(value):
             if isinstance(value, _FoxDotChord):
@@ -3006,22 +3009,22 @@ class Player:
         if (not notes or len(notes) > 256 or
                 any(isinstance(note, bool) or not isinstance(note, (int, float))
                     for note in notes)):
-            raise ValueError('Scheduled transforms currently need a dense, monophonic numeric degree pattern (no rests or chords).')
+            raise ValueError('Scheduled player operations currently need a dense, monophonic numeric degree pattern (no rests or chords).')
         events = list(base[3])
         if len(events) != len(notes):
-            raise ValueError('Scheduled transforms need exactly one note event per pattern step.')
+            raise ValueError('Scheduled player operations need exactly one note event per pattern step.')
         byPosition = {}
         for event in events:
             position = event[8]
             if (isinstance(position, bool) or not isinstance(position, int) or
                     not 0 <= position < len(notes) or event[9] != 0 or
                     position in byPosition):
-                raise ValueError('Scheduled transforms currently need one ungrouped note at each pattern step.')
+                raise ValueError('Scheduled player operations currently need one ungrouped note at each pattern step.')
             byPosition[position] = event
         if len(byPosition) != len(notes):
-            raise ValueError('Scheduled transforms cannot move notes into rests; use a dense degree pattern.')
+            raise ValueError('Scheduled player operations cannot move notes into rests; use a dense degree pattern.')
 
-        transform, amount, intervals = self._scheduledTransform
+        transform, amount, intervals, intervalRange = self._scheduledTransform
         baseLength = float(base[2])
         if not 0.0 < baseLength <= 4096.0:
             raise ValueError('Scheduled transform phrase length must be between 0 and 4096 beats.')
@@ -3030,6 +3033,7 @@ class Player:
         cycles = 0
         reverseState = False
         rotation = 0
+        shuffleOrders = []
         for index in range(256):
             elapsed += float(intervals[index % len(intervals)])
             calls.append(elapsed)
@@ -3037,23 +3041,59 @@ class Player:
                 break
             if transform == 'reverse':
                 reverseState = not reverseState
-            else:
+            elif transform == 'rotate':
                 rotation = (rotation + amount) % len(notes)
+            elif transform == 'shuffle':
+                shuffleOrders.append(list(
+                    PShuf(_FoxDotFinitePattern(list(range(len(notes)))))))
             candidateCycles = round(elapsed / baseLength)
             aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
-            reset = (not reverseState if transform == 'reverse' else rotation == 0)
-            if candidateCycles >= 1 and aligned and reset:
-                cycles = candidateCycles
-                break
+            reset = (
+                not reverseState if transform == 'reverse' else
+                rotation == 0 if transform == 'rotate' else
+                True)
+            if candidateCycles >= 1 and reset:
+                if not aligned:
+                    previousElapsed = elapsed - float(intervals[index % len(intervals)])
+                    lowInterval, highInterval = intervalRange
+                    lowCyclesValue = (previousElapsed + lowInterval) / baseLength
+                    lowCycles = int(lowCyclesValue)
+                    if lowCycles < lowCyclesValue - 1e-9:
+                        lowCycles += 1
+                    highCycles = int(
+                        (previousElapsed + highInterval + 1e-9) / baseLength)
+                    eventBudget = 256
+                    if transform == 'stutter':
+                        eventBudget -= len(calls) * (amount - 1)
+                    maxCycles = min(
+                        int(4096.0 / baseLength),
+                        max(0, eventBudget // len(events)))
+                    highCycles = min(highCycles, maxCycles)
+                    if lowCycles <= highCycles:
+                        targetCycles = max(
+                            lowCycles, min(highCycles, candidateCycles))
+                        adjustedInterval = (
+                            targetCycles * baseLength - previousElapsed)
+                        if lowInterval - 1e-9 <= adjustedInterval <= highInterval + 1e-9:
+                            elapsed = targetCycles * baseLength
+                            calls[-1] = elapsed
+                            aligned = True
+                            candidateCycles = targetCycles
+                if aligned:
+                    cycles = candidateCycles
+                    break
         if (not calls or elapsed > 4096.0 or cycles < 1):
             raise ValueError('Scheduled transform could not form a bounded repeating phrase under the 256-event limit; use a shorter phrase or another interval.')
-        if len(events) * cycles > 256:
+        scheduledExtraEvents = (
+            len(calls) * (amount - 1) if transform == 'stutter' else 0)
+        if len(events) * cycles + scheduledExtraEvents > 256:
             raise ValueError('Scheduled transform expands beyond the 256-event limit; use a shorter phrase or fewer note steps.')
 
         outputEvents = []
         callIndex = 0
         reverseState = False
         rotation = 0
+        shuffleOrder = shuffleOrders[-1] if shuffleOrders else None
         for cycleIndex in range(cycles):
             cycleOffset = cycleIndex * baseLength
             for position in range(len(notes)):
@@ -3062,63 +3102,137 @@ class Player:
                 while callIndex < len(calls) and calls[callIndex] <= eventBeat + 1e-9:
                     if transform == 'reverse':
                         reverseState = not reverseState
-                    else:
+                    elif transform == 'rotate':
                         rotation = (rotation + amount) % len(notes)
+                    elif transform == 'shuffle':
+                        shuffleOrder = shuffleOrders[callIndex]
                     callIndex += 1
                 sourcePosition = (
                     len(notes) - 1 - position if reverseState else
                     (position - rotation) % len(notes) if transform == 'rotate' else
+                    shuffleOrder[position] if transform == 'shuffle' else
                     position)
                 repeatedEvent = list(event)
                 repeatedEvent[0] = float(event[0]) + cycleOffset
                 repeatedEvent[2] = byPosition[sourcePosition][2]
                 outputEvents.append(tuple(repeatedEvent))
 
+        if transform == 'stutter':
+            stepStarts = sorted(
+                ((float(event[0]), event) for event in byPosition.values()),
+                key=lambda item: item[0])
+            for scheduledBeat in calls:
+                callBeat = scheduledBeat % elapsed
+                phase = callBeat % baseLength
+                selectedIndex = len(stepStarts) - 1
+                for stepIndex, (stepBeat, _) in enumerate(stepStarts):
+                    if stepBeat <= phase + 1e-9:
+                        selectedIndex = stepIndex
+                    else:
+                        break
+                stepBeat, event = stepStarts[selectedIndex]
+                if phase + 1e-9 < stepBeat:
+                    nextStepBeat = stepStarts[0][0] + baseLength
+                    remaining = nextStepBeat - phase
+                elif selectedIndex + 1 < len(stepStarts):
+                    nextStepBeat = stepStarts[selectedIndex + 1][0]
+                    remaining = nextStepBeat - phase
+                else:
+                    nextStepBeat = stepStarts[0][0] + baseLength
+                    remaining = nextStepBeat - phase
+                if remaining <= 1e-9:
+                    remaining = baseLength / len(stepStarts)
+                spacing = remaining / float(amount)
+                for repeatIndex in range(1, amount):
+                    repeatedEvent = list(event)
+                    repeatedEvent[0] = (callBeat + spacing * repeatIndex) % elapsed
+                    repeatedEvent[1] = min(float(event[1]), spacing)
+                    outputEvents.append(tuple(repeatedEvent))
+                    if len(outputEvents) > 256:
+                        raise ValueError('Scheduled stutter expands beyond the 256-event limit; use fewer notes, fewer triggers, or a smaller stutter count.')
+            outputEvents.sort(key=lambda event: float(event[0]))
+
         expanded = list(base)
         expanded[2] = elapsed
         expanded[3] = outputEvents
         _dexter_updates[self.number - 1] = tuple(expanded)
 
-    def _set_scheduled_transform(self, method, amount, intervals):
+    def _set_scheduled_transform(self, method, amount, intervals,
+                                 intervalRange=None):
         if self._currentPattern is None or self._baseUpdate is None:
-            raise ValueError('Assign a player pattern before calling .every() or .sometimes().')
+            raise ValueError('Assign a player pattern before scheduling a transform.')
+        if self._scheduledTransform is not None:
+            raise ValueError('Only one scheduled player operation is supported per player.')
         if self._follows is not None or self._followers:
             raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
-        if (method == 'reverse' and amount != 1) or (
+        if (method in {'reverse', 'shuffle'} and
+                (isinstance(amount, bool) or amount != 1)) or (
                 method == 'rotate' and
                 (isinstance(amount, bool) or not isinstance(amount, int) or
-                 not -256 <= amount <= 256)):
-            raise ValueError('Scheduled rotate amount must be a whole number from -256 to 256.')
-        if method not in {'reverse', 'rotate'}:
-            raise ValueError('Embedded scheduled transforms support only reverse and rotate.')
-        self._scheduledTransform = (method, amount, tuple(intervals))
+                 not -256 <= amount <= 256)) or (
+                method == 'stutter' and
+                (isinstance(amount, bool) or not isinstance(amount, int) or
+                 not 1 <= amount <= 16)):
+            raise ValueError('Rotate amount must be -256 to 256, stutter count 1 to 16, and reverse/shuffle take no amount.')
+        if method not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError('Embedded scheduled transforms support reverse, rotate, shuffle, and stutter.')
+        if intervalRange is None:
+            intervalRange = (min(intervals), max(intervals))
+        self._scheduledTransform = (
+            method, amount, tuple(intervals), tuple(intervalRange))
         self._apply_scheduled_transform()
 
     def every(self, occurrence, command, *args, **kwargs):
         if kwargs or len(args) > 1:
-            raise ValueError('Embedded .every() accepts a beat interval, reverse/rotate, and an optional rotate amount only.')
+            raise ValueError('Embedded .every() accepts a beat interval, reverse/rotate/shuffle/stutter, and one optional transform amount.')
         if (isinstance(occurrence, bool) or
                 not isinstance(occurrence, (int, float)) or
                 occurrence != occurrence or occurrence in (float('inf'), float('-inf')) or
                 not 0.05 <= occurrence <= 4096.0):
             raise ValueError('.every() interval must be a finite number from 0.05 to 4096 beats.')
-        if command not in {'reverse', 'rotate'}:
-            raise ValueError("Embedded .every() supports 'reverse' and 'rotate' degree transforms.")
-        amount = args[0] if args else 1
-        self._set_scheduled_transform(command, amount, [float(occurrence)])
+        if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError("Embedded .every() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        amount = args[0] if args else (2 if command == 'stutter' else 1)
+        self._set_scheduled_transform(
+            command, amount, [float(occurrence)],
+            (float(occurrence), float(occurrence)))
+        return self
+
+    def _random_transform_intervals(self, low, high):
+        seed = (_dexter_shuffle_seed ^
+                ((self.number * 2654435761) & 0xffffffff)) & 0xffffffff
+        intervals = [value / 2.0 for value in
+                     PRand(low, high, length=256, seed=seed)]
+        return intervals, (low / 2.0, high / 2.0)
+
+    def often(self, command, *args, **kwargs):
+        if kwargs or len(args) > 1:
+            raise ValueError('Embedded .often() accepts a transform and one optional amount only.')
+        if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError("Embedded .often() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        amount = args[0] if args else (2 if command == 'stutter' else 1)
+        intervals, intervalRange = self._random_transform_intervals(1, 8)
+        self._set_scheduled_transform(command, amount, intervals, intervalRange)
         return self
 
     def sometimes(self, command, *args, **kwargs):
         if kwargs or len(args) > 1:
-            raise ValueError('Embedded .sometimes() accepts reverse/rotate and an optional rotate amount only.')
-        if command not in {'reverse', 'rotate'}:
-            raise ValueError("Embedded .sometimes() supports 'reverse' and 'rotate' degree transforms.")
-        amount = args[0] if args else 1
-        seed = (_dexter_shuffle_seed ^
-                ((self.number * 2654435761) & 0xffffffff)) & 0xffffffff
-        intervals = [value / 2.0 for value in
-                     PRand(8, 32, length=256, seed=seed)]
-        self._set_scheduled_transform(command, amount, intervals)
+            raise ValueError('Embedded .sometimes() accepts a transform and one optional amount only.')
+        if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError("Embedded .sometimes() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        amount = args[0] if args else (2 if command == 'stutter' else 1)
+        intervals, intervalRange = self._random_transform_intervals(8, 32)
+        self._set_scheduled_transform(command, amount, intervals, intervalRange)
+        return self
+
+    def rarely(self, command, *args, **kwargs):
+        if kwargs or len(args) > 1:
+            raise ValueError('Embedded .rarely() accepts a transform and one optional amount only.')
+        if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError("Embedded .rarely() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        amount = args[0] if args else (2 if command == 'stutter' else 1)
+        intervals, intervalRange = self._random_transform_intervals(32, 64)
+        self._set_scheduled_transform(command, amount, intervals, intervalRange)
         return self
 
     def _copy_followed_degree(self, source):

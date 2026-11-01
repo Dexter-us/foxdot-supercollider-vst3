@@ -1,15 +1,21 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.82 adds FoxDot-style `.often()`/`.rarely()` scheduling shortcuts and
+scheduled `shuffle`/`stutter` operations alongside `reverse`/`rotate`. The
+upstream 0.6.7 interval ranges are used: often 0.5–4 beats, sometimes 4–16,
+rarely 16–32; the final interval may be nudged within the same range to close a
+bounded repeating phrase. Schedules are seeded, and Python does not remain
+running as a server. Stutter retriggers the current note within its remaining
+step and accepts counts 1–16. Only one scheduled operation can be attached to a
+player. See Portable Example 111.
+
 Version 0.4.81 adds numeric player degree references (`p2.degree = p1.degree`
 and `p2.follow(p1)`) plus bounded player `.every()`/`.sometimes()` transformations.
 Degree changes propagate to followers while each player keeps its own synth,
-timing, and mix controls. Scheduled `reverse`/`rotate` changes are compiled into
-a repeating phrase so no Python server is needed after evaluation. See Portable
-Examples 109–110. This is a bounded embedded subset: scheduled transforms require
-dense single-note patterns and do not combine with rests, chords, strum/delay,
-variable octave, or player-follow relationships on the same player. `.every()`
-and `.sometimes()` transform the degree stream, not every FoxDot player control;
-`.sometimes()` uses a seeded repeating interval phrase.
+timing, and mix controls. See Portable Examples 109–110. This embedded subset
+requires dense single-note numeric patterns and does not combine scheduled
+operations with rests, chords, strum/delay, variable octave, or player-follow
+relationships on the same player. Degree transforms leave other controls fixed.
 
 Version 0.4.80 adds an optional standalone DiskIO pack: native DiskIn/VDiskIn
 streaming and bounded DiskOut master recording. Examples 106–108 use explicit

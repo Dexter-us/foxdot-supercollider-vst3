@@ -1,16 +1,25 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.82 adds `.often()` and `.rarely()` scheduling shortcuts and expands
+`.every()`/`.sometimes()` to include seeded degree `shuffle` and bounded
+current-note `stutter`. FoxDot 0.6.7 interval ranges are used:
+often 0.5–4 beats, sometimes 4–16 beats, and rarely 16–32 beats. As with the
+earlier scheduling subset, these are compiled into a bounded repeating phrase;
+the final interval may be nudged within the same range to close the phrase.
+The embedded Python does not stay running. See Example 111. Stutter accepts
+counts 1–16; only one scheduled operation may be attached to a player, and
+expanded player phrases are capped at 256 events.
+
 Version 0.4.81 adds live numeric player degree references using
 `p2.degree = p1.degree` or `p2.follow(p1)`. When the source player changes in a
 script evaluation, followers update their note degrees while retaining their
 own synth, rhythm, octave, and mix controls. It also adds bounded player
-`.every()` and `.sometimes()` transforms for `reverse` and `rotate`. These
-scheduled changes are compiled into a repeating phrase, so Python is not left
-running as a server. See Examples 109–110. This subset requires dense,
-monophonic numeric note patterns; it does not support rests, chords, variable
+`.every()` and `.sometimes()` transforms for `reverse` and `rotate`. See
+Examples 109–110. These are bounded embedded subsets: scheduled operations
+require dense, monophonic numeric note patterns and do not support rests, chords, variable
 octaves, strum/delay, or combining a scheduled transform with a player that
-follows another. Only degree changes are transformed; other controls stay fixed.
-`.sometimes()` uses a seeded, repeating interval phrase.
+follows another. Degree transforms do not alter other controls. `.often()`,
+`.sometimes()`, and `.rarely()` use seeded repeating interval phrases.
 
 Version 0.4.79 adds FoxDot-style var()/linvar() modulation to Airwindows
 fx_* controls. var() step changes are smoothed with a short 15 ms time constant;
