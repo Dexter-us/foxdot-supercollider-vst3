@@ -154,7 +154,7 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate'
 }
 _COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum'}
-_COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop'}
+_COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop', 'effect'}
 _COMPAT_PLAY_KEYWORDS = _COMPAT_NOTE_PLAY_KEYWORDS | _COMPAT_SAMPLE_PLAY_KEYWORDS
 _COMPAT_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
 _COMPAT_SCALE_NAMES = {
@@ -419,6 +419,19 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     self.add(node.lineno, 'Dynamic keyword expansion cannot be checked; use explicit supported controls.')
                 elif keyword.arg not in keyword_names:
                     self.add(keyword.lineno or node.lineno, "Control '" + keyword.arg + "' is not supported by " + name + '() in this build.')
+        if name == 'play':
+            for keyword in node.keywords:
+                if keyword.arg != 'effect':
+                    continue
+                if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
+                    self.add(keyword.lineno or node.lineno,
+                             "play(effect=...) requires a literal 'AirwindowsTapeDelay2' or 'AirwindowsEchojam' name.")
+                elif keyword.value.value not in {'AirwindowsTapeDelay2', 'AirwindowsEchojam'}:
+                    self.add(keyword.lineno or node.lineno,
+                             'play(effect=...) supports AirwindowsTapeDelay2 or AirwindowsEchojam.')
+                elif keyword.value.value not in _USER_SYNTH_NAMES:
+                    self.add(keyword.lineno or node.lineno,
+                             'play(effect=...) requires the matching Airwindows SynthDef in Portable/SynthDefs.')
         if name in _COMPAT_WAVES and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
             self.add(node.lineno, 'Use play(\"...\") for sample strings, not a pitched synth call.')
         if name == 'play' and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
@@ -571,6 +584,7 @@ std::string makeEvaluationScript(const std::string& sourcePath,
 _dexter_synth_controls = {}
 _dexter_sample_events = {}
 _dexter_sample_controls = {}
+_dexter_player_effect_indices = {}
 _dexter_shuffle_counter = 0
 _dexter_random_counter = 0
 _dexter_swing_seconds = 0.0
@@ -2039,6 +2053,7 @@ class PlayerPattern:
                 synth not in _dexter_user_synth_names:
             raise ValueError('Unknown embedded synth: ' + str(synth))
         self.synth = synth
+        self.playerEffectUserIndex = -1
         self.synthControls = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
         if synthRate is None:
             synthRate = 1.0 if synth == 'bug' else 0.0
@@ -2213,6 +2228,8 @@ def userSynth(name, notes=0, **kwargs):
         controls.append(value)
     pattern = _fox_wave(name, notes, **kwargs)
     pattern.synthControls = tuple(controls)
+    if name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam'):
+        pattern.playerEffectUserIndex = _dexter_user_synth_names.index(name)
     return pattern
 
 bass = _make_named_synth('bass', 8.0)
@@ -2595,7 +2612,16 @@ def _sample_timeline_values(values, parameterLengths):
     return notes, multipliers, symbolSlots
 
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
-                    start=0.0, end=1.0, loop=False, **controls):
+                    start=0.0, end=1.0, loop=False, effect=None, **controls):
+    playerEffectUserIndex = -1
+    if effect is not None:
+        if effect not in ('AirwindowsTapeDelay2', 'AirwindowsEchojam'):
+            raise ValueError('sample effect must be AirwindowsTapeDelay2 or AirwindowsEchojam')
+        if effect not in _dexter_user_synth_names:
+            raise ValueError(
+                'sample effect ' + effect +
+                ' is not loaded; install its SynthDef in Portable/SynthDefs and restart the DAW')
+        playerEffectUserIndex = _dexter_user_synth_names.index(effect)
     start, startPatternLength = _sample_fraction_pattern(start, 'start')
     end, endPatternLength = _sample_fraction_pattern(end, 'end')
     if not isinstance(loop, bool):
@@ -2669,6 +2695,7 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
     pattern.sampleSpec = (selections, rates, sus is not None or loop, positions,
                           sampleControl, rateControl, symbolEvents,
                           start, end, loop)
+    pattern.playerEffectUserIndex = playerEffectUserIndex
     return pattern
 
 def play(notes, *args, **kwargs):
@@ -2794,6 +2821,8 @@ class Player:
                 sampleControl.wire() if sampleControl is not None else '-',
                 rateControl.wire() if rateControl is not None else '-')
         _dexter_synth_controls[playerIndex] = pattern.synthControls
+        effectUserIndex = pattern.playerEffectUserIndex
+        _dexter_player_effect_indices[playerIndex] = effectUserIndex
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echoBeats,
@@ -2887,6 +2916,8 @@ p8 = Player(8)
             << "            _f.write('G' + chr(9) + chr(9).join(map(str, _modulation_values)) + chr(10))\n"
             << "            _synth_controls = _dexter_scope['_dexter_synth_controls'].get(_player, (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))\n"
             << "            _f.write('S' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _synth_controls)) + chr(10))\n"
+             << "            _effect_user_index = _dexter_scope['_dexter_player_effect_indices'].get(_player, -1)\n"
+             << "            _f.write('A' + chr(9) + str(_player) + chr(9) + str(_effect_user_index) + chr(10))\n"
              << "            if _synth == 57:\n"
              << "                _sample_control, _rate_control = _dexter_scope['_dexter_sample_controls'].get(_player, ('-', '-'))\n"
              << "                _f.write('Q' + chr(9) + str(_player) + chr(9) + _sample_control + chr(9) + _rate_control + chr(10))\n"
@@ -2957,7 +2988,7 @@ bool parseResult(const std::filesystem::path& resultPath,
              !std::isfinite(update.lengthBeats) || update.lengthBeats <= 0.0 ||
                update.lengthBeats > 4096.0 || update.synthIndex < 0 ||
                static_cast<std::size_t>(update.synthIndex) >=
-                   kEmbeddedSynthCount + userSynthCount ||
+                    kEmbeddedSynthCount + userSynthCount ||
              !std::isfinite(update.synthRate) || update.synthRate < 0.0 ||
              update.synthRate > 10.0 ||
               (update.synthIndex == 5 && update.synthRate > 1.0) ||
@@ -3054,6 +3085,19 @@ bool parseResult(const std::filesystem::path& resultPath,
                 error = "Python returned an invalid synth control.";
                 return false;
             }
+        }
+        char playerEffectRecord = 0;
+        int playerEffectPlayer = -1;
+        if (!(input >> playerEffectRecord >> playerEffectPlayer >>
+              update.playerEffectUserIndex) ||
+            playerEffectRecord != 'A' ||
+            playerEffectPlayer != update.playerIndex ||
+            update.playerEffectUserIndex < -1 ||
+            (update.playerEffectUserIndex >= 0 &&
+             static_cast<std::size_t>(update.playerEffectUserIndex) >=
+                 userSynthCount)) {
+            error = "Python returned an invalid per-player Airwindows effect selection.";
+            return false;
         }
         if (update.synthIndex == 57) {
             char controlRecord = 0;

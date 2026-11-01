@@ -618,6 +618,7 @@ public:
                         next.swingSeconds = player.swingSeconds;
                         next.lengthBeats = player.lengthBeats;
                         next.synthIndex = player.synthIndex;
+                        next.playerEffectUserIndex = player.playerEffectUserIndex;
                         next.synthRate = static_cast<float>(player.synthRate);
                         next.synthControls = player.synthControls;
                         next.amplitude = static_cast<float>(player.amplitude);
@@ -930,6 +931,7 @@ private:
         double swingSeconds = 0.0;
         double lengthBeats = 1.0;
         int synthIndex = 0;
+        int playerEffectUserIndex = -1;
         float synthRate = 0.0f;
         std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
         float amplitude = 1.0f;
@@ -1913,8 +1915,9 @@ private:
             usesUserSynth |=
                 (updateMask & static_cast<std::uint8_t>(1u << player)) != 0 &&
                 updates[player].active &&
-                static_cast<std::size_t>(updates[player].synthIndex) >=
-                    kSynthIndexToGraphIndex.size();
+                (static_cast<std::size_t>(updates[player].synthIndex) >=
+                     kSynthIndexToGraphIndex.size() ||
+                 updates[player].playerEffectUserIndex >= 0);
         if (usesUserSynth) {
             std::vector<std::string> loadedNames;
             loadedNames.reserve(userSynthDefinitions_.size());
@@ -1937,14 +1940,35 @@ private:
                 error = "The selected synth index is outside the registered synth bank.";
                 return false;
             }
+            auto effectUserIndex = updates[player].playerEffectUserIndex;
+            if (effectUserIndex < 0 &&
+                isPersistentPlayerEffectSynthIndex(synthIndex)) {
+                effectUserIndex = synthIndex -
+                    static_cast<int>(kSynthIndexToGraphIndex.size());
+            }
+            if (effectUserIndex >= 0) {
+                if (static_cast<std::size_t>(effectUserIndex) >=
+                        userSynthDefinitions_.size() ||
+                    !userSynthDefinitions_[static_cast<std::size_t>(
+                        effectUserIndex)].persistentPlayerEffect) {
+                    error = "The selected player effect is not a registered Airwindows delay.";
+                    return false;
+                }
+                if (!createPlayerEffectGraph(
+                        player, static_cast<std::size_t>(effectUserIndex),
+                        updates[player].synthControls, error))
+                    return false;
+            }
             if (static_cast<std::size_t>(synthIndex) >=
                 kSynthIndexToGraphIndex.size()) {
                 const auto userIndex = static_cast<std::size_t>(synthIndex) -
                                        kSynthIndexToGraphIndex.size();
                 if (userSynthDefinitions_[userIndex].persistentPlayerEffect &&
-                    !createPlayerEffectGraph(player, userIndex,
-                                             updates[player].synthControls, error))
-                    return false;
+                    effectUserIndex != static_cast<int>(userIndex)) {
+                    if (!createPlayerEffectGraph(player, userIndex,
+                                                 updates[player].synthControls, error))
+                        return false;
+                }
             }
             // New-bank notes are born running, with controls configured before
             // World_Run. Do not create paused, never-rendered templates for them.
@@ -3338,16 +3362,10 @@ private:
             if (!graph)
                 continue;
             const auto& pattern = activePatterns_[player];
-            const auto userIndex = pattern.synthIndex >= 0 &&
-                    static_cast<std::size_t>(pattern.synthIndex) >=
-                        kSynthIndexToGraphIndex.size()
-                ? static_cast<std::size_t>(pattern.synthIndex) -
-                      kSynthIndexToGraphIndex.size()
-                : userSynthDefinitions_.size();
             const bool effectSelected = pattern.active &&
-                isPersistentPlayerEffectSynthIndex(pattern.synthIndex) &&
-                userIndex == static_cast<std::size_t>(
-                    playerEffectDefinitionIndices_[player]);
+                pattern.playerEffectUserIndex >= 0 &&
+                pattern.playerEffectUserIndex ==
+                    playerEffectDefinitionIndices_[player];
             const auto inputBus = static_cast<std::size_t>(kAirwindowsInputBusBase) +
                                   player * 2;
             for (int channel = 0; channel < 2; ++channel) {
@@ -3401,16 +3419,10 @@ private:
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 const auto& pattern = activePatterns_[player];
                 const auto* effectGraph = playerEffectGraphs_[player];
-                const auto userIndex = pattern.synthIndex >= 0 &&
-                        static_cast<std::size_t>(pattern.synthIndex) >=
-                            kSynthIndexToGraphIndex.size()
-                    ? static_cast<std::size_t>(pattern.synthIndex) -
-                          kSynthIndexToGraphIndex.size()
-                    : userSynthDefinitions_.size();
                 const bool effectSelected = pattern.active && effectGraph &&
-                    isPersistentPlayerEffectSynthIndex(pattern.synthIndex) &&
-                    userIndex == static_cast<std::size_t>(
-                        playerEffectDefinitionIndices_[player]);
+                    pattern.playerEffectUserIndex >= 0 &&
+                    pattern.playerEffectUserIndex ==
+                        playerEffectDefinitionIndices_[player];
                 const auto effectOutputBus =
                     static_cast<std::size_t>(kAirwindowsOutputBusBase) + player * 2;
                 const float effectLeft = effectGraph
@@ -3662,7 +3674,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.76",
+           "0.4.77",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

@@ -534,7 +534,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, user_synth_names=()):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -553,6 +553,7 @@ def run_script(script_text, include_events=False, include_effects=False, include
         player_rows = [line.split('\t') for line in lines if line.startswith('P\t')]
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
+        player_effect_rows = [line.split('\t') for line in lines if line.startswith('A\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
@@ -560,6 +561,8 @@ def run_script(script_text, include_events=False, include_effects=False, include
         if include_sample_controls:
             return (player_rows, [line.split('\t') for line in lines if line.startswith('B\t')],
                     [line.split('\t') for line in lines if line.startswith('Q\t')])
+        if include_player_effects:
+            return player_rows, player_effect_rows
         if include_samples and include_events:
             return (player_rows, [line.split('\t') for line in lines if line.startswith('B\t')],
                     event_rows)
@@ -599,10 +602,11 @@ def run_error_script(script_text):
         exec(make_wrapper(source_path, result_path), wrapper_globals, wrapper_globals)
         return open(result_path, encoding='utf-8').read()
 
-def run_example(name, user_synth_names=()):
+def run_example(name, user_synth_names=(), include_player_effects=False):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read(),
-                      user_synth_names=user_synth_names)
+                      user_synth_names=user_synth_names,
+                      include_player_effects=include_player_effects)
 
 sampleSetupPath = os.path.join(sys.argv[2], 'SAMPLES-SETUP.html')
 sampleSetupHtml = open(sampleSetupPath, encoding='utf-8').read()
@@ -1256,7 +1260,10 @@ syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
 for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
-        example_names = ('CustomPluck',) if filename == '94-user-synthdef-loader.py' else ()
+        example_names = (
+            ('CustomPluck',) if filename == '94-user-synthdef-loader.py' else
+            ('AirwindowsTapeDelay2',)
+            if filename == '103-sample-player-airwindows-delay.py' else ())
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
@@ -1288,6 +1295,19 @@ example101 = run_example('101-patterned-sample-slices.py')
 assert [int(row[6]) for row in example101 if row[2] == '0'] == [57, 57]
 example102 = run_example('102-random-pattern-generators.py')
 assert [int(row[5]) for row in example102 if row[0] == 'P'] == [16, 16]
+example103, example103EffectRows = run_example(
+    '103-sample-player-airwindows-delay.py', ('AirwindowsTapeDelay2',),
+    include_player_effects=True)
+assert [int(row[5]) for row in example103 if row[0] == 'P'] == [28, 6]
+assert example103EffectRows == [['A', '0', '0'], ['A', '1', '-1']]
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play("x-o-", effect="AirwindowsTapeDelay2")\n',
+    ('AirwindowsTapeDelay2',))
+assert 'requires the matching Airwindows SynthDef' in run_compatibility_check(
+    'p1 >> play("x-o-", effect="AirwindowsTapeDelay2")\n')
+assert 'supports AirwindowsTapeDelay2 or AirwindowsEchojam' in run_compatibility_check(
+    'p1 >> play("x-o-", effect="NotAnEffect")\n',
+    ('NotAnEffect',))
 _, duplicateLayerRequests, duplicateLayerEvents = run_script(
     'p1 >> play("<x><x>", dur=1)', include_samples=True, include_events=True)
 assert [int(row[1]) for row in duplicateLayerRequests] == [120, 120]
@@ -1702,4 +1722,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Portable examples through 102, and user SynthDef Example 94.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Portable examples through 103, and user SynthDef examples 94 and 103.')

@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
     }
     for (const auto& player : pattern.players) {
         std::cout << player.synthIndex << ' ';
+        std::cout << "A:" << player.playerEffectUserIndex << ' ';
         std::cout << "W:" << player.swingSeconds << ' ';
         if (player.synthIndex == 57)
             std::cout << "Q:" << player.sampleControlToken << ':'
@@ -70,7 +71,10 @@ with tempfile.TemporaryDirectory() as directory:
     examples = sorted((plugin / "Portable").glob("*.py"))
     for example in examples:
         result = directory / "result.out"
-        user_synth_names = ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else ()
+        user_synth_names = (
+            ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
+            ("AirwindowsTapeDelay2",)
+            if example.name == "103-sample-player-airwindows-delay.py" else ())
         wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
@@ -82,6 +86,8 @@ with tempfile.TemporaryDirectory() as directory:
             assert "Q:l:0.0,1.0:4.0,4.0:l:0.75,1.5:4.0,4.0" in parsed.stdout
         if example.name == "93-clock-swing.py":
             assert parsed.stdout.count("W:0.04") == 2, parsed.stdout
+        if example.name == "103-sample-player-airwindows-delay.py":
+            assert "A:0" in parsed.stdout and "A:-1" in parsed.stdout, parsed.stdout
     user_synth_example = plugin / "Portable" / "94-user-synthdef-loader.py"
     user_synth_wrapper = api_tests["make_wrapper"](
         str(user_synth_example), str(result), ("CustomPluck",))
@@ -90,6 +96,19 @@ with tempfile.TemporaryDirectory() as directory:
                                          capture_output=True, text=True)
     assert rejected_user_synth.returncode == 1
     assert "synth" in rejected_user_synth.stderr.lower(), rejected_user_synth.stderr
+    airwindows_example = plugin / "Portable" / "103-sample-player-airwindows-delay.py"
+    airwindows_wrapper = api_tests["make_wrapper"](
+        str(airwindows_example), str(result), ("AirwindowsTapeDelay2",))
+    exec(airwindows_wrapper, {"__name__": "__main__"})
+    valid_airwindows = result.read_text()
+    bad_effect_index = re.sub(r"^A\t0\t0$", "A\t0\t4", valid_airwindows,
+                              count=1, flags=re.M)
+    assert bad_effect_index != valid_airwindows
+    result.write_text(bad_effect_index)
+    rejected_effect_index = subprocess.run([str(binary), str(result), "1"],
+                                           capture_output=True, text=True)
+    assert rejected_effect_index.returncode == 1
+    assert "effect selection" in rejected_effect_index.stderr.lower()
     swing_example = plugin / "Portable" / "93-clock-swing.py"
     swing_wrapper = api_tests["make_wrapper"](str(swing_example), str(result))
     exec(swing_wrapper, {"__name__": "__main__"})

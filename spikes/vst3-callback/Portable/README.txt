@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.77 lets sample players select a persistent Airwindows insert using
+effect="AirwindowsTapeDelay2" or effect="AirwindowsEchojam". The matching
+SynthDef and UGen pack must be installed; play() still provides the sample,
+slices, loop and timing while the insert processes the player's stereo sum.
+Example 103 demonstrates TapeDelay2 on the sliced sample rhythm.
 Version 0.4.76 adds bounded FoxDot-style PRand and PWhite pattern generators.
 PRand chooses from a finite pattern or an inclusive integer range; PWhite uses
 FoxDot's symmetric triangular distribution. Both create finite sequences of
@@ -138,6 +143,9 @@ or vary with var()/linvar(); every emitted hit is checked to ensure
 durations. PWhite uses the same triangular distribution as FoxDot; values are
 generated once per script run and the finite result cycles in the player.
 Re-run the script for a fresh unseeded sequence.
+103-sample-player-airwindows-delay.py applies TapeDelay2 to the sliced p1 WAV
+player while leaving p2 dry. It requires AirwindowsTapeDelay2.scsyndef in
+Portable/SynthDefs and its compatible UGen module in Portable/SCPlugins.
 74-nested-play-strings.py demonstrates `[]` step subdivisions and `()` lacing.
 75-random-and-layered-strings.py demonstrates bounded `{}` variations and
 adjacent `<>` layers. The compatibility checker reports malformed strings;
