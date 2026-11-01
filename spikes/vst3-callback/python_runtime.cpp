@@ -407,12 +407,40 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                             isinstance(node.args[commandIndex], ast.Constant) and
                             node.args[commandIndex].value in
                             {'reverse', 'rotate', 'shuffle', 'stutter'})
-            validInterval = (
-                node.func.attr != 'every' or
-                (node.args and isinstance(node.args[0], ast.Constant) and
-                 isinstance(node.args[0].value, (int, float)) and
-                 not isinstance(node.args[0].value, bool) and
-                 0.05 <= node.args[0].value <= 4096.0))
+            keywordNodes = {
+                keyword.arg: keyword.value for keyword in node.keywords
+                if keyword.arg is not None
+            }
+            supportedKeywords = all(
+                keyword.arg in {'cycle', 'ident'}
+                for keyword in node.keywords)
+            cycleNode = keywordNodes.get('cycle')
+            cycleValue = (cycleNode.value if
+                          isinstance(cycleNode, ast.Constant) else None)
+            validCycle = (
+                cycleNode is None or
+                (isinstance(cycleValue, (int, float)) and
+                 not isinstance(cycleValue, bool) and
+                 0.05 <= cycleValue <= 4096.0))
+            validInterval = True
+            if node.func.attr == 'every':
+                validInterval = (
+                    node.args and isinstance(node.args[0], ast.Constant) and
+                    isinstance(node.args[0].value, (int, float)) and
+                    not isinstance(node.args[0].value, bool) and
+                    (0.0 <= node.args[0].value < cycleValue
+                     if cycleNode is not None and validCycle else
+                     0.05 <= node.args[0].value <= 4096.0))
+            identNode = keywordNodes.get('ident')
+            identValue = (identNode.value if
+                          isinstance(identNode, ast.Constant) else None)
+            validIdent = (
+                identNode is None or
+                (isinstance(identValue, (str, int)) and
+                 not isinstance(identValue, bool) and
+                 0 < len(str(identValue)) <= 64 and
+                 all(character.isalnum() or character in '_-'
+                     for character in str(identValue))))
             command = (node.args[commandIndex].value if validCommand else None)
             hasAmount = len(node.args) == commandIndex + 2
             amount = node.args[-1].value if (
@@ -422,10 +450,10 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                             not isinstance(amount, bool) and
                             ((command == 'rotate' and -256 <= amount <= 256) or
                              (command == 'stutter' and 1 <= amount <= 16))))
-            if node.keywords:
-                self.add(node.lineno, 'Embedded player scheduling accepts positional arguments only; cycle= and ident= are not implemented.')
-            if not validCount or not validCommand or not validInterval or not validAmount:
-                self.add(node.lineno, "Use bounded transforms such as p1.every(8, 'reverse'), p1.every(8, 'rotate', 1), p1.often('shuffle'), or p1.rarely('stutter', 2).")
+            if not supportedKeywords:
+                self.add(node.lineno, 'Embedded player scheduling accepts only constant cycle= and ident= keywords.')
+            if not validCount or not validCommand or not validInterval or not validAmount or not validCycle or not validIdent:
+                self.add(node.lineno, "Use bounded transforms such as p1.every(8, 'reverse'), p1.every(1, 'stutter', 3, cycle=8, ident='fill'), p1.often('shuffle'), or p1.rarely('stutter', 2).")
         if name in {'PRand', 'PWhite'}:
             parameters = ('start', 'stop') if name == 'PRand' else ('lo', 'hi')
             allowed = set(parameters) | {'length', 'seed'}
@@ -644,6 +672,7 @@ std::string makeEvaluationScript(const std::string& sourcePath,
     static constexpr char api[] = R"PY(
 _dexter_synth_controls = {}
 _dexter_sample_events = {}
+_dexter_sample_base_events = {}
 _dexter_sample_controls = {}
 _dexter_player_effect_indices = {}
 _dexter_effect_control_variables = {}
@@ -2951,6 +2980,7 @@ class Player:
                 adjusted.append(tuple(note[:7]))
             compiledEvents = adjusted
             _dexter_sample_events[playerIndex] = requests
+            _dexter_sample_base_events[playerIndex] = list(requests)
             _dexter_sample_controls[playerIndex] = (
                 sampleControl.wire() if sampleControl is not None else '-',
                 rateControl.wire() if rateControl is not None else '-')
@@ -2986,12 +3016,14 @@ class Player:
         self._refresh_followers()
         return self
 
-    def _apply_sample_stutter(self, amount, intervals, intervalRange):
+    def _apply_sample_stutter(self, operations):
         base = self._baseUpdate
         pattern = self._currentPattern
         playerIndex = self.number - 1
+        if any(operation[0] != 'stutter' for operation in operations):
+            raise ValueError('Sample players currently support scheduled stutter only.')
         events = list(base[3])
-        requests = list(_dexter_sample_events.get(playerIndex, ()))
+        requests = list(_dexter_sample_base_events.get(playerIndex, ()))
         if not events or len(events) != len(requests):
             raise ValueError('Sample stutter needs matching playable hits and sample requests.')
         if (pattern.strumControl is not None or pattern.strumBeats != 0.0 or
@@ -3000,7 +3032,6 @@ class Player:
         baseLength = float(base[2])
         if not 0.0 < baseLength <= 4096.0:
             raise ValueError('Sample stutter phrase length must be between 0 and 4096 beats.')
-
         def hitsAt(beat):
             phase = float(beat) % baseLength
             hits = []
@@ -3012,49 +3043,57 @@ class Player:
                     hits.append((event, request))
             return hits
 
-        calls = []
-        elapsed = 0.0
-        cycles = 0
-        for index in range(256):
-            elapsed += float(intervals[index % len(intervals)])
-            calls.append(elapsed)
-            if elapsed > 4096.0:
+        schedules = [
+            self._compile_scheduled_operation(
+                operation, baseLength, len(events))
+            for operation in operations
+        ]
+        longestPeriod = max(schedule['period'] for schedule in schedules)
+        commonLength = None
+        maxMultiplier = max(1, int(4096.0 / longestPeriod))
+        for multiplier in range(1, maxMultiplier + 1):
+            candidate = longestPeriod * multiplier
+            if all(abs(candidate / schedule['period'] -
+                       round(candidate / schedule['period'])) <= 1e-8
+                   for schedule in schedules):
+                commonLength = candidate
                 break
-            candidateCycles = round(elapsed / baseLength)
-            aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
-            if candidateCycles >= 1 and not aligned:
-                previousElapsed = elapsed - float(intervals[index % len(intervals)])
-                lowInterval, highInterval = intervalRange
-                lowCyclesValue = (previousElapsed + lowInterval) / baseLength
-                lowCycles = int(lowCyclesValue)
-                if lowCycles < lowCyclesValue - 1e-9:
-                    lowCycles += 1
-                highCycles = int(
-                    (previousElapsed + highInterval + 1e-9) / baseLength)
-                eventBudget = 256 - len(calls) * (amount - 1)
-                maxCycles = min(
-                    int(4096.0 / baseLength),
-                    max(0, eventBudget // max(1, len(events))))
-                highCycles = min(highCycles, maxCycles)
-                if lowCycles <= highCycles:
-                    targetCycles = max(
-                        lowCycles, min(highCycles, candidateCycles))
-                    adjustedInterval = (
-                        targetCycles * baseLength - previousElapsed)
-                    if lowInterval - 1e-9 <= adjustedInterval <= highInterval + 1e-9:
-                        elapsed = targetCycles * baseLength
-                        calls[-1] = elapsed
-                        aligned = True
-                        candidateCycles = targetCycles
-            if candidateCycles >= 1 and aligned:
-                cycles = candidateCycles
-                break
-        if not calls or elapsed > 4096.0 or cycles < 1:
-            raise ValueError('Sample stutter could not form a bounded repeating phrase; use a shorter drum pattern or a compatible interval.')
+        if commonLength is None:
+            raise ValueError('Combined sample stutters do not form a repeating phrase within 4096 beats.')
+        cycles = round(commonLength / baseLength)
+        if (cycles < 1 or
+                abs(commonLength - cycles * baseLength) > 1e-7):
+            raise ValueError('Combined sample stutters do not align with the drum pattern.')
 
-        stutterCalls = [(beat, hitsAt(beat)) for beat in calls]
-        extraCount = sum(len(hits) * (amount - 1)
-                         for _, hits in stutterCalls)
+        scheduledBeats = []
+        for scheduleIndex, schedule in enumerate(schedules):
+            localCycles = round(commonLength / schedule['period'])
+            callLimit = (len(schedule['calls']) - 1
+                         if schedule['closureAtPeriod'] and
+                         schedule['method'] != 'stutter'
+                         else len(schedule['calls']))
+            for localCycle in range(localCycles):
+                cycleOffset = localCycle * schedule['period']
+                for callIndex in range(callLimit):
+                    beat = cycleOffset + schedule['calls'][callIndex]
+                    if beat >= commonLength - 1e-8:
+                        if (schedule['closureAtPeriod'] and
+                                schedule['method'] == 'stutter' and
+                                abs(beat - commonLength) <= 1e-8):
+                            beat = 0.0
+                        else:
+                            continue
+                    scheduledBeats.append((beat, scheduleIndex))
+                    if len(scheduledBeats) > 256:
+                        raise ValueError('Combined sample stutters exceed 256 scheduled calls.')
+        scheduledBeats.sort(key=lambda item: (item[0], item[1]))
+        stutterCalls = [
+            (beat, scheduleIndex, hitsAt(beat))
+            for beat, scheduleIndex in scheduledBeats
+        ]
+        extraCount = sum(
+            len(hits) * (schedules[scheduleIndex]['amount'] - 1)
+            for _, scheduleIndex, hits in stutterCalls)
         if len(events) * cycles + extraCount > 256:
             raise ValueError('Sample stutter expands beyond the 256-event limit; use fewer hits, fewer triggers, or a smaller stutter count.')
 
@@ -3069,10 +3108,11 @@ class Player:
         hitStarts = sorted(set(
             (float(event[0]) + float(event[6])) % baseLength
             for event in events))
-        for scheduledBeat, hits in stutterCalls:
+        for scheduledBeat, scheduleIndex, hits in stutterCalls:
             if not hits:
                 continue
-            callBeat = scheduledBeat % elapsed
+            amount = schedules[scheduleIndex]['amount']
+            callBeat = scheduledBeat % commonLength
             phase = callBeat % baseLength
             nextStarts = [start for start in hitStarts
                           if start > phase + 1e-8]
@@ -3086,7 +3126,7 @@ class Player:
                 for repeatIndex in range(1, amount):
                     repeatedEvent = list(event)
                     repeatedStart = (
-                        callBeat + spacing * repeatIndex) % elapsed
+                        callBeat + spacing * repeatIndex) % commonLength
                     repeatedEvent[0] = repeatedStart - float(event[6])
                     repeatedEvent[1] = min(float(event[1]), spacing)
                     outputPairs.append((tuple(repeatedEvent), request))
@@ -3094,20 +3134,61 @@ class Player:
         outputPairs.sort(
             key=lambda item: float(item[0][0]) + float(item[0][6]))
         expanded = list(base)
-        expanded[2] = elapsed
+        expanded[2] = commonLength
         expanded[3] = [event for event, _ in outputPairs]
         _dexter_updates[playerIndex] = tuple(expanded)
         _dexter_sample_events[playerIndex] = [
             request for _, request in outputPairs]
 
     def _compile_scheduled_operation(self, operation, baseLength, eventCount):
-        method, amount, intervals, intervalRange = operation
+        (method, amount, intervals, intervalRange, phase, repeatCycle,
+         scheduleKey, explicitCycle) = operation
         calls = []
         elapsed = 0.0
         cycles = 0
         reverseState = False
         rotation = 0
         shuffleOrders = []
+        if explicitCycle:
+            for cycleIndex in range(1, 257):
+                callBeat = (
+                    float(phase[(cycleIndex - 1) % len(phase)]) +
+                    (cycleIndex - 1) * float(repeatCycle))
+                calls.append(callBeat)
+                if method == 'reverse':
+                    reverseState = not reverseState
+                elif method == 'rotate':
+                    rotation = (rotation + amount) % eventCount
+                elif method == 'shuffle':
+                    shuffleOrders.append(list(
+                        PShuf(_FoxDotFinitePattern(list(range(eventCount))))))
+                elapsed = cycleIndex * float(repeatCycle)
+                if elapsed > 4096.0:
+                    break
+                candidateCycles = round(elapsed / baseLength)
+                aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
+                reset = (
+                    not reverseState if method == 'reverse' else
+                    rotation == 0 if method == 'rotate' else
+                    True)
+                if (cycleIndex % len(phase) != 0 or
+                        candidateCycles < 1 or not aligned or not reset):
+                    continue
+                if (method == 'stutter' and
+                        eventCount * candidateCycles +
+                        len(calls) * (amount - 1) > 256):
+                    continue
+                elapsed = candidateCycles * baseLength
+                cycles = candidateCycles
+                return {
+                    'method': method,
+                    'amount': amount,
+                    'calls': tuple(calls),
+                    'period': elapsed,
+                    'shuffleOrders': tuple(shuffleOrders),
+                    'closureAtPeriod': False,
+                }
+            raise ValueError('Scheduled operation could not form a bounded repeating phrase; use a shorter cycle or another interval.')
         for index in range(256):
             elapsed += float(intervals[index % len(intervals)])
             calls.append(elapsed)
@@ -3173,6 +3254,7 @@ class Player:
             'calls': tuple(calls),
             'period': elapsed,
             'shuffleOrders': tuple(shuffleOrders),
+            'closureAtPeriod': True,
         }
 
     def _apply_stacked_scheduled_transforms(self):
@@ -3181,7 +3263,7 @@ class Player:
         if pattern is None or base is None:
             raise ValueError('Assign a note pattern before scheduling player operations.')
         if pattern.synth == 'sample':
-            raise ValueError('Sample players currently support one scheduled stutter operation only.')
+            raise ValueError('Sample players currently support scheduled stutter only.')
         if (pattern.octaveControl is not None or
                 pattern.strumControl is not None or
                 pattern.strumBeats != 0.0 or
@@ -3244,14 +3326,16 @@ class Player:
         for operationIndex, operation in enumerate(operations):
             localCycles = round(commonLength / operation['period'])
             method = operation['method']
-            callLimit = (len(operation['calls']) if method == 'stutter'
-                         else len(operation['calls']) - 1)
+            callLimit = (len(operation['calls']) - 1
+                         if operation['closureAtPeriod'] and
+                         method != 'stutter' else len(operation['calls']))
             for localCycle in range(localCycles):
                 cycleOffset = localCycle * operation['period']
                 for callIndex in range(callLimit):
                     beat = cycleOffset + operation['calls'][callIndex]
                     if beat >= commonLength - 1e-8:
-                        if (method == 'stutter' and
+                        if (operation['closureAtPeriod'] and
+                                method == 'stutter' and
                                 abs(beat - commonLength) <= 1e-8):
                             beat = 0.0
                         else:
@@ -3366,14 +3450,11 @@ class Player:
         if pattern is None or base is None:
             raise ValueError('Assign a note pattern before scheduling a player transform.')
         if pattern.synth == 'sample':
-            if len(self._scheduledTransforms) != 1:
-                raise ValueError('Sample players currently support one scheduled stutter operation only.')
-            transform, amount, intervals, intervalRange = self._scheduledTransforms[0]
-            if transform != 'stutter':
-                raise ValueError('Sample players currently support scheduled stutter only.')
-            self._apply_sample_stutter(amount, intervals, intervalRange)
+            self._apply_sample_stutter(self._scheduledTransforms)
             return
-        if len(self._scheduledTransforms) > 1:
+        if (len(self._scheduledTransforms) > 1 or
+                self._scheduledTransforms[0][5] is not None or
+                self._scheduledTransforms[0][6] is not None):
             self._apply_stacked_scheduled_transforms()
             return
         if (pattern.octaveControl is not None or pattern.strumControl is not None or
@@ -3407,7 +3488,8 @@ class Player:
         if len(byPosition) != len(notes):
             raise ValueError('Scheduled player operations cannot move notes into rests; use a dense degree pattern.')
 
-        transform, amount, intervals, intervalRange = self._scheduledTransforms[0]
+        transform, amount, intervals, intervalRange = \
+            self._scheduledTransforms[0][:4]
         baseLength = float(base[2])
         if not 0.0 < baseLength <= 4096.0:
             raise ValueError('Scheduled transform phrase length must be between 0 and 4096 beats.')
@@ -3541,7 +3623,8 @@ class Player:
         _dexter_updates[self.number - 1] = tuple(expanded)
 
     def _set_scheduled_transform(self, method, amount, intervals,
-                                 intervalRange=None):
+                                 intervalRange=None, phase=0.0,
+                                 repeatCycle=None, ident=None):
         if self._currentPattern is None or self._baseUpdate is None:
             raise ValueError('Assign a player pattern before scheduling a transform.')
         if self._follows is not None or self._followers:
@@ -3559,12 +3642,45 @@ class Player:
             raise ValueError('Embedded scheduled transforms support reverse, rotate, shuffle, and stutter.')
         if intervalRange is None:
             intervalRange = (min(intervals), max(intervals))
+        if repeatCycle is not None:
+            if (isinstance(repeatCycle, bool) or
+                    not isinstance(repeatCycle, (int, float)) or
+                    repeatCycle != repeatCycle or
+                    repeatCycle in (float('inf'), float('-inf')) or
+                    not 0.05 <= repeatCycle <= 4096.0):
+                raise ValueError('Schedule cycle must be a finite interval from 0.05 to 4096 beats.')
+            repeatCycle = float(repeatCycle)
+        phaseValues = (tuple(phase) if isinstance(phase, (tuple, list))
+                       else (phase,))
+        if not phaseValues:
+            raise ValueError('A scheduled cycle needs at least one phase offset.')
+        for phaseValue in phaseValues:
+            if (isinstance(phaseValue, bool) or
+                    not isinstance(phaseValue, (int, float)) or
+                    phaseValue != phaseValue or
+                    phaseValue in (float('inf'), float('-inf')) or
+                    phaseValue < 0.0 or
+                    (repeatCycle is not None and
+                     phaseValue >= repeatCycle)):
+                raise ValueError('Scheduled cycle offsets must be finite and within their cycle.')
+        if ident is not None:
+            if isinstance(ident, bool) or not isinstance(ident, (str, int)):
+                raise ValueError('Schedule ident must be a short string or integer.')
+            ident = str(ident)
+            if (not ident or len(ident) > 64 or
+                    any(not (character.isalnum() or character in '_-')
+                        for character in ident)):
+                raise ValueError('Schedule ident may contain only letters, digits, underscore, and hyphen.')
         existingIndex = None
         for index in range(len(self._scheduledTransforms)):
-            if self._scheduledTransforms[index][0] == method:
+            if (self._scheduledTransforms[index][0] == method and
+                    self._scheduledTransforms[index][6] == ident):
                 existingIndex = index
                 break
-        operation = (method, amount, tuple(intervals), tuple(intervalRange))
+        operation = (method, amount, tuple(intervals), tuple(intervalRange),
+                     tuple(float(value) for value in phaseValues),
+                     repeatCycle, ident,
+                     repeatCycle is not None)
         previous = (self._scheduledTransforms[existingIndex]
                     if existingIndex is not None else None)
         if existingIndex is None:
@@ -3581,56 +3697,123 @@ class Player:
             raise
 
     def every(self, occurrence, command, *args, **kwargs):
+        cycle = kwargs.pop('cycle', None)
+        ident = kwargs.pop('ident', None)
         if kwargs or len(args) > 1:
-            raise ValueError('Embedded .every() accepts a beat interval, reverse/rotate/shuffle/stutter, and one optional transform amount.')
-        if (isinstance(occurrence, bool) or
-                not isinstance(occurrence, (int, float)) or
-                occurrence != occurrence or occurrence in (float('inf'), float('-inf')) or
-                not 0.05 <= occurrence <= 4096.0):
-            raise ValueError('.every() interval must be a finite number from 0.05 to 4096 beats.')
+            raise ValueError('Embedded .every() accepts one transform amount and the optional cycle= and ident= arguments.')
         if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
             raise ValueError("Embedded .every() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        if (isinstance(occurrence, bool) or
+                not isinstance(occurrence, (int, float)) or
+                occurrence != occurrence or occurrence in (float('inf'), float('-inf'))):
+            raise ValueError('.every() occurrence must be a finite number.')
         amount = args[0] if args else (2 if command == 'stutter' else 1)
+        if cycle is None:
+            if not 0.05 <= occurrence <= 4096.0:
+                raise ValueError('.every() interval must be from 0.05 to 4096 beats.')
+            intervals = [float(occurrence)]
+            intervalRange = (float(occurrence), float(occurrence))
+            phase = (0.0,)
+        else:
+            if (isinstance(cycle, bool) or
+                    not isinstance(cycle, (int, float)) or
+                    cycle != cycle or cycle in (float('inf'), float('-inf')) or
+                    not 0.05 <= cycle <= 4096.0):
+                raise ValueError('.every() cycle must be a finite interval from 0.05 to 4096 beats.')
+            if not 0.0 <= occurrence < cycle:
+                raise ValueError('.every() cycle offset must be at least zero and less than cycle.')
+            intervals = [float(cycle)]
+            intervalRange = (float(cycle), float(cycle))
+            phase = (float(occurrence),)
         self._set_scheduled_transform(
-            command, amount, [float(occurrence)],
-            (float(occurrence), float(occurrence)))
+            command, amount, intervals, intervalRange,
+            phase=phase, repeatCycle=cycle, ident=ident)
         return self
 
-    def _random_transform_intervals(self, low, high):
+    def _random_transform_seed(self, command, ident):
         seed = (_dexter_shuffle_seed ^
                 ((self.number * 2654435761) & 0xffffffff)) & 0xffffffff
+        salt = str(command) + ':' + ('' if ident is None else str(ident))
+        for index in range(len(salt)):
+            seed = (seed ^ (
+                ord(salt[index]) * (index + 1) * 16777619)) & 0xffffffff
+        return seed
+
+    def _random_transform_intervals(self, low, high, command, ident):
+        seed = self._random_transform_seed(command, ident)
         intervals = [value / 2.0 for value in
                      PRand(low, high, length=256, seed=seed)]
         return intervals, (low / 2.0, high / 2.0)
 
+    def _random_transform_phases(self, low, high, command, ident, cycle):
+        seed = self._random_transform_seed(command, ident)
+        return tuple((value / 2.0) % cycle for value in
+                     PRand(low, high, length=4, seed=seed))
+
     def often(self, command, *args, **kwargs):
+        ident = kwargs.pop('ident', None)
+        cycle = kwargs.pop('cycle', None)
         if kwargs or len(args) > 1:
-            raise ValueError('Embedded .often() accepts a transform and one optional amount only.')
+            raise ValueError('Embedded .often() accepts a transform, optional amount, ident=, and cycle=.')
         if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
             raise ValueError("Embedded .often() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
         amount = args[0] if args else (2 if command == 'stutter' else 1)
-        intervals, intervalRange = self._random_transform_intervals(1, 8)
-        self._set_scheduled_transform(command, amount, intervals, intervalRange)
+        if cycle is None:
+            intervals, intervalRange = self._random_transform_intervals(
+                1, 8, command, ident)
+            phase = (0.0,)
+        else:
+            intervals = [float(cycle)]
+            intervalRange = (float(cycle), float(cycle))
+            phase = self._random_transform_phases(
+                1, 8, command, ident, float(cycle))
+        self._set_scheduled_transform(
+            command, amount, intervals, intervalRange,
+            phase=phase, repeatCycle=cycle, ident=ident)
         return self
 
     def sometimes(self, command, *args, **kwargs):
+        ident = kwargs.pop('ident', None)
+        cycle = kwargs.pop('cycle', None)
         if kwargs or len(args) > 1:
-            raise ValueError('Embedded .sometimes() accepts a transform and one optional amount only.')
+            raise ValueError('Embedded .sometimes() accepts a transform, optional amount, ident=, and cycle=.')
         if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
             raise ValueError("Embedded .sometimes() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
         amount = args[0] if args else (2 if command == 'stutter' else 1)
-        intervals, intervalRange = self._random_transform_intervals(8, 32)
-        self._set_scheduled_transform(command, amount, intervals, intervalRange)
+        if cycle is None:
+            intervals, intervalRange = self._random_transform_intervals(
+                8, 32, command, ident)
+            phase = (0.0,)
+        else:
+            intervals = [float(cycle)]
+            intervalRange = (float(cycle), float(cycle))
+            phase = self._random_transform_phases(
+                8, 32, command, ident, float(cycle))
+        self._set_scheduled_transform(
+            command, amount, intervals, intervalRange,
+            phase=phase, repeatCycle=cycle, ident=ident)
         return self
 
     def rarely(self, command, *args, **kwargs):
+        ident = kwargs.pop('ident', None)
+        cycle = kwargs.pop('cycle', None)
         if kwargs or len(args) > 1:
-            raise ValueError('Embedded .rarely() accepts a transform and one optional amount only.')
+            raise ValueError('Embedded .rarely() accepts a transform, optional amount, ident=, and cycle=.')
         if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
             raise ValueError("Embedded .rarely() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
         amount = args[0] if args else (2 if command == 'stutter' else 1)
-        intervals, intervalRange = self._random_transform_intervals(32, 64)
-        self._set_scheduled_transform(command, amount, intervals, intervalRange)
+        if cycle is None:
+            intervals, intervalRange = self._random_transform_intervals(
+                32, 64, command, ident)
+            phase = (0.0,)
+        else:
+            intervals = [float(cycle)]
+            intervalRange = (float(cycle), float(cycle))
+            phase = self._random_transform_phases(
+                32, 64, command, ident, float(cycle))
+        self._set_scheduled_transform(
+            command, amount, intervals, intervalRange,
+            phase=phase, repeatCycle=cycle, ident=ident)
         return self
 
     def _copy_followed_degree(self, source):

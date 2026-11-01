@@ -1,12 +1,19 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.85 adds FoxDot-style `cycle=` phase offsets and `ident=` schedule
+keys to `.every()`, `.often()`, `.sometimes()`, and `.rarely()`. Different
+identifiers allow the same transform to run on independent schedules; repeating
+the same method/identifier replaces that schedule, while omitting the identifier
+retains FoxDot's default replace-by-method behavior. `.every()` uses a scalar
+phase within a scalar cycle. The random shortcuts can also use a cycle, compiled
+as a seeded four-phase repeating phrase rather than an unbounded random stream.
+Sample players may run multiple identified stutter schedules. All operations are
+bounded to 256 scheduled calls and 256 output events. The schedule key follows
+FoxDot's `Repeatable.every` behavior in `FoxDot/lib/Repeat.py`. See Example 114.
+
 Version 0.4.84 lets numeric players combine distinct scheduled operations, e.g.
-`.often("shuffle")` with `.every(1, "stutter", 3)`. Repeating the same operation
-updates its schedule, as in FoxDot's default behavior. FoxDot's optional `ident`
-and `cycle` arguments are not implemented. The supported operations are
-`reverse`, `rotate`, `shuffle`, and `stutter`, with at most 256 scheduled calls
-and 256 output events. Sample players still support one scheduled stutter only.
-See Example 113.
+`.often("shuffle")` with `.every(1, "stutter", 3)`. The supported operations are
+`reverse`, `rotate`, `shuffle`, and `stutter`. See Example 113.
 
 Version 0.4.83 adds scheduled stutter for WAV drum hits; it repeats hits only
 when the scheduled beat matches an onset, and skips rests. Retriggers preserve

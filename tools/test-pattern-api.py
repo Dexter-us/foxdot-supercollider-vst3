@@ -1863,6 +1863,63 @@ rotateRows, rotateEvents = run_script(
 assert len(rotateRows) == 1 and len(rotateEvents) == 16
 assert [int(event[3]) for event in rotateEvents[:12]] == [
     60, 62, 64, 65, 65, 60, 62, 64, 64, 65, 60, 62]
+cycleReverseRows, cycleReverseEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p1.every(1, "reverse", cycle=4, ident="phrase")\n',
+    include_events=True)
+assert len(cycleReverseRows) == 1 and len(cycleReverseEvents) == 16
+assert float(cycleReverseRows[0][4]) == 8.0
+assert [int(event[3]) for event in cycleReverseEvents[:8]] == [
+    60, 62, 62, 60, 65, 64, 62, 60]
+identifiedStutterRows, identifiedStutterEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p1.every(0.5, "stutter", 2, cycle=2, ident="a")\n'
+    'p1.every(1.5, "stutter", 2, cycle=2, ident="b")\n',
+    include_events=True)
+assert len(identifiedStutterRows) == 1
+assert float(identifiedStutterRows[0][4]) == 2.0
+assert len(identifiedStutterEvents) == 6
+sameIdentRows, sameIdentEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p1.every(1, "reverse", cycle=4, ident="same")\n'
+    'p1.every(3, "reverse", cycle=4, ident="same")\n',
+    include_events=True)
+lastIdentRows, lastIdentEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p1.every(3, "reverse", cycle=4, ident="same")\n',
+    include_events=True)
+assert sameIdentRows == lastIdentRows
+assert sameIdentEvents == lastIdentEvents
+cycleOftenRows, cycleOftenEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p1.often("shuffle", cycle=8, ident="variation")\n',
+    include_events=True)
+assert len(cycleOftenRows) == 1 and len(cycleOftenEvents) == 64
+cycleSometimesRows, cycleSometimesEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p1.sometimes("shuffle", cycle=16, ident="variation")\n',
+    include_events=True)
+assert len(cycleSometimesEvents) == 128
+cycleRarelyRows, cycleRarelyEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p1.rarely("shuffle", cycle=32, ident="variation")\n',
+    include_events=True)
+assert len(cycleRarelyEvents) == 256
+cycleIdentText = open(
+    os.path.join(sys.argv[2], '114-cycle-ident-schedules.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    cycleIdentText)
+cycleIdentRows, cycleIdentEvents = run_script(
+    cycleIdentText, include_events=True)
+assert len(cycleIdentRows) == 1 and 4 <= len(cycleIdentEvents) <= 256
+assert_player_polyphony_ok(cycleIdentRows[0], cycleIdentEvents)
+for scheduleSeed in range(16):
+    seededCycleRows, seededCycleEvents = run_script_with_schedule_seed(
+        cycleIdentText, scheduleSeed)
+    assert len(seededCycleRows) == 1
+    assert 4 <= len(seededCycleEvents) <= 256
+    assert_player_polyphony_ok(seededCycleRows[0], seededCycleEvents)
 sometimesText = open(
     os.path.join(sys.argv[2], '110-every-sometimes-players.py'),
     encoding='utf-8').read()
@@ -1935,6 +1992,12 @@ _, restStutterRequests, restStutterEvents = run_script(
     include_samples=True, include_events=True)
 assert len(restStutterRequests) == 6
 assert len(restStutterEvents) == 6
+_, identifiedSampleRequests, identifiedSampleEvents = run_script(
+    'p1 >> play("x-o-", dur=0.5, sample=0)\n'
+    'p1.every(0.5, "stutter", 2, cycle=2, ident="first")\n'
+    'p1.every(1.5, "stutter", 2, cycle=2, ident="second")\n',
+    include_samples=True, include_events=True)
+assert len(identifiedSampleRequests) == len(identifiedSampleEvents) == 6
 assert 'Sample players currently support scheduled stutter only' in run_error_script(
     'p1 >> play("x-o-", dur=0.5)\np1.every(1, "shuffle")\n')
 assert 'unstrummed hits without per-note delay' in run_error_script(
@@ -2001,8 +2064,8 @@ for scheduleSeed in range(16):
 sampleStutterOverflow = run_error_script(
     'p1 >> play("xxxxxxxxxxxxxxxxxxxx", dur=0.05)\n'
     'p1.every(0.05, "stutter", 16)\n')
-assert 'sample stutter expands beyond the 256-event limit' in (
-    sampleStutterOverflow.lower())
+assert 'scheduled stutter expands beyond the 256-event limit' in (
+    sampleStutterOverflow.lower()), sampleStutterOverflow
 assert 'Scheduled player operations currently need a dense' in run_error_script(
     'p1 >> sine([0, None, 2, None], dur=0.5)\n'
     'p1.every(2, "reverse")\n')
@@ -2010,17 +2073,20 @@ assert 'Scheduled transforms and degree-follow relationships cannot be combined'
     'p1 >> sine([0, 2, 4, 6], dur=0.5)\n'
     'p2 >> bass([0, 2, 4, 6], dur=0.5)\n'
     'p2.follow(p1)\np2.every(2, "reverse")\n')
-assert 'Sample players currently support one scheduled stutter' in run_error_script(
+sampleUnsupportedStack = run_error_script(
     'p1 >> play("x-o-", dur=0.5)\n'
     'p1.every(1, "stutter", 2)\np1.every(2, "shuffle")\n')
+assert 'Sample players currently support scheduled stutter only' in (
+    sampleUnsupportedStack), sampleUnsupportedStack
 assert 'cannot follow itself' in run_compatibility_check(
     'p1 >> sine([0, 2], dur=0.5)\np1.follow(p1)\n')
 assert 'degree assignment supports only' in run_compatibility_check(
     'p1 >> sine([0, 2], dur=0.5)\np1.degree = 3\n')
 assert 'Use bounded transforms' in run_compatibility_check(
     'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(2, "stutter", 17)\n')
-assert 'accepts positional arguments only' in run_compatibility_check(
-    'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(2, "reverse", cycle=8)\n')
+assert 'Use bounded transforms' in run_compatibility_check(
+    'p1 >> sine([0, 2, 4, 6], dur=0.5)\n'
+    'p1.every(2, "reverse", cycle=var([8, 16], 4))\n')
 assert 'Use bounded transforms' in run_compatibility_check(
     'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(var([2, 4], 2), "reverse")\n')
 dense_degrees = ', '.join(str(index % 4) for index in range(100))
@@ -2032,4 +2098,4 @@ assert 'Circular player degree reference' in run_error_script(
     'p1.follow(p2)\np2.follow(p1)\n')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded and stacked .every()/.often()/.sometimes()/.rarely() transforms, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 113, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 114, and user SynthDef examples 94, 103, 104, and 105.')

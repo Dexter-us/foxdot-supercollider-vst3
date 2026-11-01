@@ -1,13 +1,23 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.85 adds FoxDot-style `cycle=` phase offsets and `ident=` schedule
+keys to `.every()`, `.often()`, `.sometimes()`, and `.rarely()`. Different
+identifiers let the same operation run as independent schedules; repeating a
+command with the same identifier replaces that schedule, while an omitted
+identifier preserves FoxDot's default replace-by-command behavior. `.every()`
+uses a scalar phase within a scalar cycle. The random shortcuts can also use a
+cycle, compiled as a seeded four-phase repeating phrase rather than an
+unbounded random stream. The command/identifier scheduling key follows
+FoxDot's [`Repeatable.every`](https://github.com/Qirky/FoxDot/blob/master/FoxDot/lib/Repeat.py)
+behavior. Sample players may run multiple identified stutter schedules; other
+sample transforms remain unsupported. All schedules are bounded to 256 calls
+and 256 output events. Portable Example 114 demonstrates cycle/identifier
+scheduling.
+
 Version 0.4.84 lets numeric players combine distinct scheduled operations, for
 example `.often("shuffle")` with `.every(1, "stutter", 3)`, as shown in
-Portable Example 113. Repeating the same operation updates its schedule, matching
-FoxDot's default `every()` behavior. FoxDot's optional `ident` and `cycle`
-arguments are not implemented. The supported operations are
-`reverse`, `rotate`, `shuffle`, and `stutter`. Sample players still support one
-scheduled stutter only. Combined phrases are bounded to 256 scheduled calls and
-256 output events.
+Portable Example 113. The supported operations are `reverse`, `rotate`,
+`shuffle`, and `stutter`.
 
 Version 0.4.83 adds scheduled stutter for WAV drum players, as shown in
 Portable Example 112. A stutter repeats a sample hit only when the scheduled
