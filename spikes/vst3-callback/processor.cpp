@@ -23,6 +23,7 @@
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
 #include "clock_swing.h"
+#include "airwindows_control_smoothing.h"
 #include "master_output_gain.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
@@ -646,6 +647,20 @@ public:
                             !parseTimeVarControl(player.bpnoiseControlToken, 0.0, 10.0, next.bpnoiseControl) ||
                             !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
+                        for (std::size_t control = 0;
+                             control < next.effectControlVariables.size(); ++control) {
+                            if (!parseTimeVarControl(player.effectControlTokens[control],
+                                                     0.0, 1.0,
+                                                     next.effectControlVariables[control])) {
+                                throw std::runtime_error(
+                                    "Invalid Airwindows fx_* var/linvar control from Python.");
+                            }
+                            if (next.effectControlVariables[control].active &&
+                                next.playerEffectUserIndex < 0) {
+                                throw std::runtime_error(
+                                    "Airwindows fx_* modulation requires a selected player effect.");
+                            }
+                        }
                         if (next.synthIndex == 57) {
                             if (!parseTimeVarControl(player.sampleControlToken, -1000000.0, 1000000.0,
                                                      next.sampleControl) ||
@@ -934,6 +949,7 @@ private:
         int playerEffectUserIndex = -1;
         float synthRate = 0.0f;
         std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
+        std::array<TimeVarControl, 7> effectControlVariables{};
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -3110,6 +3126,9 @@ private:
             player.fill(nullptr);
         playerEffectGraphs_.fill(nullptr);
         playerEffectDefinitionIndices_.fill(-1);
+        playerEffectControlEffectIndices_.fill(-1);
+        for (auto& controls : playerEffectControlSmoothed_)
+            controls.fill(0.0f);
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
         userSynthFiles_.clear();
@@ -3366,6 +3385,8 @@ private:
                 pattern.playerEffectUserIndex >= 0 &&
                 pattern.playerEffectUserIndex ==
                     playerEffectDefinitionIndices_[player];
+            if (!effectSelected)
+                playerEffectControlEffectIndices_[player] = -1;
             const auto inputBus = static_cast<std::size_t>(kAirwindowsInputBusBase) +
                                   player * 2;
             for (int channel = 0; channel < 2; ++channel) {
@@ -3383,13 +3404,39 @@ private:
                 : userSynthDefinitions_.size();
             if (effectSelected && userIndex < userSynthDefinitions_.size()) {
                 const auto& definition = userSynthDefinitions_[userIndex];
+                const bool newEffect =
+                    playerEffectControlEffectIndices_[player] !=
+                    pattern.playerEffectUserIndex;
+                const auto blockMidSample = static_cast<double>(blockStart) +
+                                            static_cast<double>(kSCBlockSize) * 0.5;
+                const auto patternStart = patternStartSamples_[player];
+                const double effectBeat = pattern.bpm > 0.0 &&
+                                          blockMidSample >=
+                                              static_cast<double>(patternStart)
+                    ? (blockMidSample - static_cast<double>(patternStart)) *
+                          pattern.bpm / (60.0 * sampleRate_)
+                    : 0.0;
+                const float blockSeconds =
+                    static_cast<float>(kSCBlockSize / sampleRate_);
                 for (std::size_t control = 0;
                      control < definition.effectControlIndices.size(); ++control) {
                     const auto controlIndex = definition.effectControlIndices[control];
-                    if (controlIndex >= 0)
-                        Graph_SetControl(graph, controlIndex,
-                                         static_cast<float>(pattern.synthControls[control]));
+                    if (controlIndex < 0)
+                        continue;
+                    const float target = evaluateTimeVar(
+                        pattern.effectControlVariables[control], effectBeat,
+                        static_cast<float>(pattern.synthControls[control]));
+                    auto& current = playerEffectControlSmoothed_[player][control];
+                    if (newEffect) {
+                        current = target;
+                    } else {
+                        current = smoothAirwindowsFxControl(current, target,
+                                                            blockSeconds);
+                    }
+                    Graph_SetControl(graph, controlIndex, current);
                 }
+                playerEffectControlEffectIndices_[player] =
+                    pattern.playerEffectUserIndex;
             }
             // The graph is paused in the root group and is advanced exactly
             // once here, after its summed stereo input bus is ready.
@@ -3615,6 +3662,12 @@ private:
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
     std::array<Graph*, kPlayerCount> playerEffectGraphs_{};
+    std::array<std::array<float, 7>, kPlayerCount> playerEffectControlSmoothed_{};
+    std::array<int, kPlayerCount> playerEffectControlEffectIndices_ = [] {
+        std::array<int, kPlayerCount> indices{};
+        indices.fill(-1);
+        return indices;
+    }();
     std::array<int, kPlayerCount> playerEffectDefinitionIndices_ = [] {
         std::array<int, kPlayerCount> indices{};
         indices.fill(-1);
@@ -3677,7 +3730,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.78",
+           "0.4.79",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

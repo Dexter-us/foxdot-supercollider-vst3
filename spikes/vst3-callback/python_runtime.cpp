@@ -585,6 +585,7 @@ _dexter_synth_controls = {}
 _dexter_sample_events = {}
 _dexter_sample_controls = {}
 _dexter_player_effect_indices = {}
+_dexter_effect_control_variables = {}
 _dexter_shuffle_counter = 0
 _dexter_random_counter = 0
 _dexter_swing_seconds = 0.0
@@ -2055,6 +2056,7 @@ class PlayerPattern:
         self.synth = synth
         self.playerEffectUserIndex = -1
         self.synthControls = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
+        self.effectControlVariables = ('-', '-', '-', '-', '-', '-', '-')
         if synthRate is None:
             synthRate = 1.0 if synth == 'bug' else 0.0
         try:
@@ -2618,7 +2620,7 @@ def _sample_effect_control_values(effect, controls):
     if effect is None:
         if provided:
             raise ValueError('fx_* controls require effect="AirwindowsTapeDelay2" or effect="AirwindowsEchojam"')
-        return None
+        return None, ('-', '-', '-', '-', '-', '-', '-')
 
     if effect == 'AirwindowsTapeDelay2':
         specs = (
@@ -2637,18 +2639,25 @@ def _sample_effect_control_values(effect, controls):
         raise ValueError('unsupported Airwindows player effect')
 
     values = [0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0]
+    variables = ['-', '-', '-', '-', '-', '-', '-']
     for key, index, default in specs:
         raw = controls.pop(key, default)
-        if isinstance(raw, _DexterTimeVar) or isinstance(raw, bool):
-            raise ValueError(key + ' must be a fixed scalar from 0 to 1; time-varying effect controls are not supported yet')
+        if isinstance(raw, _DexterTimeVar):
+            if any(value < 0.0 or value > 1.0 for value in raw.values):
+                raise ValueError(key + ' time-var values must be between 0 and 1')
+            values[index] = raw.values[0]
+            variables[index] = raw.wire()
+            continue
+        if isinstance(raw, bool):
+            raise ValueError(key + ' must be a finite number or var/linvar from 0 to 1')
         try:
             value = float(raw)
         except (TypeError, ValueError, OverflowError):
-            raise ValueError(key + ' must be a finite scalar from 0 to 1')
+            raise ValueError(key + ' must be a finite number or var/linvar from 0 to 1')
         if not 0.0 <= value <= 1.0:
-            raise ValueError(key + ' must be a finite scalar from 0 to 1')
+            raise ValueError(key + ' must be a finite number or var/linvar from 0 to 1')
         values[index] = value
-    return tuple(values)
+    return tuple(values), tuple(variables)
 
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                     start=0.0, end=1.0, loop=False, effect=None, **controls):
@@ -2661,7 +2670,7 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                 'sample effect ' + effect +
                 ' is not loaded; install its SynthDef in Portable/SynthDefs and restart the DAW')
         playerEffectUserIndex = _dexter_user_synth_names.index(effect)
-    effectControlValues = _sample_effect_control_values(effect, controls)
+    effectControlValues, effectControlVariables = _sample_effect_control_values(effect, controls)
     start, startPatternLength = _sample_fraction_pattern(start, 'start')
     end, endPatternLength = _sample_fraction_pattern(end, 'end')
     if not isinstance(loop, bool):
@@ -2738,6 +2747,7 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
     pattern.playerEffectUserIndex = playerEffectUserIndex
     if effectControlValues is not None:
         pattern.synthControls = effectControlValues
+        pattern.effectControlVariables = effectControlVariables
     return pattern
 
 def play(notes, *args, **kwargs):
@@ -2863,6 +2873,7 @@ class Player:
                 sampleControl.wire() if sampleControl is not None else '-',
                 rateControl.wire() if rateControl is not None else '-')
         _dexter_synth_controls[playerIndex] = pattern.synthControls
+        _dexter_effect_control_variables[playerIndex] = pattern.effectControlVariables
         effectUserIndex = pattern.playerEffectUserIndex
         _dexter_player_effect_indices[playerIndex] = effectUserIndex
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
@@ -2887,6 +2898,7 @@ class Player:
         return self
 
     def stop(self):
+        _dexter_effect_control_variables[self.number - 1] = ('-', '-', '-', '-', '-', '-', '-')
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
                                              0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, _dexter_swing_seconds)
 
@@ -2960,6 +2972,8 @@ p8 = Player(8)
             << "            _f.write('S' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _synth_controls)) + chr(10))\n"
              << "            _effect_user_index = _dexter_scope['_dexter_player_effect_indices'].get(_player, -1)\n"
              << "            _f.write('A' + chr(9) + str(_player) + chr(9) + str(_effect_user_index) + chr(10))\n"
+             << "            _effect_control_variables = _dexter_scope['_dexter_effect_control_variables'].get(_player, ('-', '-', '-', '-', '-', '-', '-'))\n"
+             << "            _f.write('X' + chr(9) + str(_player) + chr(9) + chr(9).join(_effect_control_variables) + chr(10))\n"
              << "            if _synth == 57:\n"
              << "                _sample_control, _rate_control = _dexter_scope['_dexter_sample_controls'].get(_player, ('-', '-'))\n"
              << "                _f.write('Q' + chr(9) + str(_player) + chr(9) + _sample_control + chr(9) + _rate_control + chr(10))\n"
@@ -3140,6 +3154,69 @@ bool parseResult(const std::filesystem::path& resultPath,
                  userSynthCount)) {
             error = "Python returned an invalid per-player Airwindows effect selection.";
             return false;
+        }
+        char effectControlsRecord = 0;
+        int effectControlsPlayer = -1;
+        if (!(input >> effectControlsRecord >> effectControlsPlayer) ||
+            effectControlsRecord != 'X' ||
+            effectControlsPlayer != update.playerIndex) {
+            error = "Python returned malformed Airwindows effect controls.";
+            return false;
+        }
+        const auto validEffectControlToken = [](const std::string& token) {
+            if (token == "-")
+                return true;
+            if (token.size() > 256 || token.size() < 5 ||
+                (token[0] != 'v' && token[0] != 'l') || token[1] != ':')
+                return false;
+            const auto middle = token.find(':', 2);
+            if (middle == std::string::npos || middle == 2 ||
+                middle + 1 >= token.size() ||
+                token.find(':', middle + 1) != std::string::npos)
+                return false;
+            const auto validNumberList = [](const std::string& text, double minimum,
+                                            double maximum, bool positive,
+                                            std::size_t& count) {
+                if (text.empty() || text.front() == ',' || text.back() == ',' ||
+                    text.find(",,") != std::string::npos)
+                    return false;
+                std::istringstream values(text);
+                std::string part;
+                count = 0;
+                while (std::getline(values, part, ',')) {
+                    if (part.empty() || count >= 8)
+                        return false;
+                    try {
+                        std::size_t used = 0;
+                        const double value = std::stod(part, &used);
+                        if (used != part.size() || !std::isfinite(value) ||
+                            (positive ? value <= 0.0 || value > maximum
+                                      : value < minimum || value > maximum))
+                            return false;
+                    } catch (...) {
+                        return false;
+                    }
+                    ++count;
+                }
+                return count > 0;
+            };
+            std::size_t valueCount = 0;
+            std::size_t durationCount = 0;
+            return validNumberList(token.substr(2, middle - 2), 0.0, 1.0,
+                                  false, valueCount) &&
+                   validNumberList(token.substr(middle + 1), 0.0, 4096.0,
+                                   true, durationCount) &&
+                   (durationCount == 1 || durationCount == valueCount);
+        };
+        for (auto& token : update.effectControlTokens) {
+            if (!(input >> token) || !validEffectControlToken(token)) {
+                error = "Python returned malformed Airwindows effect-control modulation.";
+                return false;
+            }
+            if (token != "-" && update.playerEffectUserIndex < 0) {
+                error = "Python returned Airwindows effect modulation without an effect selection.";
+                return false;
+            }
         }
         if (update.synthIndex == 57) {
             char controlRecord = 0;

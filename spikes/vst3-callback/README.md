@@ -1,10 +1,15 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.78 exposes per-player Airwindows insert controls on sample `play()`.
+Version 0.4.79 adds beat-synced `var()` and `linvar()` modulation to the
+per-player Airwindows insert controls. `var()` changes are smoothed over a short
+15 ms time constant; `linvar()` follows the beat clock, with controls updated
+once per SuperCollider block. See Portable Example 105.
+
+Version 0.4.78 exposed per-player Airwindows insert controls on sample `play()`.
 Use fixed 0–1 scalar arguments `fx_vib`, `fx_depth`, `fx_lforate`, and `fx_blur` with either
 `effect="AirwindowsTapeDelay2"` or `effect="AirwindowsEchojam"`; TapeDelay2 also
-accepts `fx_lfowidth` and `fx_rq`. Controls are fixed scalars from 0 to 1 and
-take effect when the script is evaluated. Example 103 demonstrates all six
+accepts `fx_lfowidth` and `fx_rq`. In 0.4.78 controls are fixed scalars from 0
+to 1 and take effect when the script is evaluated. Example 103 demonstrates all six
 TapeDelay2 settings and Example 104 demonstrates Echojam's four controls, both
 while preserving sample sequence and slice controls. The matching SynthDef and
 UGen pack are still required.

@@ -534,7 +534,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, user_synth_names=()):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -555,6 +555,7 @@ def run_script(script_text, include_events=False, include_effects=False, include
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
         player_effect_rows = [line.split('\t') for line in lines if line.startswith('A\t')]
         synth_control_rows = [line.split('\t') for line in lines if line.startswith('S\t')]
+        effect_control_var_rows = [line.split('\t') for line in lines if line.startswith('X\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
@@ -563,7 +564,12 @@ def run_script(script_text, include_events=False, include_effects=False, include
             return (player_rows, [line.split('\t') for line in lines if line.startswith('B\t')],
                     [line.split('\t') for line in lines if line.startswith('Q\t')])
         if include_player_effects and include_synth_controls:
+            if include_effect_control_vars:
+                return (player_rows, player_effect_rows, synth_control_rows,
+                        effect_control_var_rows)
             return player_rows, player_effect_rows, synth_control_rows
+        if include_effect_control_vars:
+            return player_rows, effect_control_var_rows
         if include_player_effects:
             return player_rows, player_effect_rows
         if include_synth_controls:
@@ -609,12 +615,13 @@ def run_error_script(script_text, user_synth_names=()):
         return open(result_path, encoding='utf-8').read()
 
 def run_example(name, user_synth_names=(), include_player_effects=False,
-                include_synth_controls=False):
+                include_synth_controls=False, include_effect_control_vars=False):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read(),
                       user_synth_names=user_synth_names,
                       include_player_effects=include_player_effects,
-                      include_synth_controls=include_synth_controls)
+                      include_synth_controls=include_synth_controls,
+                      include_effect_control_vars=include_effect_control_vars)
 
 sampleSetupPath = os.path.join(sys.argv[2], 'SAMPLES-SETUP.html')
 sampleSetupHtml = open(sampleSetupPath, encoding='utf-8').read()
@@ -1273,7 +1280,9 @@ for filename in os.listdir(sys.argv[2]):
             ('AirwindowsTapeDelay2',)
             if filename == '103-sample-player-airwindows-delay.py' else
             ('AirwindowsEchojam',)
-            if filename == '104-sample-player-airwindows-echojam.py' else ())
+            if filename == '104-sample-player-airwindows-echojam.py' else
+            ('AirwindowsTapeDelay2', 'AirwindowsEchojam')
+            if filename == '105-airwindows-timevar-controls.py' else ())
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
@@ -1326,10 +1335,29 @@ example104EchojamControls = next(row for row in example104ControlRows
                                  if row[1] == '0')
 assert [float(value) for value in example104EchojamControls[2:]] == [
     0.62, 0.72, 0.38, 0.5, 0.5, 0.0, 0.82]
+modulatedEffect = run_script(
+    'p1 >> play("x", effect="AirwindowsTapeDelay2", '
+    'fx_vib=var([0.2, 0.8], [2, 3]), '
+    'fx_depth=linvar([0.1, 0.9], 8), fx_blur=0.6)\n',
+    include_player_effects=True, include_synth_controls=True,
+    include_effect_control_vars=True, user_synth_names=('AirwindowsTapeDelay2',))
+modulatedControls = next(row for row in modulatedEffect[3] if row[1] == '0')
+assert modulatedControls[2:] == [
+    'v:0.2,0.8:2.0,3.0', 'l:0.1,0.9:8.0,8.0',
+    '-', '-', '-', '-', '-']
+modulatedEchojam = run_script(
+    'p1 >> play("x", effect="AirwindowsEchojam", '
+    'fx_lforate=var([0.15, 0.7], 4), '
+    'fx_blur=linvar([0.2, 0.8], [2, 6]))\n',
+    include_player_effects=True, include_synth_controls=True,
+    include_effect_control_vars=True, user_synth_names=('AirwindowsEchojam',))
+echojamControlVars = next(row for row in modulatedEchojam[3] if row[1] == '0')
+assert echojamControlVars[2:] == [
+    '-', '-', 'v:0.15,0.7:4.0,4.0', '-', '-', '-', 'l:0.2,0.8:2.0,6.0']
 badTapeControl = run_error_script(
     'p1 >> play("x", effect="AirwindowsTapeDelay2", fx_depth=1.1)\n',
     ('AirwindowsTapeDelay2',))
-assert 'fx_depth must be a finite scalar from 0 to 1' in badTapeControl
+assert 'fx_depth must be a finite number or var/linvar from 0 to 1' in badTapeControl
 unsupportedEchojamControl = run_error_script(
     'p1 >> play("x", effect="AirwindowsEchojam", fx_rq=0.4)\n',
     ('AirwindowsEchojam',))
@@ -1337,7 +1365,21 @@ assert 'fx_rq is not a control on AirwindowsEchojam' in unsupportedEchojamContro
 timeVaryingEffectControl = run_error_script(
     'p1 >> play("x", effect="AirwindowsEchojam", fx_depth=var([0.2, 0.8]))\n',
     ('AirwindowsEchojam',))
-assert 'time-varying effect controls are not supported yet' in timeVaryingEffectControl
+assert not timeVaryingEffectControl.startswith('ERROR'), timeVaryingEffectControl
+invalidTimeVaryingEffectControl = run_error_script(
+    'p1 >> play("x", effect="AirwindowsEchojam", '
+    'fx_depth=linvar([0.2, 1.2]))\n', ('AirwindowsEchojam',))
+assert 'time-var values must be between 0 and 1' in invalidTimeVaryingEffectControl
+example105, example105Effects, example105Controls, example105ControlVars = run_example(
+    '105-airwindows-timevar-controls.py',
+    ('AirwindowsTapeDelay2', 'AirwindowsEchojam'),
+    include_player_effects=True, include_synth_controls=True,
+    include_effect_control_vars=True)
+assert example105Effects == [['A', '0', '0'], ['A', '1', '1'], ['A', '2', '-1']]
+assert len([row for row in example105ControlVars if row[1] == '0']) == 1
+assert len([row for row in example105ControlVars if row[1] == '1']) == 1
+assert all(any(token[0] in 'vl' for token in row[2:])
+           for row in example105ControlVars if row[1] in ('0', '1'))
 orphanEffectControl = run_error_script(
     'p1 >> play("x", fx_blur=0.4)\n')
 assert 'fx_* controls require effect=' in orphanEffectControl
@@ -1763,4 +1805,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Portable examples through 104, and user SynthDef examples 94, 103, and 104.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Portable examples through 105, and user SynthDef examples 94, 103, 104, and 105.')

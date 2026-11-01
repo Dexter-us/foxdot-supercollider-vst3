@@ -1,11 +1,18 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.79 adds FoxDot-style var()/linvar() modulation to Airwindows
+fx_* controls. var() step changes are smoothed with a short 15 ms time constant;
+linvar() tracks the player beat clock, with settings applied once per SuperCollider
+block. All values remain in the 0..1 range. Example 105 demonstrates both
+TapeDelay2 and Echojam beside a dry reference. Existing fixed scalar syntax and
+defaults are unchanged.
+
 Version 0.4.78 lets sample players adjust persistent Airwindows inserts using
 fx_vib, fx_depth, fx_lforate and fx_blur from 0 to 1 with either
 effect="AirwindowsTapeDelay2" or effect="AirwindowsEchojam". TapeDelay2 also
 accepts fx_lfowidth and fx_rq. These are fixed scalar settings, applied when
-the script is evaluated; time-varying fx controls are not supported yet. The
-matching SynthDef and UGen pack must be installed. Example 103 shows all six
+the script is evaluated in that version. The matching SynthDef and UGen pack
+must be installed. Example 103 shows all six
 TapeDelay2 controls and Example 104 demonstrates Echojam's four controls. Each
 example leaves its second player dry for comparison.
 Version 0.4.76 adds bounded FoxDot-style PRand and PWhite pattern generators.

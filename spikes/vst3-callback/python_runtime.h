@@ -52,6 +52,9 @@ struct PythonPlayerUpdate {
     std::string swellControlToken = "-";
     std::string sampleControlToken = "-";
     std::string sampleRateControlToken = "-";
+    std::array<std::string, 7> effectControlTokens{
+        "-", "-", "-", "-", "-", "-", "-"
+    };
     int playerIndex = 0;
     bool stopped = false;
     double bpm = 120.0;

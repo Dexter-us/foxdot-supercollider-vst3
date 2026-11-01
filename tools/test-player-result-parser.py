@@ -22,6 +22,7 @@ parse_end = source.index("} // namespace", parse_start)
 cpp = r"""
 #include "python_runtime.h"
 #include "clock_swing.h"
+#include "airwindows_control_smoothing.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -36,6 +37,25 @@ cpp += source[parse_start:parse_end]
 cpp += r"""
 int main(int argc, char** argv) {
     if (argc != 3) return 3;
+    const double fxBlockSeconds = 64.0 / 48000.0;
+    float smoothedFx = 0.0f;
+    const float firstFxStep = smoothAirwindowsFxControl(smoothedFx, 1.0f,
+                                                        fxBlockSeconds);
+    if (!(firstFxStep > 0.0f && firstFxStep < 0.1f))
+        return 5;
+    for (int block = 0; block < 12; ++block) {
+        const float next = smoothAirwindowsFxControl(smoothedFx, 1.0f,
+                                                     fxBlockSeconds);
+        if (next < smoothedFx || next > 1.0f)
+            return 6;
+        smoothedFx = next;
+    }
+    if (smoothedFx < 0.60f || smoothedFx > 0.72f)
+        return 7;
+    if (smoothAirwindowsFxControl(0.5f, 2.0f, fxBlockSeconds) > 1.0f)
+        return 8;
+    if (smoothAirwindowsFxControl(0.5f, 0.2f, 0.0) != 0.2f)
+        return 9;
     if (std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.0)) > 1e-9 ||
         std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.25)) > 1e-9 ||
         std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.5) - 0.2) > 1e-9 ||
@@ -55,6 +75,12 @@ int main(int argc, char** argv) {
         std::cout << player.synthIndex << ' ';
         std::cout << "A:" << player.playerEffectUserIndex << ' ';
         std::cout << "W:" << player.swingSeconds << ' ';
+        if (player.playerEffectUserIndex >= 0) {
+            std::cout << "X:";
+            for (const auto& token : player.effectControlTokens)
+                std::cout << token << ',';
+            std::cout << ' ';
+        }
         if (player.synthIndex == 57)
             std::cout << "Q:" << player.sampleControlToken << ':'
                       << player.sampleRateControlToken << ' ';
@@ -76,7 +102,9 @@ with tempfile.TemporaryDirectory() as directory:
             ("AirwindowsTapeDelay2",)
             if example.name == "103-sample-player-airwindows-delay.py" else
             ("AirwindowsEchojam",)
-            if example.name == "104-sample-player-airwindows-echojam.py" else ())
+            if example.name == "104-sample-player-airwindows-echojam.py" else
+            ("AirwindowsTapeDelay2", "AirwindowsEchojam")
+            if example.name == "105-airwindows-timevar-controls.py" else ())
         wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
@@ -92,6 +120,10 @@ with tempfile.TemporaryDirectory() as directory:
             assert "A:0" in parsed.stdout and "A:-1" in parsed.stdout, parsed.stdout
         if example.name == "104-sample-player-airwindows-echojam.py":
             assert "A:0" in parsed.stdout and "A:-1" in parsed.stdout, parsed.stdout
+        if example.name == "105-airwindows-timevar-controls.py":
+            assert parsed.stdout.count("X:") == 2, parsed.stdout
+            assert "v:0.22,0.68:2.0,2.0" in parsed.stdout, parsed.stdout
+            assert "l:0.18,0.62:3.0,3.0" in parsed.stdout, parsed.stdout
     user_synth_example = plugin / "Portable" / "94-user-synthdef-loader.py"
     user_synth_wrapper = api_tests["make_wrapper"](
         str(user_synth_example), str(result), ("CustomPluck",))
@@ -177,6 +209,35 @@ with tempfile.TemporaryDirectory() as directory:
         parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
         assert parsed.returncode == 1, parsed.stdout
 
+    fx_example = plugin / "Portable" / "105-airwindows-timevar-controls.py"
+    fx_wrapper = api_tests["make_wrapper"](
+        str(fx_example), str(result),
+        ("AirwindowsTapeDelay2", "AirwindowsEchojam"))
+    exec(fx_wrapper, {"__name__": "__main__"})
+    valid_fx = result.read_text()
+    assert valid_fx.count("\nX\t") == 3
+    bad_fx_token = re.sub(r"^X\t0\t[^\n]+",
+                          "X\t0\tinvalid\t-\t-\t-\t-\t-\t-",
+                          valid_fx, count=1, flags=re.M)
+    out_of_range_fx_token = re.sub(
+        r"^X\t0\t[^\n]+",
+        "X\t0\tv:0.2,1.1:2.0,2.0\t-\t-\t-\t-\t-\t-",
+        valid_fx, count=1, flags=re.M)
+    assert bad_fx_token != valid_fx
+    for bad in (bad_fx_token, out_of_range_fx_token):
+        assert bad != valid_fx
+        result.write_text(bad)
+        parsed = subprocess.run([str(binary), str(result), "2"],
+                                capture_output=True, text=True)
+        assert parsed.returncode == 1 and "effect-control modulation" in parsed.stderr, parsed.stderr
+    missing_fx_record = re.sub(r"^X\t[^\n]+\n", "", valid_fx,
+                               count=1, flags=re.M)
+    assert missing_fx_record != valid_fx
+    result.write_text(missing_fx_record)
+    parsed = subprocess.run([str(binary), str(result), "2"],
+                            capture_output=True, text=True)
+    assert parsed.returncode == 1 and "effect controls" in parsed.stderr, parsed.stderr
+
     safe_overlap_source = directory / "safe-overlap.py"
     safe_overlap_source.write_text(
         "p1 >> sine([(0, 1, 2, 3, 4), (5, 6, 7, 8)], dur=1, sus=0.5)\n")
@@ -194,4 +255,4 @@ with tempfile.TemporaryDirectory() as directory:
     result.write_text("\n".join(overlap_lines) + "\n")
     parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
     assert parsed.returncode == 1 and "exceeds 8-note polyphony" in parsed.stderr, parsed.stderr
-print(f"PASS: {len(examples)} example results accepted by compiled C++ parser; malformed synth/sample records rejected")
+print(f"PASS: {len(examples)} example results accepted by compiled C++ parser; malformed synth/sample/effect-control records rejected")
