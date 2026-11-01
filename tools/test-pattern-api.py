@@ -2123,6 +2123,15 @@ exampleGroupRows, exampleGroupBuffers, exampleGroupEvents = run_script(
     groupPitchTimingText, include_samples=True, include_events=True)
 assert len(exampleGroupRows) == 3 and len(exampleGroupBuffers) == 4
 assert len(exampleGroupEvents) == 12
+groupDegreeTimevarText = open(
+    os.path.join(sys.argv[2], '117-group-degree-timevars.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    groupDegreeTimevarText)
+degreeTimevarExampleRows, degreeTimevarExampleEvents = run_script(
+    groupDegreeTimevarText, include_events=True)
+assert len(degreeTimevarExampleRows) == 3
+assert len(degreeTimevarExampleEvents) == 12
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2166,6 +2175,60 @@ groupPitchReassignmentRows, groupPitchReassignmentEvents = run_script(
 assert len(groupPitchReassignmentRows) == 1
 assert [int(event[3]) for event in groupPitchReassignmentEvents] == [60, 62]
 
+def group_degree_events(degree_assignment):
+    return run_script(
+        'Scale.default.set("major")\nRoot.default.set("C")\n'
+        'p1 >> triangle([0, 0, 0, 0], dur=0.5, oct=4)\n'
+        'p2 >> pluck([0, 0, 0, 0], dur=0.5, oct=5)\n'
+        'pair = Group(p1, p2)\n'
+        'pair.degree = ' + degree_assignment + '\n',
+        include_events=True)[1]
+
+dynamicGroupDegreeEvents = group_degree_events(
+    'var([0, 2, 4, 6], [0.5, 0.5, 0.5, 0.5])')
+staticGroupDegreeEvents = group_degree_events('P[0, 2, 4, 6]')
+assert len(dynamicGroupDegreeEvents) == 8
+assert [int(event[3]) for event in dynamicGroupDegreeEvents] == [
+    int(event[3]) for event in staticGroupDegreeEvents]
+linearGroupDegreeEvents = group_degree_events('linvar([0, 4], [1, 1])')
+steppedLinearDegreeEvents = group_degree_events('P[0, 2, 4, 2]')
+assert [int(event[3]) for event in linearGroupDegreeEvents] == [
+    int(event[3]) for event in steppedLinearDegreeEvents]
+
+preassignedGroupRows, preassignedGroupEvents = run_script(
+    'Scale.default.set("major")\nRoot.default.set("C")\n'
+    'pair = Group(p1, p2)\n'
+    'pair.degree = var([0, 2], [0.5, 0.5])\n'
+    'p1 >> triangle([0, 0], dur=0.5, oct=4)\n'
+    'p2 >> pluck([0, 0], dur=0.5, oct=5)\n',
+    include_events=True)
+preassignedStaticRows, preassignedStaticEvents = run_script(
+    'Scale.default.set("major")\nRoot.default.set("C")\n'
+    'p1 >> triangle([0, 0], dur=0.5, oct=4)\n'
+    'p2 >> pluck([0, 0], dur=0.5, oct=5)\n'
+    'Group(p1, p2).degree = P[0, 2]\n',
+    include_events=True)
+assert len(preassignedGroupRows) == 2 and len(preassignedGroupEvents) == 4
+assert [int(event[3]) for event in preassignedGroupEvents] == [
+    int(event[3]) for event in preassignedStaticEvents]
+
+chordDegreeRows, chordDegreeEvents = run_script(
+    'Scale.default.set("major")\nRoot.default.set("C")\n'
+    'p1 >> triangle([[0, 2, 4], [0, 2, 4]], dur=1, oct=5)\n'
+    'Group(p1).degree = var([0, 2], [1, 1])\n',
+    include_events=True)
+assert len(chordDegreeRows) == 1 and len(chordDegreeEvents) == 6
+assert [int(event[3]) for event in chordDegreeEvents[:3]] == [60, 64, 67]
+assert [int(event[3]) for event in chordDegreeEvents[3:]] == [64, 67, 71]
+
+restingGroupDegreeRows, restingGroupDegreeEvents = run_script(
+    'Scale.default.set("major")\nRoot.default.set("C")\n'
+    'p1 >> triangle([0, None, 0, 0], dur=0.5, oct=5)\n'
+    'Group(p1).degree = var([0, 2, 4, 6], [0.5, 0.5, 0.5, 0.5])\n',
+    include_events=True)
+assert len(restingGroupDegreeRows) == 1
+assert [float(event[1]) for event in restingGroupDegreeEvents] == [0.0, 1.0, 1.5]
+
 sampleGroupRows, sampleGroupBuffers, sampleGroupEvents = run_script(
     'p1 >> play("x-o-", dur=0.5, sample=0)\n'
     'drums = Group(p1)\ndrums.dur = 1\ndrums.sus = 0.25\n',
@@ -2178,7 +2241,8 @@ for invalidGroupAssignment in (
         'Group(p1).dur = 0\n',
         'Group(p1).sus = 0.01\n',
         'Group(p1).oct = 11\n',
-        'Group(p1).degree = P["x", "o"]\n'):
+        'Group(p1).degree = P["x", "o"]\n',
+        'Group(p1).degree = var([0, 128], 1)\n'):
     assert run_error_script(invalidGroupAssignment)
 
 groupSetAfterRun = run_script(
@@ -2281,4 +2345,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), shared pitch/timing controls, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 116, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), shared pitch/timing and dynamic degree controls, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 117, and user SynthDef examples 94, 103, 104, and 105.')

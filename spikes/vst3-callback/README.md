@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.88 adds bounded `var()`/`linvar()` motion to `Group.degree`.
+Pitch is sampled and rounded to a scale degree at each note onset (not a
+continuous glide); rests remain rests and existing chord intervals are
+retained. Values are limited to -128..127 and must still resolve to MIDI
+pitches 0..127. Portable Example 117 demonstrates the feature.
+
 Version 0.4.87 extends FoxDot-style player groups with shared `degree`, `dur`,
 `sus`, `oct`, and `scale` assignments. Pitch controls apply to numeric players;
 timing controls also work on sample players. `oct` and `dur` accept `var()` and

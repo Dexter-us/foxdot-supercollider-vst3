@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.88 adds bounded `var()` and `linvar()` pitch motion to `Group.degree`.
+The contour is sampled and rounded to a scale degree at each note onset (not a
+continuous glide); rests remain rests and existing chord intervals are retained.
+Values are limited to -128..127; rendered pitches must still resolve to MIDI
+notes 0..127. See Example 117.
+
 Version 0.4.87 extends FoxDot-style player groups with shared `degree`, `dur`,
 `sus`, `oct`, and `scale` assignments. Pitch controls apply to numeric players;
 timing controls also work on sample players. `oct` and `dur` accept `var()` and

@@ -1941,7 +1941,7 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
          _octave_control=None, _base_octave=5, _degrees_per_octave=7,
          _attack_control=None, _release_control=None,
          _attack_default=0.01, _release_default=0.04, _time_multipliers=None,
-         _allow_repeated_notes=False):
+         _allow_repeated_notes=False, _degree_control=None):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
     if isinstance(notes, _FoxDotChord):
@@ -2047,6 +2047,14 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
         chord = [note for note in chord if note is not None]
         if not chord:
             continue
+        if _degree_control is not None:
+            degree = (int(round(_degree_control.at(start))) +
+                      (_base_octave - 5) * _degrees_per_octave)
+            if len(chord) > 1:
+                anchor = int(chord[0])
+                chord = [degree + (int(note) - anchor) for note in chord]
+            else:
+                chord = [degree]
         if len(chord) > 8:
             raise ValueError('a chord can contain at most 8 notes')
         strumValue = strum.at(start) if strumIsVar else strum
@@ -2277,6 +2285,7 @@ class PlayerPattern:
         self.echoDecayBeats, self.echoDecayControl = _event_control(decay, 'decay', 0.0, 64.0)
         self.strumBeats, self.strumControl = _event_control(strum, 'strum', 0.0, 1.0)
         self.octaveControl = octaveControl
+        self.degreeControl = None
         self.baseOctave = baseOctave
         self.degreesPerOctave = degreesPerOctave
         if self.attackSeconds != self.attackSeconds or not 0.0 <= self.attackSeconds <= 3.0:
@@ -2922,14 +2931,15 @@ _GROUP_PATTERN_FIELDS = {
     'lpr': 'lpr', 'hpf': 'hpfHz', 'hpr': 'hpr', 'bpf': 'bpfHz',
     'bpr': 'bpr', 'decay': 'echoDecayBeats', 'echomix': 'echoMix',
     'feedback': 'feedback', 'bpnoise': 'bpnoise', 'swell': 'swell',
-    'degree': 'notes', 'dur': 'step', 'sus': 'duration',
+    'degree': 'degreeControl', 'dur': 'step', 'sus': 'duration',
     'oct': 'octaveControl', 'scale': 'scaleName'
 }
 
 def _group_degree_items(value):
     if isinstance(value, _DexterTimeVar):
-        raise TypeError(
-            'Group.degree accepts a bounded numeric pattern; use var/linvar on oct or dur')
+        if any(item < -128.0 or item > 127.0 for item in value.values):
+            raise ValueError('Group.degree var/linvar values must be from -128 to 127')
+        return value
     if isinstance(value, _FoxDotChord):
         items = [value]
     elif value is None or _finite_note_number(value):
@@ -3027,6 +3037,10 @@ def _set_group_pattern_control(pattern, name, value):
             raise ValueError('Group.degree applies to numeric note players, not sample players')
         if not pattern.degrees:
             raise ValueError('Group.degree applies only to scale-degree note players')
+        if isinstance(value, _DexterTimeVar):
+            pattern.degreeControl = value
+            return
+        pattern.degreeControl = None
         shift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
         pattern.notes = _group_shift_notes(value, shift)
     elif name == 'dur':
@@ -3203,6 +3217,7 @@ class Player:
                   _release_default=pattern.releaseSeconds,
                    _time_multipliers=pattern.timeMultipliers,
                    _allow_repeated_notes=pattern.allowRepeatedNotes,
+                   _degree_control=pattern.degreeControl,
                   strum=pattern.strumControl if pattern.strumControl is not None else pattern.strumBeats)
             compiledLength = _dexter_length
             delayPattern = isinstance(pattern.delayControl, _FoxDotFinitePattern)
@@ -4236,11 +4251,14 @@ class Group:
                 if pattern is None:
                     values.append(None)
                 elif name == 'degree':
-                    shift = ((pattern.baseOctave - 5) *
-                             pattern.degreesPerOctave)
-                    values.append(_group_shift_notes(
-                        pattern.notes, -shift) if pattern.degrees else
-                        pattern.notes)
+                    if pattern.degreeControl is not None:
+                        values.append(pattern.degreeControl)
+                    else:
+                        shift = ((pattern.baseOctave - 5) *
+                                 pattern.degreesPerOctave)
+                        values.append(_group_shift_notes(
+                            pattern.notes, -shift) if pattern.degrees else
+                            pattern.notes)
                 elif name == 'oct':
                     values.append(pattern.octaveControl
                                   if pattern.octaveControl is not None else
