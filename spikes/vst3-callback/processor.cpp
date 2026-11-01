@@ -3378,6 +3378,9 @@ private:
                         ? source[static_cast<std::size_t>(sampleIndex)] : 0.0f;
                 world_->mAudioBusTouched[bus] = world_->mBufCounter;
             }
+            const auto userIndex = pattern.playerEffectUserIndex >= 0
+                ? static_cast<std::size_t>(pattern.playerEffectUserIndex)
+                : userSynthDefinitions_.size();
             if (effectSelected && userIndex < userSynthDefinitions_.size()) {
                 const auto& definition = userSynthDefinitions_[userIndex];
                 for (std::size_t control = 0;
