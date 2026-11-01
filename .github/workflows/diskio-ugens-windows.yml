@@ -1,0 +1,100 @@
+name: Windows optional DiskIO UGen pack
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "UGens/DiskIO/**"
+      - "spikes/vst3-callback/portable_diskio.h"
+      - "spikes/vst3-callback/Portable/10[6-8]-*.py"
+      - ".github/workflows/diskio-ugens-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diskio-pack:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out pinned SuperCollider SOURCE ONLY
+        uses: actions/checkout@v4
+        with:
+          repository: supercollider/supercollider
+          ref: ef5771bce3d1c9c780cafd58cf032ec4a3f36d10
+          path: sc-source
+          submodules: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Configure only DiskIO module and small shared libsndfile
+        shell: pwsh
+        run: |
+          Write-Host "No libscsynth or other SuperCollider/UGen targets will be built."
+          python UGens/DiskIO/prepare-source.py --self-test sc-source/server/plugins/DiskIO_UGens.cpp
+          if ($LASTEXITCODE -ne 0) { throw "Pinned DiskIO source adaptation failed." }
+          cmake -S UGens/DiskIO -B "$env:RUNNER_TEMP\diskio-build" `
+            -DSC_SOURCE_DIR="$env:GITHUB_WORKSPACE\sc-source"
+          if ($LASTEXITCODE -ne 0) { throw "DiskIO configure failed." }
+      - name: Build DiskIO and actual-DSP lifecycle tests
+        shell: pwsh
+        run: |
+          cmake --build "$env:RUNNER_TEMP\diskio-build" --config Release `
+            --parallel 2 --target DiskIO_UGens diskio-tests
+          if ($LASTEXITCODE -ne 0) { throw "DiskIO build failed." }
+      - name: Required actual-DSP and VST disk-controller tests
+        shell: pwsh
+        run: |
+          python tools/test-diskio-api.py
+          if ($LASTEXITCODE -ne 0) { throw "Embedded DiskIO API checks failed." }
+          & "$env:RUNNER_TEMP\diskio-build\Release\diskio-tests.exe" `
+            "$env:RUNNER_TEMP\diskio-build\Release\DiskIO_UGens.scx" `
+            "$env:RUNNER_TEMP\diskio-tests"
+          if ($LASTEXITCODE -ne 0) { throw "DiskIO lifecycle/audio tests failed." }
+      - name: Package optional module, replaceable DLL, examples and corresponding source
+        shell: pwsh
+        run: |
+          $build = "$env:RUNNER_TEMP\diskio-build"
+          $pack = "$env:RUNNER_TEMP\dexter-diskio-pack"
+          New-Item -ItemType Directory -Force -Path "$pack\Portable\SCPlugins", `
+            "$pack\Sources\project\UGens\DiskIO", `
+            "$pack\Sources\project\spikes\vst3-callback", "$pack\Licenses" | Out-Null
+          Copy-Item "$build\Release\DiskIO_UGens.scx" "$pack\Portable\SCPlugins"
+          Copy-Item "$build\Release\sndfile.dll" "$pack\Portable\SCPlugins"
+          Copy-Item "UGens\DiskIO\*" "$pack\Sources\project\UGens\DiskIO" -Recurse -Force
+          Copy-Item "spikes\vst3-callback\portable_diskio.h", `
+            "spikes\vst3-callback\python_runtime.h" "$pack\Sources\project\spikes\vst3-callback"
+          Copy-Item "UGens\DiskIO\README.md" "$pack\README.md"
+          Copy-Item "sc-source\COPYING" "$pack\Licenses\SuperCollider-GPL.txt"
+          Copy-Item "$build\_deps\sndfile-src\COPYING" "$pack\Licenses\libsndfile-LGPL.txt"
+          Copy-Item "spikes\vst3-callback\Licenses\Boost-1.0.txt" "$pack\Licenses\Boost-1.0.txt"
+          Copy-Item "spikes\vst3-callback\Portable\106-*.py", `
+            "spikes\vst3-callback\Portable\107-*.py", `
+            "spikes\vst3-callback\Portable\108-*.py" "$pack\Portable"
+          python UGens/DiskIO/generate-fixture.py "$pack\Portable\Samples\DiskIO"
+          if ($LASTEXITCODE -ne 0) { throw "DiskIO fixture generation failed." }
+          $archives = @(
+            @{ Url="https://codeload.github.com/supercollider/supercollider/tar.gz/ef5771bce3d1c9c780cafd58cf032ec4a3f36d10"; File="supercollider-source.tar.gz"; Hash="93c1653b7f4380317139cf1038bed0a089badc3791a4166d7ef699ca0c22243a" },
+            @{ Url="https://codeload.github.com/libsndfile/libsndfile/tar.gz/1.2.2"; File="libsndfile-1.2.2-source.tar.gz"; Hash="ffe12ef8add3eaca876f04087734e6e8e029350082f3251f565fa9da55b52121" }
+          )
+          foreach ($archive in $archives) {
+            $path = Join-Path "$pack\Sources" $archive.File
+            Invoke-WebRequest $archive.Url -OutFile $path
+            if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $archive.Hash) {
+              throw "Corresponding source archive hash mismatch: $($archive.File)"
+            }
+          }
+          foreach ($required in @("Portable\SCPlugins\DiskIO_UGens.scx", `
+              "Portable\SCPlugins\sndfile.dll", "Portable\Samples\DiskIO\drum-loop.wav", `
+              "Portable\106-diskin-streaming.py", "Portable\107-vdiskin-variable-rate.py", `
+              "Portable\108-diskout-safe-recording.py", "Licenses\libsndfile-LGPL.txt")) {
+            if (-not (Test-Path (Join-Path $pack $required))) { throw "Pack is missing $required" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dexter-diskio-ugens-win-x64
+          path: ${{ runner.temp }}/dexter-diskio-pack/
+          if-no-files-found: error
+          retention-days: 14

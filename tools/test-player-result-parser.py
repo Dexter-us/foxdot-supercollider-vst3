@@ -71,6 +71,9 @@ int main(int argc, char** argv) {
         std::cerr << error << '\n';
         return 1;
     }
+    for (const auto& disk : pattern.diskCommands)
+        std::cout << "D:" << disk.mode << ':' << disk.slot << ':' << disk.path
+                  << ':' << disk.rate << ':' << disk.seconds << ' ';
     for (const auto& player : pattern.players) {
         std::cout << player.synthIndex << ' ';
         std::cout << "A:" << player.playerEffectUserIndex << ' ';
@@ -110,6 +113,12 @@ with tempfile.TemporaryDirectory() as directory:
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
                                 capture_output=True, text=True)
         assert parsed.returncode == 0, (example.name, parsed.stderr)
+        if example.name == "106-diskin-streaming.py":
+            assert "D:1:0:DiskIO/drum-loop.wav:1:0" in parsed.stdout, parsed.stdout
+        if example.name == "107-vdiskin-variable-rate.py":
+            assert "D:0:0:" in parsed.stdout and "D:2:0:DiskIO/drum-loop.wav:0.75:0" in parsed.stdout
+        if example.name == "108-diskout-safe-recording.py":
+            assert "D:3:0::1:8" in parsed.stdout, parsed.stdout
         if example.name == "72-var-sample-and-rate.py":
             assert "Q:v:0.0,1.0:4.0,4.0:v:1.0,-1.0:4.0,4.0" in parsed.stdout
         if example.name == "73-linvar-sample-and-rate.py":
@@ -124,6 +133,18 @@ with tempfile.TemporaryDirectory() as directory:
             assert parsed.stdout.count("X:") == 2, parsed.stdout
             assert "v:0.22,0.68:2.0,2.0" in parsed.stdout, parsed.stdout
             assert "l:0.18,0.62:3.0,3.0" in parsed.stdout, parsed.stdout
+    for invalid in (
+            "OK\t0\t0\t17\n",
+            "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",
+            "OK\t0\t0\t1\nD\t1\t8\t1\t.5\t0\t0\t0\t78\n",
+            "OK\t0\t0\t1\nD\t1\t0\t-1\t.5\t0\t0\t0\t78\n",
+            "OK\t0\t0\t1\nD\t3\t0\t1\t.5\t0\t3601\t0\t-\n",
+            "OK\t0\t0\t1\nD\t1\t0\t1\t.5\t0\t0\t0\t00\n",
+            "OK\t0\t0\t1\nD\t1\t0\t1\t.5\t0\t0\t0\txyz\n"):
+        result.write_text(invalid)
+        rejected = subprocess.run([str(binary), str(result), "0"],
+                                  capture_output=True, text=True)
+        assert rejected.returncode == 1, (invalid, rejected.stdout, rejected.stderr)
     user_synth_example = plugin / "Portable" / "94-user-synthdef-loader.py"
     user_synth_wrapper = api_tests["make_wrapper"](
         str(user_synth_example), str(result), ("CustomPluck",))

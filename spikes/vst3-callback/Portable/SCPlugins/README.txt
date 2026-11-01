@@ -8,5 +8,8 @@ The editor status shows the .scx filenames it found, not a guarantee that each m
 Only add native modules from sources you trust. A .scx file is executable native code and must match
 this plugin's pinned SuperCollider API/build. Check its license and any required DLLs yourself;
 the loader cannot validate either. Duplicate modules or missing dependencies may prevent UGens from
-registering. The core bundle includes ReverbUGens, DiskIO_UGens and its LGPL-2.1 libsndfile runtime,
-plus UIUGens for global desktop mouse input. No sample files or Python FoxDot sample-player controls are included.
+registering. The core bundle includes ReverbUGens and UIUGens for global desktop mouse input.
+DiskIO_UGens and shared libsndfile are a SEPARATE optional pack (VST 0.4.80+).
+Keep its sndfile.dll beside DiskIO_UGens.scx; do not install duplicate DiskIO modules.
+Examples 106-108 document the explicit VST disk-stream/recording extensions.
+Normal play() sample playback still uses the separate native WAV/PlayBuf path.

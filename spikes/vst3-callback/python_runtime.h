@@ -99,9 +99,18 @@ struct PythonPlayerMute {
     bool muted = false;
 };
 
+struct PythonDiskCommand {
+    int mode = 0; // stop reader, DiskIn, VDiskIn, DiskOut record, stop recording
+    int slot = 0;
+    std::string path;
+    double rate = 1, amp = 0.5, pan = 0, seconds = 0;
+    bool loop = false;
+};
+
 struct PythonPattern {
     std::vector<PythonPlayerUpdate> players;
     std::vector<PythonPlayerMute> mutes;
+    std::vector<PythonDiskCommand> diskCommands;
 };
 
 class PortablePython {

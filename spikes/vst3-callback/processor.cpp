@@ -22,6 +22,7 @@
 #include "portable_samples.h"
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
+#include "portable_diskio.h"
 #include "clock_swing.h"
 #include "airwindows_control_smoothing.h"
 #include "master_output_gain.h"
@@ -274,6 +275,7 @@ public:
     ~DexterSCTone() override {
         LifecycleTrace trace("processor destructor", this);
         joinScriptThread();
+        diskIO_.shutdown();
         stopWorld();
     }
 
@@ -397,6 +399,7 @@ public:
     tresult PLUGIN_API terminate() override {
         LifecycleTrace trace("processor terminate", this);
         joinScriptThread();
+        diskIO_.shutdown();
         stopWorld();
         return SingleComponentEffect::terminate();
     }
@@ -515,6 +518,7 @@ public:
                 outputBlock_[0][outputSample] * masterGainCurrent_;
             const float rightSample =
                 outputBlock_[1][outputSample] * masterGainCurrent_;
+            diskIO_.captureSample(leftSample, rightSample);
             for (int32 channel = 0; channel < output.numChannels; ++channel) {
                 if (!output.channelBuffers32[channel])
                     continue;
@@ -596,7 +600,7 @@ public:
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
                     }
-                    if (pattern.players.empty() && pattern.mutes.empty()) {
+                    if (pattern.players.empty() && pattern.mutes.empty() && pattern.diskCommands.empty()) {
                         setEditorStatus("No players changed.");
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
@@ -712,6 +716,12 @@ public:
                             return;
                         }
                     }
+                    if (!pattern.diskCommands.empty() && !initializeWorld()) {
+                        setEditorStatus("DiskIO could not start the embedded engine. Enable host audio and press Run again.");
+                        scriptRunning_.store(false, std::memory_order_release);
+                        return;
+                    }
+                    std::string diskStatus;
                     {
                         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
                         if (scriptGeneration_.load(std::memory_order_acquire) != generation) {
@@ -723,6 +733,17 @@ public:
                             if ((updateMask & (1u << player)) && updates[player].sampleWorld != 0 &&
                                 updates[player].sampleWorld != sampleWorldGeneration_)
                                 throw std::runtime_error("The audio engine restarted while loading samples. Press Run to retry.");
+                        }
+                        if (!pattern.diskCommands.empty()) {
+                            diskIO_.startMaintenance(worldAccessMutex_,
+                                [this](const std::string& message) { setEditorStatus(message); });
+                            std::string diskError;
+                            const auto portable = pluginBinaryPath().parent_path().parent_path().parent_path() / "Portable";
+                            if (!diskIO_.execute(world_, portable, pattern.diskCommands, diskStatus, diskError)) {
+                                setEditorStatus("DiskIO: " + diskError);
+                                scriptRunning_.store(false, std::memory_order_release);
+                                return;
+                            }
                         }
                         std::lock_guard<std::mutex> lock(patternMutex_);
                         for (std::size_t player = 0; player < kPlayerCount; ++player) {
@@ -750,6 +771,7 @@ public:
                     }
                     for (const auto& mute : pattern.mutes)
                         status << " p" << mute.playerIndex + 1 << (mute.muted ? " muted." : " unmuted.");
+                    if (!diskStatus.empty()) status << " " << diskStatus;
                     setEditorStatus(status.str());
                 } catch (const std::exception& exception) {
                     setEditorStatus(std::string("Python worker error: ") + exception.what());
@@ -767,6 +789,7 @@ public:
     void stopPattern() override {
         scriptGeneration_.fetch_add(1, std::memory_order_acq_rel);
         stopRequested_.store(true, std::memory_order_release);
+        diskIO_.requestStop();
         setEditorStatus("Stopping pattern...");
     }
 
@@ -1865,11 +1888,14 @@ private:
                             return false;
                         }
                         // Buffer zero remains the nil buffer, as in FoxDot.
-                        if (sampleCache_.size() + 1 >= world_->mNumSndBufs) {
+                        unsigned freeBuffer = 1;
+                        while (freeBuffer < world_->mNumSndBufs &&
+                               world_->mSndBufs[freeBuffer].data) ++freeBuffer;
+                        if (freeBuffer >= world_->mNumSndBufs) {
                             error = "SuperCollider sample buffers are full. Reopen the plugin to clear the cache.";
                             return false;
                         }
-                        loaded->buffer = static_cast<int>(sampleCache_.size() + 1);
+                        loaded->buffer = static_cast<int>(freeBuffer);
                         cached = loaded.get();
                         // Publish ownership before either SC buffer mirror points at the vector.
                         sampleCache_.push_back(std::move(loaded));
@@ -2908,6 +2934,8 @@ private:
             setEditorStatus(worldInitializationError_);
             return false;
         };
+        if (diskCleanupFailed_)
+            return fail("DiskIO teardown could not drain outstanding work safely. Fully close and restart the DAW before retrying this instance.");
         if (!hostProcessingConfigured_)
             return fail("The host has not configured audio processing yet. Enable the DAW audio engine (or start playback), then press Run again.");
         worldInitializationError_.clear();
@@ -2921,6 +2949,7 @@ private:
             return fail("SuperCollider startup failed: the bundled SCPlugins folder is missing or inaccessible. Restore the UGen files, restart the host, and press Run.");
         }
         ugenPluginPath_ = ugenModuleSearchPath();
+        diskIO_.preload(pluginBinaryPath().parent_path().parent_path().parent_path() / "Portable");
         std::string synthScanError;
         userSynthFiles_ = discoverUserSynthFiles(synthScanError);
         if (!synthScanError.empty())
@@ -3192,6 +3221,7 @@ private:
             }
         }
         World_Run(world_);
+        diskIO_.renderBlock();
         for (auto& voice : audioVoices_) {
             if (voice.triggerControlPendingReset && voice.activeSynth) {
                 Graph_SetControl(voice.activeSynth, 9, 0.0f);
@@ -3573,8 +3603,10 @@ private:
                                             ? 1.0f
                                             : 1.0f / static_cast<float>(mixContributors);
             mixGain_ += (targetMixGain - mixGain_) * mixSmoothing;
-            outputBlock_[0][static_cast<std::size_t>(sampleIndex)] = leftMixed * mixGain_;
-            outputBlock_[1][static_cast<std::size_t>(sampleIndex)] = rightMixed * mixGain_;
+            outputBlock_[0][static_cast<std::size_t>(sampleIndex)] = leftMixed * mixGain_ +
+                diskIO_.left(static_cast<unsigned>(sampleIndex));
+            outputBlock_[1][static_cast<std::size_t>(sampleIndex)] = rightMixed * mixGain_ +
+                diskIO_.right(static_cast<unsigned>(sampleIndex));
         }
 
         const auto blockEnd = blockStart + static_cast<std::uint64_t>(kSCBlockSize);
@@ -3608,10 +3640,16 @@ private:
     // Caller owns worldAccessMutex_. Never call the locking wrapper recursively.
     void stopWorldLocked() {
         if (world_) {
+            std::string diskError;
+            const bool diskDrained = diskIO_.closeAll(diskError);
+            diskCleanupFailed_ |= !diskDrained;
             detachSampleBuffers();
             std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
             LifecycleTrace cleanupTrace("World_Cleanup", this);
-            World_Cleanup(world_, false);
+            if (diskDrained) World_Cleanup(world_, false);
+            else std::fprintf(stderr, "Dexter DiskIO: %s; retaining the inactive SC World rather than freeing memory still referenced by disk I/O.\n", diskError.c_str());
+            if (diskDrained && !diskError.empty())
+                std::fprintf(stderr, "Dexter DiskIO finalization error: %s\n", diskError.c_str());
             world_ = nullptr;
         }
         sampleCache_.clear();
@@ -3654,6 +3692,8 @@ private:
     bool hostProcessingConfigured_ = false;
     std::string worldInitializationError_;
     World* world_ = nullptr;
+    PortableDiskIO diskIO_;
+    bool diskCleanupFailed_ = false;
     Group* rootGroup_ = nullptr;
     std::array<GraphDef*, kSynthGraphCount> synthDefinitions_{};
     std::vector<UserSynthFile> userSynthFiles_;
@@ -3730,7 +3770,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.79",
+    "0.4.80",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

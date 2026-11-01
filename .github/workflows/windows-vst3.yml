@@ -38,7 +38,7 @@ jobs:
           key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
           restore-keys: |
             windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-      - name: Build VST3 (cached or one-time bootstrap)
+      - name: Build VST3 only (requires existing SuperCollider cache)
         id: build_vst3
         shell: pwsh
         run: |
@@ -52,7 +52,7 @@ jobs:
             $buildParameters["UseCachedSuperColliderBuild"] = $true
           }
           else {
-            Write-Host "SuperCollider build cache miss; performing the approved one-time engine/UGen build to seed this PR's cache."
+            throw "SuperCollider cache miss: stopping rather than rebuilding the engine/UGens. Reuse the populated PR cache or obtain explicit approval for another one-time cold build."
           }
           try {
             & .\tools\build-windows-vst3.ps1 @buildParameters *>&1 |

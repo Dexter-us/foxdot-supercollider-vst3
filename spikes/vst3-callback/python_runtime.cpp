@@ -125,7 +125,7 @@ _COMPAT_CALLS = {
     'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
     'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
     'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
-    'Player', 'PlayerPattern', 'MouseX', 'MouseY', 'userSynth',
+    'Player', 'PlayerPattern', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
     '__build_class__'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
@@ -442,6 +442,10 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id in {'DiskIn', 'VDiskIn', 'DiskOut'}:
+            allowed = {'record', 'stop'} if node.value.id == 'DiskOut' else {'play', 'stop'}
+            if node.attr not in allowed:
+                self.add(node.lineno, node.value.id + ' supports only ' + ', '.join(sorted(allowed)) + ' in this VST extension; sclang .ar graph building is not embedded.')
         if isinstance(node.value, ast.Name) and node.value.id == 'Clock' and node.attr not in {'bpm', 'meter', 'swing'}:
             self.add(node.lineno, "Clock." + node.attr + ' is not supported; use Clock.bpm, fixed 4/4 Clock.meter, or Clock.swing(...).')
         if (isinstance(node.value, ast.Name) and node.value.id == 'Clock' and
@@ -2918,6 +2922,59 @@ p5 = Player(5)
 p6 = Player(6)
 p7 = Player(7)
 p8 = Player(8)
+
+# Explicit VST extensions, not claims of upstream FoxDot Buffer/sclang APIs.
+def _disk_number(value, name, lo, hi):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(name + ' requires a finite scalar number')
+    value = float(value)
+    if value != value or not lo <= value <= hi:
+        raise ValueError(name + ' is outside the supported range')
+    return value
+
+def _disk_slot(slot):
+    if isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot <= 8:
+        raise ValueError('Disk stream slot must be a whole number from 1 to 8')
+    return slot - 1
+
+def _disk_command(command):
+    if len(_dexter_disk_commands) >= 16:
+        raise ValueError('One Run may contain at most 16 disk lifecycle operations')
+    _dexter_disk_commands.append(command)
+
+class _DiskReader:
+    def __init__(self, mode):
+        self.mode = mode
+    def play(self, path, slot=1, loop=False, amp=0.5, pan=0.0, rate=1.0):
+        if not isinstance(path, str) or not 1 <= len(path) <= 512:
+            raise ValueError('Disk input needs a relative file path under Portable/Samples')
+        normalized = path.replace('\\', '/')
+        if (normalized.startswith('/') or ':' in normalized or
+                any(part in ('', '.', '..') for part in normalized.split('/')) or
+                any(ord(character) < 32 for character in normalized)):
+            raise ValueError('Disk input cannot be absolute, escape Portable/Samples, or contain control characters')
+        if not isinstance(loop, bool):
+            raise TypeError('Disk loop must be True or False')
+        rate = _disk_number(rate, 'Disk rate', 0.0625, 8.0)
+        if self.mode == 1 and rate != 1.0:
+            raise ValueError('DiskIn has no rate control; use VDiskIn.play(..., rate=...)')
+        _disk_command((self.mode, _disk_slot(slot), rate,
+                       _disk_number(amp, 'Disk amp', 0.0, 2.0),
+                       _disk_number(pan, 'Disk pan', -1.0, 1.0), 0.0,
+                       int(loop), normalized.encode('utf-8').hex()))
+    def stop(self, slot=1):
+        _disk_command((0, _disk_slot(slot), 1.0, 0.0, 0.0, 0.0, 0, '-'))
+
+class _DiskRecorder:
+    def record(self, seconds=30.0):
+        _disk_command((3, 0, 1.0, 0.0, 0.0,
+                       _disk_number(seconds, 'Recording seconds', 0.05, 3600.0), 0, '-'))
+    def stop(self):
+        _disk_command((4, 0, 1.0, 0.0, 0.0, 0.0, 0, '-'))
+
+DiskIn = _DiskReader(1)
+VDiskIn = _DiskReader(2)
+DiskOut = _DiskRecorder()
 )PY";
 
     std::ostringstream script;
@@ -2927,7 +2984,7 @@ p8 = Player(8)
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
            << "'_dexter_length': 1.0, '_dexter_slots': 0, '_dexter_updates': {}, '_dexter_default_touched': False, "
             << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, '_dexter_mutes': {}, "
-            << "'_dexter_swing_seconds': 0.0, "
+            << "'_dexter_swing_seconds': 0.0, '_dexter_disk_commands': [], "
            << "'_dexter_shuffle_seed': int(time.monotonic_ns() & 0xffffffff)})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
            << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
@@ -2957,7 +3014,7 @@ p8 = Player(8)
               << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None) + (_dexter_scope['_dexter_swing_seconds'],)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _mutes = _dexter_scope['_dexter_mutes']\n"
-            << "        _f.write('OK\\t{}\\t{}\\n'.format(len(_updates), len(_mutes)))\n"
+            << "        _f.write('OK\\t{}\\t{}\\t{}\\n'.format(len(_updates), len(_mutes), len(_dexter_scope['_dexter_disk_commands'])))\n"
             << "        for _player in sorted(_updates):\n"
               << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control, _swing_seconds = _updates[_player]\n"
              << "            _p_values = (_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _synth_rate, _swing_seconds)\n"
@@ -2983,6 +3040,8 @@ p8 = Player(8)
             << "                    _f.write('B\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(*_dexter_scope['_dexter_sample_events'][_player][_event_index]))\n"
             << "        for _player, _muted in sorted(_mutes.items()):\n"
             << "            _f.write('M\\t{}\\t{}\\n'.format(_player, int(_muted)))\n"
+            << "        for _command in _dexter_scope['_dexter_disk_commands']:\n"
+            << "            _f.write('D' + chr(9) + chr(9).join(map(str, _command)) + chr(10))\n"
             << "except BaseException:\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
            << "        _f.write('ERROR\\n' + traceback.format_exc())\n";
@@ -3018,6 +3077,12 @@ bool parseResult(const std::filesystem::path& resultPath,
         error = "Python returned an invalid player update header: " + header;
         return false;
     }
+    std::size_t diskCount = 0;
+    fields >> std::ws;
+    if (!fields.eof() && (!(fields >> diskCount) || diskCount > 16)) {
+        error = "Python returned an invalid DiskIO command count."; return false;
+    }
+    pattern.diskCommands.clear();
     pattern.players.clear();
     pattern.players.reserve(updateCount);
     pattern.mutes.clear();
@@ -3357,6 +3422,44 @@ bool parseResult(const std::filesystem::path& resultPath,
         }
         seenMutes[static_cast<std::size_t>(playerIndex)] = true;
         pattern.mutes.push_back(PythonPlayerMute{playerIndex, muted != 0});
+    }
+    for (std::size_t i = 0; i < diskCount; ++i) {
+        PythonDiskCommand command;
+        char record = 0;
+        int loop = 0;
+        std::string pathHex;
+        if (!(input >> record >> command.mode >> command.slot >> command.rate >>
+              command.amp >> command.pan >> command.seconds >> loop >> pathHex) ||
+            record != 'D' || command.mode < 0 || command.mode > 4 ||
+            command.slot < 0 || command.slot > 7 || (loop != 0 && loop != 1) ||
+            !std::isfinite(command.rate) || command.rate < 0.0625 || command.rate > 8 ||
+            !std::isfinite(command.amp) || command.amp < 0 || command.amp > 2 ||
+            !std::isfinite(command.pan) || command.pan < -1 || command.pan > 1 ||
+            !std::isfinite(command.seconds) ||
+            (command.mode == 3 && (command.seconds < .05 || command.seconds > 3600)) ||
+            (command.mode != 3 && command.seconds != 0)) {
+            error = "Python returned an invalid DiskIO command."; return false;
+        }
+        command.loop = loop != 0;
+        if (command.mode == 1 || command.mode == 2) {
+            if (pathHex.empty() || pathHex.size() > 4096 || pathHex.size() % 2) {
+                error = "Python returned an invalid disk input path."; return false;
+            }
+            auto digit = [](char c) {
+                return c >= '0' && c <= '9' ? c - '0' :
+                       c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+            };
+            for (std::size_t pos = 0; pos < pathHex.size(); pos += 2) {
+                const auto high = digit(pathHex[pos]), low = digit(pathHex[pos + 1]);
+                if (high < 0 || low < 0 || high * 16 + low < 32) {
+                    error = "Python returned invalid disk path encoding."; return false;
+                }
+                command.path.push_back(static_cast<char>(high * 16 + low));
+            }
+        } else if (pathHex != "-") {
+            error = "Python returned a path for a non-reading disk command."; return false;
+        }
+        pattern.diskCommands.push_back(std::move(command));
     }
     return true;
 }
