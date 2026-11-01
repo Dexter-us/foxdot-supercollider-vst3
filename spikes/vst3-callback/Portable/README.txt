@@ -1,5 +1,17 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.81 adds live numeric player degree references using
+`p2.degree = p1.degree` or `p2.follow(p1)`. When the source player changes in a
+script evaluation, followers update their note degrees while retaining their
+own synth, rhythm, octave, and mix controls. It also adds bounded player
+`.every()` and `.sometimes()` transforms for `reverse` and `rotate`. These
+scheduled changes are compiled into a repeating phrase, so Python is not left
+running as a server. See Examples 109–110. This subset requires dense,
+monophonic numeric note patterns; it does not support rests, chords, variable
+octaves, strum/delay, or combining a scheduled transform with a player that
+follows another. Only degree changes are transformed; other controls stay fixed.
+`.sometimes()` uses a seeded, repeating interval phrase.
+
 Version 0.4.79 adds FoxDot-style var()/linvar() modulation to Airwindows
 fx_* controls. var() step changes are smoothed with a short 15 ms time constant;
 linvar() tracks the player beat clock, with settings applied once per SuperCollider

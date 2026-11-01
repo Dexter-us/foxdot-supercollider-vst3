@@ -386,6 +386,43 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 keyword.value for keyword in node.keywords
                 if keyword.arg in {'pat1', 'pat2'})
             self._check_pattern_kinds(patternArguments, node.lineno, 'PZip2')
+        if (isinstance(node.func, ast.Attribute) and
+                isinstance(node.func.value, ast.Name) and
+                node.func.value.id in {'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'} and
+                node.func.attr == 'follow'):
+            if (len(node.args) != 1 or node.keywords or
+                    not isinstance(node.args[0], ast.Name) or
+                    not re.fullmatch(r'p[1-8]', node.args[0].id)):
+                self.add(node.lineno, 'Player.follow requires one player name, for example p2.follow(p1).')
+            elif node.args[0].id == node.func.value.id:
+                self.add(node.lineno, 'A player cannot follow itself.')
+        if (isinstance(node.func, ast.Attribute) and
+                isinstance(node.func.value, ast.Name) and
+                node.func.value.id in {'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'} and
+                node.func.attr in {'every', 'sometimes'}):
+            validCount = (2 <= len(node.args) <= 3 if node.func.attr == 'every'
+                          else 1 <= len(node.args) <= 2)
+            commandIndex = 1 if node.func.attr == 'every' else 0
+            validCommand = (len(node.args) > commandIndex and
+                            isinstance(node.args[commandIndex], ast.Constant) and
+                            node.args[commandIndex].value in {'reverse', 'rotate'})
+            validInterval = (
+                node.func.attr != 'every' or
+                (node.args and isinstance(node.args[0], ast.Constant) and
+                 isinstance(node.args[0].value, (int, float)) and
+                 not isinstance(node.args[0].value, bool) and
+                 0.05 <= node.args[0].value <= 4096.0))
+            command = (node.args[commandIndex].value if validCommand else None)
+            hasAmount = len(node.args) == commandIndex + 2
+            validAmount = (not hasAmount or
+                           (command == 'rotate' and
+                            isinstance(node.args[-1], ast.Constant) and
+                            isinstance(node.args[-1].value, int) and
+                            not isinstance(node.args[-1].value, bool)))
+            if node.keywords:
+                self.add(node.lineno, 'Embedded .every()/.sometimes() accepts positional arguments only; cycle= and ident= are not implemented.')
+            if not validCount or not validCommand or not validInterval or not validAmount:
+                self.add(node.lineno, "Use bounded degree transforms such as p1.every(8, 'reverse'), p1.every(8, 'rotate', 1), or p1.sometimes('reverse').")
         if name in {'PRand', 'PWhite'}:
             parameters = ('start', 'stop') if name == 'PRand' else ('lo', 'hi')
             allowed = set(parameters) | {'length', 'seed'}
@@ -462,8 +499,25 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Name) and re.fullmatch(r'p[0-9]+', node.value.id):
             if not re.fullmatch(r'p[1-8]', node.value.id):
                 self.add(node.lineno, 'Use one of the supported player names p1 through p8.')
-            elif node.attr not in {'stop', 'mute', 'unmute'}:
-                self.add(node.lineno, "Player " + node.value.id + ' supports .stop(), .mute(), and .unmute() in this build.')
+            elif node.attr not in {'stop', 'mute', 'unmute', 'follow', 'degree', 'every', 'sometimes'}:
+                self.add(node.lineno, "Player " + node.value.id + ' supports .stop(), .mute(), .unmute(), .follow(), degree references, and bounded .every()/.sometimes() degree transforms.')
+        self.generic_visit(node)
+
+    def visit_Assign(self, node):
+        for target in node.targets:
+            if (isinstance(target, ast.Attribute) and
+                    isinstance(target.value, ast.Name) and
+                    re.fullmatch(r'p[0-9]+', target.value.id)):
+                if not re.fullmatch(r'p[1-8]', target.value.id):
+                    self.add(target.lineno, 'Use one of the supported player names p1 through p8.')
+                elif (target.attr != 'degree' or
+                      not isinstance(node.value, ast.Attribute) or
+                      not isinstance(node.value.value, ast.Name) or
+                      not re.fullmatch(r'p[1-8]', node.value.value.id) or
+                      node.value.attr != 'degree'):
+                    self.add(target.lineno, 'Player degree assignment supports only p2.degree = p1.degree-style player references.')
+                elif target.value.id == node.value.value.id:
+                    self.add(target.lineno, 'A player degree cannot reference itself.')
         self.generic_visit(node)
 
     def visit_Subscript(self, node):
@@ -2762,6 +2816,27 @@ def play(notes, *args, **kwargs):
 class Player:
     def __init__(self, number):
         self.number = number
+        self._currentPattern = None
+        self._follows = None
+        self._followers = []
+        self._applyingFollow = False
+        self._baseUpdate = None
+        self._scheduledTransform = None
+
+    def __getattr__(self, name):
+        if name == 'degree':
+            if self._currentPattern is None:
+                raise ValueError('Assign a pattern to this player before referencing its degree.')
+            return _PlayerDegreeReference(self)
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        if name == 'degree':
+            if not isinstance(value, _PlayerDegreeReference):
+                raise TypeError('Player degree references must use another player, e.g. p2.degree = p1.degree.')
+            self.follow(value.player)
+            return
+        self.__dict__[name] = value
 
     def __rshift__(self, pattern):
         global _dexter_events, _dexter_length, _dexter_slots
@@ -2899,6 +2974,213 @@ class Player:
                                          _dexter_swing_seconds)
         if playerIndex == 0:
             _dexter_default_touched = False
+        self._currentPattern = pattern
+        self._baseUpdate = _dexter_updates[playerIndex]
+        if self._scheduledTransform is not None:
+            self._apply_scheduled_transform()
+        if self._follows is not None and not self._applyingFollow:
+            self._copy_followed_degree(self._follows)
+        self._refresh_followers()
+        return self
+
+    def _apply_scheduled_transform(self):
+        pattern = self._currentPattern
+        base = self._baseUpdate
+        if pattern is None or base is None:
+            raise ValueError('Assign a note pattern before scheduling a player transform.')
+        if pattern.synth == 'sample':
+            raise ValueError('Scheduled degree transforms currently support numeric note players, not sample players.')
+        if (pattern.octaveControl is not None or pattern.strumControl is not None or
+                pattern.strumBeats != 0.0 or pattern.delayControl is not None or
+                pattern.delayBeats != 0.0):
+            raise ValueError('Scheduled degree transforms currently require fixed-octave, unstrummed notes without per-note delay.')
+
+        def noteItems(value):
+            if isinstance(value, _FoxDotChord):
+                return [value]
+            if isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+                return list(value)
+            return [value]
+
+        notes = noteItems(pattern.notes)
+        if (not notes or len(notes) > 256 or
+                any(isinstance(note, bool) or not isinstance(note, (int, float))
+                    for note in notes)):
+            raise ValueError('Scheduled transforms currently need a dense, monophonic numeric degree pattern (no rests or chords).')
+        events = list(base[3])
+        if len(events) != len(notes):
+            raise ValueError('Scheduled transforms need exactly one note event per pattern step.')
+        byPosition = {}
+        for event in events:
+            position = event[8]
+            if (isinstance(position, bool) or not isinstance(position, int) or
+                    not 0 <= position < len(notes) or event[9] != 0 or
+                    position in byPosition):
+                raise ValueError('Scheduled transforms currently need one ungrouped note at each pattern step.')
+            byPosition[position] = event
+        if len(byPosition) != len(notes):
+            raise ValueError('Scheduled transforms cannot move notes into rests; use a dense degree pattern.')
+
+        transform, amount, intervals = self._scheduledTransform
+        baseLength = float(base[2])
+        if not 0.0 < baseLength <= 4096.0:
+            raise ValueError('Scheduled transform phrase length must be between 0 and 4096 beats.')
+        calls = []
+        elapsed = 0.0
+        cycles = 0
+        reverseState = False
+        rotation = 0
+        for index in range(256):
+            elapsed += float(intervals[index % len(intervals)])
+            calls.append(elapsed)
+            if elapsed > 4096.0:
+                break
+            if transform == 'reverse':
+                reverseState = not reverseState
+            else:
+                rotation = (rotation + amount) % len(notes)
+            candidateCycles = round(elapsed / baseLength)
+            aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
+            reset = (not reverseState if transform == 'reverse' else rotation == 0)
+            if candidateCycles >= 1 and aligned and reset:
+                cycles = candidateCycles
+                break
+        if (not calls or elapsed > 4096.0 or cycles < 1):
+            raise ValueError('Scheduled transform could not form a bounded repeating phrase under the 256-event limit; use a shorter phrase or another interval.')
+        if len(events) * cycles > 256:
+            raise ValueError('Scheduled transform expands beyond the 256-event limit; use a shorter phrase or fewer note steps.')
+
+        outputEvents = []
+        callIndex = 0
+        reverseState = False
+        rotation = 0
+        for cycleIndex in range(cycles):
+            cycleOffset = cycleIndex * baseLength
+            for position in range(len(notes)):
+                event = byPosition[position]
+                eventBeat = cycleOffset + float(event[0])
+                while callIndex < len(calls) and calls[callIndex] <= eventBeat + 1e-9:
+                    if transform == 'reverse':
+                        reverseState = not reverseState
+                    else:
+                        rotation = (rotation + amount) % len(notes)
+                    callIndex += 1
+                sourcePosition = (
+                    len(notes) - 1 - position if reverseState else
+                    (position - rotation) % len(notes) if transform == 'rotate' else
+                    position)
+                repeatedEvent = list(event)
+                repeatedEvent[0] = float(event[0]) + cycleOffset
+                repeatedEvent[2] = byPosition[sourcePosition][2]
+                outputEvents.append(tuple(repeatedEvent))
+
+        expanded = list(base)
+        expanded[2] = elapsed
+        expanded[3] = outputEvents
+        _dexter_updates[self.number - 1] = tuple(expanded)
+
+    def _set_scheduled_transform(self, method, amount, intervals):
+        if self._currentPattern is None or self._baseUpdate is None:
+            raise ValueError('Assign a player pattern before calling .every() or .sometimes().')
+        if self._follows is not None or self._followers:
+            raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
+        if (method == 'reverse' and amount != 1) or (
+                method == 'rotate' and
+                (isinstance(amount, bool) or not isinstance(amount, int) or
+                 not -256 <= amount <= 256)):
+            raise ValueError('Scheduled rotate amount must be a whole number from -256 to 256.')
+        if method not in {'reverse', 'rotate'}:
+            raise ValueError('Embedded scheduled transforms support only reverse and rotate.')
+        self._scheduledTransform = (method, amount, tuple(intervals))
+        self._apply_scheduled_transform()
+
+    def every(self, occurrence, command, *args, **kwargs):
+        if kwargs or len(args) > 1:
+            raise ValueError('Embedded .every() accepts a beat interval, reverse/rotate, and an optional rotate amount only.')
+        if (isinstance(occurrence, bool) or
+                not isinstance(occurrence, (int, float)) or
+                occurrence != occurrence or occurrence in (float('inf'), float('-inf')) or
+                not 0.05 <= occurrence <= 4096.0):
+            raise ValueError('.every() interval must be a finite number from 0.05 to 4096 beats.')
+        if command not in {'reverse', 'rotate'}:
+            raise ValueError("Embedded .every() supports 'reverse' and 'rotate' degree transforms.")
+        amount = args[0] if args else 1
+        self._set_scheduled_transform(command, amount, [float(occurrence)])
+        return self
+
+    def sometimes(self, command, *args, **kwargs):
+        if kwargs or len(args) > 1:
+            raise ValueError('Embedded .sometimes() accepts reverse/rotate and an optional rotate amount only.')
+        if command not in {'reverse', 'rotate'}:
+            raise ValueError("Embedded .sometimes() supports 'reverse' and 'rotate' degree transforms.")
+        amount = args[0] if args else 1
+        seed = (_dexter_shuffle_seed ^
+                ((self.number * 2654435761) & 0xffffffff)) & 0xffffffff
+        intervals = [value / 2.0 for value in
+                     PRand(8, 32, length=256, seed=seed)]
+        self._set_scheduled_transform(command, amount, intervals)
+        return self
+
+    def _copy_followed_degree(self, source):
+        if source._currentPattern is None or self._currentPattern is None:
+            return
+        if (source._currentPattern.synth == 'sample' or
+                self._currentPattern.synth == 'sample'):
+            raise ValueError('Player degree following is for numeric note patterns, not sample players.')
+        if self._scheduledTransform is not None or source._scheduledTransform is not None:
+            raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
+        def noteItems(pattern):
+            notes = pattern.notes
+            if isinstance(notes, _FoxDotChord):
+                return [notes]
+            if isinstance(notes, (list, tuple, _FoxDotFinitePattern)):
+                return list(notes)
+            return [notes]
+
+        sourceNotes = noteItems(source._currentPattern)
+        targetNotes = noteItems(self._currentPattern)
+        if not sourceNotes or not targetNotes or len(sourceNotes) > 256:
+            raise ValueError('Player degree following needs non-empty patterns with at most 256 source steps.')
+        clone = PlayerPattern.__new__(PlayerPattern)
+        clone.__dict__ = dict(self._currentPattern.__dict__)
+        clone.notes = [sourceNotes[index % len(sourceNotes)]
+                       for index in range(len(targetNotes))]
+        clone.degrees = source._currentPattern.degrees
+        self._currentPattern = clone
+        self._applyingFollow = True
+        try:
+            self.__rshift__(clone)
+        finally:
+            self._applyingFollow = False
+
+    def _refresh_followers(self):
+        for follower in list(self._followers):
+            follower._copy_followed_degree(self)
+
+    def follow(self, other=False):
+        if not isinstance(other, Player) or not 1 <= other.number <= 8:
+            raise TypeError('Player.follow requires one player from p1 through p8.')
+        if other is self:
+            raise ValueError('A player cannot follow itself.')
+        if self._scheduledTransform is not None or other._scheduledTransform is not None:
+            raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
+        if (self._currentPattern is not None and
+                other._currentPattern is not None and
+                (self._currentPattern.synth == 'sample' or
+                 other._currentPattern.synth == 'sample')):
+            raise ValueError('Player degree following is for numeric note patterns, not sample players.')
+        cursor = other
+        while cursor is not None:
+            if cursor is self:
+                raise ValueError('Circular player degree reference.')
+            cursor = cursor._follows
+        previous = self._follows
+        if previous is not None and self in previous._followers:
+            previous._followers.remove(self)
+        self._follows = other
+        if self not in other._followers:
+            other._followers.append(self)
+        self._copy_followed_degree(other)
         return self
 
     def stop(self):
@@ -2922,6 +3204,10 @@ p5 = Player(5)
 p6 = Player(6)
 p7 = Player(7)
 p8 = Player(8)
+
+class _PlayerDegreeReference:
+    def __init__(self, player):
+        self.player = player
 
 # Explicit VST extensions, not claims of upstream FoxDot Buffer/sclang APIs.
 def _disk_number(value, name, lo, hi):

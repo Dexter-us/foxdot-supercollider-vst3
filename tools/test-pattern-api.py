@@ -1803,6 +1803,87 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     playerEvents = numericTransformEvents[eventOffset:eventOffset + eventCount]
     eventOffset += eventCount
     assert_player_polyphony_ok(row, playerEvents)
+playerFollowText = open(
+    os.path.join(sys.argv[2], '109-player-degree-follow.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    playerFollowText)
+followRows, followEvents = run_script(playerFollowText, include_events=True)
+assert len(followRows) == 3 and len(followEvents) == 24
+def player_event_pitches(rows, events, player_index):
+    first = sum(int(row[5]) for row in rows[:player_index])
+    count = int(rows[player_index][5])
+    return [int(event[3]) for event in events[first:first + count]]
+assert player_event_pitches(followRows, followEvents, 0) == player_event_pitches(
+    followRows, followEvents, 1)
+assert player_event_pitches(followRows, followEvents, 0) == player_event_pitches(
+    followRows, followEvents, 2)
+assert float(followRows[1][7]) == 0.32 and float(followRows[1][8]) == 0.2
+assert float(followRows[2][7]) == 0.12 and float(followRows[2][8]) == 0.35
+referenceEditRows, referenceEditEvents = run_script(
+    'p2 >> bass([0, 4, 2, 5], dur=1, oct=3, amp=0.32, pan=0.2)\n'
+    'p1 >> sine([0, 2, 4, 6], dur=0.5, amp=0.2)\n'
+    'p2.follow(p1)\n'
+    'p3 >> triangle([6, 2, 0, 4], dur=0.5, oct=5, amp=0.12, pan=0.35)\n'
+    'p3.degree = p1.degree\n'
+    'p1 >> pluck([1, 3, 5, 7], dur=0.5, oct=5, amp=0.24)\n',
+    include_events=True)
+assert len(referenceEditRows) == 3 and len(referenceEditEvents) == 12
+sourcePitches = player_event_pitches(referenceEditRows, referenceEditEvents, 0)
+assert player_event_pitches(referenceEditRows, referenceEditEvents, 1) == sourcePitches
+assert player_event_pitches(referenceEditRows, referenceEditEvents, 2) == sourcePitches
+assert float(referenceEditRows[1][7]) == 0.32
+assert float(referenceEditRows[1][8]) == 0.2
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(2, "reverse")\n')
+reverseRows, reverseEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\np1.every(2, "reverse")\n',
+    include_events=True)
+assert len(reverseRows) == 1 and len(reverseEvents) == 8
+assert float(reverseRows[0][4]) == 4.0
+assert [int(event[3]) for event in reverseEvents] == [
+    60, 62, 64, 65, 65, 64, 62, 60]
+rotateRows, rotateEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\np1.every(2, "rotate", 1)\n',
+    include_events=True)
+assert len(rotateRows) == 1 and len(rotateEvents) == 16
+assert [int(event[3]) for event in rotateEvents[:12]] == [
+    60, 62, 64, 65, 65, 60, 62, 64, 64, 65, 60, 62]
+sometimesText = open(
+    os.path.join(sys.argv[2], '110-every-sometimes-players.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    sometimesText)
+sometimesRows, sometimesEvents = run_script(
+    sometimesText, include_events=True)
+assert len(sometimesRows) == 2
+assert 2 < len(sometimesEvents) <= 256
+assert int(sometimesRows[1][5]) <= 256
+assert 8.0 <= float(sometimesRows[1][4]) <= 128.0
+assert 'Scheduled transforms currently need a dense' in run_error_script(
+    'p1 >> sine([0, None, 2, None], dur=0.5)\n'
+    'p1.every(2, "reverse")\n')
+assert 'Scheduled transforms and degree-follow relationships cannot be combined' in run_error_script(
+    'p1 >> sine([0, 2, 4, 6], dur=0.5)\n'
+    'p2 >> bass([0, 2, 4, 6], dur=0.5)\n'
+    'p2.follow(p1)\np2.every(2, "reverse")\n')
+assert 'cannot follow itself' in run_compatibility_check(
+    'p1 >> sine([0, 2], dur=0.5)\np1.follow(p1)\n')
+assert 'degree assignment supports only' in run_compatibility_check(
+    'p1 >> sine([0, 2], dur=0.5)\np1.degree = 3\n')
+assert 'Use bounded degree transforms' in run_compatibility_check(
+    'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(2, "stutter")\n')
+assert 'accepts positional arguments only' in run_compatibility_check(
+    'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(2, "reverse", cycle=8)\n')
+assert 'Use bounded degree transforms' in run_compatibility_check(
+    'p1 >> sine([0, 2, 4, 6], dur=0.5)\np1.every(var([2, 4], 2), "reverse")\n')
+dense_degrees = ', '.join(str(index % 4) for index in range(100))
+assert 'beyond the 256-event limit' in run_error_script(
+    'p1 >> sine([' + dense_degrees + '], dur=0.1)\n'
+    'p1.every(6, "reverse")\n')
+assert 'Circular player degree reference' in run_error_script(
+    'p1 >> sine([0, 2], dur=0.5)\np2 >> bass([2, 4], dur=0.5)\n'
+    'p1.follow(p2)\np2.follow(p1)\n')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Portable examples through 108, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded .every()/.sometimes() transforms, static FoxDot compatibility checks, line diagnostics, Portable examples through 110, and user SynthDef examples 94, 103, 104, and 105.')

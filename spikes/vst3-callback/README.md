@@ -1,5 +1,16 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.81 adds numeric player degree references (`p2.degree = p1.degree`
+and `p2.follow(p1)`) plus bounded player `.every()`/`.sometimes()` transformations.
+Degree changes propagate to followers while each player keeps its own synth,
+timing, and mix controls. Scheduled `reverse`/`rotate` changes are compiled into
+a repeating phrase so no Python server is needed after evaluation. See Portable
+Examples 109–110. This is a bounded embedded subset: scheduled transforms require
+dense single-note patterns and do not combine with rests, chords, strum/delay,
+variable octave, or player-follow relationships on the same player. `.every()`
+and `.sometimes()` transform the degree stream, not every FoxDot player control;
+`.sometimes()` uses a seeded repeating interval phrase.
+
 Version 0.4.80 adds an optional standalone DiskIO pack: native DiskIn/VDiskIn
 streaming and bounded DiskOut master recording. Examples 106–108 use explicit
 VST extensions, not an embedded sclang interpreter or the full FoxDot Buffer API.
