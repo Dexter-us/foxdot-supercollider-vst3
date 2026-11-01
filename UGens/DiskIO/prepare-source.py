@@ -47,7 +47,10 @@ def adapt(source):
             "buf->data + mPos * buf->channels, mFrames)) : 0;")
     replace("count = sf_writef_float(GETSNDFILE(buf), buf->data + mPos * buf->channels, mFrames);",
             "dexter_disk::writeFrames(mWorld, mBufNum, buf->data + mPos * buf->channels, mFrames);")
-    return text + '\n#include "DiskIOBridgeImpl.inc"\n'
+    # SC_Unit.h replaces Windows IN/OUT annotation macros. Parse the complete
+    # Windows SDK first, before those DSP macros can affect winuser/RPC headers.
+    prefix = '#ifdef _WIN32\n#include <windows.h>\n#endif\n'
+    return prefix + text + '\n#include "DiskIOBridgeImpl.inc"\n'
 
 
 if __name__ == "__main__":

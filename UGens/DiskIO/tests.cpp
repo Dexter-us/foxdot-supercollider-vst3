@@ -2,6 +2,9 @@
 // Calls the actual pinned DiskIO Unit constructors/calculation/destructors with
 // a minimal SC InterfaceTable. No SC engine/server or VST SDK build is needed.
 #include "DiskIOBridge.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "SC_PlugIn.h"
 #include "../../spikes/vst3-callback/portable_diskio.h"
 #include <sndfile.h>
