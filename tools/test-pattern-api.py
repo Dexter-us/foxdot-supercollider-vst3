@@ -93,6 +93,40 @@ assert namespace['interleave']([1, 2, 3], [None, 9], [4]) == [1, None, 4, 2, 9, 
 assert namespace['transpose']([60, None, [64, 67]], 12) == [72, None, [76, 79]]
 euclidean = namespace['euclid'](3, 8, 36, 1)
 assert len(euclidean) == 8 and euclidean.count(36) == 3
+randChoices = namespace['PRand'](namespace['P'][0, 2, 4, 7],
+                                 length=64, seed=12345)
+assert len(randChoices) == 64 and all(value in (0, 2, 4, 7) for value in randChoices)
+assert randChoices == namespace['PRand'](
+    namespace['P'][0, 2, 4, 7], length=64, seed=12345)
+assert namespace['PRand'](5, length=64, seed=8) == namespace['PRand'](
+    0, 5, length=64, seed=8)
+integerRange = namespace['PRand'](-3, 4, length=64, seed=9)
+assert all(isinstance(value, int) and -3 <= value <= 4 for value in integerRange)
+randomSamples = namespace['PRand'](
+    namespace['P']['x', 'o', '-', ' '], length=64, seed=99)
+assert all(value in ('x', 'o', '-', ' ') for value in randomSamples)
+white = namespace['PWhite'](-1.0, 1.0, length=256, seed=123)
+assert len(white) == 256 and all(-1.0 <= value <= 1.0 for value in white)
+assert white == namespace['PWhite'](-1.0, 1.0, length=256, seed=123)
+assert white != namespace['PWhite'](-1.0, 1.0, length=256, seed=124)
+assert abs(sum(white) / len(white)) < 0.15
+assert namespace['PWhite'](0.5, 0.5, length=8, seed=2) == [0.5] * 8
+for generator in (
+        lambda: namespace['PRand']([], length=2),
+        lambda: namespace['PRand'](2.5, length=2),
+        lambda: namespace['PRand'](4, 2, length=2),
+        lambda: namespace['PRand'](1, length=0),
+        lambda: namespace['PRand'](1, length=257),
+        lambda: namespace['PRand'](1, seed=True),
+        lambda: namespace['PWhite'](2.0, 1.0),
+        lambda: namespace['PWhite'](0.0, float('inf')),
+        lambda: namespace['PWhite'](0.0, 1.0, length=257)):
+    try:
+        generator()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('random pattern generator should reject invalid bounds')
 stepVar = namespace['var']([0.2, 0.8], [2, 2])
 linearVar = namespace['linvar']([-1, 1], 4)
 assert stepVar.wire() == 'v:0.2,0.8:2.0,2.0'
@@ -1252,6 +1286,8 @@ example100 = run_example('100-sample-loop-and-slicing.py')
 assert [int(row[6]) for row in example100 if row[2] == '0'] == [57, 57]
 example101 = run_example('101-patterned-sample-slices.py')
 assert [int(row[6]) for row in example101 if row[2] == '0'] == [57, 57]
+example102 = run_example('102-random-pattern-generators.py')
+assert [int(row[5]) for row in example102 if row[0] == 'P'] == [16, 16]
 _, duplicateLayerRequests, duplicateLayerEvents = run_script(
     'p1 >> play("<x><x>", dur=1)', include_samples=True, include_events=True)
 assert [int(row[1]) for row in duplicateLayerRequests] == [120, 120]
@@ -1666,4 +1702,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Portable examples through 101, and user SynthDef Example 94.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Portable examples through 102, and user SynthDef Example 94.')

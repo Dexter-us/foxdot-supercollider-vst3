@@ -1,10 +1,6 @@
 name: Windows Airwindows UGen add-on pack
 
 on:
-  pull_request:
-    paths:
-      - "UGens/Airwindows/**"
-      - ".github/workflows/airwindows-ugens-windows.yml"
   workflow_dispatch:
 
 permissions:

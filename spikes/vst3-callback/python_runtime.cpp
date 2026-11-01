@@ -115,7 +115,7 @@ _COMPAT_CALLS = {
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
-    'PZip', 'PZip2',
+    'PZip', 'PZip2', 'PRand', 'PWhite',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -386,6 +386,24 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 keyword.value for keyword in node.keywords
                 if keyword.arg in {'pat1', 'pat2'})
             self._check_pattern_kinds(patternArguments, node.lineno, 'PZip2')
+        if name in {'PRand', 'PWhite'}:
+            parameters = ('start', 'stop') if name == 'PRand' else ('lo', 'hi')
+            allowed = set(parameters) | {'length', 'seed'}
+            if len(node.args) > 2:
+                self.add(node.lineno, name + ' accepts at most two positional bounds/patterns.')
+            positional = set(parameters[:len(node.args)])
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(keyword.lineno or node.lineno,
+                             name + ' accepts only ' +
+                             ', '.join(parameters + ('length', 'seed')) + '.')
+                elif keyword.arg in positional:
+                    self.add(keyword.lineno or node.lineno,
+                             name + ' received the same argument more than once.')
+                elif keyword.arg in parameters:
+                    positional.add(keyword.arg)
+            if name == 'PRand' and not positional.intersection({'start'}):
+                self.add(node.lineno, 'PRand requires a start value or source pattern.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -554,6 +572,7 @@ _dexter_synth_controls = {}
 _dexter_sample_events = {}
 _dexter_sample_controls = {}
 _dexter_shuffle_counter = 0
+_dexter_random_counter = 0
 _dexter_swing_seconds = 0.0
 _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
@@ -1092,6 +1111,86 @@ def _compatible_pattern_sequences(patterns, name, minimum=1):
         kind = patternKind
         sequences.append(values)
     return sequences, kind
+
+def _random_pattern_length(length, name):
+    if isinstance(length, bool) or not isinstance(length, int):
+        raise TypeError(name + ' length must be a whole number')
+    if not 1 <= length <= 256:
+        raise ValueError(name + ' length must be from 1 to 256')
+    return length
+
+def _random_pattern_seed(seed, name):
+    global _dexter_random_counter
+    if seed is None:
+        _dexter_random_counter += 1
+        seed = (int(_dexter_shuffle_seed) +
+                _dexter_random_counter * 1013904223) & 0xffffffff
+    elif isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError(name + ' seed must be a whole number')
+    elif not 0 <= seed <= 0xffffffff:
+        raise ValueError(name + ' seed must be from 0 to 4294967295')
+    seed = int(seed) & 0xffffffff
+    return seed if seed else 0x6d2b79f5
+
+def _random_pattern_step(state):
+    state ^= (state << 13) & 0xffffffff
+    state &= 0xffffffff
+    state ^= state >> 17
+    state &= 0xffffffff
+    state ^= (state << 5) & 0xffffffff
+    state &= 0xffffffff
+    return state, state / 4294967296.0
+
+def PRand(start, stop=None, length=256, seed=None):
+    length = _random_pattern_length(length, 'PRand')
+    if isinstance(start, (str, list, tuple, _FoxDotFinitePattern)):
+        if stop is not None:
+            raise TypeError('PRand accepts one finite source pattern or integer bounds')
+        values, kind = _pattern_items(start, 'PRand')
+        if not values:
+            raise ValueError('PRand source pattern cannot be empty')
+        state = _random_pattern_seed(seed, 'PRand')
+        result = []
+        for _ in range(length):
+            state, _ = _random_pattern_step(state)
+            index = (state * len(values)) >> 32
+            result.append(values[index])
+        return _FoxDotFinitePattern(result)
+
+    if isinstance(start, bool) or not isinstance(start, int):
+        raise TypeError('PRand bounds must be whole numbers or a finite source pattern')
+    low = 0 if stop is None else start
+    high = start if stop is None else stop
+    if isinstance(high, bool) or not isinstance(high, int):
+        raise TypeError('PRand bounds must be whole numbers')
+    if not -1000000 <= low <= high <= 1000000:
+        raise ValueError('PRand bounds must be ordered and within -1000000..1000000')
+    state = _random_pattern_seed(seed, 'PRand')
+    span = high - low + 1
+    result = []
+    for _ in range(length):
+        state, _ = _random_pattern_step(state)
+        result.append(low + ((state * span) >> 32))
+    return _FoxDotFinitePattern(result)
+
+def PWhite(lo=0.0, hi=1.0, length=256, seed=None):
+    length = _random_pattern_length(length, 'PWhite')
+    for value in (lo, hi):
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or
+                value != value or value in (float('inf'), float('-inf')) or
+                not -1000000.0 <= value <= 1000000.0):
+            raise ValueError('PWhite bounds must be finite numbers within -1000000..1000000')
+    lo, hi = float(lo), float(hi)
+    if lo > hi:
+        raise ValueError('PWhite requires lo <= hi')
+    state = _random_pattern_seed(seed, 'PWhite')
+    result = []
+    for _ in range(length):
+        state, first = _random_pattern_step(state)
+        state, second = _random_pattern_step(state)
+        # FoxDot PWhite uses a symmetric triangular distribution, not uniform.
+        result.append(lo + ((first + second) * 0.5) * (hi - lo))
+    return _FoxDotFinitePattern(result)
 
 def PAlt(*patterns):
     sequences, kind = _compatible_pattern_sequences(patterns, 'PAlt', 2)

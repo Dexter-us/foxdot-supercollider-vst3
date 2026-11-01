@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.76 adds bounded FoxDot-style PRand and PWhite pattern generators.
+PRand chooses from a finite pattern or an inclusive integer range; PWhite uses
+FoxDot's symmetric triangular distribution. Both create finite sequences of
+1–256 items (default 256), accept seed= for repeatable results, and need no
+imports or external server. See Example 102.
 Version 0.4.75 lets each sample hit use its own normalized start/end slice,
 including P/list patterns and var()/linvar(), and raises the optional master
 gain ceiling to 250%. The default remains 100% (unity); see Examples 100–101.
@@ -129,6 +134,10 @@ a loop limited by sus= (or dur= when sus is omitted).
 101-patterned-sample-slices.py demonstrates start/end values that cycle per hit
 or vary with var()/linvar(); every emitted hit is checked to ensure
 0 <= start < end <= 1. loop= remains a fixed Boolean control.
+102-random-pattern-generators.py demonstrates seeded PRand pitches and PWhite
+durations. PWhite uses the same triangular distribution as FoxDot; values are
+generated once per script run and the finite result cycles in the player.
+Re-run the script for a fresh unseeded sequence.
 74-nested-play-strings.py demonstrates `[]` step subdivisions and `()` lacing.
 75-random-and-layered-strings.py demonstrates bounded `{}` variations and
 adjacent `<>` layers. The compatibility checker reports malformed strings;
