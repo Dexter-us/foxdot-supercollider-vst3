@@ -592,7 +592,7 @@ def run_script(script_text, include_events=False, include_effects=False, include
             return player_rows, effect_rows
         return (player_rows, event_rows) if include_events else player_rows
 
-def run_script_with_schedule_seed(script_text, seed):
+def run_script_with_schedule_seed(script_text, seed, **options):
     global wrapper_cpp
     original = wrapper_cpp
     marker = 'int(time.monotonic_ns() & 0xffffffff)'
@@ -600,7 +600,8 @@ def run_script_with_schedule_seed(script_text, seed):
         raise AssertionError('Could not find the runtime shuffle seed in wrapper')
     wrapper_cpp = original.replace(marker, str(int(seed)))
     try:
-        return run_script(script_text, include_events=True)
+        options.setdefault('include_events', True)
+        return run_script(script_text, **options)
     finally:
         wrapper_cpp = original
 
@@ -1903,6 +1904,27 @@ defaultStutterRows, defaultStutterEvents = run_script(
     'p1.every(1, "stutter")\n',
     include_events=True)
 assert len(defaultStutterRows) == 1 and len(defaultStutterEvents) == 6
+sampleStutterRows, sampleStutterRequests, sampleStutterEvents = run_script(
+    'p1 >> play("x-o-", dur=0.5, sample=0, amp=0.3)\n'
+    'p1.every(1, "stutter", 3)\n',
+    include_samples=True, include_events=True)
+assert len(sampleStutterRows) == 1
+assert [int(row[1]) for row in sampleStutterRequests] == [
+    120, 120, 120, 45, 111, 111, 111, 45], (
+        sampleStutterRequests, sampleStutterEvents)
+assert [round(float(row[1]), 6) for row in sampleStutterEvents] == [
+    0.0, 0.166667, 0.333333, 0.5, 1.0, 1.166667, 1.333333, 1.5]
+_, restStutterRequests, restStutterEvents = run_script(
+    'p1 >> play("x o ", dur=0.5, sample=0)\n'
+    'p1.every(0.5, "stutter", 3)\n',
+    include_samples=True, include_events=True)
+assert len(restStutterRequests) == 6
+assert len(restStutterEvents) == 6
+assert 'Sample players currently support scheduled stutter only' in run_error_script(
+    'p1 >> play("x-o-", dur=0.5)\np1.every(1, "shuffle")\n')
+assert 'unstrummed hits without per-note delay' in run_error_script(
+    'p1 >> play("x-o-", dur=0.5, strum=0.05)\n'
+    'p1.every(1, "stutter", 3)\n')
 scheduleShortcutText = open(
     os.path.join(sys.argv[2], '111-player-schedule-shortcuts.py'),
     encoding='utf-8').read()
@@ -1919,6 +1941,38 @@ for scheduleSeed in range(16):
         scheduleShortcutText, scheduleSeed)
     assert len(seededRows) == 3 and len(seededEvents) <= 256
     assert all(int(row[5]) <= 256 for row in seededRows)
+drumStutterText = open(
+    os.path.join(sys.argv[2], '112-drum-sample-stutter.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    drumStutterText)
+drumStutterRows, drumStutterRequests, drumStutterEvents = run_script(
+    drumStutterText, include_samples=True, include_events=True)
+assert len(drumStutterRows) == 8 and len(drumStutterRequests) == 8, (
+    drumStutterRows, drumStutterRequests, drumStutterEvents)
+assert drumStutterRows[0][2] == '0' and drumStutterRows[0][4] == '2.0'
+assert drumStutterRows[0][5] == '8'
+assert [int(row[1]) for row in drumStutterRequests].count(120) == 3
+assert [int(row[1]) for row in drumStutterRequests].count(111) == 3
+assert len(drumStutterEvents) == 8
+for scheduleSeed in range(16):
+    seededDrumRows, seededDrumRequests, seededDrumEvents = (
+        run_script_with_schedule_seed(
+            drumStutterText, scheduleSeed, include_samples=True))
+    assert len(seededDrumRequests) == len(seededDrumEvents) <= 256
+sampleOftenStutter = (
+    'p1 >> play("x-o-", dur=0.5, sample=0)\n'
+    'p1.often("stutter", 3)\n')
+for scheduleSeed in range(16):
+    seededOftenRows, seededOftenRequests, seededOftenEvents = (
+        run_script_with_schedule_seed(
+            sampleOftenStutter, scheduleSeed, include_samples=True))
+    assert len(seededOftenRequests) == len(seededOftenEvents) <= 256
+sampleStutterOverflow = run_error_script(
+    'p1 >> play("xxxxxxxxxxxxxxxxxxxx", dur=0.05)\n'
+    'p1.every(0.05, "stutter", 16)\n')
+assert 'sample stutter expands beyond the 256-event limit' in (
+    sampleStutterOverflow.lower())
 assert 'Scheduled player operations currently need a dense' in run_error_script(
     'p1 >> sine([0, None, 2, None], dur=0.5)\n'
     'p1.every(2, "reverse")\n')
@@ -1948,4 +2002,4 @@ assert 'Circular player degree reference' in run_error_script(
     'p1.follow(p2)\np2.follow(p1)\n')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded .every()/.often()/.sometimes()/.rarely() transforms, static FoxDot compatibility checks, line diagnostics, Portable examples through 111, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded .every()/.often()/.sometimes()/.rarely() transforms, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 112, and user SynthDef examples 94, 103, 104, and 105.')

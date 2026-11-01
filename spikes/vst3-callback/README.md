@@ -1,5 +1,12 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.83 adds scheduled stutter for WAV drum players, as shown in
+Portable Example 112. A stutter repeats a sample hit only when the scheduled
+beat matches a hit onset; rest beats are skipped. It preserves the sample
+selection and evenly spaces the retriggers before the next hit. Sample stutter
+requires unstrummed hits without per-note delay; scheduled reverse/rotate/shuffle
+remain numeric-player operations.
+
 Version 0.4.82 adds FoxDot-style `.often()`/`.rarely()` scheduling shortcuts and
 scheduled `shuffle`/`stutter` operations alongside `reverse`/`rotate`. The
 upstream 0.6.7 interval ranges are used: often 0.5–4 beats, sometimes 4–16,

@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.83 adds scheduled stutter for WAV drum hits; it repeats hits only
+when the scheduled beat matches an onset, and skips rests. Retriggers preserve
+the chosen sample and are evenly spaced before the next hit. Sample stutter
+requires unstrummed hits without per-note delay. See Example 112.
+
 Version 0.4.82 adds `.often()` and `.rarely()` scheduling shortcuts and expands
 `.every()`/`.sometimes()` to include seeded degree `shuffle` and bounded
 current-note `stutter`. FoxDot 0.6.7 interval ranges are used:

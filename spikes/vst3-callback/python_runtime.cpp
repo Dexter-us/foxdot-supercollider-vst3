@@ -2986,13 +2986,131 @@ class Player:
         self._refresh_followers()
         return self
 
+    def _apply_sample_stutter(self, amount, intervals, intervalRange):
+        base = self._baseUpdate
+        pattern = self._currentPattern
+        playerIndex = self.number - 1
+        events = list(base[3])
+        requests = list(_dexter_sample_events.get(playerIndex, ()))
+        if not events or len(events) != len(requests):
+            raise ValueError('Sample stutter needs matching playable hits and sample requests.')
+        if (pattern.strumControl is not None or pattern.strumBeats != 0.0 or
+                pattern.delayControl is not None or pattern.delayBeats != 0.0):
+            raise ValueError('Sample stutter currently needs unstrummed hits without per-note delay.')
+        baseLength = float(base[2])
+        if not 0.0 < baseLength <= 4096.0:
+            raise ValueError('Sample stutter phrase length must be between 0 and 4096 beats.')
+
+        def hitsAt(beat):
+            phase = float(beat) % baseLength
+            hits = []
+            for event, request in zip(events, requests):
+                start = (float(event[0]) + float(event[6])) % baseLength
+                distance = ((start - phase + baseLength * 0.5) %
+                            baseLength) - baseLength * 0.5
+                if abs(distance) <= 1e-8:
+                    hits.append((event, request))
+            return hits
+
+        calls = []
+        elapsed = 0.0
+        cycles = 0
+        for index in range(256):
+            elapsed += float(intervals[index % len(intervals)])
+            calls.append(elapsed)
+            if elapsed > 4096.0:
+                break
+            candidateCycles = round(elapsed / baseLength)
+            aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
+            if candidateCycles >= 1 and not aligned:
+                previousElapsed = elapsed - float(intervals[index % len(intervals)])
+                lowInterval, highInterval = intervalRange
+                lowCyclesValue = (previousElapsed + lowInterval) / baseLength
+                lowCycles = int(lowCyclesValue)
+                if lowCycles < lowCyclesValue - 1e-9:
+                    lowCycles += 1
+                highCycles = int(
+                    (previousElapsed + highInterval + 1e-9) / baseLength)
+                eventBudget = 256 - len(calls) * (amount - 1)
+                maxCycles = min(
+                    int(4096.0 / baseLength),
+                    max(0, eventBudget // max(1, len(events))))
+                highCycles = min(highCycles, maxCycles)
+                if lowCycles <= highCycles:
+                    targetCycles = max(
+                        lowCycles, min(highCycles, candidateCycles))
+                    adjustedInterval = (
+                        targetCycles * baseLength - previousElapsed)
+                    if lowInterval - 1e-9 <= adjustedInterval <= highInterval + 1e-9:
+                        elapsed = targetCycles * baseLength
+                        calls[-1] = elapsed
+                        aligned = True
+                        candidateCycles = targetCycles
+            if candidateCycles >= 1 and aligned:
+                cycles = candidateCycles
+                break
+        if not calls or elapsed > 4096.0 or cycles < 1:
+            raise ValueError('Sample stutter could not form a bounded repeating phrase; use a shorter drum pattern or a compatible interval.')
+
+        stutterCalls = [(beat, hitsAt(beat)) for beat in calls]
+        extraCount = sum(len(hits) * (amount - 1)
+                         for _, hits in stutterCalls)
+        if len(events) * cycles + extraCount > 256:
+            raise ValueError('Sample stutter expands beyond the 256-event limit; use fewer hits, fewer triggers, or a smaller stutter count.')
+
+        outputPairs = []
+        for cycleIndex in range(cycles):
+            cycleOffset = cycleIndex * baseLength
+            for event, request in zip(events, requests):
+                repeatedEvent = list(event)
+                repeatedEvent[0] = float(event[0]) + cycleOffset
+                outputPairs.append((tuple(repeatedEvent), request))
+
+        hitStarts = sorted(set(
+            (float(event[0]) + float(event[6])) % baseLength
+            for event in events))
+        for scheduledBeat, hits in stutterCalls:
+            if not hits:
+                continue
+            callBeat = scheduledBeat % elapsed
+            phase = callBeat % baseLength
+            nextStarts = [start for start in hitStarts
+                          if start > phase + 1e-8]
+            nextHit = (nextStarts[0] if nextStarts else
+                       hitStarts[0] + baseLength)
+            remaining = nextHit - phase
+            if remaining <= 1e-9:
+                continue
+            spacing = remaining / float(amount)
+            for event, request in hits:
+                for repeatIndex in range(1, amount):
+                    repeatedEvent = list(event)
+                    repeatedStart = (
+                        callBeat + spacing * repeatIndex) % elapsed
+                    repeatedEvent[0] = repeatedStart - float(event[6])
+                    repeatedEvent[1] = min(float(event[1]), spacing)
+                    outputPairs.append((tuple(repeatedEvent), request))
+
+        outputPairs.sort(
+            key=lambda item: float(item[0][0]) + float(item[0][6]))
+        expanded = list(base)
+        expanded[2] = elapsed
+        expanded[3] = [event for event, _ in outputPairs]
+        _dexter_updates[playerIndex] = tuple(expanded)
+        _dexter_sample_events[playerIndex] = [
+            request for _, request in outputPairs]
+
     def _apply_scheduled_transform(self):
         pattern = self._currentPattern
         base = self._baseUpdate
         if pattern is None or base is None:
             raise ValueError('Assign a note pattern before scheduling a player transform.')
         if pattern.synth == 'sample':
-            raise ValueError('Scheduled player operations currently support numeric note players, not sample players.')
+            transform, amount, intervals, intervalRange = self._scheduledTransform
+            if transform != 'stutter':
+                raise ValueError('Sample players currently support scheduled stutter only.')
+            self._apply_sample_stutter(amount, intervals, intervalRange)
+            return
         if (pattern.octaveControl is not None or pattern.strumControl is not None or
                 pattern.strumBeats != 0.0 or pattern.delayControl is not None or
                 pattern.delayBeats != 0.0):
