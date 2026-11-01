@@ -1,8 +1,21 @@
-# Example 43: FoxDot viola with delayed vibrato and a soft sine counterline.
-Clock.bpm = 92
+# Example 43: original FoxDot viola graph (core UGens only).
+# Test this synth alone first. Longer spacing lets its envelope finish.
+# Change notes/rate/amp, then Run again to test live edits and retriggering.
+Clock.bpm = 90
 Scale.default = Scale.minor
+Root.default.set("C")
 
-p1 >> viola(P[0, 2, 4, 6], dur=2, sus=1.6, oct=4,
-            vib=6, amp=0.35, pan=-0.2)
-p2 >> sine(P[0, 4, 3, 5], dur=2, sus=1.6, oct=3,
-           amp=0.18, pan=0.2)
+# Make this a solo test even after a multi-player example.
+p2.stop()
+p3.stop()
+p4.stop()
+p5.stop()
+p6.stop()
+p7.stop()
+p8.stop()
+
+p1 >> viola(P[0, 2, 4, 7], dur=4, sus=0.5, oct=5,
+             amp=0.5, reverb="none", vib=6)
+
+# To stop: uncomment this line without adding leading spaces:
+# p1.stop()

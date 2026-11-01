@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.43)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.78)
 
 set(VST3_SDK_ROOT "" CACHE PATH "Path to Steinberg VST3 SDK checkout")
 set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")
@@ -144,6 +144,9 @@ smtg_add_vst3plugin(dexter_sc_tone
 smtg_target_add_plugin_resources(dexter_sc_tone
   OUTPUT_SUBDIRECTORY "Python"
   RESOURCES ${PYTHON_RUNTIME_FILES})
+smtg_target_add_plugin_resources(dexter_sc_tone
+  OUTPUT_SUBDIRECTORY "SCPlugins"
+  RESOURCES ${SC_UGEN_MODULE_FILES})
 smtg_target_add_plugin_resource(dexter_sc_tone "${SC_SOURCE_DIR}/COPYING" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/Boost-1.0.txt" "Licenses")
 smtg_target_add_plugin_resource(dexter_sc_tone "${VST3_SDK_ROOT}/LICENSE.txt" "Licenses")
@@ -169,7 +172,7 @@ if(WIN32)
   target_include_directories(dexter_sc_tone PRIVATE
     "${scintilla_SOURCE_DIR}/include" "${lexilla_SOURCE_DIR}/include")
   target_link_libraries(dexter_sc_tone PRIVATE dexter_scintilla dexter_sc_lexilla
-    shell32 comdlg32 winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
+    shell32 comdlg32 comctl32 winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
 elseif(UNIX AND NOT APPLE)
   target_link_libraries(dexter_sc_tone PRIVATE m rt pthread)
 endif()

@@ -11,31 +11,43 @@
 
 #include "SC_WorldOptions.h"
 #include "SC_Prototypes.h"
-#include "SC_HiddenWorld.h"
+#include "SC_World.h"
 #include "SC_GraphDef.h"
 #include "SC_Group.h"
 #include "SC_Graph.h"
 #include "SC_Lib_Cintf.h"
 #include "tone_synthdef.h"
+#include "foxdot_synthdefs.h"
+#include "sample_synthdef.h"
+#include "portable_samples.h"
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
+#include "clock_swing.h"
+#include "master_output_gain.h"
 #include "win32_code_editor.h"
+#include "lifecycle_trace.h"
+#include "sc_pool_capacity.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
@@ -44,12 +56,31 @@
 #include <dlfcn.h>
 #endif
 
+#include "SC_UnitDef.h"
+#include "SC_UnitSpec.h"
+
 namespace {
 std::mutex scLibraryLifecycleMutex;
 std::atomic<unsigned long long> nextScriptNamespace{1};
 Steinberg::ModuleTerminator cleanupSuperCollider([] {
+    LifecycleTrace trace("deinitialize_library");
     deinitialize_library();
 });
+static constexpr std::array<std::string_view, 58> kEmbeddedFoxDotSynthNames = {
+    "sine", "triangle", "saw", "square", "bass", "varsaw", "dirt", "jbass",
+    "noise", "dub", "growl", "soprano", "crunch", "lazer", "rave", "bell",
+    "gong", "marimba", "pluck", "twang", "donk", "squish", "charm", "spark",
+    "blip", "scatter", "orient", "zap", "fuzz", "bug", "ripple", "viola",
+    "nylon", "arpy", "dab", "sawbass", "dbass", "prophet", "pads", "pasha",
+    "ambi", "sinepad", "keys", "klank", "feel", "glass", "soft", "quin",
+    "space", "scratch", "creep", "snick", "swell", "razz", "sitar", "star",
+    "karp", "sample"};
+
+bool isEmbeddedFoxDotSynthName(std::string_view name) {
+    return std::find(kEmbeddedFoxDotSynthNames.begin(),
+                     kEmbeddedFoxDotSynthNames.end(), name) !=
+           kEmbeddedFoxDotSynthNames.end();
+}
 
 std::filesystem::path pluginBinaryPath() {
 #if defined(_WIN32)
@@ -87,19 +118,101 @@ std::filesystem::path portableUGenPath() {
     return binaryPath.parent_path().parent_path().parent_path() / "Portable" / "SCPlugins";
 }
 
-std::filesystem::path sharedPortableUGenPath() {
+std::filesystem::path portableSynthDefPath() {
     const auto binaryPath = pluginBinaryPath();
     if (binaryPath.empty())
         return {};
-    const auto bundleRoot =
-        binaryPath.parent_path().parent_path().parent_path();
-    return bundleRoot.parent_path() / "Portable" / "SCPlugins";
+    return binaryPath.parent_path().parent_path().parent_path() / "Portable" / "SynthDefs";
+}
+
+struct UserSynthFile {
+    std::string name;
+    std::filesystem::path path;
+};
+
+bool validUserSynthName(const std::string& name) {
+    if (name.empty() || name.size() > kSCNodeDefNameByteLen - 1 ||
+        !(std::isalpha(static_cast<unsigned char>(name.front())) || name.front() == '_'))
+        return false;
+    return std::all_of(name.begin() + 1, name.end(), [](unsigned char character) {
+        return std::isalnum(character) || character == '_';
+    });
+}
+
+std::vector<UserSynthFile> discoverUserSynthFiles(std::string& error) {
+    constexpr std::size_t kMaxUserSynthDefCount = 256;
+    constexpr std::uintmax_t kMaxUserSynthDefFileBytes = 8u * 1024u * 1024u;
+    constexpr std::uintmax_t kMaxUserSynthDefTotalBytes = 64u * 1024u * 1024u;
+    std::vector<UserSynthFile> files;
+    const auto directory = portableSynthDefPath();
+    if (directory.empty())
+        return files;
+
+    std::error_code filesystemError;
+    if (!std::filesystem::exists(directory, filesystemError))
+        return files;
+    if (filesystemError || !std::filesystem::is_directory(directory, filesystemError)) {
+        error = "Portable/SynthDefs exists but cannot be read as a folder.";
+        return {};
+    }
+
+    std::uintmax_t totalBytes = 0;
+    std::filesystem::directory_iterator iterator(directory, filesystemError);
+    const std::filesystem::directory_iterator end;
+    for (; !filesystemError && iterator != end; iterator.increment(filesystemError)) {
+        std::error_code entryError;
+        if (!iterator->is_regular_file(entryError) || entryError)
+            continue;
+        auto extension = iterator->path().extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (extension != ".scsyndef")
+            continue;
+        if (files.size() >= kMaxUserSynthDefCount) {
+            error = "Portable/SynthDefs exceeds the supported 256-definition safety limit.";
+            return {};
+        }
+
+        const auto name = iterator->path().stem().string();
+        if (!validUserSynthName(name)) {
+            error = "SynthDef filename must be a Python-safe identifier (start with a letter or underscore; "
+                    "letters, digits, underscore only; max 255 characters): " +
+                    iterator->path().filename().string();
+            return {};
+        }
+        if (isEmbeddedFoxDotSynthName(name)) {
+            error = "SynthDef filename conflicts with an embedded FoxDot synth name: " + name;
+            return {};
+        }
+        const auto bytes = iterator->file_size(entryError);
+        if (entryError || bytes < 10 || bytes > kMaxUserSynthDefFileBytes ||
+            bytes > kMaxUserSynthDefTotalBytes - totalBytes) {
+            error = "SynthDef file is unreadable, truncated, or exceeds the portable loader size limit: " +
+                    iterator->path().filename().string();
+            return {};
+        }
+        totalBytes += bytes;
+        files.push_back({name, iterator->path()});
+    }
+    if (filesystemError) {
+        error = "Portable/SynthDefs could not be fully scanned.";
+        return {};
+    }
+    std::sort(files.begin(), files.end(), [](const auto& left, const auto& right) {
+        return left.name < right.name;
+    });
+    for (std::size_t index = 1; index < files.size(); ++index) {
+        if (files[index - 1].name == files[index].name) {
+            error = "Two SynthDef files have the same name: " + files[index].name;
+            return {};
+        }
+    }
+    return files;
 }
 
 std::vector<std::string> discoverUGenModuleFiles() {
     std::vector<std::string> modules;
-    for (const auto& directory : {
-             bundledUGenPath(), portableUGenPath(), sharedPortableUGenPath()}) {
+    for (const auto& directory : {bundledUGenPath(), portableUGenPath()}) {
         std::error_code error;
         if (!std::filesystem::is_directory(directory, error))
             continue;
@@ -123,12 +236,9 @@ std::vector<std::string> discoverUGenModuleFiles() {
 
 std::string ugenModuleSearchPath() {
     std::string path = bundledUGenPath().u8string();
-    for (const auto& portablePath : {
-             portableUGenPath(), sharedPortableUGenPath()}) {
-        std::error_code error;
-        if (portablePath.empty() ||
-            !std::filesystem::is_directory(portablePath, error))
-            continue;
+    const auto portablePath = portableUGenPath();
+    std::error_code error;
+    if (!portablePath.empty() && std::filesystem::is_directory(portablePath, error)) {
 #if defined(_WIN32)
         path += ';';
 #else
@@ -152,6 +262,7 @@ namespace Steinberg::Vst {
 class DexterSCTone final : public SingleComponentEffect, public ICodeEditorHost {
 public:
     static FUnknown* createInstance(void*) {
+        LifecycleTrace trace("createInstance");
         return static_cast<IAudioProcessor*>(new DexterSCTone());
     }
 
@@ -160,11 +271,13 @@ public:
                            std::to_string(nextScriptNamespace.fetch_add(1))) {}
 
     ~DexterSCTone() override {
+        LifecycleTrace trace("processor destructor", this);
         joinScriptThread();
         stopWorld();
     }
 
     tresult PLUGIN_API initialize(FUnknown* context) override {
+        LifecycleTrace trace("processor initialize", this);
         const auto result = SingleComponentEffect::initialize(context);
         if (result != kResultOk)
             return result;
@@ -174,6 +287,7 @@ public:
     }
 
     IPlugView* PLUGIN_API createView(FIDString name) override {
+        LifecycleTrace trace("createView", this);
         if (!name || std::strcmp(name, ViewType::kEditor) != 0)
             return nullptr;
         return createCodeEditorView(
@@ -192,14 +306,21 @@ public:
         if (source.size() > kMaxEditorSourceBytes)
             return kResultFalse;
 
-        std::array<char, 4> magic{'D', 'X', 'C', '1'};
+        std::array<char, 4> magic{'D', 'X', 'C', '2'};
         std::array<char, 4> length{};
         encodeUint32(static_cast<std::uint32_t>(source.size()), length);
+        std::array<char, 4> gainBytes{};
+        const float gain = masterGainTarget_.load(std::memory_order_acquire);
+        std::uint32_t gainBits = 0;
+        std::memcpy(&gainBits, &gain, sizeof(gainBits));
+        encodeUint32(gainBits, gainBytes);
 
         if (!writeStreamBytes(stream, magic.data(), static_cast<int32>(magic.size())) ||
             !writeStreamBytes(stream, length.data(), static_cast<int32>(length.size())) ||
             (!source.empty() &&
-             !writeStreamBytes(stream, source.data(), static_cast<int32>(source.size()))))
+             !writeStreamBytes(stream, source.data(), static_cast<int32>(source.size()))) ||
+            !writeStreamBytes(stream, gainBytes.data(),
+                              static_cast<int32>(gainBytes.size())))
             return kResultFalse;
         return kResultOk;
     }
@@ -220,7 +341,9 @@ public:
                 return bytesRead == 0 ? kResultOk : kResultFalse;
             bytesRead += chunkRead;
         }
-        if (magic != std::array<char, 4>{'D', 'X', 'C', '1'})
+        const bool oldState = magic == std::array<char, 4>{'D', 'X', 'C', '1'};
+        const bool hasGain = magic == std::array<char, 4>{'D', 'X', 'C', '2'};
+        if (!oldState && !hasGain)
             return kResultFalse;
 
         std::array<char, 4> length{};
@@ -237,27 +360,41 @@ public:
         if (source.find('\0') != std::string::npos)
             return kResultFalse;
 
+        float restoredGain = 1.0f;
+        if (hasGain) {
+            std::array<char, 4> gainBytes{};
+            if (!readStreamBytes(stream, gainBytes.data(),
+                                 static_cast<int32>(gainBytes.size())))
+                return kResultFalse;
+            const auto gainBits = decodeUint32(gainBytes);
+            std::memcpy(&restoredGain, &gainBits, sizeof(restoredGain));
+            if (!std::isfinite(restoredGain) ||
+                restoredGain < 0.0f || restoredGain > kDexterMasterGainMaximum)
+                return kResultFalse;
+        }
+
         {
             std::lock_guard<std::mutex> lock(editorStateMutex_);
             editorSource_ = std::move(source);
             hasEditorSource_ = true;
         }
+        masterGainTarget_.store(restoredGain, std::memory_order_release);
         stopPattern();
         return kResultOk;
     }
 
     tresult PLUGIN_API setupProcessing(ProcessSetup& setup) override {
+        LifecycleTrace trace("setupProcessing", this);
         const auto baseResult = SingleComponentEffect::setupProcessing(setup);
         if (baseResult != kResultOk)
             return baseResult;
-        if (world_ && sampleRate_ == setup.sampleRate)
-            return kResultOk;
-        stopWorld();
-        sampleRate_ = setup.sampleRate;
-        return initializeWorld() ? kResultOk : kResultFalse;
+        if (!std::isfinite(setup.sampleRate) || setup.sampleRate <= 0.0)
+            return kInvalidArgument;
+        return initializeWorld(setup.sampleRate) ? kResultOk : kResultFalse;
     }
 
     tresult PLUGIN_API terminate() override {
+        LifecycleTrace trace("processor terminate", this);
         joinScriptThread();
         stopWorld();
         return SingleComponentEffect::terminate();
@@ -276,6 +413,15 @@ public:
         for (int32 channel = 0; channel < output.numChannels; ++channel) {
             if (output.channelBuffers32[channel])
                 std::fill_n(output.channelBuffers32[channel], data.numSamples, 0.0f);
+        }
+        // Script preparation/initialization owns the world off the audio thread.
+        // New-bank note nodes use SC's bounded RT pool while rendering.
+        // If preparation briefly owns the world, output silence for this
+        // block rather than blocking the host's audio callback.
+        std::unique_lock<std::mutex> worldLock(worldAccessMutex_, std::try_to_lock);
+        if (!worldLock.owns_lock()) {
+            output.silenceFlags = 1;
+            return kResultOk;
         }
         if (!world_)
             return kResultFalse;
@@ -361,8 +507,13 @@ public:
                 renderSCBlock(blockStart);
             }
             const auto outputSample = static_cast<std::size_t>(cursor_++);
-            const float leftSample = outputBlock_[0][outputSample];
-            const float rightSample = outputBlock_[1][outputSample];
+            masterGainCurrent_ = dexterMasterGainStep(
+                masterGainCurrent_,
+                masterGainTarget_.load(std::memory_order_relaxed), sampleRate_);
+            const float leftSample =
+                outputBlock_[0][outputSample] * masterGainCurrent_;
+            const float rightSample =
+                outputBlock_[1][outputSample] * masterGainCurrent_;
             for (int32 channel = 0; channel < output.numChannels; ++channel) {
                 if (!output.channelBuffers32[channel])
                     continue;
@@ -386,10 +537,15 @@ public:
         if (scriptThread_.joinable())
             scriptThread_.join();
 
+        std::string synthScanError;
+        const auto userSynthNames = availableUserSynthNames(synthScanError);
+        if (!synthScanError.empty())
+            return "SynthDef scan failed: " + synthScanError;
+
         std::string report;
         std::string error;
         if (!PortablePython::instance().checkCompatibility(bundledPythonPath(), source,
-                                                          report, error)) {
+                                                          userSynthNames, report, error)) {
             return error.empty() ? "FoxDot compatibility check failed." : error;
         }
         setEditorStatus("Static compatibility check complete; the script was not run.");
@@ -408,13 +564,22 @@ public:
         const auto generation = scriptGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
         scriptRunning_.store(true, std::memory_order_release);
         setEditorStatus("Evaluating Python...");
+        std::string synthScanError;
+        auto userSynthNames = availableUserSynthNames(synthScanError);
+        if (!synthScanError.empty()) {
+            setEditorStatus("SynthDef scan failed: " + synthScanError);
+            scriptRunning_.store(false, std::memory_order_release);
+            return;
+        }
         try {
-            scriptThread_ = std::thread([this, source, generation] {
+            scriptThread_ = std::thread([this, source, generation,
+                                         userSynthNames = std::move(userSynthNames)] {
                 try {
                     PythonPattern pattern;
                     std::string error;
                     if (!PortablePython::instance().evaluate(bundledPythonPath(),
                                                              scriptNamespace_, source,
+                                                              userSynthNames,
                                                              pattern, error)) {
                         auto message = error;
                         while (!message.empty() &&
@@ -450,9 +615,12 @@ public:
                         auto& next = updates[static_cast<std::size_t>(player.playerIndex)];
                         next.active = !player.stopped;
                         next.bpm = player.bpm;
+                        next.swingSeconds = player.swingSeconds;
                         next.lengthBeats = player.lengthBeats;
                         next.synthIndex = player.synthIndex;
+                        next.playerEffectUserIndex = player.playerEffectUserIndex;
                         next.synthRate = static_cast<float>(player.synthRate);
+                        next.synthControls = player.synthControls;
                         next.amplitude = static_cast<float>(player.amplitude);
                         next.pan = static_cast<float>(player.pan);
                         next.cutoffHz = static_cast<float>(player.cutoffHz);
@@ -478,6 +646,17 @@ public:
                             !parseTimeVarControl(player.bpnoiseControlToken, 0.0, 10.0, next.bpnoiseControl) ||
                             !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
+                        if (next.synthIndex == 57) {
+                            if (!parseTimeVarControl(player.sampleControlToken, -1000000.0, 1000000.0,
+                                                     next.sampleControl) ||
+                                !parseTimeVarControl(player.sampleRateControlToken, -8.0, 8.0,
+                                                     next.sampleRateControl))
+                                throw std::runtime_error("Invalid sample/rate var/linvar control from Python.");
+                            if (!validSampleSelectionControl(next.sampleControl))
+                                throw std::runtime_error("Sample var/linvar requires whole sample indexes.");
+                            if (!validSampleRateControl(next.sampleRateControl))
+                                throw std::runtime_error("Rate var/linvar magnitude must be 0.0625 to 8; rate linvar must not cross zero.");
+                        }
                         next.echoMix = static_cast<float>(player.echoMix);
                         next.echoBeats = player.echoBeats;
                          next.delayTimeSeconds = player.delayTimeSeconds;
@@ -502,7 +681,34 @@ public:
                         totalNotes += player.events.size();
                         updateMask |= static_cast<std::uint8_t>(1u << player.playerIndex);
                     }
+                    if (updateMask != 0) {
+                        std::string graphError;
+                        if (!prepareSampleBuffers(updates, updateMask, graphError)) {
+                            setEditorStatus(graphError);
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
+                        if (!prepareSynthGraphs(updates, updateMask, userSynthNames,
+                                                graphError)) {
+                            setEditorStatus(graphError.empty()
+                                                ? "Could not prepare the selected synth graphs."
+                                                : graphError);
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
+                    }
                     {
+                        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+                        if (scriptGeneration_.load(std::memory_order_acquire) != generation) {
+                            setEditorStatus("Evaluation cancelled.");
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
+                        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                            if ((updateMask & (1u << player)) && updates[player].sampleWorld != 0 &&
+                                updates[player].sampleWorld != sampleWorldGeneration_)
+                                throw std::runtime_error("The audio engine restarted while loading samples. Press Run to retry.");
+                        }
                         std::lock_guard<std::mutex> lock(patternMutex_);
                         for (std::size_t player = 0; player < kPlayerCount; ++player) {
                             if (updateMask & static_cast<std::uint8_t>(1u << player))
@@ -572,6 +778,17 @@ public:
         return editorStatus_;
     }
 
+    float masterOutputGain() override {
+        return masterGainTarget_.load(std::memory_order_acquire);
+    }
+
+    void setMasterOutputGain(float gain) override {
+        if (!std::isfinite(gain))
+            return;
+        masterGainTarget_.store(std::clamp(gain, 0.0f, kDexterMasterGainMaximum),
+                                std::memory_order_release);
+    }
+
     OBJ_METHODS(DexterSCTone, SingleComponentEffect)
     REFCOUNT_METHODS(SingleComponentEffect)
 
@@ -580,8 +797,11 @@ private:
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
-    static constexpr std::size_t kAudioVoiceCount = kPlayerCount * kMaxPolyphony + kPlayerCount;
-    static constexpr const char* kSynthGraphNames[] = {
+    static constexpr std::size_t kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1;
+    static constexpr std::size_t kAudioVoiceCount =
+        kPlayerCount * kVoiceSlotsPerPlayer;
+    static constexpr std::size_t kMaxCachedSynthGraphsPerVoice = 2;
+    static constexpr auto kSynthGraphNames = std::array{
         "DexterTone", "DexterBass", "DexterVarsaw", "DexterDirt",
         "DexterJBass", "DexterNoise", "DexterDub", "DexterGrowl",
         "DexterSoprano", "DexterCrunch", "DexterLazer", "DexterRave",
@@ -589,18 +809,48 @@ private:
         "DexterTwang", "DexterDonk", "DexterSquish", "DexterCharm",
         "DexterSpark", "DexterBlip", "DexterScatter", "DexterOrient",
         "DexterZap", "DexterFuzz", "DexterBug", "DexterRipple",
-        "DexterViola"};
-    static constexpr std::size_t kSynthGraphCount =
-        sizeof(kSynthGraphNames) / sizeof(kSynthGraphNames[0]);
+        "DexterViola", "DexterNylon", "DexterArpy", "DexterDab",
+        "DexterSawbass", "DexterDbass", "DexterProphet", "DexterPads",
+        "DexterPasha", "DexterAmbi", "DexterSinepad", "DexterKeys",
+        "DexterKlank", "DexterFeel", "DexterGlass", "DexterSoft",
+        "DexterQuin", "DexterSpace", "DexterScratch", "DexterCreep",
+        "DexterSnick", "DexterSwell", "DexterRazz", "DexterSitar",
+        "DexterStar", "DexterKarp", "DexterSample"};
+    static constexpr std::size_t kSynthGraphCount = kSynthGraphNames.size();
+    // The first graph handles sine/triangle/saw/square; every later synth
+    // index owns one graph. This table grows automatically with the graph bank.
+    static constexpr auto kSynthIndexToGraphIndex = [] {
+        std::array<std::size_t, kSynthGraphCount + 3> mapping{};
+        for (std::size_t index = 0; index < mapping.size(); ++index)
+            mapping[index] = index <= 3 ? 0 : index - 3;
+        return mapping;
+    }();
+    static_assert(kSynthIndexToGraphIndex.front() == 0 &&
+                      kSynthIndexToGraphIndex.back() == kSynthGraphCount - 1,
+                  "Every Python synth index must resolve to a registered graph.");
     static constexpr std::size_t kReverbGraphCount = 3;
+    static constexpr std::size_t kCalculatedWorldNodeCapacity =
+        kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice +
+        kPlayerCount * (kReverbGraphCount + 1) + 1;
+    // Preserve the known-good headroom; graph definitions are registered
+    // independently, while active voice graphs are created lazily and cached.
     static constexpr std::size_t kWorldNodeCapacity =
-        kAudioVoiceCount * kSynthGraphCount +
-        kPlayerCount * kReverbGraphCount + 1;
+        scPoolCapacity(kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity);
+    static constexpr std::size_t kWorldGraphDefCapacity =
+        scPoolCapacity(kSynthGraphCount + kReverbGraphCount);
+    static_assert((kWorldNodeCapacity & (kWorldNodeCapacity - 1)) == 0,
+                  "SC node hash capacity must be a power of two.");
+    static_assert((kWorldGraphDefCapacity & (kWorldGraphDefCapacity - 1)) == 0,
+                  "SC graph-definition hash capacity must be a power of two.");
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
     static constexpr int kReverbBaseBus = kFirstAudioBus + static_cast<int>(kAudioVoiceCount) * kAudioBusStride;
-    static constexpr int kNumAudioBusChannels = 256;
+    static constexpr int kAirwindowsInputBusBase =
+        kReverbBaseBus + static_cast<int>(kPlayerCount) * kReverbBusStride;
+    static constexpr int kAirwindowsOutputBusBase =
+        kAirwindowsInputBusBase + static_cast<int>(kPlayerCount) * 2;
+    static constexpr int kNumAudioBusChannels = 512;
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kReverbSendReleaseSeconds = 0.015;
@@ -611,9 +861,16 @@ private:
                   "The SuperCollider world needs three private buses per synth voice.");
     static_assert(kReverbBaseBus + kPlayerCount * kReverbBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per player reverb.");
-    static_assert(kAudioVoiceCount * kSynthGraphCount +
-                      kPlayerCount * kReverbGraphCount + 1 <= kWorldNodeCapacity,
-                  "The SuperCollider world needs a node slot for every voice and reverb graph.");
+    static_assert(kAirwindowsOutputBusBase + kPlayerCount * 2 <= kNumAudioBusChannels,
+                  "The SuperCollider world needs stereo Airwindows input and return buses per player.");
+    static_assert(kWorldNodeCapacity <= 0xffffffffu,
+                  "The SuperCollider world node capacity must fit WorldOptions.");
+    static_assert(kWorldNodeCapacity >= 2048,
+                  "Preserve the proven minimum node-pool headroom.");
+    static_assert(kWorldGraphDefCapacity <= 0xffffffffu,
+                  "The SuperCollider graph-definition capacity must fit WorldOptions.");
+    static_assert(kWorldNodeCapacity + 100 <= 0x7fffffff,
+                  "The SuperCollider node IDs must fit Graph_New's signed ID.");
     static constexpr std::size_t kMaxMidiEventsPerBlock = 1024;
     static constexpr std::size_t kMaxEditorSourceBytes = 256 * 1024;
 
@@ -667,10 +924,16 @@ private:
     struct PatternState {
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
         std::size_t eventCount = 0;
+        std::uint64_t sampleWorld = 0;
+        TimeVarControl sampleControl;
+        TimeVarControl sampleRateControl;
         double bpm = 120.0;
+        double swingSeconds = 0.0;
         double lengthBeats = 1.0;
         int synthIndex = 0;
+        int playerEffectUserIndex = -1;
         float synthRate = 0.0f;
+        std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -717,12 +980,35 @@ private:
         bool active = false;
     };
 
+    struct UserSynthDefinition {
+        std::string name;
+        GraphDef* definition = nullptr;
+        bool persistentPlayerEffect = false;
+        int outControl = -1;
+        int inputBusControl = -1;
+        int frequencyControl = -1;
+        int amplitudeControl = -1;
+        int panControl = -1;
+        int gateControl = -1;
+        int attackControl = -1;
+        int releaseControl = -1;
+        int sustainControl = -1;
+        std::array<int, 7> effectControlIndices{};
+    };
+
     struct TimedMidiEvent {
         std::uint64_t sample = 0;
+        int32 noteId = -1;
         int playerIndex = 0;
         int midiNote = 60;
         int velocity = 100;
         bool noteOn = false;
+    };
+
+    struct ActiveMidiGate {
+        int32 noteId = -1;
+        int midiNote = -1;
+        bool emitted = false;
     };
 
     struct BiquadState {
@@ -749,6 +1035,7 @@ private:
 
     struct AudioVoice {
         std::array<Graph*, kSynthGraphCount> synthGraphs{};
+        std::vector<Graph*> userSynthGraphs;
         Graph* activeSynth = nullptr;
         int playerIndex = -1;
         int midiNote = -1;
@@ -787,6 +1074,7 @@ private:
         std::uint64_t sustainEndSample = 0;
         std::uint64_t endSample = 0;
         bool foxDotNativeEnvelope = false;
+        bool userSynthGateReleased = false;
         bool releasing = false;
         bool reverbTail = false;
         std::uint64_t releaseStartSample = 0;
@@ -818,6 +1106,10 @@ private:
         std::uint64_t endSample = 0;
         std::uint64_t sustainEndSample = 0;
         bool foxDotNativeEnvelope = false;
+        int sampleBuffer = -1;
+        double sampleStart = 0.0;
+        double sampleEnd = 1.0;
+        bool sampleLoop = false;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -897,12 +1189,61 @@ private:
         return static_cast<float>(control.values[control.count - 1]);
     }
 
+    static float evaluateSampleSelection(const TimeVarControl& control, double beat,
+                                         float fallback) {
+        if (!control.active || control.count == 0)
+            return fallback;
+        if (!control.linear || control.count == 1)
+            return evaluateTimeVar(control, beat, fallback);
+        double cycle = 0.0;
+        for (std::size_t i = 0; i < control.count; ++i)
+            cycle += control.durations[i];
+        if (cycle <= 0.0)
+            return fallback;
+        double position = std::fmod(std::max(0.0, beat), cycle);
+        for (std::size_t i = 0; i < control.count; ++i) {
+            const double duration = control.durations[i];
+            if (position < duration || i + 1 == control.count) {
+                const double progress = std::clamp(position / duration, 0.0, 1.0);
+                const auto next = (i + 1) % control.count;
+                return static_cast<float>(control.values[progress >= 0.5 ? next : i]);
+            }
+            position -= duration;
+        }
+        return static_cast<float>(control.values[control.count - 1]);
+    }
+
+    static bool validSampleSelectionControl(const TimeVarControl& control) {
+        for (std::size_t value = 0; value < control.count; ++value) {
+            const double index = control.values[value];
+            if (!std::isfinite(index) || index < -1000000.0 || index > 1000000.0 ||
+                std::floor(index) != index)
+                return false;
+        }
+        return true;
+    }
+
+    static bool validSampleRateControl(const TimeVarControl& control) {
+        int rateSign = 0;
+        for (std::size_t value = 0; value < control.count; ++value) {
+            const double rate = control.values[value];
+            if (!std::isfinite(rate) || std::abs(rate) < 0.0625 || std::abs(rate) > 8.0)
+                return false;
+            const int sign = std::signbit(rate) ? -1 : 1;
+            if (rateSign && sign != rateSign && control.linear)
+                return false;
+            rateSign = sign;
+        }
+        return true;
+    }
+
     void setEditorStatus(std::string status) {
         std::lock_guard<std::mutex> lock(statusMutex_);
         editorStatus_ = std::move(status);
     }
 
     void joinScriptThread() {
+        LifecycleTrace trace("joinScriptThread", this);
         std::thread thread;
         {
             std::lock_guard<std::mutex> lock(scriptThreadMutex_);
@@ -915,7 +1256,8 @@ private:
     }
 
     static void addMidiNoteEvent(IEventList* outputEvents, int32 sampleOffset,
-                                 int midiNote, int velocity, bool noteOn, int channel = 0) {
+                                 int midiNote, int velocity, bool noteOn, int channel = 0,
+                                 int32 noteId = -1) {
         if (!outputEvents)
             return;
         Event event{};
@@ -930,13 +1272,13 @@ private:
             event.noteOn.tuning = 0.0f;
             event.noteOn.velocity = static_cast<float>(velocity) / 127.0f;
             event.noteOn.length = 0;
-            event.noteOn.noteId = -1;
+            event.noteOn.noteId = noteId;
         } else {
             event.type = Event::kNoteOffEvent;
             event.noteOff.channel = static_cast<int16>(channel);
             event.noteOff.pitch = static_cast<int16>(midiNote);
             event.noteOff.velocity = static_cast<float>(velocity) / 127.0f;
-            event.noteOff.noteId = -1;
+            event.noteOff.noteId = noteId;
             event.noteOff.tuning = 0.0f;
         }
         outputEvents->addEvent(event);
@@ -945,13 +1287,12 @@ private:
     void stopPlayerMidiNotes(IEventList* outputEvents, int32 sampleOffset, int playerIndex) {
         if (playerIndex < 0 || playerIndex >= static_cast<int>(kPlayerCount))
             return;
-        auto& notes = activeMidiNotes_[static_cast<std::size_t>(playerIndex)];
-        for (std::size_t note = 0; note < notes.size(); ++note) {
-            if (!notes[note])
-                continue;
-            addMidiNoteEvent(outputEvents, sampleOffset, static_cast<int>(note), 0, false,
-                             playerIndex);
-            notes[note] = false;
+        auto& gates = activeMidiGates_[static_cast<std::size_t>(playerIndex)];
+        for (auto& gate : gates) {
+            if (gate.emitted)
+                addMidiNoteEvent(outputEvents, sampleOffset, gate.midiNote, 0, false,
+                                 playerIndex, gate.noteId);
+            gate = {};
         }
     }
 
@@ -967,6 +1308,10 @@ private:
 
     static bool usesFoxDotNativeEnvelope(int synthIndex, double attackSeconds,
                                          double releaseSeconds) {
+        if (synthIndex == 57)
+            return false; // Native PlayBuf one-shots use the host's edge fades.
+        if (synthIndex >= 31)
+            return true; // These definitions contain retriggerable SC envelopes.
         return (synthIndex == 4 || synthIndex == 5 ||
                 (synthIndex >= 22 && synthIndex <= 24)) &&
                std::abs(attackSeconds - kAttackSeconds) < 1.0e-9 &&
@@ -974,13 +1319,33 @@ private:
     }
 
     static double foxDotEnvelopeDurationSeconds(int synthIndex,
-                                                double sustainSeconds) {
+                                                double sustainSeconds,
+                                                double attackSeconds = 0.01) {
         switch (synthIndex) {
         case 4: return 0.020 + sustainSeconds; // bass Env.perc(0.02, sus)
         case 5: return sustainSeconds;         // varsaw Env(sus/2, sus/2)
         case 22: return 0.010 + sustainSeconds; // charm Env.perc(0.01, sus, curve=0)
         case 23: return sustainSeconds * 1.5;   // spark Line(..., sus * 1.5)
         case 24: return sustainSeconds * 2.0;   // blip XLine(..., sus * 2)
+        case 32: return 0.000125 + sustainSeconds * 3;
+        case 33: return 0.010 + sustainSeconds * 0.25;
+        case 34: return sustainSeconds * 1.25;
+        case 35: return sustainSeconds + 0.060;
+        case 36: return sustainSeconds + 0.030;
+        case 37: return sustainSeconds * 2 + 0.010;
+        case 38: return sustainSeconds * 1.2 + attackSeconds;
+        case 39: return sustainSeconds * (4.0 / 3.0) + 0.010;
+        case 40: return sustainSeconds * 1.5;
+        case 41: return sustainSeconds + 0.010;
+        case 42: return sustainSeconds * 1.5 + 0.010;
+        case 43: case 44: case 45: return sustainSeconds * 6;
+        case 46: return sustainSeconds * 2;
+        case 47: case 51: case 52: return sustainSeconds + 0.010;
+        case 48: return sustainSeconds * 1.4;
+        case 50: return sustainSeconds + 0.001;
+        case 53: return sustainSeconds + 0.125;
+        case 54: return sustainSeconds * 4;
+        case 55: return sustainSeconds * 3;
         default: return sustainSeconds;
         }
     }
@@ -1002,6 +1367,13 @@ private:
             return 0.0f;
 
         if (voice.foxDotNativeEnvelope) {
+            if (voice.synthIndex >= 31) {
+                // The graph owns its envelope. Retain a 5 ms end safety fade
+                // for upstream step/ramp envelopes and forced voice truncation.
+                const auto remaining = voice.endSample - sample;
+                return std::min(1.0f, static_cast<float>(remaining) /
+                    static_cast<float>(envelopeSamples(0.005)));
+            }
             if (voice.synthIndex == 22) {
                 const auto attack = envelopeSamples(0.010);
                 const auto releaseLength = voice.endSample -
@@ -1082,6 +1454,10 @@ private:
     }
 
     static float foxDotAmplitude(int synthIndex, float amplitude) {
+        if (synthIndex >= static_cast<int>(kSynthIndexToGraphIndex.size()))
+            return amplitude;
+        if (synthIndex >= 31)
+            return 1.0f; // amp arithmetic is inside the original SC graph.
         if (synthIndex == 4)
             return 0.8f * amplitude * amplitude;
         if (synthIndex == 5 || synthIndex == 22)
@@ -1100,8 +1476,6 @@ private:
             return amplitude * 0.2f;
         if (synthIndex == 30)
             return amplitude / 6.0f;
-        if (synthIndex == 31)
-            return amplitude * 0.25f;
         return amplitude;
     }
 
@@ -1123,8 +1497,6 @@ private:
             highestPartial = 1.02f;
         else if (synthIndex == 28)
             highestPartial = 1.5f;
-        else if (synthIndex == 31)
-            highestPartial = 1.1f;
         const float safeLimit = static_cast<float>(sampleRate_ * 0.45) /
                                 highestPartial;
         return std::min(requested, safeLimit);
@@ -1134,8 +1506,10 @@ private:
         if (voice.activeSynth)
             Node_SetRun(&voice.activeSynth->mNode, 0);
         const auto synthGraphs = voice.synthGraphs;
+        auto userSynthGraphs = std::move(voice.userSynthGraphs);
         voice = {};
         voice.synthGraphs = synthGraphs;
+        voice.userSynthGraphs = std::move(userSynthGraphs);
     }
 
     void beginReverbTail(AudioVoice& voice, std::uint64_t tailStartSample) {
@@ -1148,12 +1522,467 @@ private:
         voice.releaseStartGain = 0.0f;
     }
 
-    static Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
-        if (synthIndex >= 0 && synthIndex <= 3)
-            return voice.synthGraphs[0];
-        if (synthIndex >= 4 && synthIndex <= 31)
-            return voice.synthGraphs[static_cast<std::size_t>(synthIndex - 3)];
-        return nullptr;
+    Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
+        if (synthIndex < 0)
+            return nullptr;
+        if (static_cast<std::size_t>(synthIndex) >= kSynthIndexToGraphIndex.size()) {
+            const auto userIndex = static_cast<std::size_t>(synthIndex) -
+                                  kSynthIndexToGraphIndex.size();
+            return userIndex < voice.userSynthGraphs.size()
+                ? voice.userSynthGraphs[userIndex] : nullptr;
+        }
+        const auto graphIndex =
+            kSynthIndexToGraphIndex[static_cast<std::size_t>(synthIndex)];
+        return graphIndex < voice.synthGraphs.size()
+            ? voice.synthGraphs[graphIndex]
+            : nullptr;
+    }
+
+    bool isPersistentPlayerEffectSynthIndex(int synthIndex) const {
+        if (synthIndex < 0 ||
+            static_cast<std::size_t>(synthIndex) < kSynthIndexToGraphIndex.size())
+            return false;
+        const auto userIndex = static_cast<std::size_t>(synthIndex) -
+                               kSynthIndexToGraphIndex.size();
+        return userIndex < userSynthDefinitions_.size() &&
+               userSynthDefinitions_[userIndex].persistentPlayerEffect;
+    }
+
+    bool makeSynthGraphCacheRoom(AudioVoice& voice, std::string& error) {
+        const auto builtinCount = static_cast<std::size_t>(std::count_if(
+            voice.synthGraphs.begin(), voice.synthGraphs.end(),
+            [](const Graph* cached) { return cached != nullptr; }));
+        const auto userCount = static_cast<std::size_t>(std::count_if(
+            voice.userSynthGraphs.begin(), voice.userSynthGraphs.end(),
+            [](const Graph* cached) { return cached != nullptr; }));
+        if (builtinCount + userCount < kMaxCachedSynthGraphsPerVoice)
+            return true;
+
+        auto evict = [&](Graph*& cached) {
+            if (!cached || cached == voice.activeSynth)
+                return false;
+            Node_SetRun(&cached->mNode, 0);
+            Node_End(&cached->mNode);
+            cached = nullptr;
+            return true;
+        };
+        for (auto& cached : voice.synthGraphs) {
+            if (evict(cached))
+                return true;
+        }
+        for (auto& cached : voice.userSynthGraphs) {
+            if (evict(cached))
+                return true;
+        }
+        error = "No inactive synth graph is available for replacement.";
+        return false;
+    }
+
+    Graph* createSynthGraph(std::size_t voiceIndex, std::size_t graphIndex,
+                            std::string& error, bool startImmediately = false) {
+        if (!world_ || !rootGroup_ || graphIndex >= synthDefinitions_.size() ||
+            !synthDefinitions_[graphIndex]) {
+            error = "The SuperCollider world or selected synth definition is not ready.";
+            return nullptr;
+        }
+        if (voiceIndex >= audioVoices_.size()) {
+            error = "The selected synth voice is outside the supported range.";
+            return nullptr;
+        }
+
+        auto& voice = audioVoices_[voiceIndex];
+        auto*& graph = voice.synthGraphs[graphIndex];
+        if (graph)
+            return graph;
+
+        if (!makeSynthGraphCacheRoom(voice, error))
+            return nullptr;
+
+        sc_msg_iter noControls(0, "");
+        Graph* created = nullptr;
+        const auto graphError =
+            Graph_New(world_, synthDefinitions_[graphIndex], nextDynamicGraphNodeId_++,
+                      &noControls, &created, true);
+        if (graphError != 0 || !created) {
+            error = "SuperCollider could not create synth graph " +
+                    std::string(kSynthGraphNames[graphIndex]) + " (error " +
+                    std::to_string(static_cast<int>(graphError)) + ").";
+            return nullptr;
+        }
+
+        const auto outputBus = kFirstAudioBus +
+                               kAudioBusStride * static_cast<int>(voiceIndex);
+        Graph_SetControl(created, 0, static_cast<float>(outputBus));
+        Graph_SetControl(created, 6, static_cast<float>(kReverbBaseBus));
+        Graph_SetControl(created, 7, 0.0f);
+        Graph_SetControl(created, 8, 20000.0f);
+        if (graphIndex >= 12)
+            Graph_SetControl(created, 9, 0.0f);
+        if (graphIndex == 1)
+            Graph_SetControl(created, 2, 8.0f);
+        else if (graphIndex == 2)
+            Graph_SetControl(created, 2, 0.0f);
+        Group_AddTail(rootGroup_, &created->mNode);
+        // SC cannot resume Graph_NullFirstCalc until it has had a world tick.
+        // A fresh note must keep Graph_FirstCalc until its first render.
+        if (!startImmediately)
+            Node_SetRun(&created->mNode, 0);
+        graph = created;
+        return created;
+    }
+
+    Graph* createUserSynthGraph(std::size_t voiceIndex, std::size_t userIndex,
+                                std::string& error, bool startImmediately = false) {
+        if (!world_ || !rootGroup_ || userIndex >= userSynthDefinitions_.size()) {
+            error = "The requested Portable SynthDef is not registered.";
+            return nullptr;
+        }
+        if (voiceIndex >= audioVoices_.size()) {
+            error = "The selected synth voice is outside the supported range.";
+            return nullptr;
+        }
+        auto& voice = audioVoices_[voiceIndex];
+        if (userIndex >= voice.userSynthGraphs.size()) {
+            error = "The Portable SynthDef graph cache is not initialized.";
+            return nullptr;
+        }
+        auto*& graph = voice.userSynthGraphs[userIndex];
+        if (graph)
+            return graph;
+        if (!makeSynthGraphCacheRoom(voice, error))
+            return nullptr;
+
+        auto& userDefinition = userSynthDefinitions_[userIndex];
+        sc_msg_iter noControls(0, "");
+        Graph* created = nullptr;
+        const auto graphError = Graph_New(world_, userDefinition.definition,
+                                          nextDynamicGraphNodeId_++, &noControls,
+                                          &created, true);
+        if (graphError != 0 || !created) {
+            error = "SuperCollider could not create user synth " + userDefinition.name +
+                    " (error " + std::to_string(static_cast<int>(graphError)) + ").";
+            return nullptr;
+        }
+        const auto outputBus = kFirstAudioBus +
+                               kAudioBusStride * static_cast<int>(voiceIndex);
+        Graph_SetControl(created, userDefinition.outControl,
+                         static_cast<float>(outputBus));
+        if (userDefinition.frequencyControl >= 0)
+            Graph_SetControl(created, userDefinition.frequencyControl, 440.0f);
+        if (userDefinition.amplitudeControl >= 0)
+            Graph_SetControl(created, userDefinition.amplitudeControl, 1.0f);
+        if (userDefinition.panControl >= 0)
+            Graph_SetControl(created, userDefinition.panControl, 0.0f);
+        if (userDefinition.gateControl >= 0)
+            Graph_SetControl(created, userDefinition.gateControl, 0.0f);
+        if (userDefinition.attackControl >= 0)
+            Graph_SetControl(created, userDefinition.attackControl, 0.01f);
+        if (userDefinition.releaseControl >= 0)
+            Graph_SetControl(created, userDefinition.releaseControl, 0.04f);
+        if (userDefinition.sustainControl >= 0)
+            Graph_SetControl(created, userDefinition.sustainControl, 1.0f);
+        Group_AddTail(rootGroup_, &created->mNode);
+        if (!startImmediately)
+            Node_SetRun(&created->mNode, 0);
+        graph = created;
+        return created;
+    }
+
+    bool createPlayerEffectGraph(std::size_t player, std::size_t userIndex,
+                                 const std::array<double, 7>& controls,
+                                 std::string& error) {
+        if (!world_ || !rootGroup_ || player >= kPlayerCount ||
+            userIndex >= userSynthDefinitions_.size()) {
+            error = "The requested per-player effect is not registered.";
+            return false;
+        }
+        const auto& definition = userSynthDefinitions_[userIndex];
+        if (!definition.persistentPlayerEffect || definition.inputBusControl < 0 ||
+            definition.outControl < 0) {
+            error = definition.name + " is not a supported persistent player effect.";
+            return false;
+        }
+        if (playerEffectGraphs_[player] &&
+            playerEffectDefinitionIndices_[player] == static_cast<int>(userIndex))
+            return true;
+
+        sc_msg_iter noControls(0, "");
+        Graph* created = nullptr;
+        const auto graphError = Graph_New(world_, definition.definition,
+                                          nextDynamicGraphNodeId_++, &noControls,
+                                          &created, true);
+        if (graphError != 0 || !created) {
+            error = "SuperCollider could not create the persistent " +
+                    definition.name + " player effect (error " +
+                    std::to_string(static_cast<int>(graphError)) + ").";
+            return false;
+        }
+
+        const auto inputBus = kAirwindowsInputBusBase +
+                              static_cast<int>(player) * 2;
+        const auto outputBus = kAirwindowsOutputBusBase +
+                               static_cast<int>(player) * 2;
+        Graph_SetControl(created, definition.inputBusControl,
+                         static_cast<float>(inputBus));
+        Graph_SetControl(created, definition.outControl,
+                         static_cast<float>(outputBus));
+        for (std::size_t control = 0;
+             control < definition.effectControlIndices.size(); ++control) {
+            const auto controlIndex = definition.effectControlIndices[control];
+            if (controlIndex >= 0)
+                Graph_SetControl(created, controlIndex,
+                                 static_cast<float>(controls[control]));
+        }
+
+        Group_AddTail(rootGroup_, &created->mNode);
+        // The persistent graph is manually calculated after its player's input
+        // bus is filled. Initialize its UGens once here, then keep it out of the
+        // normal World_Run pass so delay state advances exactly once per block.
+        if (!created->mNode.mCalcFunc) {
+            Node_End(&created->mNode);
+            error = "SuperCollider returned a player-effect graph without a calculation function.";
+            return false;
+        }
+        const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+        for (int channel = 0; channel < 2; ++channel) {
+            const auto bus = static_cast<std::size_t>(inputBus + channel);
+            auto* samples = world_->mAudioBus + bus * busLength;
+            std::fill(samples, samples + busLength, 0.0f);
+            world_->mAudioBusTouched[bus] = world_->mBufCounter;
+        }
+        created->mNode.mCalcFunc(&created->mNode);
+        Node_SetRun(&created->mNode, 0);
+
+        if (auto* previous = playerEffectGraphs_[player]) {
+            Node_SetRun(&previous->mNode, 0);
+            Node_End(&previous->mNode);
+        }
+        playerEffectGraphs_[player] = created;
+        playerEffectDefinitionIndices_[player] = static_cast<int>(userIndex);
+        return true;
+    }
+
+    struct CachedSample {
+        std::filesystem::path path;
+        PortableSamples::Wave wave;
+        int buffer = -1;
+    };
+
+    bool prepareSampleBuffers(std::array<PatternState, kPlayerCount>& updates,
+                              std::uint8_t updateMask, std::string& error) {
+        bool needed = false;
+        for (std::size_t player = 0; player < kPlayerCount; ++player)
+            needed |= (updateMask & (1u << player)) && updates[player].active &&
+                      updates[player].synthIndex == 57 && updates[player].eventCount != 0;
+        if (!needed) return true;
+        if (!initializeWorld()) {
+            std::lock_guard<std::mutex> lock(worldAccessMutex_);
+            error = worldInitializationError_; return false;
+        }
+        std::uint64_t generation;
+        {
+            std::lock_guard<std::mutex> lock(worldAccessMutex_);
+            generation = sampleWorldGeneration_;
+        }
+        const auto root = pluginBinaryPath().parent_path().parent_path().parent_path() /
+                          "Portable" / "Samples";
+        setEditorStatus("Loading portable WAV samples...");
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            auto& update = updates[player];
+            if (!(updateMask & (1u << player)) || !update.active || update.synthIndex != 57)
+                continue;
+            update.sampleWorld = generation;
+            for (std::size_t index = 0; index < update.eventCount; ++index) {
+                auto& event = update.events[index];
+                event.sampleVariantCount = update.sampleControl.active
+                    ? update.sampleControl.count : 1;
+                if (event.sampleVariantCount == 0 ||
+                    event.sampleVariantCount > event.sampleVariantBuffers.size()) {
+                    error = "Sample var/linvar has an unsupported number of variants.";
+                    return false;
+                }
+                event.sampleVariantBuffers.fill(-1);
+                event.sampleVariantDurations.fill(0.0);
+                for (std::size_t variant = 0; variant < event.sampleVariantCount; ++variant) {
+                    const auto rawIndex = update.sampleControl.active
+                        ? update.sampleControl.values[variant] : event.sampleIndex;
+                    if (!std::isfinite(rawIndex) || std::floor(rawIndex) != rawIndex ||
+                        rawIndex < -1000000.0 || rawIndex > 1000000.0) {
+                        error = "Sample var/linvar requires whole sample indexes from -1000000 to 1000000.";
+                        return false;
+                    }
+                    std::filesystem::path path;
+                    if (!PortableSamples::resolveWave(root, event.sampleSymbol,
+                                                       static_cast<int>(rawIndex), path, error))
+                        return false;
+                    auto ready = [&]() {
+                        if (world_ && generation == sampleWorldGeneration_) return true;
+                        error = "The audio engine restarted while loading samples. Press Run to retry.";
+                        return false;
+                    };
+                    CachedSample* cached = nullptr;
+                    std::size_t decodeBudget = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(worldAccessMutex_);
+                        if (!ready()) return false;
+                        for (const auto& item : sampleCache_)
+                            if (item->path == path) { cached = item.get(); break; }
+                        if (!cached) {
+                            decodeBudget = PortableSamples::kCacheBudgetBytes - sampleCacheBytes_;
+                            if (decodeBudget < 16) {
+                                error = "The 128 MiB decoded sample cache is full. Use shorter WAVs or reopen the plugin.";
+                                return false;
+                            }
+                        }
+                    }
+                    if (!cached) {
+                        // Expensive I/O/decoding is outside the world/audio lock.
+                        auto loaded = std::make_unique<CachedSample>();
+                        loaded->path = path;
+                        if (!PortableSamples::readWave(path, loaded->wave, error, decodeBudget))
+                            return false;
+                        std::lock_guard<std::mutex> lock(worldAccessMutex_);
+                        if (!ready()) return false;
+                        const auto bytes = loaded->wave.mono.size() * sizeof(float);
+                        if (bytes > PortableSamples::kCacheBudgetBytes - sampleCacheBytes_) {
+                            error = "The 128 MiB decoded sample cache is full. Use shorter WAVs or reopen the plugin.";
+                            return false;
+                        }
+                        // Buffer zero remains the nil buffer, as in FoxDot.
+                        if (sampleCache_.size() + 1 >= world_->mNumSndBufs) {
+                            error = "SuperCollider sample buffers are full. Reopen the plugin to clear the cache.";
+                            return false;
+                        }
+                        loaded->buffer = static_cast<int>(sampleCache_.size() + 1);
+                        cached = loaded.get();
+                        // Publish ownership before either SC buffer mirror points at the vector.
+                        sampleCache_.push_back(std::move(loaded));
+                        SndBuf buffer{};
+                        buffer.data = cached->wave.mono.data();
+                        buffer.frames = cached->wave.frames;
+                        buffer.samples = buffer.frames;
+                        buffer.channels = 1;
+                        buffer.samplerate = cached->wave.sampleRate;
+                        buffer.sampledur = 1.0 / buffer.samplerate;
+                        world_->mSndBufs[cached->buffer] = buffer;
+                        world_->mSndBufsNonRealTimeMirror[cached->buffer] = buffer;
+                        ++world_->mSndBufUpdates[cached->buffer].writes;
+                        sampleCacheBytes_ += bytes;
+                    }
+                    event.sampleVariantBuffers[variant] = cached->buffer;
+                    event.sampleVariantDurations[variant] =
+                        cached->wave.frames / cached->wave.sampleRate;
+                }
+                event.sampleBuffer = event.sampleVariantBuffers[0];
+                event.sampleDurationSeconds = event.sampleVariantDurations[0];
+            }
+        }
+        return true;
+    }
+
+    void detachSampleBuffers() {
+        // World_Cleanup uses free_alig(). Our immutable audio vectors are
+        // plugin-owned: detach both SC mirrors before cleanup, then destroy the
+        // vectors only after the graph/unit destructors have finished.
+        for (const auto& cached : sampleCache_) {
+            if (!world_ || cached->buffer < 0 ||
+                static_cast<unsigned>(cached->buffer) >= world_->mNumSndBufs) continue;
+            for (auto* buffers : {world_->mSndBufs, world_->mSndBufsNonRealTimeMirror})
+                if (buffers[cached->buffer].data == cached->wave.mono.data())
+                    buffers[cached->buffer] = {};
+        }
+    }
+
+    bool prepareSynthGraphs(
+        const std::array<PatternState, kPlayerCount>& updates,
+        std::uint8_t updateMask,
+        const std::vector<std::string>& expectedUserSynthNames,
+        std::string& error) {
+        // Run may follow a failed host setup (e.g. a previously missing UGen
+        // folder). Retry once on this worker, never on the audio callback.
+        if (!initializeWorld()) {
+            std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+            error = worldInitializationError_;
+            return false;
+        }
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        if (!world_) {
+            error = "The audio engine changed during Run. Enable host audio processing and press Run again.";
+            return false;
+        }
+        bool usesUserSynth = false;
+        for (std::size_t player = 0; player < kPlayerCount; ++player)
+            usesUserSynth |=
+                (updateMask & static_cast<std::uint8_t>(1u << player)) != 0 &&
+                updates[player].active &&
+                (static_cast<std::size_t>(updates[player].synthIndex) >=
+                     kSynthIndexToGraphIndex.size() ||
+                 updates[player].playerEffectUserIndex >= 0);
+        if (usesUserSynth) {
+            std::vector<std::string> loadedNames;
+            loadedNames.reserve(userSynthDefinitions_.size());
+            for (const auto& definition : userSynthDefinitions_)
+                loadedNames.push_back(definition.name);
+            if (loadedNames != expectedUserSynthNames) {
+                error = "The Portable SynthDef list changed while the script was being evaluated. Restart the DAW and run it again.";
+                return false;
+            }
+        }
+
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            if ((updateMask & static_cast<std::uint8_t>(1u << player)) == 0 ||
+                !updates[player].active)
+                continue;
+            const auto synthIndex = updates[player].synthIndex;
+            if (synthIndex < 0 ||
+                static_cast<std::size_t>(synthIndex) >=
+                    kSynthIndexToGraphIndex.size() + userSynthDefinitions_.size()) {
+                error = "The selected synth index is outside the registered synth bank.";
+                return false;
+            }
+            auto effectUserIndex = updates[player].playerEffectUserIndex;
+            if (effectUserIndex < 0 &&
+                isPersistentPlayerEffectSynthIndex(synthIndex)) {
+                effectUserIndex = synthIndex -
+                    static_cast<int>(kSynthIndexToGraphIndex.size());
+            }
+            if (effectUserIndex >= 0) {
+                if (static_cast<std::size_t>(effectUserIndex) >=
+                        userSynthDefinitions_.size() ||
+                    !userSynthDefinitions_[static_cast<std::size_t>(
+                        effectUserIndex)].persistentPlayerEffect) {
+                    error = "The selected player effect is not a registered Airwindows delay.";
+                    return false;
+                }
+                if (!createPlayerEffectGraph(
+                        player, static_cast<std::size_t>(effectUserIndex),
+                        updates[player].synthControls, error))
+                    return false;
+            }
+            if (static_cast<std::size_t>(synthIndex) >=
+                kSynthIndexToGraphIndex.size()) {
+                const auto userIndex = static_cast<std::size_t>(synthIndex) -
+                                       kSynthIndexToGraphIndex.size();
+                if (userSynthDefinitions_[userIndex].persistentPlayerEffect &&
+                    effectUserIndex != static_cast<int>(userIndex)) {
+                    if (!createPlayerEffectGraph(player, userIndex,
+                                                 updates[player].synthControls, error))
+                        return false;
+                }
+            }
+            // New-bank notes are born running, with controls configured before
+            // World_Run. Do not create paused, never-rendered templates for them.
+            if (synthIndex >= 31)
+                continue;
+            const auto firstVoice = player * kVoiceSlotsPerPlayer;
+            const auto graphIndex =
+                kSynthIndexToGraphIndex[static_cast<std::size_t>(synthIndex)];
+            for (std::size_t offset = 0; offset < kVoiceSlotsPerPlayer; ++offset) {
+                if (!createSynthGraph(firstVoice + offset, graphIndex, error))
+                    return false;
+            }
+        }
+        return true;
     }
 
     void stopAudioVoices(int playerIndex = -1) {
@@ -1180,11 +2009,12 @@ private:
                            std::array<TimedMidiEvent, kMaxMidiEventsPerBlock>& result,
                            std::size_t& resultCount) const {
         resultCount = 0;
-        auto append = [&](std::uint64_t sample, int playerIndex, int note,
+        auto append = [&](std::uint64_t sample, int32 noteId, int playerIndex, int note,
                           int velocity, bool noteOn) {
             if (sample < blockStart || sample >= blockEnd || resultCount >= result.size())
                 return;
-            result[resultCount++] = TimedMidiEvent{sample, playerIndex, note, velocity, noteOn};
+            result[resultCount++] = TimedMidiEvent{
+                sample, noteId, playerIndex, note, velocity, noteOn};
         };
 
         for (std::size_t player = 0; player < kPlayerCount; ++player) {
@@ -1212,14 +2042,22 @@ private:
                         static_cast<double>(cycle) * pattern.lengthBeats + note.beat;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
-                    const double onsetBeat = baseEventBeat + note.delayBeats + dynamicDelay;
+                    const double scheduledBeat = baseEventBeat + note.delayBeats + dynamicDelay;
+                    const double onsetBeat = scheduledBeat -
+                        foxDotClockSwingOffsetBeats(pattern.swingSeconds,
+                                                    pattern.bpm, scheduledBeat);
                     const double offsetBeat = onsetBeat + note.durationBeats;
                     const auto onSample = patternStart + static_cast<std::uint64_t>(
                         std::llround(onsetBeat * samplesPerBeat));
                     const auto offSample = patternStart + static_cast<std::uint64_t>(
                         std::llround(offsetBeat * samplesPerBeat));
-                    append(onSample, static_cast<int>(player), note.midiNote, note.velocity, true);
-                    append(offSample, static_cast<int>(player), note.midiNote, 0, false);
+                    const auto noteId = static_cast<int32>(
+                        ((player * kMaxPatternEvents + i) << 16) |
+                        (static_cast<std::uint64_t>(cycle) & 0xffffu));
+                    append(onSample, noteId, static_cast<int>(player),
+                           note.midiNote, note.velocity, true);
+                    append(offSample, noteId, static_cast<int>(player),
+                           note.midiNote, 0, false);
                 }
             }
         }
@@ -1240,22 +2078,38 @@ private:
         for (std::size_t i = 0; i < count; ++i) {
             const auto& event = events[i];
             const auto player = static_cast<std::size_t>(event.playerIndex);
-            const auto pitch = static_cast<std::size_t>(event.midiNote);
-            auto& active = activeMidiNotes_[player][pitch];
-            if (event.noteOn && mutedPlayers_[player])
-                continue;
             if (event.noteOn) {
-                if (!active) {
+                auto& gates = activeMidiGates_[player];
+                auto gate = std::find_if(gates.begin(), gates.end(),
+                                         [](const ActiveMidiGate& item) {
+                                             return item.noteId < 0;
+                                         });
+                if (gate == gates.end())
+                    continue;
+                gate->noteId = event.noteId;
+                gate->midiNote = event.midiNote;
+                gate->emitted = !mutedPlayers_[player];
+                if (gate->emitted) {
                     addMidiNoteEvent(data.outputEvents,
                                      static_cast<int32>(event.sample - sampleClock_),
-                                     event.midiNote, event.velocity, true, event.playerIndex);
-                    active = true;
+                                     event.midiNote, event.velocity, true,
+                                     event.playerIndex, event.noteId);
                 }
-            } else if (active) {
-                addMidiNoteEvent(data.outputEvents,
-                                 static_cast<int32>(event.sample - sampleClock_),
-                                 event.midiNote, 0, false, event.playerIndex);
-                active = false;
+            } else {
+                auto& gates = activeMidiGates_[player];
+                auto gate = std::find_if(gates.begin(), gates.end(),
+                                         [&](const ActiveMidiGate& item) {
+                                             return item.noteId == event.noteId &&
+                                                    item.midiNote == event.midiNote;
+                                         });
+                if (gate == gates.end())
+                    continue;
+                if (gate->emitted)
+                    addMidiNoteEvent(data.outputEvents,
+                                     static_cast<int32>(event.sample - sampleClock_),
+                                     event.midiNote, 0, false,
+                                     event.playerIndex, event.noteId);
+                *gate = {};
             }
         }
     }
@@ -1276,11 +2130,38 @@ private:
             std::size_t playerVoices = 0;
             for (std::size_t i = 0; i < pattern.eventCount; ++i) {
                 const auto& event = pattern.events[i];
+                const bool isSample = pattern.synthIndex == 57;
+                if (isSample && (event.sampleBuffer < 1 ||
+                                 pattern.sampleWorld != sampleWorldGeneration_))
+                    continue;
+                double longestSampleSeconds = 0.0;
+                double minimumSampleRate = std::abs(event.sampleRate);
+                if (isSample) {
+                    for (std::size_t variant = 0; variant < event.sampleVariantCount; ++variant)
+                        longestSampleSeconds = std::max(longestSampleSeconds,
+                                                        event.sampleVariantDurations[variant]);
+                    if (pattern.sampleRateControl.active)
+                        for (std::size_t value = 0; value < pattern.sampleRateControl.count; ++value)
+                            minimumSampleRate = std::min(
+                                minimumSampleRate,
+                                std::abs(pattern.sampleRateControl.values[value]));
+                }
+                double sampleSeconds = isSample && minimumSampleRate > 0.0
+                    ? longestSampleSeconds / minimumSampleRate : 0.0;
+                if (isSample) {
+                    if (event.sampleLoop)
+                        sampleSeconds = event.durationBeats * 60.0 / pattern.bpm;
+                    else
+                        sampleSeconds *= event.sampleEnd - event.sampleStart;
+                }
+                if (isSample && event.sampleGate)
+                    sampleSeconds = std::min(sampleSeconds, event.durationBeats * 60.0 / pattern.bpm);
+                const double lookback = isSample ? sampleSeconds * pattern.bpm / 60.0 : event.durationBeats;
                 if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
                     break;
                 const auto firstCycle = std::max<std::int64_t>(
                     0, static_cast<std::int64_t>(std::floor(
-                           (beat - event.beat - 15.0 - event.durationBeats) /
+                           (beat - event.beat - 15.0 - lookback) /
                            pattern.lengthBeats)) - 1);
                 const auto lastCycle = static_cast<std::int64_t>(
                     std::floor((beat - event.beat) / pattern.lengthBeats));
@@ -1289,15 +2170,72 @@ private:
                         static_cast<double>(cycle) * pattern.lengthBeats + event.beat;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
-                    const double absoluteStartBeat = baseEventBeat + event.delayBeats + dynamicDelay;
+                    const double scheduledBeat =
+                        baseEventBeat + event.delayBeats + dynamicDelay;
+                    const double absoluteStartBeat = scheduledBeat -
+                        foxDotClockSwingOffsetBeats(pattern.swingSeconds,
+                                                    pattern.bpm, scheduledBeat);
+                    std::size_t selectedVariant = 0;
+                    int selectedSampleBuffer = event.sampleBuffer;
+                    double selectedSampleRate = event.sampleRate;
+                    double selectedSampleSeconds = sampleSeconds;
+                    if (isSample) {
+                        const double selection = evaluateSampleSelection(
+                            pattern.sampleControl, absoluteStartBeat,
+                            static_cast<float>(event.sampleIndex));
+                        if (pattern.sampleControl.active) {
+                            for (std::size_t variant = 0;
+                                 variant < event.sampleVariantCount; ++variant) {
+                                if (pattern.sampleControl.values[variant] == selection) {
+                                    selectedVariant = variant;
+                                    break;
+                                }
+                            }
+                        }
+                        if (selectedVariant >= event.sampleVariantCount)
+                            continue;
+                        selectedSampleBuffer = event.sampleVariantBuffers[selectedVariant];
+                        selectedSampleRate = pattern.sampleRateControl.active
+                            ? evaluateTimeVar(pattern.sampleRateControl, absoluteStartBeat,
+                                              static_cast<float>(event.sampleRate))
+                            : event.sampleRate;
+                        if (selectedSampleBuffer < 1 ||
+                            std::abs(selectedSampleRate) < 0.0625 ||
+                            std::abs(selectedSampleRate) > 8.0)
+                            continue;
+                        selectedSampleSeconds = event.sampleLoop
+                            ? event.durationBeats * 60.0 / pattern.bpm
+                            : event.sampleVariantDurations[selectedVariant] *
+                                  (event.sampleEnd - event.sampleStart) /
+                                  std::abs(selectedSampleRate);
+                        if (event.sampleGate)
+                            selectedSampleSeconds = std::min(
+                                selectedSampleSeconds,
+                                event.durationBeats * 60.0 / pattern.bpm);
+                    }
                     const double sustainEndBeat = absoluteStartBeat + event.durationBeats;
-                    const bool foxDotNativeEnvelope = usesFoxDotNativeEnvelope(
-                        pattern.synthIndex, event.attackSeconds, event.releaseSeconds);
+                    const bool isUserSynth =
+                        static_cast<std::size_t>(pattern.synthIndex) >=
+                        kSynthIndexToGraphIndex.size();
+                    const bool foxDotNativeEnvelope = !isUserSynth &&
+                        usesFoxDotNativeEnvelope(pattern.synthIndex,
+                                                 event.attackSeconds,
+                                                 event.releaseSeconds);
                     const double sustainSeconds =
                         event.durationBeats * 60.0 / pattern.bpm;
-                    const double sourceEnvelopeSeconds = foxDotNativeEnvelope
-                        ? foxDotEnvelopeDurationSeconds(pattern.synthIndex, sustainSeconds)
-                        : sustainSeconds;
+                    // File-based upstream patches except sinepad do not apply blur.
+                    const bool appliesBlur = !isUserSynth && pattern.synthIndex >= 31 &&
+                        !(pattern.synthIndex >= 35 && pattern.synthIndex <= 40) &&
+                        pattern.synthIndex != 42 && pattern.synthIndex != 48;
+                    const double envelopeSustain = sustainSeconds *
+                        (appliesBlur ? pattern.synthControls[6] : 1.0);
+                    const double sourceEnvelopeSeconds = isSample ? selectedSampleSeconds
+                        : foxDotNativeEnvelope
+                            ? foxDotEnvelopeDurationSeconds(pattern.synthIndex,
+                                                            envelopeSustain,
+                                                            event.attackSeconds)
+                            : sustainSeconds + (isUserSynth
+                                ? std::max(0.005, event.releaseSeconds) : 0.0);
                     const double absoluteEndBeat = absoluteStartBeat +
                         sourceEnvelopeSeconds * pattern.bpm / 60.0;
                     if (beat < absoluteStartBeat || beat >= absoluteEndBeat)
@@ -1306,7 +2244,7 @@ private:
                         break;
                     desired[desiredCount++] = ScheduledAudioNote{
                         static_cast<int>(player), event.midiNote, event.velocity,
-                        pattern.synthIndex, pattern.synthRate,
+                        pattern.synthIndex, isSample ? static_cast<float>(selectedSampleRate) : pattern.synthRate,
                         pattern.amplitude, pattern.pan, pattern.cutoffHz,
                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
                         pattern.mousePan, pattern.mouseCutoff,
@@ -1317,7 +2255,8 @@ private:
                             std::llround(absoluteEndBeat * samplesPerBeat)),
                         patternStart + static_cast<std::uint64_t>(
                             std::llround(sustainEndBeat * samplesPerBeat)),
-                        foxDotNativeEnvelope};
+                        foxDotNativeEnvelope, selectedSampleBuffer,
+                        event.sampleStart, event.sampleEnd, event.sampleLoop};
                     ++playerVoices;
                 }
             }
@@ -1336,18 +2275,24 @@ private:
 
         for (std::size_t i = 0; i < desiredCount; ++i) {
             const auto& note = desired[i];
-            auto found = std::find_if(audioVoices_.begin(), audioVoices_.end(),
+            const auto playerStart =
+                static_cast<std::size_t>(note.playerIndex) * kVoiceSlotsPerPlayer;
+            auto voiceBegin = audioVoices_.begin() +
+                              static_cast<std::ptrdiff_t>(playerStart);
+            auto voiceEnd = voiceBegin +
+                            static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer);
+            auto found = std::find_if(voiceBegin, voiceEnd,
                                       [&](const AudioVoice& voice) {
                                           return voice.playerIndex == note.playerIndex &&
                                                  voice.midiNote == note.midiNote &&
                                                  voice.startSample == note.startSample;
                                       });
-            if (found == audioVoices_.end()) {
-                found = std::find_if(audioVoices_.begin(), audioVoices_.end(),
+            if (found == voiceEnd) {
+                found = std::find_if(voiceBegin, voiceEnd,
                                      [](const AudioVoice& voice) {
                                          return voice.midiNote < 0 && !voice.releasing;
                                      });
-                if (found == audioVoices_.end())
+                if (found == voiceEnd)
                     continue;
                 found->playerIndex = note.playerIndex;
                 found->midiNote = note.midiNote;
@@ -1387,7 +2332,14 @@ private:
                 found->swellState = {};
                 const double maxCutoff = sampleRate_ * 0.45;
                 const double clampedCutoff = std::min<double>(note.cutoffHz, maxCutoff);
-                found->filterCoefficient = clampedCutoff >= maxCutoff
+                const bool isUserSynth =
+                    static_cast<std::size_t>(note.synthIndex) >=
+                    kSynthIndexToGraphIndex.size();
+                const bool isPlayerEffect =
+                    isPersistentPlayerEffectSynthIndex(note.synthIndex);
+                found->filterCoefficient =
+                    (note.synthIndex >= 31 && !isUserSynth) ||
+                    clampedCutoff >= maxCutoff
                     ? 1.0f
                     : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
                 found->frequencyHz = safeSynthFrequency(note.synthIndex,
@@ -1396,31 +2348,151 @@ private:
                 found->sustainEndSample = note.sustainEndSample;
                 found->endSample = note.endSample;
                 found->foxDotNativeEnvelope = note.foxDotNativeEnvelope;
+                found->userSynthGateReleased = false;
                 found->releasing = false;
                 found->reverbTail = false;
-                auto* selectedSynth = graphForSynthIndex(*found, note.synthIndex);
+                auto* selectedSynth = isPlayerEffect
+                    ? nullptr : graphForSynthIndex(*found, note.synthIndex);
+                if (isPlayerEffect) {
+                    // Airwindows' state now belongs to one persistent graph per
+                    // player. These per-note source graphs use DexterTone's
+                    // saw mode and feed the player's summed insert input.
+                    std::string graphError;
+                    const auto voiceIndex =
+                        static_cast<std::size_t>(std::distance(audioVoices_.begin(), found));
+                    constexpr std::size_t kAirwindowsSourceSynthIndex = 2; // saw
+                    constexpr auto kAirwindowsSourceGraphIndex =
+                        kSynthIndexToGraphIndex[kAirwindowsSourceSynthIndex];
+                    auto*& sourceGraph =
+                        found->synthGraphs[kAirwindowsSourceGraphIndex];
+                    if (sourceGraph) {
+                        if (found->activeSynth == sourceGraph)
+                            found->activeSynth = nullptr;
+                        Node_SetRun(&sourceGraph->mNode, 0);
+                        Node_End(&sourceGraph->mNode);
+                        sourceGraph = nullptr;
+                    }
+                    selectedSynth = createSynthGraph(
+                        voiceIndex, kAirwindowsSourceGraphIndex, graphError, true);
+                    if (!selectedSynth) {
+                        found->midiNote = -1;
+                        found->velocity = 0;
+                        continue;
+                    }
+                } else if (note.synthIndex >= 31) {
+                    // Original FoxDot starts a fresh SC node for each note.
+                    // Reusing oscillator state is observably wrong for e.g.
+                    // pads (zero-Hz Pulse state), and impulse-driven patches.
+                    // Graph_New/Node_End use SC's bounded RT memory pool.
+                    std::string graphError;
+                    const auto voiceIndex =
+                        static_cast<std::size_t>(std::distance(audioVoices_.begin(), found));
+                    if (selectedSynth) {
+                        if (found->activeSynth == selectedSynth)
+                            found->activeSynth = nullptr;
+                        Node_SetRun(&selectedSynth->mNode, 0);
+                        Node_End(&selectedSynth->mNode);
+                        if (isUserSynth) {
+                            found->userSynthGraphs[static_cast<std::size_t>(note.synthIndex) -
+                                kSynthIndexToGraphIndex.size()] = nullptr;
+                        } else {
+                            const auto graphIndex = kSynthIndexToGraphIndex[
+                                static_cast<std::size_t>(note.synthIndex)];
+                            found->synthGraphs[graphIndex] = nullptr;
+                        }
+                    }
+                    if (isUserSynth) {
+                        const auto userIndex = static_cast<std::size_t>(note.synthIndex) -
+                                               kSynthIndexToGraphIndex.size();
+                        selectedSynth = createUserSynthGraph(voiceIndex, userIndex,
+                                                             graphError, true);
+                    } else {
+                        const auto graphIndex = kSynthIndexToGraphIndex[
+                            static_cast<std::size_t>(note.synthIndex)];
+                        selectedSynth = createSynthGraph(voiceIndex, graphIndex,
+                                                         graphError, true);
+                    }
+                    if (!selectedSynth) {
+                        found->midiNote = -1;
+                        found->velocity = 0;
+                        continue;
+                    }
+                }
                 if (found->activeSynth && found->activeSynth != selectedSynth)
                     Node_SetRun(&found->activeSynth->mNode, 0);
                 found->activeSynth = selectedSynth;
                 if (found->activeSynth) {
-                    Graph_SetControl(found->activeSynth, 1, found->frequencyHz);
-                    const auto playerBus = kReverbBaseBus + note.playerIndex * kReverbBusStride;
-                    Graph_SetControl(found->activeSynth, 6, static_cast<float>(playerBus));
-                    Graph_SetControl(found->activeSynth, 7, reverbEnabled(activePatterns_[static_cast<std::size_t>(note.playerIndex)]) ? 1.0f : 0.0f);
-                    Graph_SetControl(found->activeSynth, 8, found->cutoffHz);
-                    if (note.synthIndex <= 3) {
-                        for (int mode = 0; mode < 4; ++mode)
-                            Graph_SetControl(found->activeSynth, 2 + mode,
-                                         note.synthIndex == mode ? 1.0f : 0.0f);
+                    if (isUserSynth && !isPlayerEffect) {
+                        const auto userIndex = static_cast<std::size_t>(note.synthIndex) -
+                                               kSynthIndexToGraphIndex.size();
+                        const auto& definition = userSynthDefinitions_[userIndex];
+                        if (definition.frequencyControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.frequencyControl,
+                                             found->frequencyHz);
+                        if (definition.amplitudeControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.amplitudeControl, 1.0f);
+                        if (definition.panControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.panControl, 0.0f);
+                        if (definition.gateControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.gateControl, 1.0f);
+                        if (definition.attackControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.attackControl,
+                                             static_cast<float>(note.attackSeconds));
+                        if (definition.releaseControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.releaseControl,
+                                             static_cast<float>(note.releaseSeconds));
+                        if (definition.sustainControl >= 0)
+                            Graph_SetControl(found->activeSynth,
+                                             definition.sustainControl,
+                                             static_cast<float>(
+                                                 note.sustainEndSample > note.startSample
+                                                     ? static_cast<double>(
+                                                           note.sustainEndSample -
+                                                           note.startSample) /
+                                                           sampleRate_
+                                                     : 0.0));
                     } else {
+                        Graph_SetControl(found->activeSynth, 1, found->frequencyHz);
+                        const auto playerBus = kReverbBaseBus +
+                                               note.playerIndex * kReverbBusStride;
+                        Graph_SetControl(found->activeSynth, 6,
+                                         static_cast<float>(playerBus));
+                        Graph_SetControl(found->activeSynth, 7,
+                            reverbEnabled(activePatterns_[static_cast<std::size_t>(
+                                note.playerIndex)]) ? 1.0f : 0.0f);
+                        Graph_SetControl(found->activeSynth, 8, found->cutoffHz);
+                        if (isPlayerEffect) {
+                            for (int mode = 0; mode < 4; ++mode)
+                                Graph_SetControl(found->activeSynth, 2 + mode,
+                                                 mode == 2 ? 1.0f : 0.0f);
+                        } else if (note.synthIndex <= 3) {
+                            for (int mode = 0; mode < 4; ++mode)
+                                Graph_SetControl(found->activeSynth, 2 + mode,
+                                             note.synthIndex == mode ? 1.0f : 0.0f);
+                        } else {
                         Graph_SetControl(found->activeSynth, 2, note.synthRate);
+                        if (note.synthIndex == 57) {
+                            Graph_SetControl(found->activeSynth, 22, static_cast<float>(note.sampleBuffer));
+                            Graph_SetControl(found->activeSynth, 23,
+                                             static_cast<float>(note.sampleStart));
+                            Graph_SetControl(found->activeSynth, 24,
+                                             static_cast<float>(note.sampleEnd));
+                            Graph_SetControl(found->activeSynth, 25,
+                                             note.sampleLoop ? 1.0f : 0.0f);
+                        }
                         if (note.synthIndex == 10) {
                             const auto sustainSamples = note.endSample - note.startSample;
                             Graph_SetControl(found->activeSynth, 3,
                                 static_cast<float>(static_cast<double>(sustainSamples) /
                                                    sampleRate_));
                         }
-                        if (note.synthIndex >= 22 && note.synthIndex <= 31) {
+                        if (note.synthIndex >= 22 && note.synthIndex <= 30) {
                             const auto sustainSamples =
                                 note.sustainEndSample - note.startSample;
                             Graph_SetControl(found->activeSynth, 3,
@@ -1435,6 +2507,24 @@ private:
                             Graph_SetControl(found->activeSynth, 9, 1.0f);
                             found->triggerControlPendingReset = true;
                         }
+                        if (note.synthIndex >= 31) {
+                            Graph_SetControl(found->activeSynth, 3,
+                                static_cast<float>(static_cast<double>(
+                                    note.sustainEndSample - note.startSample) / sampleRate_));
+                            const auto& state = activePatterns_[static_cast<std::size_t>(note.playerIndex)];
+                            for (std::size_t control = 0; control < state.synthControls.size(); ++control)
+                                Graph_SetControl(found->activeSynth, static_cast<int>(11 + control),
+                                                static_cast<float>(state.synthControls[control]));
+                            Graph_SetControl(found->activeSynth, 10, note.amplitude);
+                            Graph_SetControl(found->activeSynth, 18, note.cutoffHz);
+                            Graph_SetControl(found->activeSynth, 19, static_cast<float>(note.attackSeconds));
+                            Graph_SetControl(found->activeSynth, 20, static_cast<float>(note.releaseSeconds));
+                            Graph_SetControl(found->activeSynth, 21,
+                                static_cast<float>(60.0 / state.bpm));
+                            Graph_SetControl(found->activeSynth, 9, 1.0f);
+                            found->triggerControlPendingReset = true;
+                        }
+                    }
                     }
                     Node_SetRun(&found->activeSynth->mNode, 1);
                 }
@@ -1575,7 +2665,10 @@ private:
             Node_SetRun(&graph->mNode, enabled && type == pattern.reverbIndex - 1 ? 1 : 0);
         }
         for (auto& voice : audioVoices_) {
-            if (voice.activeSynth && voice.playerIndex == static_cast<int>(player)) {
+            if (voice.activeSynth && voice.playerIndex == static_cast<int>(player) &&
+                (static_cast<std::size_t>(voice.synthIndex) <
+                     kSynthIndexToGraphIndex.size() ||
+                 isPersistentPlayerEffectSynthIndex(voice.synthIndex))) {
                 Graph_SetControl(voice.activeSynth, 6, static_cast<float>(bus));
                 Graph_SetControl(voice.activeSynth, 7, enabled ? 1.0f : 0.0f);
                 Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
@@ -1583,24 +2676,252 @@ private:
         }
     }
 
-    bool initializeWorld() {
-        std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
-        const auto moduleFiles = discoverUGenModuleFiles();
-        if (moduleFiles.empty()) {
-            const std::string message =
-                "No SuperCollider UGen modules found. Install the separate UGen pack's "
-                "Portable folder beside the VST3 bundle, then restart the DAW.";
-            setEditorStatus(message);
-            std::fprintf(stderr, "Dexter VST3: %s\n", message.c_str());
+    static std::string synthDefName(GraphDef* definition) {
+        if (!definition)
+            return {};
+        const auto* bytes = reinterpret_cast<const char*>(definition->mNodeDef.mName);
+        std::size_t length = 0;
+        while (length < sizeof(definition->mNodeDef.mName) && bytes[length] != '\0')
+            ++length;
+        return std::string(bytes, length);
+    }
+
+    static bool isPersistentPlayerEffectName(std::string_view name) {
+        return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam";
+    }
+
+    static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
+        if (!definition || !definition->mParamSpecs)
+            return -1;
+        for (uint32 index = 0; index < definition->mNumParamSpecs; ++index) {
+            const auto& spec = definition->mParamSpecs[index];
+            const auto* bytes = reinterpret_cast<const char*>(spec.mName);
+            std::size_t length = 0;
+            while (length < sizeof(spec.mName) && bytes[length] != '\0')
+                ++length;
+            if (std::string_view(bytes, length) == wanted)
+                return spec.mIndex;
+        }
+        return -1;
+    }
+
+    static bool hasOutUnit(GraphDef* definition, std::size_t channels) {
+        if (!definition || !definition->mUnitSpecs)
             return false;
+        for (uint32 index = 0; index < definition->mNumUnitSpecs; ++index) {
+            const auto& unit = definition->mUnitSpecs[index];
+            if (!unit.mUnitDef)
+                continue;
+            const auto* bytes =
+                reinterpret_cast<const char*>(unit.mUnitDef->mUnitDefName);
+            std::size_t length = 0;
+            while (length < sizeof(unit.mUnitDef->mUnitDefName) && bytes[length] != '\0')
+                ++length;
+            if (std::string_view(bytes, length) == "Out" &&
+                unit.mNumInputs == channels + 1)
+                return true;
+        }
+        return false;
+    }
+
+    std::vector<std::string> availableUserSynthNames(std::string& error) {
+        const auto files = discoverUserSynthFiles(error);
+        if (!error.empty())
+            return {};
+        std::vector<std::string> names;
+        names.reserve(files.size());
+        for (const auto& file : files)
+            names.push_back(file.name);
+
+        std::vector<std::string> loadedNames;
+        bool worldIsReady = false;
+        {
+            std::lock_guard<std::mutex> lock(worldAccessMutex_);
+            worldIsReady = world_ != nullptr;
+            if (worldIsReady) {
+                loadedNames.reserve(userSynthDefinitions_.size());
+                for (const auto& definition : userSynthDefinitions_)
+                    loadedNames.push_back(definition.name);
+            }
+        }
+        if (worldIsReady && names != loadedNames) {
+            error = "Portable/SynthDefs changed after the engine started. Close and reopen the DAW to load the updated SynthDef list.";
+            return {};
+        }
+        return worldIsReady ? loadedNames : names;
+    }
+
+    bool loadUserSynthDefinitions(std::string& error) {
+        userSynthDefinitions_.clear();
+        for (const auto& synthFile : userSynthFiles_) {
+            const bool conflictsWithBuiltin =
+                isEmbeddedFoxDotSynthName(synthFile.name) ||
+                std::any_of(kSynthGraphNames.begin(), kSynthGraphNames.end(),
+                            [&](const char* name) { return synthFile.name == name; });
+            if (conflictsWithBuiltin || synthFile.name == "DexRevFree" ||
+                synthFile.name == "DexRevFree2" || synthFile.name == "DexRevGverb") {
+                error = "SynthDef name is reserved by the embedded engine: " + synthFile.name;
+                return false;
+            }
+
+            auto* loaded = GraphDef_Load(world_, synthFile.path, nullptr);
+            if (!loaded) {
+                error = "SuperCollider could not parse " + synthFile.path.filename().string() +
+                        ". Check that it is a valid, compatible .scsyndef file.";
+                return false;
+            }
+            // Let the World own even definitions that fail later validation;
+            // discardPartialWorld then reclaims them on the startup error path.
+            GraphDef_Define(world_, loaded);
+            if (loaded->mNext) {
+                error = synthFile.path.filename().string() +
+                        " contains multiple SynthDefs; place one definition in each file.";
+                return false;
+            }
+            const auto internalName = synthDefName(loaded);
+            if (internalName != synthFile.name) {
+                error = "SynthDef filename and embedded name must match: expected " +
+                        synthFile.name + ", found " + internalName + ".";
+                return false;
+            }
+
+            UserSynthDefinition userDefinition;
+            userDefinition.name = synthFile.name;
+            userDefinition.definition = loaded;
+            userDefinition.persistentPlayerEffect =
+                isPersistentPlayerEffectName(userDefinition.name);
+            userDefinition.outControl = synthControlIndex(loaded, "out");
+            userDefinition.inputBusControl = synthControlIndex(loaded, "inbus");
+            userDefinition.frequencyControl = synthControlIndex(loaded, "freq");
+            userDefinition.amplitudeControl = synthControlIndex(loaded, "amp");
+            userDefinition.panControl = synthControlIndex(loaded, "pan");
+            userDefinition.gateControl = synthControlIndex(loaded, "gate");
+            userDefinition.attackControl = synthControlIndex(loaded, "atk");
+            userDefinition.releaseControl = synthControlIndex(loaded, "rel");
+            userDefinition.sustainControl = synthControlIndex(loaded, "sustain");
+            if (userDefinition.sustainControl < 0)
+                userDefinition.sustainControl = synthControlIndex(loaded, "sus");
+            constexpr std::array<std::string_view, 7> effectControlNames{{
+                "vib", "depth", "lforate", "lfowidth", "rq", "fmod", "blur"}};
+            for (std::size_t index = 0; index < effectControlNames.size(); ++index)
+                userDefinition.effectControlIndices[index] =
+                    synthControlIndex(loaded, effectControlNames[index]);
+            if (userDefinition.outControl < 0) {
+                error = synthFile.path.filename().string() +
+                        " needs an 'out' control so the plugin can route it to a private voice bus.";
+                return false;
+            }
+            if (userDefinition.persistentPlayerEffect) {
+                // These two bundled SynthDefs have a deliberately fixed,
+                // regression-tested positional ABI. Resolve their control
+                // indices from that ABI rather than GraphDef's named-parameter
+                // lookup: some embedded SC builds omit the longer names from
+                // mParamSpecs even though the serialized SynthDef contains them.
+                const bool isTapeDelay =
+                    userDefinition.name == "AirwindowsTapeDelay2";
+                const uint32 expectedControlCount = isTapeDelay ? 8u : 6u;
+                if (loaded->mNumControls != expectedControlCount) {
+                    error = synthFile.path.filename().string() +
+                            " has an incompatible Airwindows control layout (expected " +
+                            std::to_string(expectedControlCount) + " controls).";
+                    return false;
+                }
+                userDefinition.outControl = 0;
+                userDefinition.inputBusControl = 1;
+                userDefinition.effectControlIndices =
+                    isTapeDelay
+                    ? std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}
+                    : std::array<int, 7>{{2, 3, 4, -1, -1, -1, 5}};
+                const std::array<bool, 7> requiredEffectControls =
+                    isTapeDelay
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, true}}
+                    : std::array<bool, 7>{{true, true, true, false, false, false, true}};
+                bool missingRequiredEffectControl = false;
+                for (std::size_t index = 0;
+                     index < requiredEffectControls.size(); ++index)
+                    missingRequiredEffectControl |= requiredEffectControls[index] &&
+                        userDefinition.effectControlIndices[index] < 0;
+                if (userDefinition.inputBusControl < 0 ||
+                    missingRequiredEffectControl) {
+                    error = synthFile.path.filename().string() +
+                            " is missing a required inbus or Airwindows effect control.";
+                    return false;
+                }
+                if (!hasOutUnit(loaded, 2)) {
+                    error = synthFile.path.filename().string() +
+                            " needs an Out UGen that writes a stereo signal to its 'out' control.";
+                    return false;
+                }
+            } else if (!hasOutUnit(loaded, 1)) {
+                error = synthFile.path.filename().string() +
+                        " needs an Out UGen that writes exactly one mono signal to its 'out' control.";
+                return false;
+            }
+
+            std::array<int32, kSCNodeDefNameLen> nameKey{};
+            std::memcpy(nameKey.data(), synthFile.name.data(), synthFile.name.size());
+            userDefinition.definition = World_GetGraphDef(world_, nameKey.data());
+            if (!userDefinition.definition) {
+                error = "SuperCollider did not register SynthDef " + synthFile.name + ".";
+                return false;
+            }
+            userSynthDefinitions_.push_back(std::move(userDefinition));
+        }
+
+        for (auto& voice : audioVoices_)
+            voice.userSynthGraphs.assign(userSynthDefinitions_.size(), nullptr);
+        return true;
+    }
+
+    bool initializeWorld(double hostSampleRate = 0.0) {
+        LifecycleTrace trace("initializeWorld including locks", this);
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        if (hostSampleRate > 0.0) {
+            if (world_ && sampleRate_ == hostSampleRate)
+                return true;
+            // Keep teardown, sample-rate change and creation under one lock so
+            // a Run worker cannot initialize at the previous host sample rate.
+            stopWorldLocked();
+            sampleRate_ = hostSampleRate;
+            hostProcessingConfigured_ = true;
+        } else if (world_) {
+            return true;
+        }
+        auto fail = [this](std::string message) {
+            worldInitializationError_ = std::move(message);
+            setEditorStatus(worldInitializationError_);
+            return false;
+        };
+        if (!hostProcessingConfigured_)
+            return fail("The host has not configured audio processing yet. Enable the DAW audio engine (or start playback), then press Run again.");
+        worldInitializationError_.clear();
+        setEditorStatus("Starting the embedded SuperCollider engine...");
+        std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
+        LifecycleTrace lockedTrace("initializeWorld locks acquired", this);
+        const auto ugenPath = bundledUGenPath();
+        std::error_code pathError;
+        if (ugenPath.empty() || !std::filesystem::is_directory(ugenPath, pathError)) {
+            std::fprintf(stderr, "Dexter VST3: bundled SuperCollider UGen directory is missing.\n");
+            return fail("SuperCollider startup failed: the bundled SCPlugins folder is missing or inaccessible. Restore the UGen files, restart the host, and press Run.");
         }
         ugenPluginPath_ = ugenModuleSearchPath();
+        std::string synthScanError;
+        userSynthFiles_ = discoverUserSynthFiles(synthScanError);
+        if (!synthScanError.empty())
+            return fail("Portable SynthDef scan failed: " + synthScanError);
+        if (userSynthFiles_.size() >
+            static_cast<std::size_t>(std::numeric_limits<uint32>::max()) -
+                (kSynthGraphCount + kReverbGraphCount))
+            return fail("Too many SynthDefs are installed for SuperCollider's graph-definition table.");
+        const auto graphDefinitionCapacity =
+            scPoolCapacity(kSynthGraphCount + kReverbGraphCount + userSynthFiles_.size());
 
         try {
+            LifecycleTrace allocationTrace("echo buffer allocation", this);
             echoBuffer_.assign(kPlayerCount * 2 * kMaxEchoBufferSamples, 0.0f);
         } catch (...) {
             std::fprintf(stderr, "Dexter VST3: could not allocate the player echo buffer.\n");
-            return false;
+            return fail("SuperCollider startup failed: could not allocate the player echo buffers. Close unused plugin instances and press Run to retry.");
         }
 
         WorldOptions options;
@@ -1608,10 +2929,12 @@ private:
         options.mPreferredSampleRate = sampleRate_;
         options.mBufLength = kSCBlockSize;
         options.mMaxNodes = static_cast<uint32>(kWorldNodeCapacity);
-        options.mMaxGraphDefs =
-            static_cast<uint32>(kSynthGraphCount + kReverbGraphCount);
-        // Size SuperCollider's node pool from the synth registry and voice
-        // count. Adding a patch no longer hits a hard-coded 2048-node ceiling.
+        options.mMaxGraphDefs = static_cast<uint32>(graphDefinitionCapacity);
+        // Size both SuperCollider pools from the actual embedded graph bank,
+        // voice slots, and reverb bank; adding a registered synth grows them.
+        // SuperCollider measures this field in KiB. 64 MiB is enough for
+        // persistent Airwindows delay state on all eight players, without
+        // multiplying those large delay buffers by note polyphony.
         options.mRealTimeMemorySize = 65536;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
@@ -1621,101 +2944,101 @@ private:
         options.mVerbosity = -1;
         options.mUGensPluginPath = ugenPluginPath_.c_str();
 
-        world_ = World_New(&options);
+        {
+            LifecycleTrace worldTrace("World_New", this);
+            world_ = World_New(&options);
+        }
         if (!world_) {
             std::fprintf(stderr, "Dexter VST3: World_New failed at %.1f Hz.\n", sampleRate_);
-            return false;
+            return fail("SuperCollider startup failed: World_New could not create the engine at " +
+                        std::to_string(sampleRate_) + " Hz. Check the complete matching UGen bundle and press Run to retry.");
         }
+        const auto moduleFiles = discoverUGenModuleFiles();
         std::string moduleStatus = "UGen module files found (" + std::to_string(moduleFiles.size()) + "): ";
         for (std::size_t index = 0; index < moduleFiles.size(); ++index) {
             if (index != 0)
                 moduleStatus += ", ";
             moduleStatus += moduleFiles[index];
         }
-        moduleStatus += ". Install/update modules in the sibling Portable/SCPlugins folder; restart the DAW after changes.";
-        setEditorStatus(std::move(moduleStatus));
+        moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
         World_SetSampleRate(world_, sampleRate_);
-        World_Start(world_);
+        {
+            LifecycleTrace startTrace("World_Start", this);
+            World_Start(world_);
+        }
 
+        LifecycleTrace definitionsTrace("synth definitions and reverb bank", this);
         auto* defs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kToneSynthDef),
                                    sizeof(kToneSynthDef), nullptr);
         if (!defs) {
             std::fprintf(stderr, "Dexter VST3: GraphDef_Recv rejected the embedded synth bank.\n");
             discardPartialWorld();
-            return false;
+            return fail("SuperCollider startup failed: the base synth definitions could not be loaded. A required UGen may be missing or incompatible. Restore the complete matching plugin/UGen bundle and restart the host.");
         }
         GraphDef_Define(world_, defs);
+        auto* coreDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kFoxDotSynthDefs),
+                                      sizeof(kFoxDotSynthDefs), nullptr);
+        if (!coreDefs) {
+            std::fprintf(stderr, "Dexter VST3: rejected the additional FoxDot synth bank.\n");
+            discardPartialWorld();
+            return fail("SuperCollider startup failed: the new FoxDot synth bank could not be loaded. A required UGen may be missing or incompatible. Restore the complete matching plugin/UGen bundle and restart the host.");
+        }
+        GraphDef_Define(world_, coreDefs);
+        auto* sampleDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kSampleSynthDef),
+                                         sizeof(kSampleSynthDef), nullptr);
+        if (!sampleDefs) {
+            discardPartialWorld();
+            return fail("SuperCollider startup failed: native sample playback definitions could not be loaded.");
+        }
+        GraphDef_Define(world_, sampleDefs);
+        std::string userSynthError;
+        if (!loadUserSynthDefinitions(userSynthError)) {
+            std::fprintf(stderr, "Dexter VST3: external SynthDef load failed: %s\n",
+                         userSynthError.c_str());
+            discardPartialWorld();
+            return fail("Portable SynthDef loading failed: " + userSynthError);
+        }
 
-        std::array<GraphDef*, kSynthGraphCount> synthDefinitions{};
-        for (std::size_t index = 0; index < kSynthGraphCount; ++index) {
+        for (std::size_t index = 0; index < kSynthGraphNames.size(); ++index) {
             int32 synthName[4]{};
             std::memcpy(synthName, kSynthGraphNames[index],
                         std::min<std::size_t>(std::strlen(kSynthGraphNames[index]),
                                               sizeof(synthName)));
-            synthDefinitions[index] = World_GetGraphDef(world_, synthName);
+            synthDefinitions_[index] = World_GetGraphDef(world_, synthName);
         }
-        auto* root = World_GetGroup(world_, 0);
-        if (std::any_of(synthDefinitions.begin(), synthDefinitions.end(),
+        rootGroup_ = World_GetGroup(world_, 0);
+        if (std::any_of(synthDefinitions_.begin(), synthDefinitions_.end(),
                         [](const auto* definition) { return definition == nullptr; }) ||
-            !root) {
-            for (std::size_t index = 0; index < synthDefinitions.size(); ++index) {
-                if (!synthDefinitions[index])
+            !rootGroup_) {
+            std::string missing;
+            for (std::size_t index = 0; index < synthDefinitions_.size(); ++index) {
+                if (!synthDefinitions_[index])
                     std::fprintf(stderr, "Dexter VST3: missing embedded synth definition %s.\n",
                                  kSynthGraphNames[index]);
+                if (!synthDefinitions_[index]) {
+                    if (!missing.empty()) missing += ", ";
+                    missing += kSynthGraphNames[index];
+                }
             }
-            if (!root)
+            if (!rootGroup_)
                 std::fprintf(stderr, "Dexter VST3: root group is unavailable.\n");
             discardPartialWorld();
-            return false;
-        }
-        int32 nodeId = 100;
-        std::size_t voiceIndex = 0;
-        for (auto& voice : audioVoices_) {
-            const auto outputBus = kFirstAudioBus +
-                                   kAudioBusStride * static_cast<int>(voiceIndex);
-            for (std::size_t synthIndex = 0;
-                 synthIndex < synthDefinitions.size(); ++synthIndex) {
-                sc_msg_iter noControls(0, "");
-                auto*& graph = voice.synthGraphs[synthIndex];
-                const auto graphError =
-                    Graph_New(world_, synthDefinitions[synthIndex], nodeId++,
-                              &noControls, &graph, true);
-                if (graphError != 0 || !graph) {
-                    std::fprintf(stderr,
-                                 "Dexter VST3: Graph_New failed for %s (voice %zu, error %d).\n",
-                                 kSynthGraphNames[synthIndex], voiceIndex,
-                                 static_cast<int>(graphError));
-                    discardPartialWorld();
-                    return false;
-                }
-                Graph_SetControl(graph, 0, static_cast<float>(outputBus));
-                Graph_SetControl(graph, 6, static_cast<float>(kReverbBaseBus));
-                Graph_SetControl(graph, 7, 0.0f);
-                Graph_SetControl(graph, 8, 20000.0f);
-                if (synthIndex >= 12 && synthIndex <= 18)
-                    Graph_SetControl(graph, 9, 0.0f);
-                if (synthIndex == 1)
-                    Graph_SetControl(graph, 2, 8.0f);
-                else if (synthIndex == 2)
-                    Graph_SetControl(graph, 2, 0.0f);
-                Group_AddTail(root, &graph->mNode);
-                Node_SetRun(&graph->mNode, 0);
-            }
-            ++voiceIndex;
+            return fail("SuperCollider startup failed: " +
+                        (missing.empty() ? std::string("the root group is unavailable.") :
+                         "missing synth definitions: " + missing + ".") +
+                        " Press Run to retry initialization.");
         }
         auto* reverbDefs = GraphDef_Recv(world_, reinterpret_cast<const char*>(kReverbSynthDef),
                                          sizeof(kReverbSynthDef), nullptr);
         if (!reverbDefs) {
             std::fprintf(stderr, "Dexter VST3: GraphDef_Recv rejected the embedded reverb bank.\n");
             discardPartialWorld();
-            return false;
+            return fail("SuperCollider startup failed: the reverb definitions could not be loaded. Check the matching ReverbUGens module and restart the host.");
         }
         GraphDef_Define(world_, reverbDefs);
         const std::array<const char*, kReverbGraphCount> reverbNames{{
             "DexRevFree", "DexRevFree2", "DexRevGverb"}};
-        // Continue the synth-node ID sequence. Starting reverb IDs at 1000
-        // collides with the preallocated synth graphs (IDs 100–1467).
-        int32 reverbNodeId = nodeId;
+        int32 reverbNodeId = 100;
         for (std::size_t type = 0; type < reverbNames.size(); ++type) {
             int32 reverbName[4]{};
             std::memcpy(reverbName, reverbNames[type], std::strlen(reverbNames[type]));
@@ -1724,10 +3047,12 @@ private:
                 std::fprintf(stderr, "Dexter VST3: missing reverb definition %s.\n",
                              reverbNames[type]);
                 discardPartialWorld();
-                return false;
+                return fail("SuperCollider startup failed: missing reverb definition " +
+                            std::string(reverbNames[type]) + ". Press Run to retry.");
             }
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 auto*& graph = reverbGraphs_[player][type];
+                LifecycleTrace reverbTrace(reverbNames[type], this);
                 sc_msg_iter noControls(0, "");
                 const auto graphError =
                     Graph_New(world_, reverbDefinition, reverbNodeId++, &noControls,
@@ -1738,7 +3063,11 @@ private:
                                  reverbNames[type], player,
                                  static_cast<int>(graphError));
                     discardPartialWorld();
-                    return false;
+                    return fail("SuperCollider startup failed: could not create " +
+                                std::string(reverbNames[type]) + " for player " +
+                                std::to_string(player + 1) + " (SC error " +
+                                std::to_string(static_cast<int>(graphError)) +
+                                "). Press Run to retry.");
                 }
                 const auto bus = kReverbBaseBus + static_cast<int>(player) * kReverbBusStride;
                 Graph_SetControl(graph, 0, static_cast<float>(bus));
@@ -1752,11 +3081,21 @@ private:
                     Graph_SetControl(graph, 4, 0.5f);
                     Graph_SetControl(graph, 5, 15.0f);
                 }
-                Group_AddTail(root, &graph->mNode);
+                Group_AddTail(rootGroup_, &graph->mNode);
                 Node_SetRun(&graph->mNode, 0);
             }
         }
+        // Synth voice graphs are created lazily by the script worker. IDs
+        // follow the small startup reverb bank and are unique within the world.
+        nextDynamicGraphNodeId_ = reverbNodeId;
         cursor_ = kSCBlockSize;
+        worldInitializationError_.clear();
+        moduleStatus += " User SynthDefs loaded (" +
+                        std::to_string(userSynthDefinitions_.size()) + "):";
+        for (const auto& definition : userSynthDefinitions_)
+            moduleStatus += " " + definition.name;
+        moduleStatus += ".";
+        setEditorStatus("SuperCollider ready. Press Run to evaluate the script. " + moduleStatus);
         return true;
     }
 
@@ -1769,6 +3108,13 @@ private:
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
+        playerEffectGraphs_.fill(nullptr);
+        playerEffectDefinitionIndices_.fill(-1);
+        synthDefinitions_.fill(nullptr);
+        userSynthDefinitions_.clear();
+        userSynthFiles_.clear();
+        rootGroup_ = nullptr;
+        nextDynamicGraphNodeId_ = 100;
     }
 
     static std::size_t echoOffset(std::size_t player, std::size_t channel,
@@ -1784,12 +3130,47 @@ private:
                 continue;
             const auto player = static_cast<std::size_t>(voice.playerIndex);
             const auto& pattern = activePatterns_[player];
-            const float level = reverbEnabled(pattern)
-                ? voiceEnvelopeAt(voice, blockStart) *
-                      (static_cast<float>(voice.velocity) / 127.0f) * voice.amplitude
-                : 0.0f;
-            Graph_SetControl(voice.activeSynth, 7, level);
-            Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
+            const bool isUserSynth =
+                static_cast<std::size_t>(voice.synthIndex) >=
+                kSynthIndexToGraphIndex.size();
+            const bool isPlayerEffect =
+                isPersistentPlayerEffectSynthIndex(voice.synthIndex);
+            if (isUserSynth && !isPlayerEffect) {
+                const auto userIndex = static_cast<std::size_t>(voice.synthIndex) -
+                                       kSynthIndexToGraphIndex.size();
+                if (userIndex >= userSynthDefinitions_.size())
+                    continue;
+                const auto& definition = userSynthDefinitions_[userIndex];
+                if (definition.frequencyControl >= 0)
+                    Graph_SetControl(voice.activeSynth, definition.frequencyControl,
+                                     voice.frequencyHz);
+                if (definition.amplitudeControl >= 0)
+                    Graph_SetControl(voice.activeSynth, definition.amplitudeControl, 1.0f);
+                if (definition.panControl >= 0)
+                    Graph_SetControl(voice.activeSynth, definition.panControl, 0.0f);
+                if (definition.gateControl >= 0 && !voice.userSynthGateReleased &&
+                    blockStart >= voice.sustainEndSample) {
+                    Graph_SetControl(voice.activeSynth, definition.gateControl, 0.0f);
+                    voice.userSynthGateReleased = true;
+                }
+            } else if (voice.synthIndex >= 31 && !isPlayerEffect) {
+                const auto start = patternStartSamples_[player];
+                const double beat = blockStart >= start
+                    ? static_cast<double>(blockStart - start) * pattern.bpm /
+                          (60.0 * sampleRate_) : 0.0;
+                Graph_SetControl(voice.activeSynth, 10,
+                    evaluateTimeVar(pattern.ampControl, beat, pattern.amplitude));
+                Graph_SetControl(voice.activeSynth, 18,
+                    evaluateTimeVar(pattern.cutoffControl, beat, pattern.cutoffHz));
+            }
+            if (!isUserSynth || isPlayerEffect) {
+                const float level = reverbEnabled(pattern)
+                    ? voiceEnvelopeAt(voice, blockStart) *
+                          (static_cast<float>(voice.velocity) / 127.0f) * voice.amplitude
+                    : 0.0f;
+                Graph_SetControl(voice.activeSynth, 7, level);
+                Graph_SetControl(voice.activeSynth, 8, voice.cutoffHz);
+            }
         }
         World_Run(world_);
         for (auto& voice : audioVoices_) {
@@ -1798,6 +3179,11 @@ private:
                 voice.triggerControlPendingReset = false;
             }
         }
+        std::array<std::array<float, kSCBlockSize>, kPlayerCount> playerLeftBlock{};
+        std::array<std::array<float, kSCBlockSize>, kPlayerCount> playerRightBlock{};
+        std::array<std::array<float, kSCBlockSize>, kPlayerCount> playerMuteGainBlock{};
+        std::array<std::array<bool, kSCBlockSize>, kPlayerCount> playerHasVoiceBlock{};
+        std::array<std::size_t, kSCBlockSize> contributingVoicesBlock{};
         const float mixSmoothing = std::exp(
             -1.0f / static_cast<float>(sampleRate_ * kMixSmoothingSeconds));
         const float mouseSmoothing = 1.0f - mixSmoothing;
@@ -1806,6 +3192,8 @@ private:
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 const float target = mutedPlayers_[player] ? 0.0f : 1.0f;
                 playerMuteGain_[player] += mouseSmoothing * (target - playerMuteGain_[player]);
+                playerMuteGainBlock[player][static_cast<std::size_t>(sampleIndex)] =
+                    playerMuteGain_[player];
             }
             std::array<float, kPlayerCount> playerLeft{};
             std::array<float, kPlayerCount> playerRight{};
@@ -1829,7 +3217,10 @@ private:
                     ? static_cast<double>(absoluteSample - patternStart) * livePattern.bpm /
                           (60.0 * sampleRate_)
                     : 0.0;
-                if (livePattern.ampControl.active) {
+                if (livePattern.ampControl.active &&
+                    (voice.synthIndex < 31 ||
+                     static_cast<std::size_t>(voice.synthIndex) >=
+                         kSynthIndexToGraphIndex.size())) {
                     const float patternAmp = evaluateTimeVar(livePattern.ampControl, beat,
                                                              livePattern.amplitude);
                     const float targetAmp = foxDotAmplitude(voice.synthIndex, patternAmp);
@@ -1879,7 +3270,14 @@ private:
                         ? 1.0f
                         : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
                 }
-                voice.filterState += voice.filterCoefficient * (source - voice.filterState);
+                // New source graphs own cutoff filtering; do not apply a
+                // second plugin-only low-pass at the same cutoff.
+                if (voice.synthIndex >= 31 &&
+                    static_cast<std::size_t>(voice.synthIndex) <
+                        kSynthIndexToGraphIndex.size())
+                    voice.filterState = source;
+                else
+                    voice.filterState += voice.filterCoefficient * (source - voice.filterState);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
                 auto updateFilterControl = [&](float& current, const TimeVarControl& control, float fallback) {
                     if (!control.active) return;
@@ -1946,16 +3344,107 @@ private:
                     ++contributingVoices;
             }
 
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                playerLeftBlock[player][static_cast<std::size_t>(sampleIndex)] =
+                    playerLeft[player];
+                playerRightBlock[player][static_cast<std::size_t>(sampleIndex)] =
+                    playerRight[player];
+                playerHasVoiceBlock[player][static_cast<std::size_t>(sampleIndex)] =
+                    playerHasVoice[player];
+            }
+            contributingVoicesBlock[static_cast<std::size_t>(sampleIndex)] =
+                contributingVoices;
+        }
+
+        const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            auto* graph = playerEffectGraphs_[player];
+            if (!graph)
+                continue;
+            const auto& pattern = activePatterns_[player];
+            const bool effectSelected = pattern.active &&
+                pattern.playerEffectUserIndex >= 0 &&
+                pattern.playerEffectUserIndex ==
+                    playerEffectDefinitionIndices_[player];
+            const auto inputBus = static_cast<std::size_t>(kAirwindowsInputBusBase) +
+                                  player * 2;
+            for (int channel = 0; channel < 2; ++channel) {
+                const auto bus = inputBus + static_cast<std::size_t>(channel);
+                auto* destination = world_->mAudioBus + bus * busLength;
+                const auto& source = channel == 0
+                    ? playerLeftBlock[player] : playerRightBlock[player];
+                for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex)
+                    destination[sampleIndex] = effectSelected
+                        ? source[static_cast<std::size_t>(sampleIndex)] : 0.0f;
+                world_->mAudioBusTouched[bus] = world_->mBufCounter;
+            }
+            const auto userIndex = pattern.playerEffectUserIndex >= 0
+                ? static_cast<std::size_t>(pattern.playerEffectUserIndex)
+                : userSynthDefinitions_.size();
+            if (effectSelected && userIndex < userSynthDefinitions_.size()) {
+                const auto& definition = userSynthDefinitions_[userIndex];
+                for (std::size_t control = 0;
+                     control < definition.effectControlIndices.size(); ++control) {
+                    const auto controlIndex = definition.effectControlIndices[control];
+                    if (controlIndex >= 0)
+                        Graph_SetControl(graph, controlIndex,
+                                         static_cast<float>(pattern.synthControls[control]));
+                }
+            }
+            // The graph is paused in the root group and is advanced exactly
+            // once here, after its summed stereo input bus is ready.
+            Graph_Calc(graph);
+        }
+
+        for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
+            const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
+            std::array<float, kPlayerCount> playerLeft{};
+            std::array<float, kPlayerCount> playerRight{};
+            std::array<bool, kPlayerCount> playerHasVoice{};
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                playerLeft[player] =
+                    playerLeftBlock[player][static_cast<std::size_t>(sampleIndex)];
+                playerRight[player] =
+                    playerRightBlock[player][static_cast<std::size_t>(sampleIndex)];
+                playerHasVoice[player] =
+                    playerHasVoiceBlock[player][static_cast<std::size_t>(sampleIndex)];
+                playerMuteGain_[player] =
+                    playerMuteGainBlock[player][static_cast<std::size_t>(sampleIndex)];
+            }
+            std::size_t contributingVoices =
+                contributingVoicesBlock[static_cast<std::size_t>(sampleIndex)];
             float leftMixed = 0.0f;
             float rightMixed = 0.0f;
             const auto writeIndex = static_cast<std::size_t>(absoluteSample % kMaxEchoBufferSamples);
             std::size_t echoTailPlayers = 0;
             std::size_t reverbTailPlayers = 0;
-            const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+            std::size_t effectTailPlayers = 0;
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 const auto& pattern = activePatterns_[player];
-                const float dryLeft = playerLeft[player];
-                const float dryRight = playerRight[player];
+                const auto* effectGraph = playerEffectGraphs_[player];
+                const bool effectSelected = pattern.active && effectGraph &&
+                    pattern.playerEffectUserIndex >= 0 &&
+                    pattern.playerEffectUserIndex ==
+                        playerEffectDefinitionIndices_[player];
+                const auto effectOutputBus =
+                    static_cast<std::size_t>(kAirwindowsOutputBusBase) + player * 2;
+                const float effectLeft = effectGraph
+                    ? world_->mAudioBus[effectOutputBus * busLength +
+                                        static_cast<std::size_t>(sampleIndex)]
+                    : 0.0f;
+                const float effectRight = effectGraph
+                    ? world_->mAudioBus[(effectOutputBus + 1) * busLength +
+                                        static_cast<std::size_t>(sampleIndex)]
+                    : 0.0f;
+                const float dryLeft = effectSelected
+                    ? effectLeft : playerLeft[player] + effectLeft;
+                const float dryRight = effectSelected
+                    ? effectRight : playerRight[player] + effectRight;
+                if (effectGraph && !playerHasVoice[player] &&
+                    playerMuteGain_[player] > 1e-4f &&
+                    (std::abs(effectLeft) > 1e-6f ||
+                     std::abs(effectRight) > 1e-6f))
+                    ++effectTailPlayers;
                 const float targetReverbMix = reverbEnabled(pattern) ? pattern.reverbMix : 0.0f;
                 auto& reverbMix = reverbMixSmoothed_[player];
                 reverbMix += (targetReverbMix - reverbMix) * mixSmoothing;
@@ -2031,7 +3520,8 @@ private:
                 }
             }
 
-            const auto mixContributors = contributingVoices + echoTailPlayers + reverbTailPlayers;
+            const auto mixContributors = contributingVoices + echoTailPlayers +
+                                         reverbTailPlayers + effectTailPlayers;
             const float targetMixGain = mixContributors == 0
                                             ? 1.0f
                                             : 1.0f / static_cast<float>(mixContributors);
@@ -2062,15 +3552,35 @@ private:
     // UGen registration is process-global in this SC revision. Keep modules loaded
     // while any VST instance exists; the VST module terminator unloads them once.
     void stopWorld() {
+        LifecycleTrace trace("stopWorld including locks", this);
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        stopWorldLocked();
+        hostProcessingConfigured_ = false;
+    }
+
+    // Caller owns worldAccessMutex_. Never call the locking wrapper recursively.
+    void stopWorldLocked() {
         if (world_) {
+            detachSampleBuffers();
             std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
+            LifecycleTrace cleanupTrace("World_Cleanup", this);
             World_Cleanup(world_, false);
             world_ = nullptr;
         }
+        sampleCache_.clear();
+        sampleCacheBytes_ = 0;
+        ++sampleWorldGeneration_;
         for (auto& voice : audioVoices_)
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
+        playerEffectGraphs_.fill(nullptr);
+        playerEffectDefinitionIndices_.fill(-1);
+        synthDefinitions_.fill(nullptr);
+        userSynthDefinitions_.clear();
+        userSynthFiles_.clear();
+        rootGroup_ = nullptr;
+        nextDynamicGraphNodeId_ = 100;
         cursor_ = kSCBlockSize;
         for (auto& channel : outputBlock_)
             channel.fill(0.0f);
@@ -2082,8 +3592,8 @@ private:
         mixGain_ = 0.0f;
         for (auto& pattern : activePatterns_)
             pattern = {};
-        for (auto& playerNotes : activeMidiNotes_)
-            playerNotes.fill(false);
+        for (auto& playerGates : activeMidiGates_)
+            playerGates.fill({});
         pendingPlayerMask_ = 0;
         pendingMuteMask_ = 0;
         pendingMuteStates_.fill(false);
@@ -2093,9 +3603,23 @@ private:
 
     std::string scriptNamespace_;
     double sampleRate_ = 48000.0;
+    std::mutex worldAccessMutex_;
+    bool hostProcessingConfigured_ = false;
+    std::string worldInitializationError_;
     World* world_ = nullptr;
+    Group* rootGroup_ = nullptr;
+    std::array<GraphDef*, kSynthGraphCount> synthDefinitions_{};
+    std::vector<UserSynthFile> userSynthFiles_;
+    std::vector<UserSynthDefinition> userSynthDefinitions_;
+    int32 nextDynamicGraphNodeId_ = 100;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
+    std::array<Graph*, kPlayerCount> playerEffectGraphs_{};
+    std::array<int, kPlayerCount> playerEffectDefinitionIndices_ = [] {
+        std::array<int, kPlayerCount> indices{};
+        indices.fill(-1);
+        return indices;
+    }();
     std::string ugenPluginPath_;
     std::array<std::array<float, kSCBlockSize>, 2> outputBlock_{};
     std::vector<float> echoBuffer_;
@@ -2109,8 +3633,13 @@ private:
         return initial;
     }();
     float mixGain_ = 0.0f;
+    std::atomic<float> masterGainTarget_{1.0f};
+    float masterGainCurrent_ = 1.0f;
     int cursor_ = kSCBlockSize;
     std::mutex patternMutex_;
+    std::vector<std::unique_ptr<CachedSample>> sampleCache_;
+    std::size_t sampleCacheBytes_ = 0;
+    std::uint64_t sampleWorldGeneration_ = 1;
     std::array<PatternState, kPlayerCount> activePatterns_{};
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
     std::uint8_t pendingPlayerMask_ = 0;
@@ -2124,7 +3653,7 @@ private:
     }();
     std::array<std::uint64_t, kPlayerCount> patternStartSamples_{};
     std::uint64_t sampleClock_ = 0;
-    std::array<std::array<bool, 128>, kPlayerCount> activeMidiNotes_{};
+    std::array<std::array<ActiveMidiGate, kMaxPolyphony>, kPlayerCount> activeMidiGates_{};
     std::atomic<bool> stopRequested_{false};
     std::mutex scriptThreadMutex_;
     std::thread scriptThread_;
@@ -2148,7 +3677,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.43",
+           "0.4.78",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

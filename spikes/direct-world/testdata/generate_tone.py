@@ -41,7 +41,7 @@ def ugen(name, rate, inputs, output_rates, special_index=0):
 
 data.extend(b"SCgf")
 i32(1)  # SynthDef version
-u16(29)  # DexterTone plus twenty-eight embedded FoxDot patches
+u16(28)  # DexterTone plus twenty-seven embedded FoxDot patches
 string("DexterTone")
 constants = (0.0, 0.1, 0.0, 0.5, 1.0, 0.2, 0.005)
 u16(len(constants))
@@ -588,21 +588,6 @@ ugen("SinOsc", 2, [(6, 0), const_input(0.0), const_input(0.5),
                     const_input(1.0)], [2])
 ugen("BinaryOpUGen", 2, [(5, 0), (7, 0)], [2], 2)
 mouse_and_reverb(8)
-finish_patch()
-
-begin_patch("DexterViola", foxdot_patch_parameters, foxdot_patch_defaults)
-u16(13)
-ugen("Control", 1, [], [1] * 9)
-ugen("BinaryOpUGen", 1, [(0, 3), const_input(0.25)], [1], 2)
-ugen("Vibrato", 1, [(0, 1), (0, 2), const_input(0.008), (1, 0),
-                    const_input(0.0), const_input(0.0), const_input(0.0),
-                    const_input(0.0), const_input(0.0)], [1])
-# PMOsc is a SuperCollider-language shorthand, not a server UGen:
-# SinOsc.ar(carfreq, SinOsc.ar(modfreq, modphase, pmindex), mul, add).
-ugen("SinOsc", 2, [(2, 0), const_input(0.0), const_input(10.0),
-                   const_input(0.0)], [2])
-ugen("SinOsc", 2, [(0, 1), (3, 0), const_input(1.0), const_input(0.0)], [2])
-mouse_and_reverb(4)
 finish_patch()
 
 out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -7,3 +7,11 @@ This release also adapts FoxDot's band-pass `bpnoise` modulation and envelope-dr
 FoxDot-derived adaptation in this plugin is distributed under the Creative Commons Attribution-ShareAlike 4.0 International license (CC BY-SA 4.0). The complete license text is included as FoxDot-CC-BY-SA-4.0.txt.
 
 This plugin does not bundle FoxDot's OSC server, external clock thread, or sample library. The compatibility layer translates supported player/tempo expressions to the plugin's embedded SuperCollider engine.
+
+Version 0.4.46 includes 26 additional original FoxDot synth sources by Ryan
+Kirkbride and FoxDot contributors from commit
+affae587ab7b2a5f93102302254de16dd72d4c50:
+https://github.com/Qirky/FoxDot/tree/affae587ab7b2a5f93102302254de16dd72d4c50/FoxDot/osc/scsyndef
+The unmodified source files and SHA-256 manifest are in foxdot-synths/.
+Adaptations for pooled triggers, private buses, and numeric safety are described
+in foxdot-synths/README.md and tools/build-foxdot-synth-bank.py, under CC BY-SA 4.0.

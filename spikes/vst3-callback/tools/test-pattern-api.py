@@ -10,18 +10,6 @@ import tempfile
 if len(sys.argv) != 3:
     raise SystemExit('usage: test-pattern-api.py python_runtime.cpp Portable-directory')
 source = open(sys.argv[1], encoding='utf-8').read()
-processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
-processor_source = open(processor_path, encoding='utf-8').read()
-graph_mapper_start = processor_source.find('static Graph* graphForSynthIndex')
-if graph_mapper_start < 0:
-    raise SystemExit('Could not find the synth graph selector in processor.cpp')
-graph_mapper_end = processor_source.find('\n    }', graph_mapper_start)
-graph_mapper = processor_source[graph_mapper_start:graph_mapper_end]
-assert 'synthIndex <= 31' in graph_mapper
-assert 'synthIndex - 3' in graph_mapper
-assert 'kAudioVoiceCount * kSynthGraphCount' in processor_source
-assert 'kWorldNodeCapacity =\n        kAudioVoiceCount * kSynthGraphCount +' in processor_source
-assert 'synthIndex >= 12 && synthIndex <= 18' in processor_source
 start_marker = 'static constexpr char api[] = R"PY(' + chr(10)
 end_marker = ')PY";'
 start = source.find(start_marker)
@@ -49,13 +37,16 @@ if wrapper_start < 0 or wrapper_end < 0:
     raise SystemExit('Could not find makeEvaluationScript in python_runtime.cpp')
 wrapper_cpp = source[wrapper_start:wrapper_end]
 
-def make_wrapper(source_path, result_path):
+def make_wrapper(source_path, result_path, user_synth_names=()):
     parts = []
     placeholders = {'namespaceName': 'test_scope', 'api': api,
-                    'sourcePath': source_path, 'resultPath': result_path}
-    for token in re.findall(r'<<\s*("(?:\\.|[^"\\])*"|pythonLiteral\([^)]*\))', wrapper_cpp):
+                    'sourcePath': source_path, 'resultPath': result_path,
+                    'userSynthNames': tuple(user_synth_names)}
+    for token in re.findall(r'<<\s*("(?:\\.|[^"\\])*"|pythonLiteral\([^)]*\)|pythonStringTuple\([^)]*\))', wrapper_cpp):
         if token.startswith('"'):
             parts.append(ast.literal_eval(token))
+        elif token.startswith('pythonStringTuple('):
+            parts.append(repr(placeholders['userSynthNames']))
         else:
             argument = token[len('pythonLiteral('):-1]
             if argument not in placeholders:
@@ -214,13 +205,13 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
         with open(source_path, 'w', encoding='utf-8') as target:
             target.write(script_text)
-        wrapper = make_wrapper(source_path, result_path)
+        wrapper = make_wrapper(source_path, result_path, user_synth_names)
         try:
             compile(wrapper, '<generated evaluation wrapper>', 'exec')
         except SyntaxError as error:
@@ -259,7 +250,6 @@ resonatorSynthRows = run_script('p1 >> bell([0], rate=1)\np2 >> gong([0])\np3 >>
 assert len(resonatorSynthRows) == 7
 assert [int(row[6]) for row in resonatorSynthRows] == [15, 16, 17, 18, 19, 20, 21]
 assert [float(row[21]) for row in resonatorSynthRows] == [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0]
-
 def run_error_script(script_text):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
@@ -270,30 +260,44 @@ def run_error_script(script_text):
         exec(make_wrapper(source_path, result_path), wrapper_globals, wrapper_globals)
         return open(result_path, encoding='utf-8').read()
 
-def run_example(name):
+def run_example(name, user_synth_names=()):
     example_path = os.path.join(sys.argv[2], name)
-    return run_script(open(example_path, encoding='utf-8').read())
+    return run_script(open(example_path, encoding='utf-8').read(),
+                      user_synth_names=user_synth_names)
+
+userSynthDir = os.path.join(sys.argv[2], 'SynthDefs')
+userSynthBinary = open(os.path.join(userSynthDir, 'CustomPluck.scsyndef'), 'rb').read()
+assert b'CustomPluck' in userSynthBinary
+assert b'DexterPluck' not in userSynthBinary
+assert not os.path.exists(os.path.join(userSynthDir, 'DexterPluck.scsyndef'))
+userSynthRows = run_example('94-user-synthdef-loader.py', ('CustomPluck',))
+assert [int(row[6]) for row in userSynthRows] == [58, 58]
+missingUserSynth = run_error_script(
+    'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
+assert 'not a loaded Portable/SynthDefs entry' in missingUserSynth
 
 def assert_player_polyphony_ok(player_row, event_rows):
     length = float(player_row[4])
     boundaries = []
+    active = 0
     for event in event_rows:
         start = (float(event[1]) + float(event[7])) % length
-        end = start + float(event[2])
-        note = int(event[3])
+        duration = float(event[2])
+        full_cycles = int(duration // length)
+        active += full_cycles
+        remainder = duration - full_cycles * length
+        if remainder <= 1e-9:
+            continue
+        end = start + remainder
         if end <= length:
-            boundaries.extend(((start, 1, note), (end, -1, note)))
+            boundaries.extend(((start, 1), (end, -1)))
         else:
-            boundaries.extend(((0.0, 1, note), (end - length, -1, note),
-                               (start, 1, note), (length, -1, note)))
-    active = set()
-    for beat, delta, note in sorted(boundaries, key=lambda item: (item[0], item[1])):
-        if delta < 0:
-            active.remove(note)
-        else:
-            assert note not in active, ('overlapping repeated MIDI pitch', note, beat)
-            assert len(active) < 8, ('player exceeds eight-note polyphony', beat)
-            active.add(note)
+            boundaries.extend(((0.0, 1), (end - length, -1),
+                               (start, 1), (length, -1)))
+    assert active <= 8, ('player exceeds eight-note polyphony', active)
+    for beat, delta in sorted(boundaries, key=lambda item: (item[0], item[1])):
+        active += delta
+        assert 0 <= active <= 8, ('player exceeds eight-note polyphony', beat, active)
 
 initial_live_run = run_script('p1 >> saw([0, 2, 4], dur=0.5)\np2 >> pulse([0, None, 3], dur=0.25)\n')
 assert [row[1] for row in initial_live_run] == ['0', '1']
@@ -302,13 +306,14 @@ assert [row[1] for row in edit_one_player] == ['0']
 stop_one_player = run_script('p2.stop()\n')
 assert [row[1] for row in stop_one_player] == ['1'] and stop_one_player[0][2] == '1'
 
-def run_compatibility_check(script_text):
+def run_compatibility_check(script_text, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         report_path = os.path.join(directory, 'report.txt')
         with open(source_path, 'w', encoding='utf-8') as target:
             target.write(script_text)
-        namespace = {'_compat_source_path': source_path, '_compat_report_path': report_path}
+        namespace = {'_compat_source_path': source_path, '_compat_report_path': report_path,
+                     '_USER_SYNTH_NAMES': tuple(user_synth_names)}
         exec(compile(compatibility_checker, '<embedded compatibility checker>', 'exec'), namespace, namespace)
         return open(report_path, encoding='utf-8').read()
 
@@ -381,7 +386,7 @@ def test_embedded_synthdef():
                                re.findall(r'0x([0-9a-fA-F]{2})', header_text))
         assert generated_bytes == embedded_bytes, 'embedded SynthDef differs from its generator'
     synthdef_version, graphs = read_synthdef_manifest(generated_bytes)
-    assert synthdef_version == 1 and len(graphs) == 29
+    assert synthdef_version == 1 and len(graphs) == 28
     assert ('LFSaw', 2, 2) in graphs['DexterDirt']
     assert ('LFNoise0', 1, 2) in graphs['DexterNoise']
     assert ('Vibrato', 9, 1) in graphs['DexterSoprano']
@@ -406,8 +411,6 @@ def test_embedded_synthdef():
     assert ('LFSaw', 4, 1) in graphs['DexterFuzz']
     assert ('Pulse', 2, 2) in graphs['DexterBug']
     assert ('SinOsc', 4, 2) in graphs['DexterRipple']
-    assert ('Vibrato', 9, 1) in graphs['DexterViola']
-    assert graphs['DexterViola'].count(('SinOsc', 4, 2)) == 2
     for ugen_name in (b'\x06SinOsc', b'\x05LFTri', b'\x03Saw', b'\x05Pulse',
                       b'\x06MouseX', b'\x06MouseY', b'\x03LPF', b'\x03Lag',
                       b'DexterBass', b'DexterVarsaw', b'DexterDirt',
@@ -423,9 +426,8 @@ def test_embedded_synthdef():
                       b'DexterCharm', b'DexterSpark', b'DexterBlip',
                       b'LFPulse', b'DexterScatter', b'DexterOrient',
                       b'DexterZap', b'DexterFuzz', b'DexterBug',
-                      b'DexterRipple', b'DexterViola'):
+                      b'DexterRipple'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
-    assert b'PMOsc' not in generated_bytes, 'language-level PMOsc shorthand must be expanded to server UGens'
     generator_text = open(generator, encoding='utf-8').read()
     assert 'ugen("LFSaw", 2, [(1, 0), (-1, 0)], [2])' in generator_text
     assert 'ugen("BinaryOpUGen", 2, [(11, 0), (10, 0)], [2], 0)' in generator_text
@@ -449,7 +451,7 @@ def test_embedded_synthdef():
 test_embedded_synthdef()
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
-assert len(legacy) == 1 and len(legacy[0]) == 22
+assert len(legacy) == 1 and len(legacy[0]) == 23
 fox_literal_rows = run_script('p1 >> saw(P[0, 2, None, (3, 5), 7], dur=0.5, oct=5, sus=0.4)\n')
 assert len(fox_literal_rows) == 1 and fox_literal_rows[0][5] == '5', fox_literal_rows
 assert legacy[0][5] == '2' and legacy[0][6] == '0'
@@ -460,51 +462,51 @@ assert legacy[0][14] == '0.01' and legacy[0][15] == '0.04'
 assert legacy[0][16] == '-' and legacy[0][17] == '-' and legacy[0][18] == '-'
 assert legacy[0][19] == '-' and legacy[0][20] == '-'
 example7 = run_example('07-independent-players.py')
-assert len(example7) == 2 and all(len(row) == 22 for row in example7)
+assert len(example7) == 2 and all(len(row) == 23 for row in example7)
 assert example7[0][5] == '6' and example7[1][5] == '2'
 assert example7[0][6] == '0' and example7[1][6] == '0'
 assert example7[0][10] == '0.0' and example7[0][11] == '0.0'
 example9 = run_example('09-foxdot-core.py')
-assert len(example9) == 2 and all(len(row) == 22 for row in example9)
+assert len(example9) == 2 and all(len(row) == 23 for row in example9)
 foxSaw, foxPulse = example9
 assert foxSaw[1] == '0' and foxSaw[3] == '96.0' and foxSaw[6] == '2'
 assert abs(float(foxSaw[7]) - 0.7) < 1e-6 and abs(float(foxSaw[8]) + 0.35) < 1e-6
 assert foxPulse[1] == '1' and foxPulse[3] == '96.0' and foxPulse[6] == '3'
 assert abs(float(foxPulse[7]) - 0.25) < 1e-6 and abs(float(foxPulse[8]) - 0.35) < 1e-6
 example10Rows = run_example('10-pattern-transformations.py')
-assert len(example10Rows) == 2 and all(len(row) == 22 for row in example10Rows)
+assert len(example10Rows) == 2 and all(len(row) == 23 for row in example10Rows)
 assert example10Rows[0][5] == '7' and example10Rows[0][6] == '2'
 assert example10Rows[1][5] == '4' and example10Rows[1][6] == '3'
 example11Rows = run_example('11-foxdot-pattern-literals.py')
-assert len(example11Rows) == 2 and all(len(row) == 22 for row in example11Rows)
+assert len(example11Rows) == 2 and all(len(row) == 23 for row in example11Rows)
 assert example11Rows[0][5] == '7' and example11Rows[1][5] == '2'
 example12Rows = run_example('12-pattern-arithmetic.py')
-assert len(example12Rows) == 2 and all(len(row) == 22 for row in example12Rows)
+assert len(example12Rows) == 2 and all(len(row) == 23 for row in example12Rows)
 assert example12Rows[0][5] == '5' and example12Rows[1][5] == '5'
 example13Rows = run_example('13-pattern-methods.py')
-assert len(example13Rows) == 5 and all(len(row) == 22 for row in example13Rows)
+assert len(example13Rows) == 5 and all(len(row) == 23 for row in example13Rows)
 assert [row[5] for row in example13Rows] == ['8', '5', '4', '4', '4']
 example14Rows = run_example('14-pattern-composition.py')
-assert len(example14Rows) == 2 and all(len(row) == 22 for row in example14Rows)
+assert len(example14Rows) == 2 and all(len(row) == 23 for row in example14Rows)
 assert [row[5] for row in example14Rows] == ['5', '7']
 example15Rows = run_example('15-pattern-arithmetic-operators.py')
-assert len(example15Rows) == 4 and all(len(row) == 22 for row in example15Rows)
+assert len(example15Rows) == 4 and all(len(row) == 23 for row in example15Rows)
 assert [row[5] for row in example15Rows] == ['4', '2', '4', '4']
 example16Rows = run_example('16-bounded-pattern-slices.py')
-assert len(example16Rows) == 3 and all(len(row) == 22 for row in example16Rows)
+assert len(example16Rows) == 3 and all(len(row) == 23 for row in example16Rows)
 assert [row[5] for row in example16Rows] == ['8', '4', '2']
 example17Rows = run_example('17-live-player-edits.py')
 assert len(example17Rows) == 2 and [row[1] for row in example17Rows] == ['0', '1']
 example18Rows = run_example('18-ui-mouse-controls.py')
-assert len(example18Rows) == 2 and all(len(row) == 22 for row in example18Rows)
+assert len(example18Rows) == 2 and all(len(row) == 23 for row in example18Rows)
 assert example18Rows[0][12] == '1' and example18Rows[0][13] == '0'
 assert example18Rows[1][12] == '0' and example18Rows[1][13] == '1'
 envelopeRows = run_example('19-envelope-controls.py')
-assert len(envelopeRows) == 2 and all(len(row) == 22 for row in envelopeRows)
+assert len(envelopeRows) == 2 and all(len(row) == 23 for row in envelopeRows)
 assert float(envelopeRows[0][14]) == 0.005 and float(envelopeRows[0][15]) == 0.2
 assert float(envelopeRows[1][14]) == 0.04 and float(envelopeRows[1][15]) == 0.1
 timevarRows = run_example('20-timevar-controls.py')
-assert len(timevarRows) == 2 and all(len(row) == 22 for row in timevarRows)
+assert len(timevarRows) == 2 and all(len(row) == 23 for row in timevarRows)
 assert timevarRows[0][16] == 'v:0.15,0.45:4.0,4.0'
 assert timevarRows[1][17] == 'l:-0.8,0.8:8.0,8.0'
 assert timevarRows[1][18] == 'l:400.0,5000.0:8.0,8.0'
@@ -531,7 +533,7 @@ assert abs(float(foxdotDecayRows[0][4]) - 0.4) < 1e-9 and float(foxdotDecayRows[
 _, varDecayRows = run_script('p1 >> saw([0, 2], echo=0.5, decay=var([0.5, 1.5], [1, 1]), delay=linvar([0.1, 0.4], [1, 1]))\n', include_decay=True)
 assert varDecayRows[0][3] == 'v:0.5,1.5:1.0,1.0' and len(varDecayRows[0]) == 9
 assert varDecayRows[0][8] == 'l:0.1,0.4:1.0,1.0'
-assert len(effectRows) == 1 and len(effectRows[0]) == 22 and len(effectEvents) == 4
+assert len(effectRows) == 1 and len(effectRows[0]) == 23 and len(effectEvents) == 4
 assert effectRows[0][19] == 'v:0.1,0.5:1.0,1.0'
 assert effectRows[0][20] == 'l:0.1,0.5:1.0,1.0'
 assert abs(float(effectEvents[0][7]) - 0.0) < 1e-9
@@ -541,7 +543,7 @@ assert abs(float(effectEvents[0][5]) - 0.01) < 1e-9 and abs(float(effectEvents[0
 assert abs(float(effectEvents[1][5]) - 0.01) < 1e-9 and abs(float(effectEvents[1][6]) - 0.06) < 1e-9
 assert abs(float(effectEvents[2][5]) - 0.03) < 1e-9 and abs(float(effectEvents[2][6]) - 0.1) < 1e-9
 effectExample = run_example('22-timevar-effects-envelopes.py')
-assert len(effectExample) == 2 and all(len(row) == 22 for row in effectExample)
+assert len(effectExample) == 2 and all(len(row) == 23 for row in effectExample)
 reverbRows, reverbEffects = run_script(open(os.path.join(sys.argv[2], '23-reverb-algorithms.py'), encoding='utf-8').read(), include_effects=True)
 assert len(reverbRows) == 3 and len(reverbEffects) == 3
 assert [int(row[2]) for row in reverbEffects] == [1, 2, 3]
@@ -549,7 +551,7 @@ assert [float(row[4]) for row in reverbEffects] == [0.65, 0.75, 0.8]
 assert [float(row[7]) for row in reverbEffects] == [15.0, 15.0, 25.0]
 assert all(abs(float(row[3]) - expected) < 1e-6 for row, expected in zip(reverbEffects, [0.2, 0.3, 0.25]))
 filterRows, filterControls = run_script('p1 >> saw([0, 2, 4, 6], lpf=linvar([300, 3000], [2, 2]), lpr=var([0.35, 0.7], [2, 2]), hpf=var([0, 150], [2, 2]), hpr=0.8, bpf=linvar([500, 1200], [2, 2]), bpr=0.5)\n', include_filters=True)
-assert len(filterRows) == 1 and len(filterRows[0]) == 22
+assert len(filterRows) == 1 and len(filterRows[0]) == 23
 assert len(filterControls) == 1 and len(filterControls[0]) == 14
 assert filterControls[0][0:2] == ['F', '0']
 assert filterControls[0][8] == 'l:300.0,3000.0:2.0,2.0'
@@ -582,13 +584,20 @@ assert [round(float(event[7]), 6) for event in strumEvents[14:]] == [0.0, 0.02, 
 assert all(abs(float(event[2]) - 1.75) < 1e-9 for event in strumEvents)
 assert_player_polyphony_ok(strumRows[0], strumEvents[:14])
 assert_player_polyphony_ok(strumRows[1], strumEvents[14:])
-unsafeStrumError = run_error_script('Clock.bpm = 70\nScale.default = Scale.major\nRoot.default.set(\"C\")\np1 >> triangle(P[I, V7, IV, I7], dur=2, sus=1.8, oct=2, strum=0.5, amp=0.32)\np2 >> saw(P[V7, I7, IV7, V7], dur=2, sus=1.8, oct=3, strum=var([0.02, 0.15], 2), amp=0.18, pan=0.25)\n')
-assert unsafeStrumError.startswith('ERROR\n') and 'MIDI pitch' in unsafeStrumError and 'overlaps itself' in unsafeStrumError, unsafeStrumError
+overlapStrumRows, overlapStrumEvents = run_script(
+    'Clock.bpm = 70\nScale.default = Scale.major\nRoot.default.set("C")\n'
+    'p1 >> triangle(P[I, V7, IV, I7], dur=2, sus=1.8, oct=2, strum=0.5, amp=0.32)\n'
+    'p2 >> saw(P[V7, I7, IV7, V7], dur=2, sus=1.8, oct=3, '
+    'strum=var([0.02, 0.15], 2), amp=0.18, pan=0.25)\n',
+    include_events=True)
+assert len(overlapStrumRows) == 2 and len(overlapStrumEvents) == 30
+assert_player_polyphony_ok(overlapStrumRows[0], overlapStrumEvents[:14])
+assert_player_polyphony_ok(overlapStrumRows[1], overlapStrumEvents[14:])
 parse_start = source.find('bool parseResult(')
 parse_end = source.find('\n}', parse_start)
 parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
-assert 'update.synthRate' in parse_source and 'update.synthIndex > 31' in parse_source
+assert 'update.synthRate' in parse_source and 'kEmbeddedSynthCount + userSynthCount' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
@@ -602,12 +611,8 @@ assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
 namespace['_dexter_events'] = []
 namespace['_dexter_length'] = 1.0
 namespace['_dexter_slots'] = 0
-try:
-    namespace['play']([(60, 64), (64, 67)], step=1, duration=1, strum=0.2)
-except ValueError as error:
-    assert 'MIDI pitch 64 overlaps itself' in str(error) and 'adjust strum/delay' in str(error)
-else:
-    raise AssertionError('the pattern API must report repeated-pitch strum overlap clearly')
+namespace['play']([(60, 64), (64, 67)], step=1, duration=1, strum=0.2)
+assert len(namespace['_dexter_events']) == 4, 'same-pitch sustained overlaps are valid voices'
 assert len(filterExampleRows) == 3 and [row[1] for row in filterExampleRows] == ['0', '1', '2']
 assert len(filterExampleControls) == 3 and all(len(row) == 14 for row in filterExampleControls)
 assert [row[1] for row in filterExampleControls] == ['0', '1', '2']
@@ -621,7 +626,7 @@ assert 'No unsupported constructs detected' in run_compatibility_check(example30
 mutedExampleRows, mutedExampleCommands = run_script(example30Muted, include_mutes=True)
 assert len(mutedExampleRows) == 2 and mutedExampleCommands == [['M', '1', '1']]
 example8 = run_example('08-synths-and-controls.py')
-assert len(example8) == 2 and all(len(row) == 22 for row in example8)
+assert len(example8) == 2 and all(len(row) == 23 for row in example8)
 p1, p2 = example8
 assert p1[1] == '0' and p1[6] == '1' and abs(float(p1[7]) - 0.7) < 1e-6
 assert abs(float(p1[8]) + 0.4) < 1e-6 and p1[9] == '5000.0'
@@ -674,25 +679,30 @@ example41Rows = run_example('41-blip-oscillator.py')
 assert [int(row[6]) for row in example41Rows] == [24, 22]
 example42Rows = run_example('42-self-contained-ugens.py')
 assert [int(row[6]) for row in example42Rows] == [25, 26, 27, 28, 29, 30]
-example43Rows = run_example('43-foxdot-viola.py')
-assert [int(row[6]) for row in example43Rows] == [31, 0]
-assert [float(row[21]) for row in example43Rows] == [6.0, 0.0]
-assert 'No unsupported constructs detected' in run_compatibility_check(
-    'p1 >> viola([0, 2, 4], vib=6)\n')
 assert namespace['bug']([0]).synthRate == 1.0
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
+loadedUserSynthReport = run_compatibility_check(
+    'p1 >> userSynth("CustomPluck", P[0, 2, 4], dur=0.5, amp=0.3)\n',
+    ('CustomPluck',))
+assert 'No unsupported constructs detected' in loadedUserSynthReport, loadedUserSynthReport
+missingUserSynthReport = run_compatibility_check(
+    'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
+assert 'not present in Portable/SynthDefs' in missingUserSynthReport
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
-for phrase in ('Line 1:', 'Line 2:', 'Line 4:', 'Line 5:', 'Sample-string', 'String sample patterns', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
+for phrase in ('Line 1:', 'Line 2:', 'Line 3:', 'Line 5:', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
 for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
-        example_report = run_compatibility_check(open(os.path.join(sys.argv[2], filename), encoding='utf-8').read())
+        example_names = ('CustomPluck',) if filename == '94-user-synthdef-loader.py' else ()
+        example_report = run_compatibility_check(
+            open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
+            example_names)
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, and Examples 01-43.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Examples 01-42, and user SynthDef Example 94.')
