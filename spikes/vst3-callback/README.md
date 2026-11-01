@@ -1,5 +1,14 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.86 adds FoxDot-style player groups: `Group(p1, p2)` broadcasts
+supported sound/effect controls and `.stop()`, `.mute()`, `.unmute()`,
+`.solo()`, `.only()`, and bounded scheduling to its members. `Master()` selects
+currently active players, and `p_all` contains all eight slots. Group controls
+can be assigned before or after player patterns, including `var()` and
+`linvar()` controls. The first scope intentionally excludes structural controls
+such as degree, duration, octave, scale, and root. Portable Example 115
+demonstrates the feature.
+
 Version 0.4.85 adds FoxDot-style `cycle=` phase offsets and `ident=` schedule
 keys to `.every()`, `.often()`, `.sometimes()`, and `.rarely()`. Different
 identifiers let the same operation run as independent schedules; repeating a

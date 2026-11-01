@@ -535,7 +535,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, user_synth_names=()):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -561,6 +561,9 @@ def run_script(script_text, include_events=False, include_effects=False, include
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
         mute_rows = [line.split('\t') for line in lines if line.startswith('M\t')]
+        if include_group_controls:
+            return (player_rows, effect_rows, filter_rows, decay_rows,
+                    modulation_rows)
         if include_sample_controls:
             return (player_rows, [line.split('\t') for line in lines if line.startswith('B\t')],
                     [line.split('\t') for line in lines if line.startswith('Q\t')])
@@ -2096,6 +2099,119 @@ assert 'beyond the 256-event limit' in run_error_script(
 assert 'Circular player degree reference' in run_error_script(
     'p1 >> sine([0, 2], dur=0.5)\np2 >> bass([2, 4], dur=0.5)\n'
     'p1.follow(p2)\np2.follow(p1)\n')
+
+groupExampleText = open(
+    os.path.join(sys.argv[2], '115-player-groups.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    groupExampleText)
+groupRows, groupEvents = run_script(
+    groupExampleText, include_events=True)
+assert len(groupRows) == 3 and len(groupEvents) <= 256
+assert all(abs(float(groupRows[index][7]) - 0.22) < 1e-9
+           for index in (0, 1))
+assert abs(float(groupRows[0][9]) - 800.0) < 1e-9
+assert abs(float(groupRows[1][9]) - 800.0) < 1e-9
+assert groupRows[2][7] == '0.4'
+
+groupSetAfterRun = run_script(
+    'p1 >> sine([0, 2, 4, 6], amp=0.8)\n'
+    'p2 >> triangle([1, 3, 5, 7], amp=0.7)\n'
+    'pair = Group(p1, p2)\n'
+    'pair.amp = 0.3\n'
+    'pair.pan = -0.25\n'
+    'pair.reverb = "none"\n')
+assert len(groupSetAfterRun) == 2
+assert all(abs(float(row[7]) - 0.3) < 1e-9 for row in groupSetAfterRun)
+assert all(abs(float(row[8]) + 0.25) < 1e-9 for row in groupSetAfterRun)
+assert all(abs(float(row[9]) - 20000.0) < 1e-9 for row in groupSetAfterRun)
+
+groupSetBeforeRun = run_script(
+    'pair = Group(p1, p2)\n'
+    'pair.cutoff = 1250\n'
+    'p1 >> sine([0, 2], cutoff=700)\n'
+    'p2 >> bass([0, 3], cutoff=900)\n')
+assert len(groupSetBeforeRun) == 2
+assert all(abs(float(row[9]) - 1250.0) < 1e-9
+           for row in groupSetBeforeRun)
+
+allGroupControls = (
+    'pair = Group(p1, p2)\n'
+    'pair.amp = 0.3\npair.pan = -0.2\npair.cutoff = 1500\n'
+    'pair.echo = 0.25\npair.delaytime = 0.2\n'
+    'pair.atk = 0.02\npair.rel = 0.18\npair.reverb = "gverb"\n'
+    'pair.room = 0.6\npair.mix = 0.25\npair.damp = 0.4\n'
+    'pair.revtime = 2.5\npair.spread = 30\n'
+    'pair.lpf = 1200\npair.lpr = 0.75\npair.hpf = 60\n'
+    'pair.hpr = 0.8\npair.bpf = 700\npair.bpr = 0.65\n'
+    'pair.decay = 2\npair.echomix = 0.4\npair.feedback = 0.5\n'
+    'pair.bpnoise = 0.2\npair.swell = 0.3\n'
+    'p1 >> sine([0, 2], dur=1)\n'
+    'p2 >> triangle([1, 3], dur=1)\n')
+allGroupRows, allGroupEffects, allGroupFilters, allGroupDecay, allGroupMod = (
+    run_script(allGroupControls, include_group_controls=True))
+assert len(allGroupRows) == 2
+assert all(abs(float(row[7]) - 0.3) < 1e-9 for row in allGroupRows)
+assert all(abs(float(row[8]) + 0.2) < 1e-9 for row in allGroupRows)
+assert all(abs(float(row[9]) - 1500.0) < 1e-9 for row in allGroupRows)
+assert all(abs(float(row[10]) - 0.25) < 1e-9 for row in allGroupRows)
+assert all(abs(float(row[11]) - 0.2) < 1e-9 for row in allGroupRows)
+assert len(allGroupEffects) == 2 and all(row[2] == '3' for row in allGroupEffects)
+assert all([float(value) for value in row[3:8]] ==
+           [0.25, 0.6, 0.4, 2.5, 30.0] for row in allGroupEffects)
+assert len(allGroupFilters) == 2
+assert all([float(value) for value in row[2:8]] ==
+           [1200.0, 0.75, 60.0, 0.8, 700.0, 0.65]
+           for row in allGroupFilters)
+assert len(allGroupDecay) == 2
+assert all([float(row[index]) for index in (2, 4, 6)] ==
+           [2.0, 0.4, 0.5] for row in allGroupDecay)
+assert len(allGroupMod) == 2
+assert all([float(value) for value in row[2:4]] == [0.2, 0.3]
+           for row in allGroupMod)
+
+groupScheduleRows, groupScheduleEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p2 >> triangle([3, 2, 1, 0], dur=0.5)\n'
+    'pair = Group(p1, p2)\n'
+    'pair.every(1, "reverse", cycle=4, ident="shared")\n',
+    include_events=True)
+assert len(groupScheduleRows) == 2 and len(groupScheduleEvents) == 32
+assert [event[1] for event in groupScheduleEvents[:16]] == [
+    event[1] for event in groupScheduleEvents[16:]]
+
+groupStopRows = run_script(
+    'p1 >> sine([0, 2])\np2 >> triangle([1, 3])\np3 >> bass([0, 4])\n'
+    'Group(p1, p2).stop()\n')
+assert [row[2] for row in groupStopRows] == ['1', '1', '0']
+
+groupOnlyRows = run_script(
+    'p1 >> sine([0, 2])\np2 >> triangle([1, 3])\np3 >> bass([0, 4])\n'
+    'Group(p1, p2).only()\n')
+assert [row[2] for row in groupOnlyRows] == [
+    '0', '0', '1']
+
+groupSoloRows, groupSoloMutes = run_script(
+    'p1 >> sine([0])\np2 >> triangle([0])\np3 >> bass([0])\n'
+    'Group(p1, p2).solo()\n', include_mutes=True)
+assert len(groupSoloRows) == 3 and len(groupSoloMutes) == 8
+assert [int(row[2]) for row in groupSoloMutes] == [
+    0, 0, 1, 1, 1, 1, 1, 1]
+
+masterRows = run_script(
+    'p1 >> sine([0], amp=0.8)\np2 >> triangle([0], amp=0.7)\n'
+    'p2.stop()\nMaster().amp = 0.25\n')
+assert len(masterRows) == 2
+assert abs(float(masterRows[0][7]) - 0.25) < 1e-9
+assert masterRows[1][2] == '1'
+
+assert 'Group accepts zero to eight distinct players' in run_compatibility_check(
+    'Group(p1, p1)\n')
+assert 'Unsupported Group attribute' in run_compatibility_check(
+    'pair = Group(p1, p2)\npair.not_a_control = 1\n')
+assert 'Group.add accepts one player name' in run_compatibility_check(
+    'pair = Group(p1)\npair.add(p9)\n')
+
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 114, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 115, and user SynthDef examples 94, 103, 104, and 105.')

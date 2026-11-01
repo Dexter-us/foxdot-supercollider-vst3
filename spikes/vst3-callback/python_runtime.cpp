@@ -125,7 +125,7 @@ _COMPAT_CALLS = {
     'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
     'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
     'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
-    'Player', 'PlayerPattern', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
+    'Player', 'PlayerPattern', 'Group', 'Master', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
     '__build_class__'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
@@ -173,6 +173,15 @@ _COMPAT_SCALE_NAMES = {
     'lydian_dom', 'lydianDom', 'mel_min5th', 'melMin5th', 'half_dim',
     'halfDim', 'altered'
 }
+_COMPAT_GROUP_CONTROLS = {
+    'amp', 'pan', 'cutoff', 'echo', 'delaytime', 'atk', 'rel', 'reverb',
+    'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf',
+    'hpr', 'bpf', 'bpr', 'decay', 'echomix', 'feedback', 'bpnoise', 'swell'
+}
+_COMPAT_GROUP_METHODS = {
+    'add', 'stop', 'mute', 'unmute', 'solo', 'only',
+    'every', 'often', 'sometimes', 'rarely'
+}
 
 def _compat_validate_play_string(text):
     pairs = {'[':']', '(' :')', '{':'}', '<':'>'}
@@ -212,6 +221,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.diagnostics = []
         self._seen = set()
         self.defined = set()
+        self.group_names = {'p_all'}
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 self.defined.add(node.name)
@@ -224,6 +234,17 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         self.defined.add(node.args.kwarg.arg)
             elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                 self.defined.add(node.id)
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and
+                    isinstance(node.value.func, ast.Name) and
+                    node.value.func.id in {'Group', 'Master'}):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        self.group_names.add(target.id)
+
+    def _is_group_expression(self, node):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            return node.func.id in {'Group', 'Master'}
+        return isinstance(node, ast.Name) and node.id in self.group_names
 
     def add(self, line, message):
         item = (int(line or 1), message)
@@ -302,6 +323,41 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = node.func.id if isinstance(node.func, ast.Name) else None
+        if name == 'Group':
+            playerNames = [
+                argument.id for argument in node.args
+                if isinstance(argument, ast.Name)]
+            validPlayers = (
+                0 <= len(node.args) <= 8 and not node.keywords and
+                len(playerNames) == len(node.args) and
+                len(set(playerNames)) == len(playerNames) and
+                all(re.fullmatch(r'p[1-8]', playerName)
+                    for playerName in playerNames))
+            if not validPlayers:
+                self.add(node.lineno,
+                         'Group accepts zero to eight distinct players named p1 through p8.')
+        if name == 'Master' and (node.args or node.keywords):
+            self.add(node.lineno, 'Master() takes no arguments in the embedded API.')
+        if (isinstance(node.func, ast.Attribute) and
+                self._is_group_expression(node.func.value)):
+            method = node.func.attr
+            if method not in _COMPAT_GROUP_METHODS and method not in _COMPAT_GROUP_CONTROLS:
+                self.add(node.lineno, 'Group supports shared sound controls, add(), stop(), mute(), unmute(), solo(), only(), and bounded player scheduling.')
+            elif method in _COMPAT_GROUP_CONTROLS:
+                self.add(node.lineno, 'Group controls are assigned as attributes, e.g. group.amp = 0.5.')
+            elif method in {'stop', 'mute', 'unmute', 'only'} and (
+                    node.args or node.keywords):
+                self.add(node.lineno, 'Group.' + method + '() takes no arguments.')
+            elif method == 'solo' and (
+                    len(node.args) > 1 or node.keywords or
+                    (node.args and not isinstance(node.args[0], ast.Constant)) or
+                    (node.args and not isinstance(node.args[0].value, bool))):
+                self.add(node.lineno, 'Group.solo accepts only an optional literal True or False.')
+            elif method == 'add' and (
+                    len(node.args) != 1 or node.keywords or
+                    not isinstance(node.args[0], ast.Name) or
+                    not re.fullmatch(r'p[1-8]', node.args[0].id)):
+                self.add(node.lineno, 'Group.add accepts one player name from p1 through p8.')
         if name == 'userSynth':
             if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
                 self.add(node.lineno, 'userSynth requires the literal name of a loaded .scsyndef, for example userSynth(\"MyPluck\", notes).')
@@ -397,9 +453,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             elif node.args[0].id == node.func.value.id:
                 self.add(node.lineno, 'A player cannot follow itself.')
         if (isinstance(node.func, ast.Attribute) and
-                isinstance(node.func.value, ast.Name) and
-                node.func.value.id in {'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'} and
-                node.func.attr in {'every', 'often', 'sometimes', 'rarely'}):
+                node.func.attr in {'every', 'often', 'sometimes', 'rarely'} and
+                ((isinstance(node.func.value, ast.Name) and
+                  node.func.value.id in {
+                      'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'}) or
+                 self._is_group_expression(node.func.value))):
             validCount = (2 <= len(node.args) <= 3 if node.func.attr == 'every'
                           else 1 <= len(node.args) <= 2)
             commandIndex = 1 if node.func.attr == 'every' else 0
@@ -510,6 +568,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
+        if self._is_group_expression(node.value):
+            if (node.attr not in _COMPAT_GROUP_CONTROLS and
+                    node.attr not in _COMPAT_GROUP_METHODS):
+                self.add(node.lineno, 'Unsupported Group attribute "' +
+                         node.attr + '".')
         if isinstance(node.value, ast.Name) and node.value.id in {'DiskIn', 'VDiskIn', 'DiskOut'}:
             allowed = {'record', 'stop'} if node.value.id == 'DiskOut' else {'play', 'stop'}
             if node.attr not in allowed:
@@ -536,6 +599,10 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Assign(self, node):
         for target in node.targets:
+            if (isinstance(target, ast.Attribute) and
+                    self._is_group_expression(target.value) and
+                    target.attr not in _COMPAT_GROUP_CONTROLS):
+                self.add(target.lineno, 'Group assignments support only shared sound and effect controls.')
             if (isinstance(target, ast.Attribute) and
                     isinstance(target.value, ast.Name) and
                     re.fullmatch(r'p[0-9]+', target.value.id)):
@@ -2845,10 +2912,107 @@ def play(notes, *args, **kwargs):
         return _sample_pattern(notes, *args, **kwargs)
     return _play_notes(notes, *args, **kwargs)
 
+_GROUP_PATTERN_FIELDS = {
+    'amp': 'amp', 'pan': 'pan', 'cutoff': 'cutoff',
+    'echo': 'echoBeats', 'delaytime': 'delayTimeSeconds',
+    'atk': 'attackSeconds', 'rel': 'releaseSeconds',
+    'reverb': 'reverb', 'room': 'room', 'mix': 'mix', 'damp': 'damp',
+    'revtime': 'revtime', 'spread': 'spread', 'lpf': 'lpfHz',
+    'lpr': 'lpr', 'hpf': 'hpfHz', 'hpr': 'hpr', 'bpf': 'bpfHz',
+    'bpr': 'bpr', 'decay': 'echoDecayBeats', 'echomix': 'echoMix',
+    'feedback': 'feedback', 'bpnoise': 'bpnoise', 'swell': 'swell'
+}
+
+def _set_group_pattern_control(pattern, name, value):
+    if name == 'amp':
+        pattern.amp, pattern.ampControl = _control_value(value, 'amp', 0.0, 1.0)
+    elif name == 'pan':
+        pattern.pan, pattern.panControl = _control_value(value, 'pan', -1.0, 1.0)
+        pattern.mousePan = False
+    elif name == 'cutoff':
+        pattern.cutoff, pattern.cutoffControl = _control_value(
+            value, 'cutoff', 20.0, 20000.0)
+        pattern.mouseCutoff = False
+    elif name == 'echo':
+        pattern.echoBeats, pattern.echoControl = _control_value(
+            value, 'echo', 0.0, 64.0)
+    elif name == 'delaytime':
+        pattern.delayTimeSeconds, pattern.delayTimeControl = _control_value(
+            value, 'delaytime', 0.0, 4.0)
+    elif name == 'atk':
+        pattern.attackSeconds, pattern.attackControl = _event_control(
+            value, 'atk', 0.0, 3.0)
+    elif name == 'rel':
+        pattern.releaseSeconds, pattern.releaseControl = _event_control(
+            value, 'rel', 0.0, 3.0)
+    elif name == 'reverb':
+        if value not in ('freeverb', 'freeverb2', 'gverb', 'none'):
+            raise ValueError('reverb must be freeverb, freeverb2, gverb, or none')
+        pattern.reverb = value
+        pattern.reverbIndex = ('none', 'freeverb', 'freeverb2', 'gverb').index(value)
+    elif name in ('room', 'mix', 'damp'):
+        result = float(value)
+        if result != result or not 0.0 <= result <= 1.0:
+            raise ValueError(name + ' must be between 0 and 1')
+        if name == 'room':
+            pattern.room = result
+        elif name == 'mix':
+            pattern.mix = result
+        else:
+            pattern.damp = result
+    elif name == 'revtime':
+        result = float(value)
+        if result != result or not 0.1 <= result <= 10.0:
+            raise ValueError('revtime must be between 0.1 and 10 seconds')
+        pattern.revtime = result
+    elif name == 'spread':
+        result = float(value)
+        if result != result or not 0.0 <= result <= 100.0:
+            raise ValueError('spread must be between 0 and 100')
+        pattern.spread = result
+    elif name in ('lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr'):
+        lower, upper = ((0.05, 1.0) if name in ('lpr', 'hpr', 'bpr')
+                        else (0.0, 20000.0))
+        normalized, control = _event_control(value, name, lower, upper)
+        if name == 'lpf':
+            pattern.lpfHz, pattern.lpfControl = normalized, control
+        elif name == 'lpr':
+            pattern.lpr, pattern.lprControl = normalized, control
+        elif name == 'hpf':
+            pattern.hpfHz, pattern.hpfControl = normalized, control
+        elif name == 'hpr':
+            pattern.hpr, pattern.hprControl = normalized, control
+        elif name == 'bpf':
+            pattern.bpfHz, pattern.bpfControl = normalized, control
+        else:
+            pattern.bpr, pattern.bprControl = normalized, control
+    elif name == 'decay':
+        pattern.echoDecayBeats, pattern.echoDecayControl = _event_control(
+            value, 'decay', 0.0, 64.0)
+    elif name == 'echomix':
+        pattern.echoMix, pattern.echoMixControl = _control_value(
+            value, 'echomix', 0.0, 1.0)
+    elif name == 'feedback':
+        if value is None:
+            pattern.feedback, pattern.feedbackControl = -1.0, None
+        else:
+            pattern.feedback, pattern.feedbackControl = _control_value(
+                value, 'feedback', 0.0, 0.95)
+    elif name == 'bpnoise':
+        pattern.bpnoise, pattern.bpnoiseControl = _event_control(
+            value, 'bpnoise', 0.0, 10.0)
+    elif name == 'swell':
+        pattern.swell, pattern.swellControl = _event_control(
+            value, 'swell', 0.0, 4.0)
+    else:
+        raise AttributeError('unsupported shared player control ' + name)
+
 class Player:
     def __init__(self, number):
         self.number = number
         self._currentPattern = None
+        self._active = False
+        self._groupOverrides = {}
         self._follows = None
         self._followers = []
         self._applyingFollow = False
@@ -2876,6 +3040,13 @@ class Player:
         global _dexter_sample_controls
         if not isinstance(pattern, PlayerPattern):
             raise TypeError('assign sequence(...) to a player using >>')
+        if self._groupOverrides:
+            copiedPattern = PlayerPattern.__new__(PlayerPattern)
+            copiedPattern.__dict__ = dict(pattern.__dict__)
+            for controlName, controlValue in self._groupOverrides.items():
+                _set_group_pattern_control(
+                    copiedPattern, controlName, controlValue)
+            pattern = copiedPattern
         saved = (_dexter_events, _dexter_length, _dexter_slots,
                  _dexter_default_touched, _dexter_scale, _dexter_root)
         _dexter_events = []
@@ -3014,6 +3185,7 @@ class Player:
         if self._follows is not None and not self._applyingFollow:
             self._copy_followed_degree(self._follows)
         self._refresh_followers()
+        self._active = True
         return self
 
     def _apply_sample_stutter(self, operations):
@@ -3882,6 +4054,8 @@ class Player:
         _dexter_effect_control_variables[self.number - 1] = ('-', '-', '-', '-', '-', '-', '-')
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
                                              0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, _dexter_swing_seconds)
+        self._active = False
+        return self
 
     def mute(self):
         _dexter_mutes[self.number - 1] = True
@@ -3899,6 +4073,113 @@ p5 = Player(5)
 p6 = Player(6)
 p7 = Player(7)
 p8 = Player(8)
+
+_DEXTER_PLAYERS = (p1, p2, p3, p4, p5, p6, p7, p8)
+
+class Group:
+    def __init__(self, *players):
+        if len(players) > 8:
+            raise ValueError('Group is limited to eight players.')
+        if any(not isinstance(player, Player) or
+               not 1 <= player.number <= 8 for player in players):
+            raise TypeError('Group accepts only players p1 through p8.')
+        if len(set(player.number for player in players)) != len(players):
+            raise ValueError('Group cannot contain the same player twice.')
+        self.__dict__['players'] = list(players)
+
+    def __len__(self):
+        return len(self.players)
+
+    def __iter__(self):
+        return iter(self.players)
+
+    def __getattr__(self, name):
+        if name in _GROUP_PATTERN_FIELDS:
+            fieldName = _GROUP_PATTERN_FIELDS[name]
+            return [
+                None if player._currentPattern is None else
+                player._currentPattern.__dict__.get(fieldName)
+                for player in self.players
+            ]
+        raise AttributeError('unsupported Group attribute ' + name)
+
+    def __setattr__(self, name, value):
+        if name not in _GROUP_PATTERN_FIELDS:
+            raise AttributeError('Group assignments support only shared sound and effect controls.')
+        for player in self.players:
+            player._groupOverrides[name] = value
+            if player._currentPattern is not None:
+                player.__rshift__(player._currentPattern)
+        return self
+
+    def add(self, player):
+        if not isinstance(player, Player) or not 1 <= player.number <= 8:
+            raise TypeError('Group.add accepts only a player from p1 through p8.')
+        if player.number in [item.number for item in self.players]:
+            raise ValueError('Group already contains that player.')
+        if len(self.players) >= 8:
+            raise ValueError('Group is limited to eight players.')
+        self.players.append(player)
+        return self
+
+    def stop(self):
+        for player in self.players:
+            player.stop()
+        return self
+
+    def mute(self):
+        for player in self.players:
+            player.mute()
+        return self
+
+    def unmute(self):
+        for player in self.players:
+            player.unmute()
+        return self
+
+    def solo(self, enabled=True):
+        if not isinstance(enabled, bool):
+            raise TypeError('Group.solo accepts a boolean.')
+        selected = set(player.number - 1 for player in self.players)
+        for index in range(8):
+            _dexter_mutes[index] = bool(enabled and index not in selected)
+        return self
+
+    def only(self):
+        selected = set(player.number for player in self.players)
+        for player in _DEXTER_PLAYERS:
+            if player.number not in selected and player._active:
+                player.stop()
+        return self
+
+    def _schedule(self, method, *args, **kwargs):
+        for player in self.players:
+            if method == 'every':
+                player.every(*args, **kwargs)
+            elif method == 'often':
+                player.often(*args, **kwargs)
+            elif method == 'sometimes':
+                player.sometimes(*args, **kwargs)
+            elif method == 'rarely':
+                player.rarely(*args, **kwargs)
+        return self
+
+    def every(self, *args, **kwargs):
+        return self._schedule('every', *args, **kwargs)
+
+    def often(self, *args, **kwargs):
+        return self._schedule('often', *args, **kwargs)
+
+    def sometimes(self, *args, **kwargs):
+        return self._schedule('sometimes', *args, **kwargs)
+
+    def rarely(self, *args, **kwargs):
+        return self._schedule('rarely', *args, **kwargs)
+
+def Master():
+    return Group(*(player for player in _DEXTER_PLAYERS if player._active))
+
+p_all = Group(*_DEXTER_PLAYERS)
 
 class _PlayerDegreeReference:
     def __init__(self, player):
