@@ -2729,8 +2729,28 @@ private:
                 return false;
             }
             if (userDefinition.persistentPlayerEffect) {
+                // These two bundled SynthDefs have a deliberately fixed,
+                // regression-tested positional ABI. Resolve their control
+                // indices from that ABI rather than GraphDef's named-parameter
+                // lookup: some embedded SC builds omit the longer names from
+                // mParamSpecs even though the serialized SynthDef contains them.
+                const bool isTapeDelay =
+                    userDefinition.name == "AirwindowsTapeDelay2";
+                const uint32 expectedControlCount = isTapeDelay ? 8u : 6u;
+                if (loaded->mNumControls != expectedControlCount) {
+                    error = synthFile.path.filename().string() +
+                            " has an incompatible Airwindows control layout (expected " +
+                            std::to_string(expectedControlCount) + " controls).";
+                    return false;
+                }
+                userDefinition.outControl = 0;
+                userDefinition.inputBusControl = 1;
+                userDefinition.effectControlIndices =
+                    isTapeDelay
+                    ? std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}
+                    : std::array<int, 7>{{2, 3, 4, -1, -1, -1, 5}};
                 const std::array<bool, 7> requiredEffectControls =
-                    userDefinition.name == "AirwindowsTapeDelay2"
+                    isTapeDelay
                     ? std::array<bool, 7>{{true, true, true, true, true, false, true}}
                     : std::array<bool, 7>{{true, true, true, false, false, false, true}};
                 bool missingRequiredEffectControl = false;
@@ -3581,7 +3601,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-       "0.4.72",
+        "0.4.73",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

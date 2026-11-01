@@ -1,9 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.72 adds persistent per-player stereo inserts for the Airwindows
-TapeDelay2 and Echojam UGens. Install the matching Airwindows pack before using
-Examples 95–98. Each player's notes/chords share one effect state, so delay
-tails continue between events and the buffers are not allocated per note.
+Version 0.4.73 fixes startup validation for the bundled Airwindows persistent
+effects. Their checked-in SynthDefs use a fixed, tested control-index layout.
+Version 0.4.72 added persistent per-player stereo inserts for TapeDelay2 and
+Echojam. Install the matching Airwindows pack before Examples 95–98; each
+player's notes/chords share one effect state, so delay tails continue between
+events and buffers are not allocated per note.
 
 Version 0.4.71 adds external precompiled SynthDef loading. Put one
 name-matched `.scsyndef` file per synth in `SynthDefs`; the included

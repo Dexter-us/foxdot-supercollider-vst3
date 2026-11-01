@@ -1,11 +1,12 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.72 adds persistent per-player stereo Airwindows TapeDelay2 and
-Echojam inserts. Note voices are summed before the insert, so the original
-delay state carries across notes/chords and is no longer allocated per voice.
-Install the matching Airwindows UGen pack; its SynthDefs now use stereo `inbus`
-and `out` controls. The VST does not rebuild or bundle the separate Airwindows
-module in its installer. Version 0.4.71 adds runtime loading of one precompiled SuperCollider `.scsyndef`
+Version 0.4.73 fixes the Airwindows persistent SynthDef startup rejection by
+using their tested fixed control-index ABI instead of relying on runtime name
+lookup. Version 0.4.72 added per-player stereo TapeDelay2 and Echojam inserts.
+Note voices are summed before the insert, so delay state carries across
+notes/chords and is not allocated per voice. Install the matching Airwindows
+UGen pack; its SynthDefs use stereo `inbus` and `out` controls. The VST does not
+rebuild or bundle the separate Airwindows module in its installer. Version 0.4.71 adds runtime loading of one precompiled SuperCollider `.scsyndef`
 per file from `Portable/SynthDefs`, with filename/name checks and named control
 mapping for `out`, `freq`, `amp`, `pan`, `gate`, `atk`, `rel`, and `sus`/
 `sustain`. The editor exposes `userSynth("Name", notes, ...)`; it runs inside

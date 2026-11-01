@@ -12,6 +12,18 @@ if len(sys.argv) != 3:
 source = open(sys.argv[1], encoding='utf-8').read()
 processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
 processor_source = open(processor_path, encoding='utf-8').read()
+for airwindows_layout_fragment in (
+    'const uint32 expectedControlCount = isTapeDelay ? 8u : 6u;',
+    'userDefinition.outControl = 0;',
+    'userDefinition.inputBusControl = 1;',
+    'std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}',
+    'std::array<int, 7>{{2, 3, 4, -1, -1, -1, 5}}',
+):
+    if airwindows_layout_fragment not in processor_source:
+        raise AssertionError(
+            'Persistent Airwindows control ABI is missing or out of sync: ' +
+            airwindows_layout_fragment
+        )
 start_marker = 'static constexpr char api[] = R"PY(' + chr(10)
 end_marker = ')PY";'
 start = source.find(start_marker)
