@@ -1904,6 +1904,21 @@ defaultStutterRows, defaultStutterEvents = run_script(
     'p1.every(1, "stutter")\n',
     include_events=True)
 assert len(defaultStutterRows) == 1 and len(defaultStutterEvents) == 6
+stackedRows, stackedEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5, sus=0.4)\n'
+    'p1.every(1, "stutter", 3)\np1.every(2, "reverse")\n',
+    include_events=True)
+assert len(stackedRows) == 1 and len(stackedEvents) <= 256
+assert_player_polyphony_ok(stackedRows[0], stackedEvents)
+singleUpdatedRows, singleUpdatedEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\np1.every(1, "reverse")\n',
+    include_events=True)
+replacedScheduleRows, replacedScheduleEvents = run_script(
+    'p1 >> sine([0, 1, 2, 3], dur=0.5)\n'
+    'p1.every(2, "reverse")\np1.every(1, "reverse")\n',
+    include_events=True)
+assert replacedScheduleRows == singleUpdatedRows
+assert replacedScheduleEvents == singleUpdatedEvents
 sampleStutterRows, sampleStutterRequests, sampleStutterEvents = run_script(
     'p1 >> play("x-o-", dur=0.5, sample=0, amp=0.3)\n'
     'p1.every(1, "stutter", 3)\n',
@@ -1955,11 +1970,26 @@ assert drumStutterRows[0][5] == '8'
 assert [int(row[1]) for row in drumStutterRequests].count(120) == 3
 assert [int(row[1]) for row in drumStutterRequests].count(111) == 3
 assert len(drumStutterEvents) == 8
+stackedScheduleText = open(
+    os.path.join(sys.argv[2], '113-stacked-player-schedules.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    stackedScheduleText)
+stackedScheduleRows, stackedScheduleEvents = run_script(
+    stackedScheduleText, include_events=True)
+assert len(stackedScheduleRows) == 1
+assert 4 <= len(stackedScheduleEvents) <= 256
+assert_player_polyphony_ok(stackedScheduleRows[0], stackedScheduleEvents)
 for scheduleSeed in range(16):
     seededDrumRows, seededDrumRequests, seededDrumEvents = (
         run_script_with_schedule_seed(
             drumStutterText, scheduleSeed, include_samples=True))
     assert len(seededDrumRequests) == len(seededDrumEvents) <= 256
+for scheduleSeed in range(16):
+    seededStackRows, seededStackEvents = run_script_with_schedule_seed(
+        stackedScheduleText, scheduleSeed)
+    assert len(seededStackRows) == 1
+    assert 4 <= len(seededStackEvents) <= 256
 sampleOftenStutter = (
     'p1 >> play("x-o-", dur=0.5, sample=0)\n'
     'p1.often("stutter", 3)\n')
@@ -1980,9 +2010,9 @@ assert 'Scheduled transforms and degree-follow relationships cannot be combined'
     'p1 >> sine([0, 2, 4, 6], dur=0.5)\n'
     'p2 >> bass([0, 2, 4, 6], dur=0.5)\n'
     'p2.follow(p1)\np2.every(2, "reverse")\n')
-assert 'Only one scheduled player operation' in run_error_script(
-    'p1 >> sine([0, 2, 4, 6], dur=0.5)\n'
-    'p1.every(2, "reverse")\np1.often("shuffle")\n')
+assert 'Sample players currently support one scheduled stutter' in run_error_script(
+    'p1 >> play("x-o-", dur=0.5)\n'
+    'p1.every(1, "stutter", 2)\np1.every(2, "shuffle")\n')
 assert 'cannot follow itself' in run_compatibility_check(
     'p1 >> sine([0, 2], dur=0.5)\np1.follow(p1)\n')
 assert 'degree assignment supports only' in run_compatibility_check(
@@ -2002,4 +2032,4 @@ assert 'Circular player degree reference' in run_error_script(
     'p1.follow(p2)\np2.follow(p1)\n')
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded .every()/.often()/.sometimes()/.rarely() transforms, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 112, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, player degree references, bounded and stacked .every()/.often()/.sometimes()/.rarely() transforms, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 113, and user SynthDef examples 94, 103, 104, and 105.')

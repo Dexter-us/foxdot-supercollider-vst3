@@ -1,5 +1,13 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.84 lets numeric players combine distinct scheduled operations, e.g.
+`.often("shuffle")` with `.every(1, "stutter", 3)`. Repeating the same operation
+updates its schedule, as in FoxDot's default behavior. FoxDot's optional `ident`
+and `cycle` arguments are not implemented. The supported operations are
+`reverse`, `rotate`, `shuffle`, and `stutter`, with at most 256 scheduled calls
+and 256 output events. Sample players still support one scheduled stutter only.
+See Example 113.
+
 Version 0.4.83 adds scheduled stutter for WAV drum hits; it repeats hits only
 when the scheduled beat matches an onset, and skips rests. Retriggers preserve
 the chosen sample and are evenly spaced before the next hit. Sample stutter
@@ -12,8 +20,7 @@ often 0.5–4 beats, sometimes 4–16 beats, and rarely 16–32 beats. As with t
 earlier scheduling subset, these are compiled into a bounded repeating phrase;
 the final interval may be nudged within the same range to close the phrase.
 The embedded Python does not stay running. See Example 111. Stutter accepts
-counts 1–16; only one scheduled operation may be attached to a player, and
-expanded player phrases are capped at 256 events.
+counts 1–16; expanded player phrases are capped at 256 events.
 
 Version 0.4.81 adds live numeric player degree references using
 `p2.degree = p1.degree` or `p2.follow(p1)`. When the source player changes in a

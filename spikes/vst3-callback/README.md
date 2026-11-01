@@ -1,5 +1,14 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.84 lets numeric players combine distinct scheduled operations, for
+example `.often("shuffle")` with `.every(1, "stutter", 3)`, as shown in
+Portable Example 113. Repeating the same operation updates its schedule, matching
+FoxDot's default `every()` behavior. FoxDot's optional `ident` and `cycle`
+arguments are not implemented. The supported operations are
+`reverse`, `rotate`, `shuffle`, and `stutter`. Sample players still support one
+scheduled stutter only. Combined phrases are bounded to 256 scheduled calls and
+256 output events.
+
 Version 0.4.83 adds scheduled stutter for WAV drum players, as shown in
 Portable Example 112. A stutter repeats a sample hit only when the scheduled
 beat matches a hit onset; rest beats are skipped. It preserves the sample
@@ -13,8 +22,7 @@ upstream 0.6.7 interval ranges are used: often 0.5–4 beats, sometimes 4–16,
 rarely 16–32; the final interval may be nudged within the same range to close a
 bounded repeating phrase. Schedules are seeded, and Python does not remain
 running as a server. Stutter retriggers the current note within its remaining
-step and accepts counts 1–16. Only one scheduled operation can be attached to a
-player. See Portable Example 111.
+step and accepts counts 1–16. See Portable Example 111.
 
 Version 0.4.81 adds numeric player degree references (`p2.degree = p1.degree`
 and `p2.follow(p1)`) plus bounded player `.every()`/`.sometimes()` transformations.

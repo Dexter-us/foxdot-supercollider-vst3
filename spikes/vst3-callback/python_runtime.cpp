@@ -2824,7 +2824,7 @@ class Player:
         self._followers = []
         self._applyingFollow = False
         self._baseUpdate = None
-        self._scheduledTransform = None
+        self._scheduledTransforms = []
 
     def __getattr__(self, name):
         if name == 'degree':
@@ -2979,7 +2979,7 @@ class Player:
             _dexter_default_touched = False
         self._currentPattern = pattern
         self._baseUpdate = _dexter_updates[playerIndex]
-        if self._scheduledTransform is not None:
+        if self._scheduledTransforms:
             self._apply_scheduled_transform()
         if self._follows is not None and not self._applyingFollow:
             self._copy_followed_degree(self._follows)
@@ -3100,16 +3100,281 @@ class Player:
         _dexter_sample_events[playerIndex] = [
             request for _, request in outputPairs]
 
+    def _compile_scheduled_operation(self, operation, baseLength, eventCount):
+        method, amount, intervals, intervalRange = operation
+        calls = []
+        elapsed = 0.0
+        cycles = 0
+        reverseState = False
+        rotation = 0
+        shuffleOrders = []
+        for index in range(256):
+            elapsed += float(intervals[index % len(intervals)])
+            calls.append(elapsed)
+            if elapsed > 4096.0:
+                break
+            if method == 'reverse':
+                reverseState = not reverseState
+            elif method == 'rotate':
+                rotation = (rotation + amount) % eventCount
+            elif method == 'shuffle':
+                shuffleOrders.append(list(
+                    PShuf(_FoxDotFinitePattern(list(range(eventCount))))))
+            candidateCycles = round(elapsed / baseLength)
+            aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
+            reset = (
+                not reverseState if method == 'reverse' else
+                rotation == 0 if method == 'rotate' else
+                True)
+            if candidateCycles < 1 or not reset:
+                continue
+            if not aligned:
+                previousElapsed = (
+                    elapsed - float(intervals[index % len(intervals)]))
+                lowInterval, highInterval = intervalRange
+                lowCyclesValue = (
+                    previousElapsed + lowInterval) / baseLength
+                lowCycles = int(lowCyclesValue)
+                if lowCycles < lowCyclesValue - 1e-9:
+                    lowCycles += 1
+                highCycles = int(
+                    (previousElapsed + highInterval + 1e-9) / baseLength)
+                eventBudget = 256
+                if method == 'stutter':
+                    eventBudget -= len(calls) * (amount - 1)
+                maxCycles = min(
+                    int(4096.0 / baseLength),
+                    max(0, eventBudget // max(1, eventCount)))
+                highCycles = min(highCycles, maxCycles)
+                if lowCycles <= highCycles:
+                    targetCycles = max(
+                        lowCycles, min(highCycles, candidateCycles))
+                    adjustedInterval = (
+                        targetCycles * baseLength - previousElapsed)
+                    if (lowInterval - 1e-9 <= adjustedInterval <=
+                            highInterval + 1e-9):
+                        elapsed = targetCycles * baseLength
+                        calls[-1] = elapsed
+                        aligned = True
+                        candidateCycles = targetCycles
+            if aligned:
+                elapsed = candidateCycles * baseLength
+                calls[-1] = elapsed
+                cycles = candidateCycles
+                break
+        if not calls or elapsed > 4096.0 or cycles < 1:
+            raise ValueError('Scheduled operation could not form a bounded repeating phrase; use a shorter pattern or another interval.')
+        if (method == 'stutter' and
+                eventCount * cycles + len(calls) * (amount - 1) > 256):
+            raise ValueError('Scheduled stutter expands beyond the 256-event limit; use fewer notes, fewer triggers, or a smaller count.')
+        return {
+            'method': method,
+            'amount': amount,
+            'calls': tuple(calls),
+            'period': elapsed,
+            'shuffleOrders': tuple(shuffleOrders),
+        }
+
+    def _apply_stacked_scheduled_transforms(self):
+        pattern = self._currentPattern
+        base = self._baseUpdate
+        if pattern is None or base is None:
+            raise ValueError('Assign a note pattern before scheduling player operations.')
+        if pattern.synth == 'sample':
+            raise ValueError('Sample players currently support one scheduled stutter operation only.')
+        if (pattern.octaveControl is not None or
+                pattern.strumControl is not None or
+                pattern.strumBeats != 0.0 or
+                pattern.delayControl is not None or
+                pattern.delayBeats != 0.0):
+            raise ValueError('Scheduled player operations require fixed-octave, unstrummed notes without per-note delay.')
+
+        def noteItems(value):
+            if isinstance(value, _FoxDotChord):
+                return [value]
+            if isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+                return list(value)
+            return [value]
+
+        notes = noteItems(pattern.notes)
+        if (not notes or len(notes) > 256 or
+                any(isinstance(note, bool) or not isinstance(note, (int, float))
+                    for note in notes)):
+            raise ValueError('Scheduled player operations need a dense, monophonic numeric degree pattern.')
+        events = list(base[3])
+        if len(events) != len(notes):
+            raise ValueError('Scheduled player operations need exactly one note event per pattern step.')
+        byPosition = {}
+        for event in events:
+            position = event[8]
+            if (isinstance(position, bool) or not isinstance(position, int) or
+                    not 0 <= position < len(notes) or event[9] != 0 or
+                    position in byPosition):
+                raise ValueError('Scheduled player operations need one ungrouped note at each pattern step.')
+            byPosition[position] = event
+        if len(byPosition) != len(notes):
+            raise ValueError('Scheduled player operations cannot move notes into rests.')
+
+        baseLength = float(base[2])
+        if not 0.0 < baseLength <= 4096.0:
+            raise ValueError('Scheduled phrase length must be between 0 and 4096 beats.')
+        operations = [
+            self._compile_scheduled_operation(
+                operation, baseLength, len(events))
+            for operation in self._scheduledTransforms
+        ]
+        longestPeriod = max(operation['period'] for operation in operations)
+        commonLength = None
+        maxMultiplier = max(1, int(4096.0 / longestPeriod))
+        for multiplier in range(1, maxMultiplier + 1):
+            candidate = longestPeriod * multiplier
+            if all(abs(candidate / operation['period'] -
+                       round(candidate / operation['period'])) <= 1e-8
+                   for operation in operations):
+                commonLength = candidate
+                break
+        if commonLength is None:
+            raise ValueError('Combined schedules do not form a repeating phrase within 4096 beats.')
+        baseCycles = round(commonLength / baseLength)
+        if (baseCycles < 1 or
+                abs(commonLength - baseCycles * baseLength) > 1e-7):
+            raise ValueError('Combined schedules do not align with the player pattern.')
+
+        triggers = []
+        for operationIndex, operation in enumerate(operations):
+            localCycles = round(commonLength / operation['period'])
+            method = operation['method']
+            callLimit = (len(operation['calls']) if method == 'stutter'
+                         else len(operation['calls']) - 1)
+            for localCycle in range(localCycles):
+                cycleOffset = localCycle * operation['period']
+                for callIndex in range(callLimit):
+                    beat = cycleOffset + operation['calls'][callIndex]
+                    if beat >= commonLength - 1e-8:
+                        if (method == 'stutter' and
+                                abs(beat - commonLength) <= 1e-8):
+                            beat = 0.0
+                        else:
+                            continue
+                    triggers.append((beat, operationIndex, callIndex))
+                    if len(triggers) > 256:
+                        raise ValueError('Combined schedules exceed 256 scheduled calls; lengthen intervals or use fewer operations.')
+        triggers.sort(key=lambda item: (item[0], item[1], item[2]))
+        stutterCalls = [
+            trigger for trigger in triggers
+            if operations[trigger[1]]['method'] == 'stutter'
+        ]
+        stutterExtraEvents = sum(
+            operations[operationIndex]['amount'] - 1
+            for _, operationIndex, _ in stutterCalls)
+        if len(events) * baseCycles + stutterExtraEvents > 256:
+            raise ValueError('Combined scheduled operations exceed the 256-event limit; use a shorter phrase, fewer calls, or smaller stutter counts.')
+
+        states = []
+        for operation in operations:
+            if operation['method'] == 'reverse':
+                states.append(False)
+            elif operation['method'] == 'rotate':
+                states.append(0)
+            elif operation['method'] == 'shuffle':
+                states.append(list(operation['shuffleOrders'][-1]))
+            else:
+                states.append(None)
+
+        outputEvents = []
+        triggerIndex = 0
+        for cycleIndex in range(baseCycles):
+            cycleOffset = cycleIndex * baseLength
+            for position in range(len(notes)):
+                event = byPosition[position]
+                eventBeat = (cycleOffset + float(event[0]) +
+                             float(event[6]))
+                while (triggerIndex < len(triggers) and
+                       triggers[triggerIndex][0] <= eventBeat + 1e-9):
+                    _, operationIndex, callIndex = triggers[triggerIndex]
+                    operation = operations[operationIndex]
+                    method = operation['method']
+                    if method == 'reverse':
+                        states[operationIndex] = not states[operationIndex]
+                    elif method == 'rotate':
+                        states[operationIndex] = (
+                            states[operationIndex] + operation['amount']
+                        ) % len(notes)
+                    elif method == 'shuffle':
+                        states[operationIndex] = list(
+                            operation['shuffleOrders'][callIndex])
+                    triggerIndex += 1
+
+                sourcePosition = position
+                for operationIndex, operation in enumerate(operations):
+                    method = operation['method']
+                    if method == 'reverse' and states[operationIndex]:
+                        sourcePosition = len(notes) - 1 - sourcePosition
+                    elif method == 'rotate':
+                        sourcePosition = (
+                            sourcePosition - states[operationIndex]
+                        ) % len(notes)
+                    elif method == 'shuffle':
+                        sourcePosition = states[operationIndex][sourcePosition]
+                repeatedEvent = list(event)
+                repeatedEvent[0] = float(event[0]) + cycleOffset
+                repeatedEvent[2] = byPosition[sourcePosition][2]
+                outputEvents.append(tuple(repeatedEvent))
+
+        stepStarts = sorted(set(
+            (float(event[0]) + float(event[6])) % baseLength
+            for event in events))
+        for beat, operationIndex, _ in stutterCalls:
+            amount = operations[operationIndex]['amount']
+            callBeat = beat % commonLength
+            phase = callBeat % baseLength
+            previousEvents = [
+                event for event in outputEvents
+                if float(event[0]) + float(event[6]) <= callBeat + 1e-9
+            ]
+            if previousEvents:
+                event = previousEvents[-1]
+            else:
+                event = outputEvents[-1]
+            nextStarts = [start for start in stepStarts
+                          if start > phase + 1e-8]
+            nextStart = (nextStarts[0] if nextStarts else
+                         stepStarts[0] + baseLength)
+            remaining = nextStart - phase
+            if remaining <= 1e-9:
+                continue
+            spacing = remaining / float(amount)
+            for repeatIndex in range(1, amount):
+                repeatedEvent = list(event)
+                repeatedStart = (
+                    callBeat + spacing * repeatIndex) % commonLength
+                repeatedEvent[0] = repeatedStart - float(event[6])
+                repeatedEvent[1] = min(float(event[1]), spacing)
+                outputEvents.append(tuple(repeatedEvent))
+        outputEvents.sort(
+            key=lambda event: float(event[0]) + float(event[6]))
+        if len(outputEvents) > 256:
+            raise ValueError('Combined scheduled operations exceed the 256-event limit.')
+        expanded = list(base)
+        expanded[2] = commonLength
+        expanded[3] = outputEvents
+        _dexter_updates[self.number - 1] = tuple(expanded)
+
     def _apply_scheduled_transform(self):
         pattern = self._currentPattern
         base = self._baseUpdate
         if pattern is None or base is None:
             raise ValueError('Assign a note pattern before scheduling a player transform.')
         if pattern.synth == 'sample':
-            transform, amount, intervals, intervalRange = self._scheduledTransform
+            if len(self._scheduledTransforms) != 1:
+                raise ValueError('Sample players currently support one scheduled stutter operation only.')
+            transform, amount, intervals, intervalRange = self._scheduledTransforms[0]
             if transform != 'stutter':
                 raise ValueError('Sample players currently support scheduled stutter only.')
             self._apply_sample_stutter(amount, intervals, intervalRange)
+            return
+        if len(self._scheduledTransforms) > 1:
+            self._apply_stacked_scheduled_transforms()
             return
         if (pattern.octaveControl is not None or pattern.strumControl is not None or
                 pattern.strumBeats != 0.0 or pattern.delayControl is not None or
@@ -3142,7 +3407,7 @@ class Player:
         if len(byPosition) != len(notes):
             raise ValueError('Scheduled player operations cannot move notes into rests; use a dense degree pattern.')
 
-        transform, amount, intervals, intervalRange = self._scheduledTransform
+        transform, amount, intervals, intervalRange = self._scheduledTransforms[0]
         baseLength = float(base[2])
         if not 0.0 < baseLength <= 4096.0:
             raise ValueError('Scheduled transform phrase length must be between 0 and 4096 beats.')
@@ -3279,8 +3544,6 @@ class Player:
                                  intervalRange=None):
         if self._currentPattern is None or self._baseUpdate is None:
             raise ValueError('Assign a player pattern before scheduling a transform.')
-        if self._scheduledTransform is not None:
-            raise ValueError('Only one scheduled player operation is supported per player.')
         if self._follows is not None or self._followers:
             raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
         if (method in {'reverse', 'shuffle'} and
@@ -3296,9 +3559,26 @@ class Player:
             raise ValueError('Embedded scheduled transforms support reverse, rotate, shuffle, and stutter.')
         if intervalRange is None:
             intervalRange = (min(intervals), max(intervals))
-        self._scheduledTransform = (
-            method, amount, tuple(intervals), tuple(intervalRange))
-        self._apply_scheduled_transform()
+        existingIndex = None
+        for index in range(len(self._scheduledTransforms)):
+            if self._scheduledTransforms[index][0] == method:
+                existingIndex = index
+                break
+        operation = (method, amount, tuple(intervals), tuple(intervalRange))
+        previous = (self._scheduledTransforms[existingIndex]
+                    if existingIndex is not None else None)
+        if existingIndex is None:
+            self._scheduledTransforms.append(operation)
+        else:
+            self._scheduledTransforms[existingIndex] = operation
+        try:
+            self._apply_scheduled_transform()
+        except Exception:
+            if existingIndex is None:
+                self._scheduledTransforms.pop()
+            else:
+                self._scheduledTransforms[existingIndex] = previous
+            raise
 
     def every(self, occurrence, command, *args, **kwargs):
         if kwargs or len(args) > 1:
@@ -3359,7 +3639,7 @@ class Player:
         if (source._currentPattern.synth == 'sample' or
                 self._currentPattern.synth == 'sample'):
             raise ValueError('Player degree following is for numeric note patterns, not sample players.')
-        if self._scheduledTransform is not None or source._scheduledTransform is not None:
+        if self._scheduledTransforms or source._scheduledTransforms:
             raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
         def noteItems(pattern):
             notes = pattern.notes
@@ -3394,7 +3674,7 @@ class Player:
             raise TypeError('Player.follow requires one player from p1 through p8.')
         if other is self:
             raise ValueError('A player cannot follow itself.')
-        if self._scheduledTransform is not None or other._scheduledTransform is not None:
+        if self._scheduledTransforms or other._scheduledTransforms:
             raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
         if (self._currentPattern is not None and
                 other._currentPattern is not None and
