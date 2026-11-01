@@ -2232,6 +2232,40 @@ def _sample_timevar_value(control, beat):
         position -= duration
     return control.values[-1]
 
+def _sample_fraction_pattern(value, name):
+    if isinstance(value, _DexterTimeVar):
+        values = value.values
+        pattern = value
+        patternLength = None
+    elif isinstance(value, bool):
+        raise ValueError('sample ' + name + ' must contain numeric fractions')
+    elif isinstance(value, (int, float)):
+        values = [value]
+        pattern = float(value)
+        patternLength = None
+    elif isinstance(value, (list, tuple)):
+        if not value:
+            raise ValueError('sample ' + name + ' pattern cannot be empty')
+        if len(value) > 256:
+            raise ValueError('sample ' + name + ' pattern is limited to 256 values')
+        values = list(value)
+        pattern = []
+        for item in values:
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise ValueError('sample ' + name + ' must contain numeric fractions')
+            pattern.append(float(item))
+        values = pattern
+        patternLength = len(pattern)
+    else:
+        raise ValueError('sample ' + name + ' must be a number, P/list pattern, or var/linvar')
+
+    for item in values:
+        fraction = float(item)
+        if (fraction != fraction or fraction in (float('inf'), float('-inf')) or
+                not 0.0 <= fraction <= 1.0):
+            raise ValueError('sample ' + name + ' fractions must be finite values from 0 to 1')
+    return pattern, patternLength
+
 def _sample_parse_nodes(text, depth=0, closing=None, position=0):
     if depth > 8:
         raise ValueError('sample-string nesting is limited to 8 levels')
@@ -2463,12 +2497,8 @@ def _sample_timeline_values(values, parameterLengths):
 
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                     start=0.0, end=1.0, loop=False, **controls):
-    if (isinstance(start, bool) or not isinstance(start, (int, float)) or
-            start != start or start in (float('inf'), float('-inf')) or
-            isinstance(end, bool) or not isinstance(end, (int, float)) or
-            end != end or end in (float('inf'), float('-inf')) or
-            not 0.0 <= start < end <= 1.0):
-        raise ValueError('sample start/end must be finite fractions with 0 <= start < end <= 1')
+    start, startPatternLength = _sample_fraction_pattern(start, 'start')
+    end, endPatternLength = _sample_fraction_pattern(end, 'end')
     if not isinstance(loop, bool):
         raise ValueError('sample loop must be True or False')
     samplePatternValues = None
@@ -2502,6 +2532,10 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                                       for value in rateControl.values):
             raise ValueError('rate linvar values must keep the same sign; use var() to switch direction')
     lengths = [len(selections), len(rates)]
+    if startPatternLength is not None:
+        lengths.append(startPatternLength)
+    if endPatternLength is not None:
+        lengths.append(endPatternLength)
     if not isinstance(dur, (int, float, _DexterTimeVar)):
         dur = list(dur)
         if not dur:
@@ -2535,7 +2569,7 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
     pattern.synthRate = 1.0
     pattern.sampleSpec = (selections, rates, sus is not None or loop, positions,
                           sampleControl, rateControl, symbolEvents,
-                          float(start), float(end), loop)
+                          start, end, loop)
     return pattern
 
 def play(notes, *args, **kwargs):
@@ -2630,8 +2664,13 @@ class Player:
                     raise ValueError('sample selection must be an integer from -1000000 to 1000000')
                 if playbackRate != playbackRate or not 0.0625 <= abs(playbackRate) <= 8.0:
                     raise ValueError('sample rate magnitude must be 0.0625 to 8; negative plays backwards')
+                sliceStart = float(_sample_value(sampleStart, position, event[0], 'start'))
+                sliceEnd = float(_sample_value(sampleEnd, position, event[0], 'end'))
+                if not 0.0 <= sliceStart < sliceEnd <= 1.0:
+                    raise ValueError(
+                        'sample start/end must satisfy 0 <= start < end <= 1 at every hit')
                 requests.append((symbol, int(sampleIndex), playbackRate, int(gate),
-                                 sampleStart, sampleEnd, int(sampleLoop)))
+                                 sliceStart, sliceEnd, int(sampleLoop)))
                 note = list(event)
                 baseMidiNote = {120: 36, 88: 36, 111: 38, 79: 38,
                                 45: 42, 61: 46, 42: 39}.get(symbol, symbol)

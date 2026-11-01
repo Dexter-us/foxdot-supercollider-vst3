@@ -468,7 +468,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.74",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.75",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -497,7 +497,8 @@ private:
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMasterGainValueId)),
             moduleInstance(), nullptr);
         if (masterGainSlider_) {
-            SendMessageW(masterGainSlider_, TBM_SETRANGE, TRUE, MAKELONG(0, 200));
+            SendMessageW(masterGainSlider_, TBM_SETRANGE, TRUE,
+                         MAKELONG(0, kDexterMasterGainMaximumPercent));
             SendMessageW(masterGainSlider_, TBM_SETTICFREQ, 50, 0);
             const int position = host_
                 ? static_cast<int>(std::lround(host_->masterOutputGain() * 100.0f))
@@ -779,7 +780,8 @@ private:
     void updateMasterGainText(int position) {
         if (!masterGainValue_)
             return;
-        const auto text = std::to_wstring(std::clamp(position, 0, 200)) + L"%";
+        const auto text = std::to_wstring(std::clamp(
+            position, 0, kDexterMasterGainMaximumPercent)) + L"%";
         SetWindowTextW(masterGainValue_, text.c_str());
     }
 
@@ -1105,7 +1107,8 @@ private:
         if (!host_ || !status_)
             return;
         const int gainPosition = static_cast<int>(
-            std::lround(std::clamp(host_->masterOutputGain(), 0.0f, 2.0f) * 100.0f));
+            std::lround(std::clamp(host_->masterOutputGain(), 0.0f,
+                                   kDexterMasterGainMaximum) * 100.0f));
         if (masterGainSlider_)
             SendMessageW(masterGainSlider_, TBM_SETPOS, TRUE, gainPosition);
         updateMasterGainText(gainPosition);

@@ -31,7 +31,7 @@
 <body>
 <main>
   <h1>Portable WAV samples</h1>
-  <p class="subtle">Dexter U.S. FoxDot · version 0.4.74</p>
+  <p class="subtle">Dexter U.S. FoxDot · version 0.4.75</p>
   <p>This guide explains how to add your own legally licensed WAV files without
      including the demo samples in your plugin update.</p>
 
@@ -56,6 +56,20 @@
        folder. If the bundle is under <code>Program Files</code>, Windows may
        require administrator permission to add files; install a per-user copy
        or approve the file operation rather than changing the plugin path.</p>
+  </section>
+
+  <section>
+    <h2>Change the slice per hit</h2>
+    <p><code>start</code> and <code>end</code> are normalized positions in each
+       WAV. They accept numbers, finite <code>P[...]</code> or list patterns,
+       and <code>var()</code>/<code>linvar()</code>. Each hit must resolve to
+       <code>0 ≤ start &lt; end ≤ 1</code>; the loop option remains a fixed
+       Boolean.</p>
+    <pre>p1 >> play("x-o-", start=P[0.0, 0.2], end=P[0.5, 0.9])
+p2 >> play("x", start=linvar([0.1, 0.3], 4),
+          end=linvar([0.7, 0.9], 4))</pre>
+    <p>Example 101 in this folder demonstrates per-hit patterns and time-varied
+       slices alongside Example 100’s fixed slice and bounded loop.</p>
   </section>
 
   <section>

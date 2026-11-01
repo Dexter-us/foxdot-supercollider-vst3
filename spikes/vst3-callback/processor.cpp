@@ -369,7 +369,7 @@ public:
             const auto gainBits = decodeUint32(gainBytes);
             std::memcpy(&restoredGain, &gainBits, sizeof(restoredGain));
             if (!std::isfinite(restoredGain) ||
-                restoredGain < 0.0f || restoredGain > 2.0f)
+                restoredGain < 0.0f || restoredGain > kDexterMasterGainMaximum)
                 return kResultFalse;
         }
 
@@ -784,7 +784,7 @@ public:
     void setMasterOutputGain(float gain) override {
         if (!std::isfinite(gain))
             return;
-        masterGainTarget_.store(std::clamp(gain, 0.0f, 2.0f),
+        masterGainTarget_.store(std::clamp(gain, 0.0f, kDexterMasterGainMaximum),
                                 std::memory_order_release);
     }
 
@@ -3662,7 +3662,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.74",
+           "0.4.75",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

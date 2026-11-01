@@ -1250,6 +1250,8 @@ example77 = run_example('77-pattern-sample-sequences.py')
 assert len(example77) == 2
 example100 = run_example('100-sample-loop-and-slicing.py')
 assert [int(row[6]) for row in example100 if row[2] == '0'] == [57, 57]
+example101 = run_example('101-patterned-sample-slices.py')
+assert [int(row[6]) for row in example101 if row[2] == '0'] == [57, 57]
 _, duplicateLayerRequests, duplicateLayerEvents = run_script(
     'p1 >> play("<x><x>", dur=1)', include_samples=True, include_events=True)
 assert [int(row[1]) for row in duplicateLayerRequests] == [120, 120]
@@ -1286,11 +1288,41 @@ _, slicedRequests = run_script(
     'p1 >> play("x-o", start=0.2, end=0.65, loop=False)', include_samples=True)
 assert all(float(row[5]) == 0.2 and float(row[6]) == 0.65 and row[7] == '0'
            for row in slicedRequests)
+_, patternSliceRequests = run_script(
+    'p1 >> play("x-o-", start=P[0.0, 0.2], end=P[0.5, 0.9])',
+    include_samples=True)
+assert [float(row[5]) for row in patternSliceRequests] == [0.0, 0.2, 0.0, 0.2]
+assert [float(row[6]) for row in patternSliceRequests] == [0.5, 0.9, 0.5, 0.9]
+slicePattern256 = 'P[' + ','.join(['0.0'] * 256) + ']'
+_, maxSliceRequests = run_script(
+    'p1 >> play("x", start=' + slicePattern256 + ', end=1.0)',
+    include_samples=True)
+assert len(maxSliceRequests) == 256
+_, expandedSliceRequests = run_script(
+    'p1 >> play("x", start=P[0.0, 0.1, 0.2], end=0.8)',
+    include_samples=True)
+assert [float(row[5]) for row in expandedSliceRequests] == [0.0, 0.1, 0.2]
+_, timevarSliceRequests = run_script(
+    'p1 >> play("x-o-", start=var([0.0, 0.2], 2), '
+    'end=var([0.6, 1.0], 2))', include_samples=True)
+assert [float(row[5]) for row in timevarSliceRequests] == [0.0, 0.0, 0.2, 0.2]
+assert [float(row[6]) for row in timevarSliceRequests] == [0.6, 0.6, 1.0, 1.0]
+_, linearSliceRequests = run_script(
+    'p1 >> play("x-o-", start=linvar([0.1, 0.3], 4), '
+    'end=linvar([0.7, 0.9], 4))', include_samples=True)
+assert [round(float(row[5]), 8) for row in linearSliceRequests] == [
+    0.1, 0.15, 0.2, 0.25]
+assert [round(float(row[6]), 8) for row in linearSliceRequests] == [
+    0.7, 0.75, 0.8, 0.85]
 _, loopRequests = run_script(
     'p1 >> play("x", dur=2, loop=True)', include_samples=True)
 assert loopRequests[0][4:] == ['1', '0.0', '1.0', '1']
 for bad in ('start=-0.1', 'end=1.1', 'start=0.5, end=0.5',
-            'start=float("nan")', 'loop=1'):
+            'start=float("nan")', 'start=[]', 'start=P[0.0, 1.1]',
+            'start=[0.0]*257',
+            'start=P[0.2, 0.8], end=P[0.7, 0.6]',
+            'start=var([0.8, 0.2], 2), end=var([0.6, 1.0], 2)',
+            'loop=1'):
     failure = run_error_script('p1 >> play("x", ' + bad + ')')
     assert failure.startswith('ERROR\n') and 'ValueError' in failure, (bad, failure)
 _, nestedRequests, nestedEvents = run_script(
@@ -1634,4 +1666,4 @@ for row, eventCount in zip(numericTransformRows, (12, 6, 12)):
     assert_player_polyphony_ok(row, playerEvents)
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Examples 01-93, and user SynthDef Example 94.')
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Portable examples through 101, and user SynthDef Example 94.')

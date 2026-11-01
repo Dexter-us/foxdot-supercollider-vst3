@@ -1,9 +1,12 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.74 adds a smoothed, state-persisted master output-gain slider and
-bounded WAV slicing/looping. Existing sample playback remains one-shot by
-default; `start`/`end` are normalized slice fractions, and `loop=True` is
-gated by `sus=` or, when omitted, `dur=`. Version 0.4.73 fixes the Airwindows
+Version 0.4.75 adds per-hit WAV slice patterns: `start` and `end` accept
+numbers, finite P/list patterns, or `var()`/`linvar()` values. Each triggered
+hit must resolve to `0 <= start < end <= 1`; `loop=` remains a fixed Boolean.
+The master output gain ceiling is now 250%, with its default unchanged at 100%.
+Version 0.4.74 added the smoothed, state-persisted gain slider and bounded
+WAV slicing/looping. Existing sample playback remains one-shot by default.
+Version 0.4.73 fixes the Airwindows
 persistent SynthDef startup rejection by
 using their tested fixed control-index ABI instead of relying on runtime name
 lookup. Version 0.4.72 added per-player stereo TapeDelay2 and Echojam inserts.
@@ -100,9 +103,13 @@ is evaluated at its trigger; it does not pitch-glide mid-sample. Unspecified
 sus allows natural one-shot length, and explicit sus crops it. `start=0.0` and
 `end=1.0` select the full file; smaller fractions slice within it. `loop=True`
 loops only that slice and is bounded by `sus=` or `dur=`. All new controls are
-optional; leaving them out preserves the earlier one-shot behavior. The editor's
-Master slider scales the final stereo output from 0% (silence) to 200% and
-smooths changes over 10 ms; older saved states restore at unity gain.
+optional; `start` and `end` also accept finite P/list patterns and
+var()/linvar() for per-hit changes. Each hit must resolve to
+`0 <= start < end <= 1`; leaving them out preserves the earlier one-shot
+behavior. The editor's Master slider scales the final stereo output from 0%
+(silence) to 250%, with 100% as unity, and smooths changes over 10 ms; older
+saved states restore at their saved gain or unity when no value is present.
+Gains above unity can clip downstream inputs.
 Amp/pan, player stop/mute, basic effects and MIDI note output remain available.
 
 The standalone C++ reader accepts PCM 8/16/24/32 and IEEE float32 mono/stereo

@@ -1,8 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.74 adds normalized sample start/end slicing, bounded loop=True
-playback, and a smooth master output gain. Defaults preserve one-shot samples
-and unity output; see Example 100 for slice and loop syntax.
+Version 0.4.75 lets each sample hit use its own normalized start/end slice,
+including P/list patterns and var()/linvar(), and raises the optional master
+gain ceiling to 250%. The default remains 100% (unity); see Examples 100–101.
+Version 0.4.74 added normalized sample slicing, bounded loop=True playback,
+and smooth master output gain. Defaults preserve one-shot samples and unity output.
 SAMPLES-SETUP.html explains how to install your own properly licensed WAV files
 without bundling the optional demo-sample directory.
 Version 0.4.73 fixes startup validation for the bundled Airwindows persistent
@@ -124,6 +126,9 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 70-73 demonstrate portable WAV playback, sample/rate controls and var()/linvar().
 100-sample-loop-and-slicing.py demonstrates fractional start/end positions and
 a loop limited by sus= (or dur= when sus is omitted).
+101-patterned-sample-slices.py demonstrates start/end values that cycle per hit
+or vary with var()/linvar(); every emitted hit is checked to ensure
+0 <= start < end <= 1. loop= remains a fixed Boolean control.
 74-nested-play-strings.py demonstrates `[]` step subdivisions and `()` lacing.
 75-random-and-layered-strings.py demonstrates bounded `{}` variations and
 adjacent `<>` layers. The compatibility checker reports malformed strings;
