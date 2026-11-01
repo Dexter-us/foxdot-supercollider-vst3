@@ -14,7 +14,7 @@ permissions:
 jobs:
   windows-vst3:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Check out the project
         uses: actions/checkout@v4
@@ -31,19 +31,31 @@ jobs:
           "major=$major" >> $env:GITHUB_OUTPUT
 
       - name: Restore SuperCollider build cache
+        id: sc_cache
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\dexter-windows-vst3\supercollider-build
           key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
           restore-keys: |
             windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-      - name: Build VST3 from cached SuperCollider outputs
+      - name: Build VST3 (cached or one-time bootstrap)
         id: build_vst3
         shell: pwsh
         run: |
           $buildLog = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3-build.log"
+          $buildArguments = @(
+            "-BuildRoot", "$env:RUNNER_TEMP\dexter-windows-vst3",
+            "-SkipValidator"
+          )
+          if ("${{ steps.sc_cache.outputs.cache-hit }}" -eq "true") {
+            Write-Host "SuperCollider build cache hit; compiling the VST3 only."
+            $buildArguments += "-UseCachedSuperColliderBuild"
+          }
+          else {
+            Write-Host "SuperCollider build cache miss; performing the approved one-time engine/UGen build to seed this PR's cache."
+          }
           try {
-            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" -UseCachedSuperColliderBuild -SkipValidator *>&1 |
+            & .\tools\build-windows-vst3.ps1 @buildArguments *>&1 |
               Tee-Object -FilePath $buildLog
             if ($LASTEXITCODE -ne 0) {
               throw "Build script exited with code $LASTEXITCODE"
