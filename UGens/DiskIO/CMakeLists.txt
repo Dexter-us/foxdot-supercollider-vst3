@@ -7,6 +7,12 @@ endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(Threads REQUIRED)
 include(FetchContent)
+# libsndfile 1.2.2 declares an old minimum CMake version. CMake 4 removed
+# that compatibility floor; use its documented override without modifying
+# the pinned dependency sources or changing its DSP/codec configuration.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
 # Shared LGPL library, replaceable by the user. No FLAC/Vorbis/Opus/MPEG deps.
 set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
