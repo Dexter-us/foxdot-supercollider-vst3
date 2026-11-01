@@ -3789,7 +3789,7 @@ DiskOut = _DiskRecorder()
            << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', 'ord', 'chr', "
            << "'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum', 'tuple', "
            << "'zip', 'ValueError', 'TypeError', 'ZeroDivisionError', "
-           << "'__build_class__')}\n"
+            << "'AttributeError', 'Exception', '__build_class__')}\n"
            << "exec(compile(" << pythonLiteral(api) << ", '<Dexter API>', 'exec'), "
             << "_dexter_scope, _dexter_scope)\n"
             << "_dexter_scope['_dexter_user_synth_names'] = "
