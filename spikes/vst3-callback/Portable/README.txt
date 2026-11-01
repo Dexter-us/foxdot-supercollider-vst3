@@ -1,11 +1,15 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.87 extends FoxDot-style player groups with shared `degree`, `dur`,
+`sus`, `oct`, and `scale` assignments. Pitch controls apply to numeric players;
+timing controls also work on sample players. `oct` and `dur` accept `var()` and
+`linvar()`. See Example 116.
+
 Version 0.4.86 adds FoxDot-style player groups. `Group(p1, p2)` shares supported
 sound/effect controls and `.stop()`, `.mute()`, `.unmute()`, `.solo()`, `.only()`,
 and bounded scheduling. `Master()` selects currently active players; `p_all`
 contains the eight player slots. Group controls work before or after patterns
-and accept `var()`/`linvar()`. Degree, duration, octave, scale, and root remain
-per-player structural controls. See Example 115.
+and accept `var()`/`linvar()`. See Example 115.
 
 Version 0.4.85 adds FoxDot-style `cycle=` phase offsets and `ident=` schedule
 keys to `.every()`, `.often()`, `.sometimes()`, and `.rarely()`. Different

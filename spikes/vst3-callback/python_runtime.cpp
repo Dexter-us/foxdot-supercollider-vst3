@@ -176,7 +176,8 @@ _COMPAT_SCALE_NAMES = {
 _COMPAT_GROUP_CONTROLS = {
     'amp', 'pan', 'cutoff', 'echo', 'delaytime', 'atk', 'rel', 'reverb',
     'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf',
-    'hpr', 'bpf', 'bpr', 'decay', 'echomix', 'feedback', 'bpnoise', 'swell'
+    'hpr', 'bpf', 'bpr', 'decay', 'echomix', 'feedback', 'bpnoise', 'swell',
+    'degree', 'dur', 'sus', 'oct', 'scale'
 }
 _COMPAT_GROUP_METHODS = {
     'add', 'stop', 'mute', 'unmute', 'solo', 'only',
@@ -342,7 +343,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 self._is_group_expression(node.func.value)):
             method = node.func.attr
             if method not in _COMPAT_GROUP_METHODS and method not in _COMPAT_GROUP_CONTROLS:
-                self.add(node.lineno, 'Group supports shared sound controls, add(), stop(), mute(), unmute(), solo(), only(), and bounded player scheduling.')
+                self.add(node.lineno, 'Group supports shared sound/effect and pitch/timing controls, add(), stop(), mute(), unmute(), solo(), only(), and bounded player scheduling.')
             elif method in _COMPAT_GROUP_CONTROLS:
                 self.add(node.lineno, 'Group controls are assigned as attributes, e.g. group.amp = 0.5.')
             elif method in {'stop', 'mute', 'unmute', 'only'} and (
@@ -602,7 +603,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             if (isinstance(target, ast.Attribute) and
                     self._is_group_expression(target.value) and
                     target.attr not in _COMPAT_GROUP_CONTROLS):
-                self.add(target.lineno, 'Group assignments support only shared sound and effect controls.')
+                self.add(target.lineno, 'Group assignments support shared sound/effect and pitch/timing controls.')
             if (isinstance(target, ast.Attribute) and
                     isinstance(target.value, ast.Name) and
                     re.fullmatch(r'p[0-9]+', target.value.id)):
@@ -2920,11 +2921,144 @@ _GROUP_PATTERN_FIELDS = {
     'revtime': 'revtime', 'spread': 'spread', 'lpf': 'lpfHz',
     'lpr': 'lpr', 'hpf': 'hpfHz', 'hpr': 'hpr', 'bpf': 'bpfHz',
     'bpr': 'bpr', 'decay': 'echoDecayBeats', 'echomix': 'echoMix',
-    'feedback': 'feedback', 'bpnoise': 'bpnoise', 'swell': 'swell'
+    'feedback': 'feedback', 'bpnoise': 'bpnoise', 'swell': 'swell',
+    'degree': 'notes', 'dur': 'step', 'sus': 'duration',
+    'oct': 'octaveControl', 'scale': 'scaleName'
 }
 
+def _group_degree_items(value):
+    if isinstance(value, _DexterTimeVar):
+        raise TypeError(
+            'Group.degree accepts a bounded numeric pattern; use var/linvar on oct or dur')
+    if isinstance(value, _FoxDotChord):
+        items = [value]
+    elif value is None or _finite_note_number(value):
+        items = [value]
+    elif isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+        items = list(value)
+    else:
+        raise TypeError('Group.degree requires finite numeric notes, rests, or chords')
+    if not items or len(items) > 256:
+        raise ValueError('Group.degree is limited to 1..256 note steps')
+    _, kind = _pattern_items(items, 'Group.degree')
+    if kind not in (None, 'numeric'):
+        raise TypeError('Group.degree accepts numeric note patterns, not sample symbols')
+    return _FoxDotFinitePattern(items)
+
+def _group_shift_notes(notes, semitones):
+    def shift_item(item):
+        if item is None:
+            return None
+        if isinstance(item, (list, tuple)):
+            values = [shift_item(value) for value in item]
+            return tuple(values) if isinstance(item, tuple) else values
+        if not _finite_note_number(item):
+            raise TypeError('Group pitch controls require finite numeric degrees')
+        return item + semitones
+    return [shift_item(item) for item in notes]
+
+def _validate_group_time_pattern(value, name):
+    lower = 0.001 if name == 'dur' else 0.02
+    source = value.values if isinstance(value, _DexterTimeVar) else value
+    if isinstance(source, (int, float)) and not isinstance(source, bool):
+        items = [source]
+    elif isinstance(source, _FoxDotDurationGroup):
+        items = [source]
+    elif name == 'sus' and isinstance(source, _FoxDotChord):
+        items = [source]
+    elif isinstance(source, (list, tuple, _FoxDotFinitePattern)):
+        items = list(source)
+    else:
+        raise TypeError('Group.' + name + ' requires a number or bounded pattern')
+    if not items or len(items) > 256:
+        raise ValueError('Group.' + name + ' is limited to 1..256 values')
+    for item in items:
+        values = list(item) if name == 'sus' and isinstance(
+            item, _FoxDotChord) else [item]
+        if isinstance(item, _FoxDotDurationGroup):
+            if name != 'dur' or not item:
+                raise TypeError('PRhythm duration groups are supported only in Group.dur')
+            base = float(item[0])
+            offsets = [float(offset) for offset in item[1:]]
+            if (base != base or not lower <= base <= 4096.0 or
+                    len(offsets) > 255 or
+                    any(offset != offset or offset < 0.0 or
+                        offset > 8.0 or offset > base for offset in offsets)):
+                raise ValueError('Group.dur PRhythm values are outside the supported bounds')
+            continue
+        for numeric in values:
+            if (isinstance(numeric, bool) or
+                    not isinstance(numeric, (int, float))):
+                raise TypeError('Group.' + name + ' values must be numeric')
+            numeric = float(numeric)
+            if (numeric != numeric or numeric in
+                    (float('inf'), float('-inf')) or
+                    not lower <= numeric <= 4096.0):
+                raise ValueError(
+                    'Group.' + name + ' values must be between ' +
+                    str(lower) + ' and 4096 beats')
+
+def _normalize_group_control(name, value):
+    if name == 'degree':
+        return _group_degree_items(value)
+    if name in ('dur', 'sus'):
+        _validate_group_time_pattern(value, name)
+        return value
+    if name == 'oct':
+        if isinstance(value, _DexterTimeVar):
+            if any(item < 0.0 or item > 10.0 for item in value.values):
+                raise ValueError('Group.oct values must be from 0 to 10')
+            return value
+        if isinstance(value, bool) or not _finite_note_number(value):
+            raise TypeError('Group.oct requires a finite number or var/linvar')
+        octave = int(value)
+        if not 0 <= octave <= 10:
+            raise ValueError('Group.oct must be from 0 to 10')
+        return octave
+    if name == 'scale':
+        if isinstance(value, _DexterTimeVar):
+            raise TypeError('Group.scale does not accept var/linvar')
+        return _scale_intervals(value)
+    return value
+
 def _set_group_pattern_control(pattern, name, value):
-    if name == 'amp':
+    if name == 'degree':
+        if pattern.synth == 'sample':
+            raise ValueError('Group.degree applies to numeric note players, not sample players')
+        if not pattern.degrees:
+            raise ValueError('Group.degree applies only to scale-degree note players')
+        shift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
+        pattern.notes = _group_shift_notes(value, shift)
+    elif name == 'dur':
+        pattern.step = value
+    elif name == 'sus':
+        pattern.duration = value
+    elif name == 'oct':
+        if pattern.synth == 'sample' or not pattern.degrees:
+            raise ValueError('Group.oct applies only to scale-degree note players')
+        if isinstance(value, _DexterTimeVar):
+            baseOctave = int(round(value.values[0]))
+            octaveControl = value
+        else:
+            baseOctave = int(value)
+            octaveControl = None
+        oldShift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
+        rawNotes = _group_shift_notes(pattern.notes, -oldShift)
+        newShift = (baseOctave - 5) * pattern.degreesPerOctave
+        pattern.notes = _group_shift_notes(rawNotes, newShift)
+        pattern.baseOctave = baseOctave
+        pattern.octaveControl = octaveControl
+    elif name == 'scale':
+        if pattern.synth == 'sample' or not pattern.degrees:
+            raise ValueError('Group.scale applies only to scale-degree note players')
+        oldShift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
+        rawNotes = _group_shift_notes(pattern.notes, -oldShift)
+        intervals = _scale_intervals(value)
+        pattern.scaleName = intervals
+        pattern.degreesPerOctave = len(intervals)
+        newShift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
+        pattern.notes = _group_shift_notes(rawNotes, newShift)
+    elif name == 'amp':
         pattern.amp, pattern.ampControl = _control_value(value, 'amp', 0.0, 1.0)
     elif name == 'pan':
         pattern.pan, pattern.panControl = _control_value(value, 'pan', -1.0, 1.0)
@@ -4096,20 +4230,41 @@ class Group:
     def __getattr__(self, name):
         if name in _GROUP_PATTERN_FIELDS:
             fieldName = _GROUP_PATTERN_FIELDS[name]
-            return [
-                None if player._currentPattern is None else
-                player._currentPattern.__dict__.get(fieldName)
-                for player in self.players
-            ]
+            values = []
+            for player in self.players:
+                pattern = player._currentPattern
+                if pattern is None:
+                    values.append(None)
+                elif name == 'degree':
+                    shift = ((pattern.baseOctave - 5) *
+                             pattern.degreesPerOctave)
+                    values.append(_group_shift_notes(
+                        pattern.notes, -shift) if pattern.degrees else
+                        pattern.notes)
+                elif name == 'oct':
+                    values.append(pattern.octaveControl
+                                  if pattern.octaveControl is not None else
+                                  pattern.baseOctave)
+                else:
+                    values.append(pattern.__dict__.get(fieldName))
+            return values
         raise AttributeError('unsupported Group attribute ' + name)
 
     def __setattr__(self, name, value):
         if name not in _GROUP_PATTERN_FIELDS:
-            raise AttributeError('Group assignments support only shared sound and effect controls.')
+            raise AttributeError('Group assignments support shared sound/effect and pitch/timing controls.')
+        value = _normalize_group_control(name, value)
+        prepared = []
+        for player in self.players:
+            if player._currentPattern is not None:
+                copiedPattern = PlayerPattern.__new__(PlayerPattern)
+                copiedPattern.__dict__ = dict(player._currentPattern.__dict__)
+                _set_group_pattern_control(copiedPattern, name, value)
+                prepared.append((player, copiedPattern))
         for player in self.players:
             player._groupOverrides[name] = value
-            if player._currentPattern is not None:
-                player.__rshift__(player._currentPattern)
+        for player, pattern in prepared:
+            player.__rshift__(pattern)
         return self
 
     def add(self, player):

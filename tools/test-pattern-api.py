@@ -2114,6 +2114,73 @@ assert abs(float(groupRows[0][9]) - 800.0) < 1e-9
 assert abs(float(groupRows[1][9]) - 800.0) < 1e-9
 assert groupRows[2][7] == '0.4'
 
+groupPitchTimingText = open(
+    os.path.join(sys.argv[2], '116-group-pitch-and-timing.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    groupPitchTimingText)
+exampleGroupRows, exampleGroupBuffers, exampleGroupEvents = run_script(
+    groupPitchTimingText, include_samples=True, include_events=True)
+assert len(exampleGroupRows) == 3 and len(exampleGroupBuffers) == 4
+assert len(exampleGroupEvents) == 12
+groupPitchRows, groupPitchEvents = run_script(
+    'Scale.default.set("major")\nRoot.default.set("C")\n'
+    'p1 >> triangle([1, 3], dur=1, oct=4)\n'
+    'p2 >> pluck([2, 5], dur=1, oct=5)\n'
+    'pair = Group(p1, p2)\n'
+    'pair.degree = P[0, 2, 4, 6]\n'
+    'pair.scale = Scale.minor\n'
+    'pair.oct = var([3, 4], [1, 1])\n'
+    'pair.dur = var([0.5, 1], [1, 1])\n'
+    'pair.sus = 0.35\n', include_events=True)
+assert len(groupPitchRows) == 2 and len(groupPitchEvents) == 8
+expectedGroupPitches = [36, 39, 55, 46]
+for playerEvents in (groupPitchEvents[:4], groupPitchEvents[4:]):
+    assert [int(event[3]) for event in playerEvents] == expectedGroupPitches
+    assert [round(float(event[1]), 6) for event in playerEvents] == [
+        0.0, 0.5, 1.0, 2.0]
+    assert all(abs(float(event[2]) - 0.35) < 1e-9
+               for event in playerEvents)
+
+groupBeforeRun = run_script(
+    'pair = Group(p1, p2)\n'
+    'pair.degree = P[1, 3]\n'
+    'pair.scale = Scale.dorian\n'
+    'pair.oct = 4\npair.dur = 0.5\npair.sus = 0.25\n'
+    'p1 >> triangle([0, 2, 4], oct=5)\n'
+    'p2 >> saw([3, 5], oct=5)\n')
+assert len(groupBeforeRun) == 2
+assert all(int(row[5]) == 2 for row in groupBeforeRun)
+assert all(abs(float(row[4]) - 1.0) < 1e-9 for row in groupBeforeRun)
+
+groupPitchReassignmentRows, groupPitchReassignmentEvents = run_script(
+    'Scale.default.set("major")\nRoot.default.set("C")\n'
+    'p1 >> triangle([5, 6], oct=4, scale=Scale.major)\n'
+    'pair = Group(p1)\n'
+    'pair.degree = P[0, 1]\n'
+    'pair.scale = Scale.majorPentatonic\n'
+    'pair.oct = 3\n'
+    'pair.scale = Scale.minor\n'
+    'pair.oct = 5\n',
+    include_events=True)
+assert len(groupPitchReassignmentRows) == 1
+assert [int(event[3]) for event in groupPitchReassignmentEvents] == [60, 62]
+
+sampleGroupRows, sampleGroupBuffers, sampleGroupEvents = run_script(
+    'p1 >> play("x-o-", dur=0.5, sample=0)\n'
+    'drums = Group(p1)\ndrums.dur = 1\ndrums.sus = 0.25\n',
+    include_samples=True, include_events=True)
+assert len(sampleGroupRows) == 1 and len(sampleGroupBuffers) == 4
+assert len(sampleGroupEvents) == 4
+assert 'numeric note players, not sample players' in run_error_script(
+    'p1 >> play("x-o-", sample=0)\nGroup(p1).degree = P[0, 2]\n')
+for invalidGroupAssignment in (
+        'Group(p1).dur = 0\n',
+        'Group(p1).sus = 0.01\n',
+        'Group(p1).oct = 11\n',
+        'Group(p1).degree = P["x", "o"]\n'):
+    assert run_error_script(invalidGroupAssignment)
+
 groupSetAfterRun = run_script(
     'p1 >> sine([0, 2, 4, 6], amp=0.8)\n'
     'p2 >> triangle([1, 3, 5, 7], amp=0.7)\n'
@@ -2214,4 +2281,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 115, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), shared pitch/timing controls, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 116, and user SynthDef examples 94, 103, 104, and 105.')
