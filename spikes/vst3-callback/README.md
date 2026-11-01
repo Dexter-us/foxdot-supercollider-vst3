@@ -1,11 +1,13 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.77 lets sample players select a persistent Airwindows insert with
-`effect="AirwindowsTapeDelay2"` or `effect="AirwindowsEchojam"`. The loaded
-matching SynthDef and UGen pack are still required; `play()` continues to
-provide the audio source, slices, loop, and timing, while the insert processes
-that player's stereo sum. Example 103 applies TapeDelay2 to the sliced sample
-pattern and leaves the second player dry.
+Version 0.4.78 exposes per-player Airwindows insert controls on sample `play()`.
+Use fixed 0–1 scalar arguments `fx_vib`, `fx_depth`, `fx_lforate`, and `fx_blur` with either
+`effect="AirwindowsTapeDelay2"` or `effect="AirwindowsEchojam"`; TapeDelay2 also
+accepts `fx_lfowidth` and `fx_rq`. Controls are fixed scalars from 0 to 1 and
+take effect when the script is evaluated. Example 103 demonstrates all six
+TapeDelay2 settings and Example 104 demonstrates Echojam's four controls, both
+while preserving sample sequence and slice controls. The matching SynthDef and
+UGen pack are still required.
 Version 0.4.76 adds bounded FoxDot-style `PRand` and `PWhite` pattern
 generators. `PRand` chooses from a finite pattern or an inclusive integer
 range; `PWhite` follows FoxDot's symmetric triangular distribution. Both

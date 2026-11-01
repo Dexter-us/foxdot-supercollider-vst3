@@ -154,7 +154,7 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate'
 }
 _COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum'}
-_COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop', 'effect'}
+_COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'}
 _COMPAT_PLAY_KEYWORDS = _COMPAT_NOTE_PLAY_KEYWORDS | _COMPAT_SAMPLE_PLAY_KEYWORDS
 _COMPAT_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
 _COMPAT_SCALE_NAMES = {
@@ -2611,6 +2611,45 @@ def _sample_timeline_values(values, parameterLengths):
         symbolSlots.append(tuple((symbol, None) for symbol in symbols))
     return notes, multipliers, symbolSlots
 
+def _sample_effect_control_values(effect, controls):
+    keys = ('fx_vib', 'fx_depth', 'fx_lforate',
+            'fx_lfowidth', 'fx_rq', 'fx_blur')
+    provided = [key for key in keys if key in controls]
+    if effect is None:
+        if provided:
+            raise ValueError('fx_* controls require effect="AirwindowsTapeDelay2" or effect="AirwindowsEchojam"')
+        return None
+
+    if effect == 'AirwindowsTapeDelay2':
+        specs = (
+            ('fx_vib', 0, 0.94), ('fx_depth', 1, 0.28),
+            ('fx_lforate', 2, 0.72), ('fx_lfowidth', 3, 0.28),
+            ('fx_rq', 4, 0.12), ('fx_blur', 6, 0.5))
+    elif effect == 'AirwindowsEchojam':
+        specs = (
+            ('fx_vib', 0, 0.29), ('fx_depth', 1, 0.32),
+            ('fx_lforate', 2, 0.48), ('fx_blur', 6, 0.62))
+        unsupported = [key for key in provided
+                       if key in ('fx_lfowidth', 'fx_rq')]
+        if unsupported:
+            raise ValueError(unsupported[0] + ' is not a control on AirwindowsEchojam')
+    else:
+        raise ValueError('unsupported Airwindows player effect')
+
+    values = [0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0]
+    for key, index, default in specs:
+        raw = controls.pop(key, default)
+        if isinstance(raw, _DexterTimeVar) or isinstance(raw, bool):
+            raise ValueError(key + ' must be a fixed scalar from 0 to 1; time-varying effect controls are not supported yet')
+        try:
+            value = float(raw)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(key + ' must be a finite scalar from 0 to 1')
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(key + ' must be a finite scalar from 0 to 1')
+        values[index] = value
+    return tuple(values)
+
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                     start=0.0, end=1.0, loop=False, effect=None, **controls):
     playerEffectUserIndex = -1
@@ -2622,6 +2661,7 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                 'sample effect ' + effect +
                 ' is not loaded; install its SynthDef in Portable/SynthDefs and restart the DAW')
         playerEffectUserIndex = _dexter_user_synth_names.index(effect)
+    effectControlValues = _sample_effect_control_values(effect, controls)
     start, startPatternLength = _sample_fraction_pattern(start, 'start')
     end, endPatternLength = _sample_fraction_pattern(end, 'end')
     if not isinstance(loop, bool):
@@ -2696,6 +2736,8 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                           sampleControl, rateControl, symbolEvents,
                           start, end, loop)
     pattern.playerEffectUserIndex = playerEffectUserIndex
+    if effectControlValues is not None:
+        pattern.synthControls = effectControlValues
     return pattern
 
 def play(notes, *args, **kwargs):

@@ -1,10 +1,13 @@
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.77 lets sample players select a persistent Airwindows insert using
-effect="AirwindowsTapeDelay2" or effect="AirwindowsEchojam". The matching
-SynthDef and UGen pack must be installed; play() still provides the sample,
-slices, loop and timing while the insert processes the player's stereo sum.
-Example 103 demonstrates TapeDelay2 on the sliced sample rhythm.
+Version 0.4.78 lets sample players adjust persistent Airwindows inserts using
+fx_vib, fx_depth, fx_lforate and fx_blur from 0 to 1 with either
+effect="AirwindowsTapeDelay2" or effect="AirwindowsEchojam". TapeDelay2 also
+accepts fx_lfowidth and fx_rq. These are fixed scalar settings, applied when
+the script is evaluated; time-varying fx controls are not supported yet. The
+matching SynthDef and UGen pack must be installed. Example 103 shows all six
+TapeDelay2 controls and Example 104 demonstrates Echojam's four controls. Each
+example leaves its second player dry for comparison.
 Version 0.4.76 adds bounded FoxDot-style PRand and PWhite pattern generators.
 PRand chooses from a finite pattern or an inclusive integer range; PWhite uses
 FoxDot's symmetric triangular distribution. Both create finite sequences of
@@ -144,8 +147,11 @@ durations. PWhite uses the same triangular distribution as FoxDot; values are
 generated once per script run and the finite result cycles in the player.
 Re-run the script for a fresh unseeded sequence.
 103-sample-player-airwindows-delay.py applies TapeDelay2 to the sliced p1 WAV
-player while leaving p2 dry. It requires AirwindowsTapeDelay2.scsyndef in
-Portable/SynthDefs and its compatible UGen module in Portable/SCPlugins.
+player while leaving p2 dry. Edit its fx_vib, fx_depth, fx_lforate,
+fx_lfowidth, fx_rq and fx_blur values (each 0..1), then re-run the script.
+104-sample-player-airwindows-echojam.py demonstrates Echojam using fx_vib,
+fx_depth, fx_lforate and fx_blur (each 0..1). Both require the matching
+Airwindows SynthDef in Portable/SynthDefs and its UGen module in Portable/SCPlugins.
 74-nested-play-strings.py demonstrates `[]` step subdivisions and `()` lacing.
 75-random-and-layered-strings.py demonstrates bounded `{}` variations and
 adjacent `<>` layers. The compatibility checker reports malformed strings;

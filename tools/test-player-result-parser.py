@@ -74,7 +74,9 @@ with tempfile.TemporaryDirectory() as directory:
         user_synth_names = (
             ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
             ("AirwindowsTapeDelay2",)
-            if example.name == "103-sample-player-airwindows-delay.py" else ())
+            if example.name == "103-sample-player-airwindows-delay.py" else
+            ("AirwindowsEchojam",)
+            if example.name == "104-sample-player-airwindows-echojam.py" else ())
         wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
@@ -87,6 +89,8 @@ with tempfile.TemporaryDirectory() as directory:
         if example.name == "93-clock-swing.py":
             assert parsed.stdout.count("W:0.04") == 2, parsed.stdout
         if example.name == "103-sample-player-airwindows-delay.py":
+            assert "A:0" in parsed.stdout and "A:-1" in parsed.stdout, parsed.stdout
+        if example.name == "104-sample-player-airwindows-echojam.py":
             assert "A:0" in parsed.stdout and "A:-1" in parsed.stdout, parsed.stdout
     user_synth_example = plugin / "Portable" / "94-user-synthdef-loader.py"
     user_synth_wrapper = api_tests["make_wrapper"](
