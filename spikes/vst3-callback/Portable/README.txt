@@ -1,5 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.98 adds FoxDot-compatible .trim(size) and .ltrim(size) front/tail
+slices. Python slice behavior is preserved, including negative sizes; ltrim(0)
+returns the full pattern as in FoxDot. See Example 127.
+
 Version 0.4.97 adds bounded finite-pattern .layer("method", ...). It zips
 the original phrase with an allowlisted transformed copy as chord groups.
 Arbitrary callables are not accepted; results are limited to 256 events.
@@ -253,6 +257,8 @@ consecutive-only duplicate removal.
 sample symbols.
 
 126-pattern-layer.py demonstrates reverse and rotate pattern layers.
+
+127-pattern-trim.py demonstrates splitting a phrase into front and tail parts.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

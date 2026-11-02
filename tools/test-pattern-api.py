@@ -225,6 +225,24 @@ assert namespace['P'][0, namespace['PGroup'](0, 4, 7)].layer('reverse') == [
 assert namespace['P']['x', 'o', '-'].layer('reverse') == [
     ('x', '-'), ('o', 'o'), ('-', 'x')]
 assert namespace['P'][0, 1].layer('replace', 1, 2) == [(0, 0), (1, 2)]
+assert namespace['P'][0, 1, 2, 3].trim(2) == [0, 1]
+assert namespace['P'][0, 1, 2, 3].trim(-1) == [0, 1, 2]
+assert namespace['P'][0, 1, 2, 3].trim(0) == []
+assert namespace['P'][0, 1, 2, 3].ltrim(2) == [2, 3]
+assert namespace['P'][0, 1, 2, 3].ltrim(-1) == [1, 2, 3]
+assert namespace['P'][0, 1, 2, 3].ltrim(0) == [0, 1, 2, 3]
+assert namespace['P']['x', '-', 'o'].trim(2) == ['x', '-']
+assert namespace['P'][namespace['PGroup'](0, 4, 7), 2].ltrim(1) == [2]
+assert namespace['_FoxDotFinitePattern']([]).trim(2) == []
+for slice_call in (
+        lambda: namespace['P'][0, 1].trim(1.5),
+        lambda: namespace['P'][0, 1].ltrim(True)):
+    try:
+        slice_call()
+    except TypeError:
+        pass
+    else:
+        raise AssertionError('trim/ltrim require integer sizes')
 for helper in (
         lambda: namespace['P']['x', 'o'].arp(namespace['P'][0, 2]),
         lambda: namespace['P'][0, 2].arp(
@@ -2424,6 +2442,15 @@ patternLayerRows, patternLayerEvents = run_script(
     patternLayerText, include_events=True)
 assert len(patternLayerRows) == 3
 assert 0 < len(patternLayerEvents) <= 256
+patternTrimText = open(
+    os.path.join(sys.argv[2], '127-pattern-trim.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternTrimText)
+patternTrimRows, patternTrimEvents = run_script(
+    patternTrimText, include_events=True)
+assert len(patternTrimRows) == 3
+assert 0 < len(patternTrimEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2684,4 +2711,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 126, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 127, and user SynthDef examples 94, 103, 104, and 105.')

@@ -1271,6 +1271,16 @@ class _FoxDotFinitePattern(list):
         return _FoxDotFinitePattern([
             replace_item(item, 0) for item in self])
 
+    def trim(self, size):
+        if isinstance(size, bool) or not isinstance(size, int):
+            raise TypeError('trim size must be a whole number')
+        return _FoxDotFinitePattern(self[:size])
+
+    def ltrim(self, size):
+        if isinstance(size, bool) or not isinstance(size, int):
+            raise TypeError('ltrim size must be a whole number')
+        return _FoxDotFinitePattern(self[-size:])
+
     def layer(self, method, *args, **kwargs):
         if not isinstance(method, str):
             raise ValueError(
@@ -1291,6 +1301,8 @@ class _FoxDotFinitePattern(list):
             'arp': self.arp,
             'splice': self.splice,
             'replace': self.replace,
+            'trim': self.trim,
+            'ltrim': self.ltrim,
         }
         if method not in methods:
             raise ValueError(
