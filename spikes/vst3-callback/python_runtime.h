@@ -50,6 +50,7 @@ struct PythonPlayerUpdate {
     std::string bprControlToken = "-";
     std::string bpnoiseControlToken = "-";
     std::string swellControlToken = "-";
+    std::string bpmControlToken = "-";
     std::string sampleControlToken = "-";
     std::string sampleRateControlToken = "-";
     std::array<std::string, 7> effectControlTokens{

@@ -1,5 +1,33 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.107 adds `Clock.bpm = var(values, durations)` and
+`Clock.bpm = linvar(values, durations)`, with a prepared, allocation-free tempo
+map shared by audio/MIDI scheduling. Portable Example 136 has a clear stepped
+tempo and a commented ramp alternative. Tempo durations use beats and do not
+restart with each player's shorter pattern loop. Other time-varying controls
+follow the mapped beat; their control position is interpolated within each
+64-sample SC block. Beat-based echo follows current BPM; seconds-based delay
+and Airwindows time parameters remain in seconds.
+
+The supported tempo syntax and trigger-time `sus`/delay conversion follow
+[FoxDot's TempoClock](https://github.com/Qirky/FoxDot/blob/master/FoxDot/lib/TempoClock.py)
+and [Player OSC message construction](https://github.com/Qirky/FoxDot/blob/master/FoxDot/lib/Players.py):
+already-sounding notes keep the sustain duration chosen at their trigger
+tempo, and WAVs are not time-stretched. This is still the plugin's restart-on-Run
+clock: final global BPM applies to every player updated by that Run, starting
+from the same phase. It does **not** implement desktop FoxDot's next-bar
+assignment behavior or DAW transport sync. Unchanged players are not restarted
+by a script which only changes a different player.
+
+TimeVar limits remain 1–8 finite BPM values, each at least 0.001, with positive
+segment durations up to 4096 beats. There is no added fixed upper BPM limit;
+existing event/voice capacities still apply and acceleration can increase
+overlap. Regression checks: `python3 tools/test-clock-tempo.py` (requires g++)
+exercises the actual audio/MIDI scheduling code with UBSan, constant/stepped/
+ramped clocks, loop phase, gate lengths, and 100,005 mapping round trips.
+`tools/test-player-result-parser.py` round-trips the Portable examples through
+the actual compiled result parser.
+
 Version 0.4.106 adds bounded `PSquare(length=256)`, returning the deterministic
 square-number sequence `0, 1, 4, 9, ...` as a finite pattern. Its output length
 is limited to 1–256 values. Portable Example 135 demonstrates pitch mapping

@@ -78,6 +78,7 @@ int main(int argc, char** argv) {
         std::cout << player.synthIndex << ' ';
         std::cout << "A:" << player.playerEffectUserIndex << ' ';
         std::cout << "W:" << player.swingSeconds << ' ';
+        std::cout << "T:" << player.bpmControlToken << ' ';
         if (player.playerEffectUserIndex >= 0) {
             std::cout << "X:";
             for (const auto& token : player.effectControlTokens)
@@ -125,6 +126,8 @@ with tempfile.TemporaryDirectory() as directory:
             assert "Q:l:0.0,1.0:4.0,4.0:l:0.75,1.5:4.0,4.0" in parsed.stdout
         if example.name == "93-clock-swing.py":
             assert parsed.stdout.count("W:0.04") == 2, parsed.stdout
+        if example.name == "136-variable-bpm.py":
+            assert parsed.stdout.count("T:v:90.0,135.0,105.0:8.0,8.0,8.0") == 2
         if example.name == "103-sample-player-airwindows-delay.py":
             assert "A:0" in parsed.stdout and "A:-1" in parsed.stdout, parsed.stdout
         if example.name == "104-sample-player-airwindows-echojam.py":
@@ -229,6 +232,13 @@ with tempfile.TemporaryDirectory() as directory:
         result.write_text(bad)
         parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
         assert parsed.returncode == 1, parsed.stdout
+    for bad in (re.sub(r"^T\t[^\n]+\n", "", valid, count=1, flags=re.M),
+                re.sub(r"^T\t0\t[^\n]+", "T\t9\t-", valid, count=1, flags=re.M),
+                re.sub(r"^T\t0\t[^\n]+", "T\t0\tinvalid", valid, count=1, flags=re.M)):
+        assert bad != valid
+        result.write_text(bad)
+        parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
+        assert parsed.returncode == 1 and "Clock.bpm" in parsed.stderr, parsed.stderr
 
     fx_example = plugin / "Portable" / "105-airwindows-timevar-controls.py"
     fx_wrapper = api_tests["make_wrapper"](

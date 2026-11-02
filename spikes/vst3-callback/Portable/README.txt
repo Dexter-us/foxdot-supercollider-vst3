@@ -1,5 +1,21 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.107 adds Clock.bpm = var([...], [...]) and linvar([...], [...]).
+See Example 136 for stepped tempo, plus a commented continuous-ramp option.
+Tempo durations are in beats; the curve continues across shorter player loops.
+Run starts the changed players and their tempo curve together, as with the
+plugin's existing restart-on-Run behavior (not desktop FoxDot's next-bar clock
+assignment). All players in that Run receive the final global BPM setting.
+Audio and MIDI triggers use the same tempo map. Delay and sus are converted
+using the trigger tempo, matching FoxDot; already-playing WAVs are not stretched.
+Other timevar controls follow the changing musical beat. The existing echo's
+beat-based time follows tempo, while delay_time and Airwindows times stay in
+seconds. Continuous controls are evaluated at the 64-sample SC block rate.
+Limits: 1–8 finite BPM values, each >= 0.001; positive durations <= 4096 beats.
+There is no added fixed upper BPM ceiling. Existing event/voice capacities
+still apply, and acceleration can increase overlapping voices.
+This does not add DAW sync, arbitrary live Python callbacks, or time-stretching.
+
 Version 0.4.106 adds bounded PSquare(length=256), producing the sequence
 0, 1, 4, 9... as 1–256 values. See Example 135.
 
@@ -318,6 +334,7 @@ sample-symbol drum chain.
 bass contour.
 
 135-psquare-pitch-sequence.py demonstrates a square-number pitch pattern.
+136-variable-bpm.py demonstrates stepped BPM and an alternative linvar ramp.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

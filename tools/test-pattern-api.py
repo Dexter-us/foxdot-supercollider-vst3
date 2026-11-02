@@ -75,7 +75,8 @@ safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filte
               'sum', 'tuple', 'zip', 'ValueError', 'TypeError',
               'ZeroDivisionError', '__build_class__', 'ord', 'chr')
 namespace = {
-    '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
+    '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_bpm_control': None,
+    '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
     '_dexter_root': 60, '_dexter_root_control': None,
     '_dexter_updates': {}, '_dexter_mutes': {},
@@ -955,7 +956,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, user_synth_names=()):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, include_tempo=False, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -981,6 +982,8 @@ def run_script(script_text, include_events=False, include_effects=False, include
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
         mute_rows = [line.split('\t') for line in lines if line.startswith('M\t')]
+        if include_tempo:
+            return player_rows, [line.split('\t') for line in lines if line.startswith('T\t')]
         if include_group_controls:
             return (player_rows, effect_rows, filter_rows, decay_rows,
                     modulation_rows)
@@ -1526,6 +1529,33 @@ assert 'Clock.swing accepts only the amount keyword' in run_compatibility_check(
     'Clock.swing(foo=0.1)\n')
 assert 'Clock.swing is a method; call Clock.swing(amount)' in run_compatibility_check(
     'Clock.swing = 0.1\n')
+for tempo_function, token in (('var', 'v'), ('linvar', 'l')):
+    tempo_source = ('Clock.bpm = ' + tempo_function + '([80, 120], [8, 4])\n'
+                    'p1 >> sine([0, 2], dur=0.5)\n'
+                    'p2 >> play("x-o-", dur=0.5)\n')
+    assert 'No unsupported constructs detected' in run_compatibility_check(tempo_source)
+    tempo_rows, tempo_controls = run_script(tempo_source, include_tempo=True)
+    assert len(tempo_rows) == 2
+    assert all(float(row[3]) == 80.0 for row in tempo_rows)
+    assert [row[2] for row in tempo_controls] == [
+        token + ':80.0,120.0:8.0,4.0'] * 2
+# The final global setting applies even when it appears below the players.
+tempo_rows, tempo_controls = run_script(
+    'p1 >> sine([0])\nClock.bpm = var([90, 135], 8)\n', include_tempo=True)
+assert float(tempo_rows[0][3]) == 90.0
+assert tempo_controls[0][2] == 'v:90.0,135.0:8.0,8.0'
+tempo_rows, tempo_controls = run_script(
+    'Clock.bpm = var([90, 135], 8)\nClock.bpm = 110\np1 >> sine([0])\n',
+    include_tempo=True)
+assert float(tempo_rows[0][3]) == 110.0 and tempo_controls[0][2] == '-'
+for invalid_tempo in ('var([0, 120], 4)', 'linvar([-1, 120], 4)',
+                      'var([120, float("inf")], 4)', '0', '-10'):
+    assert 'tempo must be finite and at least 0.001 BPM' in run_error_script(
+        'Clock.bpm = ' + invalid_tempo + '\np1 >> sine([0])\n')
+assert '0.49 beats or more' in run_error_script(
+    'Clock.bpm = var([80, 400], 8)\nClock.swing(0.2)\np1 >> sine([0])\n')
+assert '0.49 beats or more' in run_error_script(
+    'Clock.swing(0.1)\nClock.bpm = linvar([80, 400], 8)\np1 >> sine([0])\n')
 swingRows = run_script('Clock.bpm = 120\nClock.swing()\np1 >> triangle([0, 2], dur=0.5)\n')
 assert len(swingRows[0]) == 23 and abs(float(swingRows[0][22]) - 0.1) < 1e-9
 swingAfterPlayerRows = run_script(
@@ -3003,4 +3033,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/true_shuffle/shufflets/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip/map/pivot/PWalk/PChain/PDelta/PSquare, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 135, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded pattern/player API, Clock.bpm var/linvar, compatibility checks, diagnostics, WAV samples, user SynthDefs, and Portable examples through 136.')

@@ -824,18 +824,21 @@ _DEXTER_BUILTIN_SYNTHS = (
     'space', 'scratch', 'creep', 'snick', 'swell', 'razz', 'sitar', 'star',
     'karp', 'sample')
 def tempo(bpm):
-    global _dexter_bpm
-    bpm = float(bpm)
-    if bpm != bpm or bpm in (float('inf'), float('-inf')) or bpm < 0.001:
+    global _dexter_bpm, _dexter_bpm_control
+    control = bpm if isinstance(bpm, _DexterTimeVar) else None
+    values = control.values if control is not None else [float(bpm)]
+    if any(value != value or value in (float('inf'), float('-inf')) or
+           value < 0.001 for value in values):
         raise ValueError('tempo must be finite and at least 0.001 BPM')
-    if abs(_dexter_swing_seconds * bpm / 60.0) >= 0.49:
+    if any(abs(_dexter_swing_seconds * value / 60.0) >= 0.49 for value in values):
         raise ValueError('Clock.swing would shift notes by 0.49 beats or more at this tempo')
-    _dexter_bpm = bpm
+    _dexter_bpm = float(values[0])
+    _dexter_bpm_control = control
 
 class _FoxDotClock:
     def __getattr__(self, name):
         if name == 'bpm':
-            return _dexter_bpm
+            return _dexter_bpm_control if _dexter_bpm_control is not None else _dexter_bpm
         if name == 'meter':
             return (4, 4)
         raise ValueError('Clock.' + str(name) + ' is not supported in the embedded clock')
@@ -845,7 +848,9 @@ class _FoxDotClock:
         if amount != amount or amount in (float('inf'), float('-inf')):
             raise ValueError('Clock.swing amount must be finite')
         nudge = amount * (_dexter_bpm / 120.0)
-        if abs(nudge * _dexter_bpm / 60.0) >= 0.49:
+        tempos = (_dexter_bpm_control.values if _dexter_bpm_control is not None
+                  else [_dexter_bpm])
+        if any(abs(nudge * bpm / 60.0) >= 0.49 for bpm in tempos):
             raise ValueError('Clock.swing would shift notes by 0.49 beats or more at this tempo')
         _dexter_swing_seconds = nudge
         for _player in _dexter_updates:
@@ -5116,7 +5121,7 @@ DiskOut = _DiskRecorder()
     script << "import builtins, traceback, sys, time\n"
            << "_dexter_scope = globals().setdefault(" << pythonLiteral(namespaceName) << ", {})\n"
            << "_dexter_scope['__name__'] = 'dexter'\n"
-           << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
+           << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_bpm_control': None, "
            << "'_dexter_length': 1.0, '_dexter_slots': 0, '_dexter_updates': {}, '_dexter_default_touched': False, "
              << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, "
              << "'_dexter_root_control': None, '_dexter_mutes': {}, "
@@ -5153,8 +5158,11 @@ DiskOut = _DiskRecorder()
             << "        _f.write('OK\\t{}\\t{}\\t{}\\n'.format(len(_updates), len(_mutes), len(_dexter_scope['_dexter_disk_commands'])))\n"
             << "        for _player in sorted(_updates):\n"
               << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control, _swing_seconds = _updates[_player]\n"
+             << "            _bpm = _dexter_scope['_dexter_bpm']\n"
+             << "            _tempo_control = _dexter_scope['_dexter_bpm_control']\n"
              << "            _p_values = (_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _synth_rate, _swing_seconds)\n"
              << "            _f.write('P' + chr(9) + chr(9).join(map(str, _p_values)) + chr(10))\n"
+             << "            _f.write('T\\t{}\\t{}\\n'.format(_player, _tempo_control.wire() if _tempo_control is not None else '-'))\n"
             << "            _f.write('R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _reverb, _mix, _room, _damp, _revtime, _spread))\n"
              << "            _f.write('E\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _decay, _decay_control.wire() if _decay_control is not None else '-', _echo_mix, _echo_mix_control, _feedback, _feedback_control if _feedback_control is not None else '-', _note_delay_control.wire() if hasattr(_note_delay_control, 'wire') else (_note_delay_control if _note_delay_control is not None else '-')))\n"
               << "            _controls = (_lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control)\n"
@@ -5270,6 +5278,25 @@ bool parseResult(const std::filesystem::path& resultPath,
                    << "). Check the copied diagnostic for the full exception.";
             error = detail.str();
             return false;
+        }
+        char tempoRecord = 0;
+        int tempoPlayer = -1;
+        if (!(input >> tempoRecord >> tempoPlayer >> update.bpmControlToken) ||
+            tempoRecord != 'T' || tempoPlayer != update.playerIndex ||
+            update.bpmControlToken.size() > 256) {
+            error = "Python returned malformed Clock.bpm automation.";
+            return false;
+        }
+        if (update.bpmControlToken != "-") {
+            const auto& token = update.bpmControlToken;
+            const auto delimiter = token.find(':', 2);
+            if (token.size() < 5 || (token[0] != 'v' && token[0] != 'l') ||
+                token[1] != ':' || delimiter == std::string::npos ||
+                delimiter == 2 || delimiter + 1 == token.size() ||
+                token.find(':', delimiter + 1) != std::string::npos) {
+                error = "Python returned malformed Clock.bpm automation.";
+                return false;
+            }
         }
         char effectRecord = 0;
         int effectPlayer = -1;

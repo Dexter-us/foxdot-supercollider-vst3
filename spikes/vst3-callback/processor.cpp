@@ -24,6 +24,7 @@
 #include "python_runtime.h"
 #include "portable_diskio.h"
 #include "clock_swing.h"
+#include "clock_tempo_map.h"
 #include "airwindows_control_smoothing.h"
 #include "master_output_gain.h"
 #include "win32_code_editor.h"
@@ -620,7 +621,23 @@ public:
                         auto& next = updates[static_cast<std::size_t>(player.playerIndex)];
                         next.active = !player.stopped;
                         next.bpm = player.bpm;
+                        if (!parseTimeVarControl(player.bpmControlToken, 0.001,
+                                                 std::numeric_limits<double>::max(),
+                                                 next.bpmControl) ||
+                            !next.tempoMap.prepare(next.bpmControl, next.bpm)) {
+                            setEditorStatus("Python returned invalid Clock.bpm timevar data.");
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
                         next.swingSeconds = player.swingSeconds;
+                        for (std::size_t value = 0; value < next.bpmControl.count; ++value) {
+                            if (std::abs(next.swingSeconds *
+                                         next.bpmControl.values[value] / 60.0) >= 0.49) {
+                                setEditorStatus("Clock.swing is too large for the automated tempo.");
+                                scriptRunning_.store(false, std::memory_order_release);
+                                return;
+                            }
+                        }
                         next.lengthBeats = player.lengthBeats;
                         next.synthIndex = player.synthIndex;
                         next.playerEffectUserIndex = player.playerEffectUserIndex;
@@ -765,7 +782,11 @@ public:
                     std::ostringstream status;
                     if (!pattern.players.empty()) {
                         status << "Updated " << pattern.players.size() << " player(s), "
-                               << totalNotes << " notes at " << pattern.players.front().bpm << " BPM.";
+                               << totalNotes << " notes";
+                        if (pattern.players.front().bpmControlToken != "-")
+                            status << " with automated BPM.";
+                        else
+                            status << " at " << pattern.players.front().bpm << " BPM.";
                     } else {
                         status << "Player control updated.";
                     }
@@ -965,6 +986,8 @@ private:
         std::uint64_t sampleWorld = 0;
         TimeVarControl sampleControl;
         TimeVarControl sampleRateControl;
+        TimeVarControl bpmControl;
+        ClockTempoMap tempoMap;
         double bpm = 120.0;
         double swingSeconds = 0.0;
         double lengthBeats = 1.0;
@@ -1149,6 +1172,7 @@ private:
         double sampleStart = 0.0;
         double sampleEnd = 1.0;
         bool sampleLoop = false;
+        double beatDurationSeconds = 0.5;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -2047,6 +2071,27 @@ private:
         }
     }
 
+    static double tempoAtBeat(const PatternState& pattern, double beat) {
+        return pattern.tempoMap.bpmAtBeat(beat);
+    }
+
+    static double beatAtSeconds(const PatternState& pattern, double seconds) {
+        return pattern.tempoMap.beatAtSeconds(seconds);
+    }
+
+    double maxTempo(const PatternState& pattern) const {
+        return pattern.tempoMap.maximumBpm();
+    }
+
+    static ClockTempoNoteTiming clockNoteTiming(const PatternState& pattern,
+                                                double baseBeat, double delay,
+                                                double sustain) {
+        const double bpm = tempoAtBeat(pattern, baseBeat);
+        const double nudge = foxDotClockSwingOffsetBeats(
+            pattern.swingSeconds, bpm, baseBeat + delay) * 60.0 / bpm;
+        return pattern.tempoMap.noteTiming(baseBeat, delay, sustain, nudge);
+    }
+
     void collectMidiEvents(std::uint64_t blockStart, std::uint64_t blockEnd,
                            std::array<TimedMidiEvent, kMaxMidiEventsPerBlock>& result,
                            std::size_t& resultCount) const {
@@ -2067,15 +2112,21 @@ private:
             const auto patternStart = patternStartSamples_[player];
             if (blockEnd <= patternStart)
                 continue;
-            const double samplesPerBeat = sampleRate_ * 60.0 / pattern.bpm;
+            const double secondsIntoPattern = static_cast<double>(
+                blockStart > patternStart ? blockStart - patternStart : 0) /
+                sampleRate_;
             const double startBeat = blockStart <= patternStart ? 0.0
-                : static_cast<double>(blockStart - patternStart) / samplesPerBeat;
-            const double endBeat = static_cast<double>(blockEnd - patternStart) / samplesPerBeat;
+                : beatAtSeconds(pattern, secondsIntoPattern);
+            const double endBeat = beatAtSeconds(
+                pattern, static_cast<double>(blockEnd - patternStart) / sampleRate_);
             for (std::size_t i = 0; i < pattern.eventCount; ++i) {
                 const auto& note = pattern.events[i];
+                const double tempoRatio = maxTempo(pattern) /
+                                          pattern.tempoMap.minimumBpm();
                 const auto firstCycle = std::max<std::int64_t>(
                     0, static_cast<std::int64_t>(std::floor(
-                           (startBeat - note.beat - 15.0 - note.durationBeats) /
+                           (startBeat - note.beat -
+                            (15.0 + note.durationBeats) * tempoRatio) /
                            pattern.lengthBeats)) - 1);
                 const auto lastCycle = static_cast<std::int64_t>(
                     std::ceil((endBeat - note.beat) / pattern.lengthBeats)) + 1;
@@ -2084,15 +2135,13 @@ private:
                         static_cast<double>(cycle) * pattern.lengthBeats + note.beat;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
-                    const double scheduledBeat = baseEventBeat + note.delayBeats + dynamicDelay;
-                    const double onsetBeat = scheduledBeat -
-                        foxDotClockSwingOffsetBeats(pattern.swingSeconds,
-                                                    pattern.bpm, scheduledBeat);
-                    const double offsetBeat = onsetBeat + note.durationBeats;
+                    const auto timing = clockNoteTiming(
+                        pattern, baseEventBeat, note.delayBeats + dynamicDelay,
+                        note.durationBeats);
                     const auto onSample = patternStart + static_cast<std::uint64_t>(
-                        std::llround(onsetBeat * samplesPerBeat));
-                    const auto offSample = patternStart + static_cast<std::uint64_t>(
-                        std::llround(offsetBeat * samplesPerBeat));
+                        std::llround(timing.startSeconds * sampleRate_));
+                    const auto offSample = onSample + static_cast<std::uint64_t>(
+                        std::llround(timing.sustainSeconds * sampleRate_));
                     const auto noteId = static_cast<int32>(
                         ((player * kMaxPatternEvents + i) << 16) |
                         (static_cast<std::uint64_t>(cycle) & 0xffffu));
@@ -2167,8 +2216,8 @@ private:
                 pattern.lengthBeats <= 0.0 || pattern.bpm <= 0.0 ||
                 midpoint < patternStart)
                 continue;
-            const double samplesPerBeat = sampleRate_ * 60.0 / pattern.bpm;
-            const double beat = static_cast<double>(midpoint - patternStart) / samplesPerBeat;
+            const double beat = beatAtSeconds(
+                pattern, static_cast<double>(midpoint - patternStart) / sampleRate_);
             std::size_t playerVoices = 0;
             for (std::size_t i = 0; i < pattern.eventCount; ++i) {
                 const auto& event = pattern.events[i];
@@ -2190,20 +2239,18 @@ private:
                 }
                 double sampleSeconds = isSample && minimumSampleRate > 0.0
                     ? longestSampleSeconds / minimumSampleRate : 0.0;
-                if (isSample) {
-                    if (event.sampleLoop)
-                        sampleSeconds = event.durationBeats * 60.0 / pattern.bpm;
-                    else
-                        sampleSeconds *= event.sampleEnd - event.sampleStart;
-                }
-                if (isSample && event.sampleGate)
-                    sampleSeconds = std::min(sampleSeconds, event.durationBeats * 60.0 / pattern.bpm);
-                const double lookback = isSample ? sampleSeconds * pattern.bpm / 60.0 : event.durationBeats;
+                if (isSample)
+                    sampleSeconds *= event.sampleEnd - event.sampleStart;
+                const double tempoRatio = maxTempo(pattern) /
+                                          pattern.tempoMap.minimumBpm();
+                const double lookback = isSample && !event.sampleLoop && !event.sampleGate
+                    ? sampleSeconds * maxTempo(pattern) / 60.0
+                    : event.durationBeats * tempoRatio;
                 if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
                     break;
                 const auto firstCycle = std::max<std::int64_t>(
                     0, static_cast<std::int64_t>(std::floor(
-                           (beat - event.beat - 15.0 - lookback) /
+                           (beat - event.beat - 15.0 * tempoRatio - lookback) /
                            pattern.lengthBeats)) - 1);
                 const auto lastCycle = static_cast<std::int64_t>(
                     std::floor((beat - event.beat) / pattern.lengthBeats));
@@ -2212,11 +2259,11 @@ private:
                         static_cast<double>(cycle) * pattern.lengthBeats + event.beat;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
-                    const double scheduledBeat =
-                        baseEventBeat + event.delayBeats + dynamicDelay;
-                    const double absoluteStartBeat = scheduledBeat -
-                        foxDotClockSwingOffsetBeats(pattern.swingSeconds,
-                                                    pattern.bpm, scheduledBeat);
+                    const auto timing = clockNoteTiming(
+                        pattern, baseEventBeat, event.delayBeats + dynamicDelay,
+                        event.durationBeats);
+                    const double absoluteStartBeat = timing.startBeat;
+                    const double sustainSeconds = timing.sustainSeconds;
                     std::size_t selectedVariant = 0;
                     int selectedSampleBuffer = event.sampleBuffer;
                     double selectedSampleRate = event.sampleRate;
@@ -2246,16 +2293,15 @@ private:
                             std::abs(selectedSampleRate) > 8.0)
                             continue;
                         selectedSampleSeconds = event.sampleLoop
-                            ? event.durationBeats * 60.0 / pattern.bpm
+                            ? sustainSeconds
                             : event.sampleVariantDurations[selectedVariant] *
                                   (event.sampleEnd - event.sampleStart) /
                                   std::abs(selectedSampleRate);
                         if (event.sampleGate)
                             selectedSampleSeconds = std::min(
                                 selectedSampleSeconds,
-                                event.durationBeats * 60.0 / pattern.bpm);
+                                sustainSeconds);
                     }
-                    const double sustainEndBeat = absoluteStartBeat + event.durationBeats;
                     const bool isUserSynth =
                         static_cast<std::size_t>(pattern.synthIndex) >=
                         kSynthIndexToGraphIndex.size();
@@ -2263,8 +2309,6 @@ private:
                         usesFoxDotNativeEnvelope(pattern.synthIndex,
                                                  event.attackSeconds,
                                                  event.releaseSeconds);
-                    const double sustainSeconds =
-                        event.durationBeats * 60.0 / pattern.bpm;
                     // File-based upstream patches except sinepad do not apply blur.
                     const bool appliesBlur = !isUserSynth && pattern.synthIndex >= 31 &&
                         !(pattern.synthIndex >= 35 && pattern.synthIndex <= 40) &&
@@ -2278,9 +2322,11 @@ private:
                                                             event.attackSeconds)
                             : sustainSeconds + (isUserSynth
                                 ? std::max(0.005, event.releaseSeconds) : 0.0);
-                    const double absoluteEndBeat = absoluteStartBeat +
-                        sourceEnvelopeSeconds * pattern.bpm / 60.0;
-                    if (beat < absoluteStartBeat || beat >= absoluteEndBeat)
+                    const auto startSample = patternStart + static_cast<std::uint64_t>(
+                        std::llround(timing.startSeconds * sampleRate_));
+                    const auto endSample = startSample + static_cast<std::uint64_t>(
+                        std::llround(sourceEnvelopeSeconds * sampleRate_));
+                    if (midpoint < startSample || midpoint >= endSample)
                         continue;
                     if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
                         break;
@@ -2291,14 +2337,12 @@ private:
                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
                         pattern.mousePan, pattern.mouseCutoff,
                         event.attackSeconds, event.releaseSeconds,
-                        patternStart + static_cast<std::uint64_t>(
-                            std::llround(absoluteStartBeat * samplesPerBeat)),
-                        patternStart + static_cast<std::uint64_t>(
-                            std::llround(absoluteEndBeat * samplesPerBeat)),
-                        patternStart + static_cast<std::uint64_t>(
-                            std::llround(sustainEndBeat * samplesPerBeat)),
+                        startSample, endSample,
+                        startSample + static_cast<std::uint64_t>(
+                            std::llround(sustainSeconds * sampleRate_)),
                         foxDotNativeEnvelope, selectedSampleBuffer,
-                        event.sampleStart, event.sampleEnd, event.sampleLoop};
+                        event.sampleStart, event.sampleEnd, event.sampleLoop,
+                        sustainSeconds / event.durationBeats};
                     ++playerVoices;
                 }
             }
@@ -2562,7 +2606,7 @@ private:
                             Graph_SetControl(found->activeSynth, 19, static_cast<float>(note.attackSeconds));
                             Graph_SetControl(found->activeSynth, 20, static_cast<float>(note.releaseSeconds));
                             Graph_SetControl(found->activeSynth, 21,
-                                static_cast<float>(60.0 / state.bpm));
+                                static_cast<float>(note.beatDurationSeconds));
                             Graph_SetControl(found->activeSynth, 9, 1.0f);
                             found->triggerControlPendingReset = true;
                         }
@@ -3171,6 +3215,21 @@ private:
     }
 
     void renderSCBlock(std::uint64_t blockStart) {
+        // Control modulation is block-rate, interpolated inside the 64-sample
+        // block. Note scheduling uses the exact map, not this approximation.
+        std::array<double, kPlayerCount> controlBeatStart{};
+        std::array<double, kPlayerCount> controlBeatStep{};
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            const auto& pattern = activePatterns_[player];
+            const auto start = patternStartSamples_[player];
+            const double elapsed = blockStart >= start
+                ? static_cast<double>(blockStart - start) / sampleRate_ : 0.0;
+            controlBeatStart[player] = beatAtSeconds(pattern, elapsed);
+            const double endBeat = beatAtSeconds(
+                pattern, elapsed + static_cast<double>(kSCBlockSize) / sampleRate_);
+            controlBeatStep[player] =
+                (endBeat - controlBeatStart[player]) / kSCBlockSize;
+        }
         for (auto& voice : audioVoices_) {
             if (!voice.activeSynth || (voice.midiNote < 0 && !voice.releasing) ||
                 voice.playerIndex < 0 ||
@@ -3202,10 +3261,7 @@ private:
                     voice.userSynthGateReleased = true;
                 }
             } else if (voice.synthIndex >= 31 && !isPlayerEffect) {
-                const auto start = patternStartSamples_[player];
-                const double beat = blockStart >= start
-                    ? static_cast<double>(blockStart - start) * pattern.bpm /
-                          (60.0 * sampleRate_) : 0.0;
+                const double beat = controlBeatStart[player];
                 Graph_SetControl(voice.activeSynth, 10,
                     evaluateTimeVar(pattern.ampControl, beat, pattern.amplitude));
                 Graph_SetControl(voice.activeSynth, 18,
@@ -3261,11 +3317,8 @@ private:
                 const float source = world_->mAudioBus[offset];
                 const auto controlPlayerIndex = static_cast<std::size_t>(voice.playerIndex);
                 const auto& livePattern = activePatterns_[controlPlayerIndex];
-                const auto patternStart = patternStartSamples_[controlPlayerIndex];
-                const double beat = livePattern.bpm > 0.0 && absoluteSample >= patternStart
-                    ? static_cast<double>(absoluteSample - patternStart) * livePattern.bpm /
-                          (60.0 * sampleRate_)
-                    : 0.0;
+                const double beat = controlBeatStart[controlPlayerIndex] +
+                    controlBeatStep[controlPlayerIndex] * sampleIndex;
                 if (livePattern.ampControl.active &&
                     (voice.synthIndex < 31 ||
                      static_cast<std::size_t>(voice.synthIndex) >=
@@ -3437,15 +3490,8 @@ private:
                 const bool newEffect =
                     playerEffectControlEffectIndices_[player] !=
                     pattern.playerEffectUserIndex;
-                const auto blockMidSample = static_cast<double>(blockStart) +
-                                            static_cast<double>(kSCBlockSize) * 0.5;
-                const auto patternStart = patternStartSamples_[player];
-                const double effectBeat = pattern.bpm > 0.0 &&
-                                          blockMidSample >=
-                                              static_cast<double>(patternStart)
-                    ? (blockMidSample - static_cast<double>(patternStart)) *
-                          pattern.bpm / (60.0 * sampleRate_)
-                    : 0.0;
+                const double effectBeat = controlBeatStart[player] +
+                    controlBeatStep[player] * (kSCBlockSize * 0.5);
                 const float blockSeconds =
                     static_cast<float>(kSCBlockSize / sampleRate_);
                 for (std::size_t control = 0;
@@ -3535,11 +3581,9 @@ private:
                     ++reverbTailPlayers;
                 const float reverbedLeft = dryLeft * (1.0f - reverbMix) + wetLeft * reverbMix;
                 const float reverbedRight = dryRight * (1.0f - reverbMix) + wetRight * reverbMix;
-                const auto patternStart = patternStartSamples_[player];
-                const double playerBeat = pattern.bpm > 0.0 && absoluteSample >= patternStart
-                    ? static_cast<double>(absoluteSample - patternStart) * pattern.bpm /
-                          (60.0 * sampleRate_)
-                    : 0.0;
+                const double playerBeat = controlBeatStart[player] +
+                    controlBeatStep[player] * sampleIndex;
+                const double playerBpm = tempoAtBeat(pattern, playerBeat);
                 auto& echoMix = echoMixSmoothed_[player];
                 const float echoBeats = evaluateTimeVar(pattern.echoControl, playerBeat,
                                                         static_cast<float>(pattern.echoBeats));
@@ -3552,13 +3596,13 @@ private:
                 auto& delaySeconds = echoDelaySmoothed_[player];
                 const float targetDelaySeconds = requestedDelayTime > 0.0f
                     ? requestedDelayTime
-                    : (pattern.bpm > 0.0 ? echoBeats * 60.0f / static_cast<float>(pattern.bpm) : 0.0f);
+                    : static_cast<float>(echoBeats * 60.0 / playerBpm);
                 delaySeconds += (targetDelaySeconds - delaySeconds) * mixSmoothing;
                 if (sampleIndex % kSCBlockSize == 0) {
                     const float decayBeats = evaluateTimeVar(pattern.echoDecayControl, playerBeat,
                                                             static_cast<float>(pattern.echoDecayBeats));
-                    const double decaySeconds = pattern.bpm > 0.0
-                        ? static_cast<double>(decayBeats) * 60.0 / pattern.bpm : 0.0;
+                    const double decaySeconds =
+                        static_cast<double>(decayBeats) * 60.0 / playerBpm;
                     const float requestedFeedback = evaluateTimeVar(pattern.echoFeedbackControl,
                                                                      playerBeat, pattern.echoFeedback);
                     echoFeedbackTarget_[player] = requestedFeedback >= 0.0f
@@ -3770,7 +3814,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-    "0.4.106",
+    "0.4.107",
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 
