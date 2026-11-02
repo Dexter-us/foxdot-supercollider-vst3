@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.104 adds finite PChain(mapping, length=256, seed=None). It starts
+at the first mapping key, chooses from that state's destinations, and repeats
+terminal values. Numeric-note and sample-symbol chains are supported, limited
+to 32 states and 256 choices. See Example 133.
+
 Version 0.4.103 adds finite seeded PWalk(max=7, step=1, start=0). It follows
 FoxDot's random walk and turning thresholds, supports a cycling numeric step
 pattern, and returns 1..256 values. See Example 132.
@@ -298,6 +303,9 @@ shuffled chord passes with strum.
 
 132-pwalk-melodic-walk.py demonstrates a seeded melodic walk, a slower bass
 walk, and drums.
+
+133-pchain-transition-melody.py demonstrates numeric transition chains and a
+sample-symbol drum chain.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

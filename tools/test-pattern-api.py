@@ -122,6 +122,23 @@ assert all(-9 <= value <= 9 for value in walk)
 boundedWalk = namespace['PWalk'](max=3, step=1, start=0, length=256, seed=9)
 assert all(-3 <= value <= 3 for value in boundedWalk)
 assert namespace['PWalk'](max=-2, step=-1, start=1, length=4, seed=3)[0] == 1
+chainMap = {0: [1, 2], 1: [0], 2: [2, 9]}
+chain = namespace['PChain'](chainMap, length=128, seed=123)
+assert len(chain) == 128 and chain[0] == 0
+assert chain == namespace['PChain'](chainMap, length=128, seed=123)
+for previous, current in zip(chain, chain[1:]):
+    if previous in chainMap:
+        assert current in chainMap[previous]
+    else:
+        assert current == previous
+terminalChain = namespace['PChain']({0: [9]}, length=8, seed=6)
+assert terminalChain == [0, 9, 9, 9, 9, 9, 9, 9]
+sampleChain = namespace['PChain'](
+    {'x': ['o', '-'], 'o': ['x'], '-': ['x']},
+    length=32, seed=22)
+assert len(sampleChain) == 32 and sampleChain[0] == 'x'
+assert all(value in ('x', 'o', '-') for value in sampleChain)
+assert namespace['PChain']({5: [5]}, length=6) == [5] * 6
 for generator in (
         lambda: namespace['PRand']([], length=2),
         lambda: namespace['PRand'](2.5, length=2),
@@ -139,7 +156,18 @@ for generator in (
         lambda: namespace['PWalk'](step=namespace['P']['x', 'o'], length=3),
         lambda: namespace['PWalk'](step=float('inf')),
         lambda: namespace['PWalk'](length=257),
-        lambda: namespace['PWalk'](seed=True)):
+        lambda: namespace['PWalk'](seed=True),
+        lambda: namespace['PChain']([]),
+        lambda: namespace['PChain']({}),
+        lambda: namespace['PChain']({True: [0]}),
+        lambda: namespace['PChain']({0: []}),
+        lambda: namespace['PChain']({0: ['x']}),
+        lambda: namespace['PChain']({0: [object()]}),
+        lambda: namespace['PChain']({0: [0]}, length=257),
+        lambda: namespace['PChain']({0: [0]}, seed=True),
+        lambda: namespace['PChain']({i: [i] for i in range(33)}),
+        lambda: namespace['PChain'](
+            {0: list(range(257))})):
     try:
         generator()
     except (TypeError, ValueError):
@@ -2669,6 +2697,15 @@ patternWalkRows, patternWalkEvents = run_script(
     patternWalkText, include_events=True)
 assert len(patternWalkRows) == 3
 assert 0 < len(patternWalkEvents) <= 256
+patternChainText = open(
+    os.path.join(sys.argv[2], '133-pchain-transition-melody.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternChainText)
+patternChainRows, patternChainEvents = run_script(
+    patternChainText, include_events=True)
+assert len(patternChainRows) == 3
+assert 0 < len(patternChainEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2929,4 +2966,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/true_shuffle/shufflets/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip/map/pivot, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 132, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/true_shuffle/shufflets/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip/map/pivot/PWalk/PChain, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 133, and user SynthDef examples 94, 103, 104, and 105.')

@@ -115,7 +115,7 @@ _COMPAT_CALLS = {
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
-    'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk',
+    'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -546,6 +546,22 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                              'PWalk received the same argument more than once.')
                 else:
                     positional.add(keyword.arg)
+        if name == 'PChain':
+            parameters = ('mapping', 'length', 'seed')
+            allowed = set(parameters)
+            if len(node.args) > len(parameters):
+                self.add(node.lineno, 'PChain accepts mapping, length, and seed.')
+            positional = set(parameters[:len(node.args)])
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(node.lineno, 'PChain accepts only mapping, length, and seed.')
+                elif keyword.arg in positional:
+                    self.add(keyword.lineno or node.lineno,
+                             'PChain received the same argument more than once.')
+                else:
+                    positional.add(keyword.arg)
+            if not positional.intersection({'mapping'}):
+                self.add(node.lineno, 'PChain requires a transition mapping.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -1894,6 +1910,60 @@ def PWalk(max=7, step=1, start=0, length=256, seed=None):
             value += direction * stepValues[index % len(stepValues)]
             if not _finite_note_number(value):
                 raise ValueError('PWalk generated a non-finite note')
+        result.append(value)
+    return _FoxDotFinitePattern(result)
+
+def PChain(mapping, length=256, seed=None):
+    length = _random_pattern_length(length, 'PChain')
+    if not isinstance(mapping, dict):
+        raise TypeError('PChain expects a dictionary of transition choices')
+    if not 1 <= len(mapping) <= 32:
+        raise ValueError('PChain mappings must contain 1 to 32 states')
+
+    normalized = {}
+    kind = None
+    choiceCount = 0
+    for key, rawChoices in mapping.items():
+        if isinstance(key, str) and len(key) == 1 and (
+                key == ' ' or key in _SAMPLE_SYMBOLS):
+            keyKind = 'sample'
+        elif _finite_note_number(key) and abs(float(key)) <= 1000000.0:
+            keyKind = 'numeric'
+        else:
+            raise TypeError(
+                'PChain keys must be finite numeric notes or single sample symbols')
+        if kind is not None and keyKind != kind:
+            raise TypeError('PChain cannot mix numeric notes and sample symbols')
+        kind = keyKind
+
+        if isinstance(rawChoices, _FoxDotFinitePattern):
+            choices = list(rawChoices)
+        elif isinstance(rawChoices, list):
+            choices = list(rawChoices)
+        elif isinstance(rawChoices, tuple):
+            choices = [rawChoices]
+        else:
+            choices = [rawChoices]
+        if not choices:
+            raise ValueError('PChain transition choices cannot be empty')
+        choiceCount += len(choices)
+        if choiceCount > 256:
+            raise ValueError('PChain transition choices are limited to 256 items')
+        choiceValues, choiceKind = _pattern_items(choices, 'PChain')
+        if choiceKind != keyKind:
+            raise TypeError('PChain transitions must match their key type')
+        normalized[key] = choiceValues
+
+    state = _random_pattern_seed(seed, 'PChain')
+    value = list(normalized.keys())[0]
+    result = []
+    for index in range(length):
+        if index:
+            choices = normalized.get(value)
+            if choices:
+                state, _ = _random_pattern_step(state)
+                choiceIndex = (state * len(choices)) >> 32
+                value = choices[choiceIndex]
         result.append(value)
     return _FoxDotFinitePattern(result)
 
