@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.93 adds FoxDot's native finite-pattern .invert() method. It reflects
+numeric notes around the phrase's highest note, keeps rests, and inverts chord
+groups independently. Transposition uses the existing transpose(pattern,
+interval) helper; FoxDot does not define .transpose() as a P method. See Example 122.
+
 Version 0.4.92 adds FoxDot-style finite P pattern methods .stretch(size),
 .loop(n), and .shuffle(n). stretch repeats to a target length; loop repeats a
 whole phrase; shuffle makes independently shuffled copies while keeping chord
@@ -215,6 +220,9 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 
 121-pattern-method-parity.py demonstrates method-form stretch(size), loop(n),
 and shuffle(n) on finite numeric, chord, and note patterns.
+
+122-pitch-inversion.py demonstrates .invert() on a numeric phrase and
+transpose(pattern, interval) on chords and notes.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

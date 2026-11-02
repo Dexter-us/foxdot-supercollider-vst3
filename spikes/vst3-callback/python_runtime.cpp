@@ -1217,6 +1217,9 @@ class _FoxDotFinitePattern(list):
             result.extend(PShuf(self))
         return _FoxDotFinitePattern(result)
 
+    def invert(self):
+        return _invert_pitch_pattern(self)
+
     def stutter(self, count=2):
         counts = list(count) if isinstance(count, (list, tuple)) else [count]
         if not counts:
@@ -1371,6 +1374,40 @@ class _FoxDotFinitePattern(list):
 def _finite_note_number(value):
     return (isinstance(value, (int, float)) and not isinstance(value, bool) and
             value == value and value not in (float('inf'), float('-inf')))
+
+def _invert_pitch_values(values, depth=0):
+    if depth > 16:
+        raise ValueError('invert is limited to 16 nested pattern levels')
+    if len(values) > 256:
+        raise ValueError('invert input patterns are limited to 256 items')
+    notes = [value for value in values if _finite_note_number(value)]
+    pivot = max(notes) if notes else 0
+    result = []
+    for value in values:
+        if value is None:
+            result.append(None)
+        elif _finite_note_number(value):
+            inverted = pivot - value
+            if not _finite_note_number(inverted):
+                raise ValueError('invert results must remain finite numbers')
+            result.append(inverted)
+        elif isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+            if not isinstance(value, _FoxDotFinitePattern) and not 1 <= len(value) <= 8:
+                raise ValueError('invert chord groups must contain 1..8 notes')
+            children = _invert_pitch_values(value, depth + 1)
+            if isinstance(value, _FoxDotFinitePattern):
+                result.append(_FoxDotFinitePattern(children))
+            elif isinstance(value, tuple):
+                result.append(_FoxDotChord(*children) if isinstance(value, _FoxDotChord)
+                              else tuple(children))
+            else:
+                result.append(children)
+        else:
+            raise TypeError('invert supports finite numeric notes, rests, and numeric chords')
+    return result
+
+def _invert_pitch_pattern(pattern):
+    return _FoxDotFinitePattern(_invert_pitch_values(pattern))
 
 def _numeric_pattern_item(value):
     if value is None or _finite_note_number(value):
