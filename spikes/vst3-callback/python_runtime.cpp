@@ -1092,6 +1092,75 @@ class _FoxDotFinitePattern(list):
         amount = int(amount) % len(values)
         return _FoxDotFinitePattern(values[amount:] + values[:amount])
 
+    def mirror(self):
+        def mirror_item(item, depth):
+            if depth > 16:
+                raise ValueError('mirror is limited to 16 nested pattern levels')
+            if isinstance(item, _FoxDotFinitePattern):
+                return _FoxDotFinitePattern([
+                    mirror_item(child, depth + 1) for child in reversed(item)])
+            if isinstance(item, tuple):
+                return tuple(mirror_item(child, depth + 1)
+                             for child in reversed(item))
+            if isinstance(item, list):
+                return [mirror_item(child, depth + 1)
+                        for child in reversed(item)]
+            return item
+        return _FoxDotFinitePattern([
+            mirror_item(item, 0) for item in reversed(self)])
+
+    def accum(self, n=None):
+        counts = ([len(self)] if n is None else
+                  list(n) if isinstance(n, (list, tuple, _FoxDotFinitePattern))
+                  else [n])
+        if not counts:
+            raise ValueError('accum count pattern cannot be empty')
+        if len(counts) > 256:
+            raise ValueError('accum count patterns are limited to 256 items')
+        result = []
+        for count in counts:
+            if isinstance(count, bool) or not isinstance(count, int):
+                raise TypeError('accum lengths must be whole numbers from 0 to 256')
+            if not 0 <= count <= 256:
+                raise ValueError('accum lengths must be whole numbers from 0 to 256')
+            values = [0]
+            if count > 1 and not self:
+                raise ValueError('accum needs a non-empty source pattern')
+            total = 0
+            for index in range(count - 1):
+                item = self[index % len(self)]
+                if not _finite_note_number(item):
+                    raise TypeError('accum supports finite numeric note patterns only')
+                total += item
+                if not _finite_note_number(total):
+                    raise ValueError('accum results must remain finite numbers')
+                values.append(total)
+            if len(result) + len(values) > 256:
+                raise ValueError('accum output is limited to 256 items')
+            result.extend(values)
+        return _FoxDotFinitePattern(result)
+
+    def swap(self, n=2):
+        sizes = (list(n) if isinstance(n, (list, tuple, _FoxDotFinitePattern))
+                 else [n])
+        if not sizes:
+            raise ValueError('swap block-size pattern cannot be empty')
+        if len(sizes) > 256:
+            raise ValueError('swap block-size patterns are limited to 256 items')
+        result = []
+        for size in sizes:
+            if isinstance(size, bool) or not isinstance(size, int):
+                raise TypeError('swap block sizes must be whole numbers from 1 to 256')
+            if not 1 <= size <= 256:
+                raise ValueError('swap block sizes must be whole numbers from 1 to 256')
+            swapped = []
+            for start in range(0, len(self), size):
+                swapped.extend(reversed(self[start:start + size]))
+            if len(result) + len(swapped) > 256:
+                raise ValueError('swap output is limited to 256 items')
+            result.extend(swapped)
+        return _FoxDotFinitePattern(result)
+
     def repeat(self, count=2):
         count = int(count)
         if count < 1 or len(self) * count > 256:

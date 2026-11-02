@@ -150,6 +150,28 @@ assert pattern.rotate(-1) == [4, 1, None, (3, 5)]
 assert namespace['P'][0, 1, 2, 3].stutter([1, 3]) == [0, 1, 1, 1, 2, 3, 3, 3]
 assert namespace['P'][1, None, 3].repeat(2) == [1, None, 3, 1, None, 3]
 assert namespace['P'][1, 2, 3].palindrome() == [1, 2, 3, 3, 2, 1]
+assert namespace['P'][1, namespace['P'][2, 3], 4].mirror() == [
+    4, [3, 2], 1]
+assert namespace['P'][1, 2, 3, 4].accum() == [0, 1, 3, 6]
+assert namespace['P'][1, 2, 3].accum(5) == [0, 1, 3, 6, 7]
+assert namespace['P'][1, 2].accum(namespace['P'][2, 3]) == [
+    0, 1, 0, 1, 3]
+assert namespace['P'][0, 1, 2, 3, 4].swap(2) == [1, 0, 3, 2, 4]
+assert namespace['P'][0, 1, 2, 3, 4, 5].swap(
+    namespace['P'][2, 3]) == [1, 0, 3, 2, 5, 4, 2, 1, 0, 5, 4, 3]
+assert namespace['P']['x', namespace['P']['o', ' ']].mirror() == [
+    [' ', 'o'], 'x']
+for helper in (
+        lambda: namespace['P'][1, 2].accum(257),
+        lambda: namespace['P'][1, None, 2].accum(),
+        lambda: namespace['P'][1, 2].swap(0),
+        lambda: namespace['P'][1, 2].swap(1.5)):
+    try:
+        helper()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('bounded pattern helper should reject invalid input')
 try:
     namespace['P'][*range(129)].repeat(2)
 except ValueError as error:
@@ -2180,6 +2202,15 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
 globalRootRows, globalRootEvents = run_script(
     globalRootText, include_events=True)
 assert len(globalRootRows) == 4 and len(globalRootEvents) == 16
+patternHelperText = open(
+    os.path.join(sys.argv[2], '120-pattern-shaping-helpers.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternHelperText)
+patternHelperRows, patternHelperEvents = run_script(
+    patternHelperText, include_events=True)
+assert len(patternHelperRows) == 3
+assert 0 < len(patternHelperEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2440,4 +2471,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 119, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 120, and user SynthDef examples 94, 103, 104, and 105.')

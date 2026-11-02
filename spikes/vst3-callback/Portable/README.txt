@@ -1,5 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.91 adds bounded finite-pattern `mirror()`, `accum()`, and
+`swap(n)` methods. Nested sequences mirror recursively; `accum()` uses
+numeric notes and bounded lengths; `swap()` reverses each block. See Example 120.
+
 Version 0.4.90 lets `Root.default.set()` use bounded `var()` and `linvar()`
 values. The root is sampled at note onsets; fixed per-player roots override it,
 while changing `Scale.default` alone preserves the current root. See Example 119.
@@ -200,6 +204,8 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 12-pattern-arithmetic.py shows FoxDot-style P[...] numeric transposition with + and -, including laced patterns, rests, and numeric chords.
 
 13-pattern-methods.py demonstrates FoxDot-style transformations directly on finite P patterns: reverse, rotate, variable-count stutter, repeat, and palindrome. The methods return bounded finite patterns and can be used before a player.
+
+120-pattern-shaping-helpers.py demonstrates nested mirror(), cumulative degree contours with accum(), and reversed blocks with swap().
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 
