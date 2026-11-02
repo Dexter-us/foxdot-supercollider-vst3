@@ -1,5 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.90 lets `Root.default.set()` use bounded `var()` and `linvar()`
+values. The root is sampled at note onsets; fixed per-player roots override it,
+while changing `Scale.default` alone preserves the current root. See Example 119.
+
 Version 0.4.89 adds per-player `root=` and shared `Group.root`. Root changes
 take effect at note onsets. `var()` and `linvar()` root values are rounded to
 MIDI semitones; fixed roots accept note names or numeric pitch classes/MIDI
@@ -303,7 +307,7 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 
 26-scales-and-chords.py demonstrates the expanded equal-tempered FoxDot scale bank, custom ascending semitone scales, and chord note groups. Just-intonation and frequency scales are not included.
 
-27-root-and-scale-controls.py demonstrates FoxDot-style Scale.default assignment, Root.default.set(...) using pitch classes or note names, and per-player root overrides.
+27-root-and-scale-controls.py demonstrates FoxDot-style Scale.default assignment, Root.default.set(...) using pitch classes or note names, and per-player root overrides. 119-global-root-timevars.py demonstrates session-wide stepped var() and semitone-gliding linvar() root changes.
 
 28-roman-numeral-chords.py demonstrates FoxDot's I–VII triad and seventh-chord names, plus custom chords made with PGroup(...).
 

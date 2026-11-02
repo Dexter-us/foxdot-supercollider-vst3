@@ -77,7 +77,8 @@ safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filte
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
-    '_dexter_root': 60, '_dexter_updates': {}, '_dexter_mutes': {},
+    '_dexter_root': 60, '_dexter_root_control': None,
+    '_dexter_updates': {}, '_dexter_mutes': {},
     '_dexter_shuffle_seed': 123456789,
     '_dexter_default_touched': False, '__name__': 'dexter_test',
     '__builtins__': {name: getattr(builtins, name) for name in safe_names},
@@ -1123,7 +1124,37 @@ rootRows, rootEvents = run_script(open(os.path.join(sys.argv[2], '27-root-and-sc
 assert len(rootRows) == 3 and [row[1] for row in rootRows] == ['0', '1', '2']
 assert [int(event[3]) for event in rootEvents] == [62, 65, 69, 72, 55, 58, 62, 57, 60, 63, 63, 67, 70, 74]
 assert 'No unsupported constructs detected' in run_compatibility_check('Scale.default = "minor"\nRoot.default.set("Eb")\np1 >> saw([0, 2, 4], root=7)\n')
-assert 'Root.default only supports .set(note)' in run_compatibility_check('Root.default.notes\n')
+assert 'Root.default only supports .set(root)' in run_compatibility_check('Root.default.notes\n')
+rootTimevarText = (
+    'Scale.default = Scale.major\n'
+    'Root.default.set(var([0, 7], [2, 2]))\n'
+    'Scale.default.set(Scale.major)\n'
+    'p1 >> triangle(P[0, 2, 4, 6], dur=1, oct=5)\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(rootTimevarText)
+rootTimevarRows, rootTimevarEvents = run_script(
+    rootTimevarText, include_events=True)
+assert len(rootTimevarRows) == 1
+assert [int(event[3]) for event in rootTimevarEvents] == [
+    60, 64, 74, 78]
+rootLinvarRows, rootLinvarEvents = run_script(
+    'Root.default.set(linvar([0, 4], [4, 4]))\n'
+    'p1 >> triangle(P[0, 0, 0, 0], dur=1, oct=5)\n',
+    include_events=True)
+assert len(rootLinvarRows) == 1
+assert [int(event[3]) for event in rootLinvarEvents] == [60, 61, 62, 63]
+rootOverrideRows, rootOverrideEvents = run_script(
+    'Root.default.set(var([0, 7], [2, 2]))\n'
+    'p1 >> triangle(P[0, 0], dur=1, oct=5, root=2)\n'
+    'p2 >> triangle(P[0, 0, 0, 0], dur=1, oct=5)\n',
+    include_events=True)
+assert len(rootOverrideRows) == 2
+assert [int(event[3]) for event in rootOverrideEvents[:2]] == [62, 62]
+assert [int(event[3]) for event in rootOverrideEvents[2:]] == [60, 60, 67, 67]
+assert 'pitch classes 0..11 or MIDI notes 12..127' in run_error_script(
+    'Root.default.set(var([0, 60], [2, 2]))\n'
+    'p1 >> triangle([0], dur=1)\n')
+assert 'Root.default.set requires' in run_error_script(
+    'Root.default.set(None)\np1 >> triangle([0], dur=1)\n')
 chordRows, chordEvents = run_script(open(os.path.join(sys.argv[2], '28-roman-numeral-chords.py'), encoding='utf-8').read(), include_events=True)
 assert len(chordRows) == 2 and [row[1] for row in chordRows] == ['0', '1']
 assert [int(event[3]) for event in chordEvents[:14]] == [48, 52, 55, 53, 57, 48, 55, 47, 50, 65, 48, 52, 55, 59]
@@ -2141,6 +2172,14 @@ groupRootExampleRows, groupRootExampleEvents = run_script(
     groupRootText, include_events=True)
 assert len(groupRootExampleRows) == 3
 assert len(groupRootExampleEvents) == 12
+globalRootText = open(
+    os.path.join(sys.argv[2], '119-global-root-timevars.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    globalRootText)
+globalRootRows, globalRootEvents = run_script(
+    globalRootText, include_events=True)
+assert len(globalRootRows) == 4 and len(globalRootEvents) == 16
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2401,4 +2440,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 118, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 119, and user SynthDef examples 94, 103, 104, and 105.')

@@ -590,7 +590,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Name) and node.value.id == 'Root' and node.attr != 'default':
             self.add(node.lineno, 'Root only supports Root.default in this build.')
         if isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == 'Root' and node.value.attr == 'default' and node.attr != 'set':
-            self.add(node.lineno, 'Root.default only supports .set(note).')
+            self.add(node.lineno, 'Root.default only supports .set(root), with fixed notes or bounded var/linvar values.')
         if isinstance(node.value, ast.Name) and re.fullmatch(r'p[0-9]+', node.value.id):
             if not re.fullmatch(r'p[1-8]', node.value.id):
                 self.add(node.lineno, 'Use one of the supported player names p1 through p8.')
@@ -921,16 +921,23 @@ def _root_midi(value):
     return 60 + root if root <= 11 else root
 
 def scale(name='major', root=60):
-    global _dexter_scale, _dexter_root
+    global _dexter_scale, _dexter_root, _dexter_root_control
     root = int(root)
     if not 0 <= root <= 127:
         raise ValueError('scale root must be a MIDI note from 0 to 127')
     _dexter_scale = _scale_intervals(name)
     _dexter_root = root
+    _dexter_root_control = None
 
 class _FoxDotScaleDefault:
     def set(self, name, root=None):
-        scale(name, _dexter_root if root is None else _root_midi(root))
+        global _dexter_scale, _dexter_root, _dexter_root_control
+        if root is None:
+            _dexter_scale = _scale_intervals(name)
+        else:
+            _dexter_scale = _scale_intervals(name)
+            _dexter_root = _root_midi(root)
+            _dexter_root_control = None
 
 class _FoxDotScaleNamespace:
     def __init__(self):
@@ -949,8 +956,10 @@ Scale = _FoxDotScaleNamespace()
 
 class _FoxDotRootDefault:
     def set(self, value):
-        global _dexter_root
-        _dexter_root = _root_midi(value)
+        global _dexter_root, _dexter_root_control
+        if value is None:
+            raise ValueError('Root.default.set requires a pitch class, MIDI note, or bounded var/linvar')
+        _dexter_root, _dexter_root_control = _normalize_root_control(value)
 
 class _FoxDotRootNamespace:
     def __init__(self):
@@ -2070,8 +2079,10 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                 note += (octave - _base_octave) * _degrees_per_octave
             if degrees:
                 octave, degree = divmod(note, len(_dexter_scale))
-                rootMidi = (int(round(_root_control.at(start)))
-                            if _root_control is not None else _dexter_root)
+                rootControl = (_root_control if _root_control is not None
+                               else _dexter_root_control)
+                rootMidi = (int(round(rootControl.at(start)))
+                            if rootControl is not None else _dexter_root)
                 note = rootMidi + octave * 12 + _dexter_scale[degree]
             if not 0 <= note <= 127:
                 raise ValueError('notes must resolve to MIDI pitches 0..127')
@@ -3209,6 +3220,7 @@ class Player:
     def __rshift__(self, pattern):
         global _dexter_events, _dexter_length, _dexter_slots
         global _dexter_default_touched, _dexter_scale, _dexter_root
+        global _dexter_root_control
         global _dexter_sample_controls
         if not isinstance(pattern, PlayerPattern):
             raise TypeError('assign sequence(...) to a player using >>')
@@ -3220,16 +3232,18 @@ class Player:
                     copiedPattern, controlName, controlValue)
             pattern = copiedPattern
         saved = (_dexter_events, _dexter_length, _dexter_slots,
-                 _dexter_default_touched, _dexter_scale, _dexter_root)
+                 _dexter_default_touched, _dexter_scale, _dexter_root,
+                 _dexter_root_control)
         _dexter_events = []
         _dexter_length = 1.0
         _dexter_slots = 0
         _dexter_default_touched = False
         try:
             if pattern.scaleName is not None:
-                scale(pattern.scaleName, _dexter_root)
+                _dexter_scale = _scale_intervals(pattern.scaleName)
             if pattern.rootMidi is not None:
                 _dexter_root = pattern.rootMidi
+                _dexter_root_control = pattern.rootControl
             play(pattern.notes, step=pattern.step, duration=pattern.duration,
                  velocity=pattern.velocity, offset=pattern.offset,
                  degrees=pattern.degrees, _octave_control=pattern.octaveControl,
@@ -3267,6 +3281,7 @@ class Player:
         finally:
             _dexter_events, _dexter_length, _dexter_slots, _dexter_default_touched = saved[:4]
             _dexter_scale, _dexter_root = saved[4], saved[5]
+            _dexter_root_control = saved[6]
         playerIndex = self.number - 1
         if not 0 <= playerIndex < 8:
             raise ValueError('player number must be 1..8')
@@ -4447,7 +4462,8 @@ DiskOut = _DiskRecorder()
            << "_dexter_scope['__name__'] = 'dexter'\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, "
            << "'_dexter_length': 1.0, '_dexter_slots': 0, '_dexter_updates': {}, '_dexter_default_touched': False, "
-            << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, '_dexter_mutes': {}, "
+             << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, "
+             << "'_dexter_root_control': None, '_dexter_mutes': {}, "
             << "'_dexter_swing_seconds': 0.0, '_dexter_disk_commands': [], "
            << "'_dexter_shuffle_seed': int(time.monotonic_ns() & 0xffffffff)})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
