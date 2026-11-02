@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.101 adds bounded .map(mapping) and .pivot(index) pattern methods.
+map() recursively applies a dictionary to nested patterns and chords; unmapped
+values become zero like FoxDot. pivot() mirrors and rotates around one or more
+whole-number steps. Results are limited to 256 values and 16 nested levels.
+See Example 130.
+
 Version 0.4.100 adds bounded .zip(), .deepzip(), and .deeprzip() pattern
 methods. zip() pairs numeric or sample-symbol values into chord-like groups.
 The deep forms preserve nested phrase structure; deeprzip() reverses paired

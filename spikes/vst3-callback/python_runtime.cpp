@@ -1319,6 +1319,90 @@ class _FoxDotFinitePattern(list):
     def deeprzip(self, other):
         return _deep_zip_pattern(self, other, reverse=True)
 
+    def map(self, mapping):
+        if not isinstance(mapping, dict):
+            raise TypeError('map requires a dictionary')
+        if len(mapping) > 256:
+            raise ValueError('map dictionaries are limited to 256 entries')
+        budget = [0]
+
+        def validate_value(value, depth):
+            if depth > 16:
+                raise ValueError('map is limited to 16 nested pattern levels')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    validate_value(child, depth + 1) for child in value])
+            if isinstance(value, _FoxDotChord):
+                values = [validate_value(child, depth + 1) for child in value]
+                if all(_finite_note_number(child) for child in values):
+                    return _FoxDotChord(*values)
+                return tuple(values)
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return tuple(validate_value(child, depth + 1)
+                             for child in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return [validate_value(child, depth + 1) for child in value]
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError('map output is limited to 256 values')
+            if (value is None or isinstance(value, str) or
+                    _finite_note_number(value)):
+                return value
+            raise TypeError(
+                'map values must be finite numbers, rests, symbols, or groups')
+
+        def map_item(item, depth):
+            if depth > 16:
+                raise ValueError('map is limited to 16 nested pattern levels')
+            if isinstance(item, _FoxDotFinitePattern):
+                return _FoxDotFinitePattern([
+                    map_item(value, depth + 1) for value in item])
+            if isinstance(item, _FoxDotChord):
+                values = [map_item(value, depth + 1) for value in item]
+                if all(_finite_note_number(value) for value in values):
+                    return _FoxDotChord(*values)
+                return tuple(values)
+            if isinstance(item, tuple):
+                return tuple(map_item(value, depth + 1) for value in item)
+            if isinstance(item, list):
+                return [map_item(value, depth + 1) for value in item]
+            return validate_value(mapping.get(item, 0), depth)
+
+        if len(self) > 256:
+            raise ValueError('map input is limited to 256 top-level items')
+        return _FoxDotFinitePattern([map_item(item, 0) for item in self])
+
+    def pivot(self, index):
+        indices = (list(index) if isinstance(
+            index, (list, tuple, _FoxDotFinitePattern)) else [index])
+        if len(indices) > 256:
+            raise ValueError('pivot index patterns are limited to 256 items')
+        if self and len(self) * len(indices) > 256:
+            raise ValueError('pivot output is limited to 256 items')
+        result = []
+        length = len(self)
+        for pivot_index in indices:
+            if isinstance(pivot_index, bool) or not isinstance(pivot_index, int):
+                raise TypeError('pivot indices must be whole numbers')
+            if not length:
+                continue
+            midpoint = length / 2.0
+            if pivot_index > midpoint:
+                pivot_index = length - pivot_index - 1
+                transformed = self.mirror().rotate(
+                    (2 * (pivot_index % length)) + 1)
+            else:
+                transformed = self.rotate(
+                    (2 * (pivot_index % length)) + 1).mirror()
+            result.extend(transformed)
+        return _FoxDotFinitePattern(result)
+
     def layer(self, method, *args, **kwargs):
         if not isinstance(method, str):
             raise ValueError(
@@ -1345,6 +1429,8 @@ class _FoxDotFinitePattern(list):
             'zip': self.zip,
             'deepzip': self.deepzip,
             'deeprzip': self.deeprzip,
+            'map': self.map,
+            'pivot': self.pivot,
         }
         if method not in methods:
             raise ValueError(

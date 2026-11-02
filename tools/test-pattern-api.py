@@ -294,6 +294,19 @@ deepReversed = namespace['P'][
 assert deepReversed == [
     namespace['P'][(4, 1), (4, 2)], (5, 3)]
 assert namespace['P'][1, 2].zip(3) == [(1, 3), (2, 3)]
+assert namespace['P'][1, 3, 4].map({1: 6, 4: 2}) == [6, 0, 2]
+assert namespace['P'][
+    namespace['P'][1, 3],
+    namespace['PGroup'](0, 4)].map({1: 7, 3: 2, 0: 4, 4: 6}) == [
+        [7, 2], namespace['PGroup'](4, 6)]
+assert namespace['P']['x', 'o'].map({'x': 'o', 'o': 'x'}) == ['o', 'x']
+assert namespace['P'][0, None].map({}) == [0, 0]
+assert namespace['P'][1].map({1: (2, 4)}) == [(2, 4)]
+assert namespace['P'][0, 1, 2, 3].pivot(0) == [0, 3, 2, 1]
+assert namespace['P'][0, 1, 2, 3].pivot(1) == [2, 1, 0, 3]
+assert namespace['P'][0, 1, 2, 3].pivot(3) == [2, 1, 0, 3]
+assert namespace['P'][0, 1, 2, 3].pivot(
+    namespace['P'][0, 2]) == [0, 3, 2, 1, 0, 3, 2, 1]
 for zip_call in (
         lambda: namespace['P'][0, 1].zip(
             namespace['P'][2, 3], dtype=namespace['PGroup']),
@@ -316,6 +329,20 @@ except ValueError as error:
     assert '16 nested pattern levels' in str(error)
 else:
     raise AssertionError('deepzip must enforce the nested-depth bound')
+for pattern_call in (
+        lambda: namespace['P'][0, 1].map([1, 2]),
+        lambda: namespace['P'][0].map({0: tuple(range(257))}),
+        lambda: namespace['P'][*range(129)].map({
+            value: (value, value + 1) for value in range(129)}),
+        lambda: namespace['P'][0, 1].pivot(1.5),
+        lambda: namespace['P'][*range(17)].pivot(
+            namespace['P'][*range(17)])):
+    try:
+        pattern_call()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('map/pivot must validate inputs and enforce bounds')
 for slice_call in (
         lambda: namespace['P'][0, 1].trim(1.5),
         lambda: namespace['P'][0, 1].ltrim(True)):
@@ -2551,6 +2578,15 @@ patternZipRows, patternZipEvents = run_script(
     patternZipText, include_events=True)
 assert len(patternZipRows) == 3
 assert 0 < len(patternZipEvents) <= 256
+patternMapPivotText = open(
+    os.path.join(sys.argv[2], '130-pattern-map-pivot.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternMapPivotText)
+patternMapPivotRows, patternMapPivotEvents = run_script(
+    patternMapPivotText, include_events=True)
+assert len(patternMapPivotRows) == 3
+assert 0 < len(patternMapPivotEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2811,4 +2847,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 129, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip/map/pivot, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 130, and user SynthDef examples 94, 103, 104, and 105.')
