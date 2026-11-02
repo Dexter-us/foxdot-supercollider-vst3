@@ -1,5 +1,8 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.106 adds bounded PSquare(length=256), producing the sequence
+0, 1, 4, 9... as 1–256 values. See Example 135.
+
 Version 0.4.105 adds finite PDelta(deltas, start=0, length=256). It emits the
 start value, then accumulates a repeating numeric delta pattern. Scalar deltas
 repeat; output is limited to 256 notes and ±1,000,000. See Example 134.
@@ -313,6 +316,8 @@ sample-symbol drum chain.
 
 134-pdelta-pitch-contour.py demonstrates interval accumulation in a lead and
 bass contour.
+
+135-psquare-pitch-sequence.py demonstrates a square-number pitch pattern.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

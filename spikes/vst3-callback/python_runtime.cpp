@@ -116,6 +116,7 @@ _COMPAT_CALLS = {
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
     'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain', 'PDelta',
+    'PSquare',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -578,6 +579,20 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     positional.add(keyword.arg)
             if not positional.intersection({'deltas'}):
                 self.add(node.lineno, 'PDelta requires a finite delta pattern.')
+        if name == 'PSquare':
+            parameters = ('length',)
+            allowed = set(parameters)
+            if len(node.args) > len(parameters):
+                self.add(node.lineno, 'PSquare accepts only a length argument.')
+            positional = set(parameters[:len(node.args)])
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(node.lineno, 'PSquare accepts only a length argument.')
+                elif keyword.arg in positional:
+                    self.add(keyword.lineno or node.lineno,
+                             'PSquare received the same argument more than once.')
+                else:
+                    positional.add(keyword.arg)
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -2010,6 +2025,10 @@ def PDelta(deltas, start=0, length=256):
             raise ValueError('PDelta accumulated notes must stay within -1000000..1000000')
         result.append(value)
     return _FoxDotFinitePattern(result)
+
+def PSquare(length=256):
+    length = _random_pattern_length(length, 'PSquare')
+    return _FoxDotFinitePattern(index * index for index in range(length))
 
 def PAlt(*patterns):
     sequences, kind = _compatible_pattern_sequences(patterns, 'PAlt', 2)
