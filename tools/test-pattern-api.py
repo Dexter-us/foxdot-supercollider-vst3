@@ -113,6 +113,15 @@ assert white == namespace['PWhite'](-1.0, 1.0, length=256, seed=123)
 assert white != namespace['PWhite'](-1.0, 1.0, length=256, seed=124)
 assert abs(sum(white) / len(white)) < 0.15
 assert namespace['PWhite'](0.5, 0.5, length=8, seed=2) == [0.5] * 8
+walk = namespace['PWalk'](max=7, step=namespace['P'][1, 2, 1],
+                          start=0, length=128, seed=123)
+assert len(walk) == 128 and walk[0] == 0
+assert walk == namespace['PWalk'](
+    max=7, step=namespace['P'][1, 2, 1], start=0, length=128, seed=123)
+assert all(-9 <= value <= 9 for value in walk)
+boundedWalk = namespace['PWalk'](max=3, step=1, start=0, length=256, seed=9)
+assert all(-3 <= value <= 3 for value in boundedWalk)
+assert namespace['PWalk'](max=-2, step=-1, start=1, length=4, seed=3)[0] == 1
 for generator in (
         lambda: namespace['PRand']([], length=2),
         lambda: namespace['PRand'](2.5, length=2),
@@ -122,7 +131,15 @@ for generator in (
         lambda: namespace['PRand'](1, seed=True),
         lambda: namespace['PWhite'](2.0, 1.0),
         lambda: namespace['PWhite'](0.0, float('inf')),
-        lambda: namespace['PWhite'](0.0, 1.0, length=257)):
+        lambda: namespace['PWhite'](0.0, 1.0, length=257),
+        lambda: namespace['PWalk'](max=True),
+        lambda: namespace['PWalk'](
+            step=namespace['_FoxDotFinitePattern']([]), length=3),
+        lambda: namespace['PWalk'](step=namespace['P'][1, None], length=3),
+        lambda: namespace['PWalk'](step=namespace['P']['x', 'o'], length=3),
+        lambda: namespace['PWalk'](step=float('inf')),
+        lambda: namespace['PWalk'](length=257),
+        lambda: namespace['PWalk'](seed=True)):
     try:
         generator()
     except (TypeError, ValueError):
@@ -2643,6 +2660,15 @@ patternShuffleRows, patternShuffleEvents = run_script(
     patternShuffleText, include_events=True)
 assert len(patternShuffleRows) == 3
 assert 0 < len(patternShuffleEvents) <= 256
+patternWalkText = open(
+    os.path.join(sys.argv[2], '132-pwalk-melodic-walk.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternWalkText)
+patternWalkRows, patternWalkEvents = run_script(
+    patternWalkText, include_events=True)
+assert len(patternWalkRows) == 3
+assert 0 < len(patternWalkEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2903,4 +2929,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/true_shuffle/shufflets/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip/map/pivot, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 131, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/true_shuffle/shufflets/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip/map/pivot, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 132, and user SynthDef examples 94, 103, 104, and 105.')

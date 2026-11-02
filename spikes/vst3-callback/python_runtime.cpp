@@ -115,7 +115,7 @@ _COMPAT_CALLS = {
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
-    'PZip', 'PZip2', 'PRand', 'PWhite',
+    'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -531,6 +531,21 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     positional.add(keyword.arg)
             if name == 'PRand' and not positional.intersection({'start'}):
                 self.add(node.lineno, 'PRand requires a start value or source pattern.')
+        if name == 'PWalk':
+            parameters = ('max', 'step', 'start', 'length', 'seed')
+            allowed = set(parameters)
+            if len(node.args) > len(parameters):
+                self.add(node.lineno, 'PWalk accepts max, step, start, length, and seed.')
+            positional = set(parameters[:len(node.args)])
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(keyword.lineno or node.lineno,
+                             'PWalk accepts only max, step, start, length, and seed.')
+                elif keyword.arg in positional:
+                    self.add(keyword.lineno or node.lineno,
+                             'PWalk received the same argument more than once.')
+                else:
+                    positional.add(keyword.arg)
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -1841,6 +1856,45 @@ def PWhite(lo=0.0, hi=1.0, length=256, seed=None):
         state, second = _random_pattern_step(state)
         # FoxDot PWhite uses a symmetric triangular distribution, not uniform.
         result.append(lo + ((first + second) * 0.5) * (hi - lo))
+    return _FoxDotFinitePattern(result)
+
+def PWalk(max=7, step=1, start=0, length=256, seed=None):
+    length = _random_pattern_length(length, 'PWalk')
+    for label, value in (('max', max), ('start', start)):
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or
+                value != value or value in (float('inf'), float('-inf')) or
+                not -1000000.0 <= value <= 1000000.0):
+            raise ValueError('PWalk ' + label + ' must be finite and within -1000000..1000000')
+    if isinstance(step, (list, tuple, _FoxDotFinitePattern)):
+        stepValues, stepKind = _pattern_items(step, 'PWalk step')
+        if stepKind != 'numeric' or not stepValues or not all(
+                _finite_note_number(value) for value in stepValues):
+            raise TypeError('PWalk step requires a non-empty numeric pattern')
+    elif _finite_note_number(step):
+        stepValues = [step]
+    else:
+        raise TypeError('PWalk step must be a finite number or numeric pattern')
+    stepValues = [abs(float(value)) for value in stepValues]
+    if any(value > 1000000.0 for value in stepValues):
+        raise ValueError('PWalk step values must be within -1000000..1000000')
+
+    boundary = abs(float(max))
+    value = float(start)
+    state = _random_pattern_seed(seed, 'PWalk')
+    result = []
+    for index in range(length):
+        if index:
+            if value >= boundary:
+                direction = -1.0
+            elif value <= -boundary:
+                direction = 1.0
+            else:
+                state, choice = _random_pattern_step(state)
+                direction = 1.0 if choice < 0.5 else -1.0
+            value += direction * stepValues[index % len(stepValues)]
+            if not _finite_note_number(value):
+                raise ValueError('PWalk generated a non-finite note')
+        result.append(value)
     return _FoxDotFinitePattern(result)
 
 def PAlt(*patterns):

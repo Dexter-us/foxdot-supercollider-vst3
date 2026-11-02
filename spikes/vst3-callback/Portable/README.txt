@@ -1,5 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.103 adds finite seeded PWalk(max=7, step=1, start=0). It follows
+FoxDot's random walk and turning thresholds, supports a cycling numeric step
+pattern, and returns 1..256 values. See Example 132.
+
 Version 0.4.102 adds bounded .true_shuffle(n) and .shufflets(n). true_shuffle()
 scrambles the expanded finite phrase while preserving chord items; shufflets()
 creates seeded shuffled numeric chord groups of up to 8 notes. Output is
@@ -291,6 +295,9 @@ mirroring a phrase around selected steps.
 
 131-true-shuffle-and-shufflets.py demonstrates expanded seeded shuffling and
 shuffled chord passes with strum.
+
+132-pwalk-melodic-walk.py demonstrates a seeded melodic walk, a slower bass
+walk, and drums.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 
