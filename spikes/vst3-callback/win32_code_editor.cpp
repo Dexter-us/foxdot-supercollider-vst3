@@ -66,7 +66,8 @@ constexpr char kFoxDotApiKeywords[] =
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
     "vib depth lforate lfowidth rq fmod blur sample "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
-    "echo delay mute unmute rate start end loop";
+    "echo delay mute unmute rate start end loop stretch shuffle repeat stutter "
+    "palindrome mirror accum swap reverse rotate";
 constexpr char kFoxDotCompletions[] =
     "Clock P PGroup Player Root Scale DiskIn VDiskIn DiskOut record slot seconds amp cutoff delay dur echo linvar mute oct pan "
     "play p1 p2 p3 p4 p5 p6 p7 p8 pulse reverb resonance room saw sine stop strum "
@@ -74,7 +75,8 @@ constexpr char kFoxDotCompletions[] =
     "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple rate "
     "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
-    "vib depth lforate lfowidth rq fmod blur sample start end loop";
+    "vib depth lforate lfowidth rq fmod blur sample start end loop stretch "
+    "shuffle repeat stutter palindrome mirror accum swap reverse rotate";
 
 std::mutex gScintillaMutex;
 std::size_t gScintillaViewCount = 0;
@@ -468,7 +470,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.91",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.92",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),

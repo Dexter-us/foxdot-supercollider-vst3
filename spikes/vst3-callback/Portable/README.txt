@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.92 adds FoxDot-style finite P pattern methods .stretch(size),
+.loop(n), and .shuffle(n). stretch repeats to a target length; loop repeats a
+whole phrase; shuffle makes independently shuffled copies while keeping chord
+items together. Scalar calls are bounded to 256 output items; stretch and loop
+also accept finite size/count patterns. See Example 121.
+
 Version 0.4.91 adds bounded finite-pattern `mirror()`, `accum()`, and
 `swap(n)` methods. Nested sequences mirror recursively; `accum()` uses
 numeric notes and bounded lengths; `swap()` reverses each block. See Example 120.
@@ -206,6 +212,9 @@ Open one of the numbered .py files in this folder from the plugin editor to load
 13-pattern-methods.py demonstrates FoxDot-style transformations directly on finite P patterns: reverse, rotate, variable-count stutter, repeat, and palindrome. The methods return bounded finite patterns and can be used before a player.
 
 120-pattern-shaping-helpers.py demonstrates nested mirror(), cumulative degree contours with accum(), and reversed blocks with swap().
+
+121-pattern-method-parity.py demonstrates method-form stretch(size), loop(n),
+and shuffle(n) on finite numeric, chord, and note patterns.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

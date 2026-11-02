@@ -149,6 +149,29 @@ assert pattern.rotate(1) == [None, (3, 5), 4, 1]
 assert pattern.rotate(-1) == [4, 1, None, (3, 5)]
 assert namespace['P'][0, 1, 2, 3].stutter([1, 3]) == [0, 1, 1, 1, 2, 3, 3, 3]
 assert namespace['P'][1, None, 3].repeat(2) == [1, None, 3, 1, None, 3]
+assert namespace['P'][0, 1, 2].stretch(5) == [0, 1, 2, 0, 1]
+assert namespace['P']['x', 'o'].stretch(namespace['P'][2, 3]) == [
+    'x', 'o', 'x', 'o', 'x']
+assert namespace['P'][1, 2].loop(2) == [1, 2, 1, 2]
+assert namespace['P'][1, 2].loop(namespace['P'][1, 2]) == [
+    1, 2, 1, 2, 1, 2]
+assert namespace['P'][1, 2].loop(0) == []
+assert namespace['P'][1, 2].stretch(0) == []
+shuffleCounterBeforeMethodTests = namespace['_dexter_shuffle_counter']
+shuffleSource = namespace['P'][(0, 4), None, 7, 2]
+shuffleBefore = list(shuffleSource)
+shuffleCopies = shuffleSource.shuffle(2)
+assert len(shuffleCopies) == 2 * len(shuffleSource)
+for chunkStart in (0, len(shuffleSource)):
+    assert sorted(map(repr, shuffleCopies[chunkStart:chunkStart + len(shuffleSource)])) == \
+        sorted(map(repr, shuffleBefore))
+assert list(shuffleSource) == shuffleBefore
+sampleShuffle = namespace['P']['x', 'o', ' ', '-'].shuffle(2)
+assert len(sampleShuffle) == 8
+assert sorted(sampleShuffle[:4]) == [' ', '-', 'o', 'x']
+assert sorted(sampleShuffle[4:]) == [' ', '-', 'o', 'x']
+assert namespace['P'][1, 2].shuffle(0) == []
+namespace['_dexter_shuffle_counter'] = shuffleCounterBeforeMethodTests
 assert namespace['P'][1, 2, 3].palindrome() == [1, 2, 3, 3, 2, 1]
 assert namespace['P'][1, namespace['P'][2, 3], 4].mirror() == [
     4, [3, 2], 1]
@@ -165,7 +188,23 @@ for helper in (
         lambda: namespace['P'][1, 2].accum(257),
         lambda: namespace['P'][1, None, 2].accum(),
         lambda: namespace['P'][1, 2].swap(0),
-        lambda: namespace['P'][1, 2].swap(1.5)):
+        lambda: namespace['P'][1, 2].swap(1.5),
+        lambda: namespace['P'][1, 2].stretch(True),
+        lambda: namespace['P'][1, 2].stretch(1.5),
+        lambda: namespace['P'][1, 2].stretch(257),
+        lambda: namespace['P'][1, 2].stretch(namespace['P'][200, 100]),
+        lambda: namespace['P'][1, 2].stretch(
+            namespace['_FoxDotFinitePattern']([])),
+        lambda: namespace['P'][1, 2].loop(True),
+        lambda: namespace['P'][1, 2].loop(-1),
+        lambda: namespace['P'][1, 2].loop(1.5),
+        lambda: namespace['P'][1, 2].loop(129),
+        lambda: namespace['P'][1, 2].loop(
+            namespace['_FoxDotFinitePattern']([])),
+        lambda: namespace['P'][1, 2].shuffle(True),
+        lambda: namespace['P'][1, 2].shuffle(-1),
+        lambda: namespace['P'][1, 2].shuffle(1.5),
+        lambda: namespace['P'][1, 2].shuffle(129)):
     try:
         helper()
     except (TypeError, ValueError):
@@ -2211,6 +2250,15 @@ patternHelperRows, patternHelperEvents = run_script(
     patternHelperText, include_events=True)
 assert len(patternHelperRows) == 3
 assert 0 < len(patternHelperEvents) <= 256
+patternMethodText = open(
+    os.path.join(sys.argv[2], '121-pattern-method-parity.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternMethodText)
+patternMethodRows, patternMethodEvents = run_script(
+    patternMethodText, include_events=True)
+assert len(patternMethodRows) == 3
+assert 0 < len(patternMethodEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2471,4 +2519,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 120, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 121, and user SynthDef examples 94, 103, 104, and 105.')

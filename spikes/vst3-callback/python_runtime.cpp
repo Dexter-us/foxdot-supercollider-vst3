@@ -1167,6 +1167,56 @@ class _FoxDotFinitePattern(list):
             raise ValueError('repeat is limited to 256 expanded items and requires a positive count')
         return _FoxDotFinitePattern(list(self) * count)
 
+    def stretch(self, size):
+        sizes = (list(size) if isinstance(size, (list, tuple, _FoxDotFinitePattern))
+                 else [size])
+        if not sizes:
+            raise ValueError('stretch target-size pattern cannot be empty')
+        if len(sizes) > 256:
+            raise ValueError('stretch target-size patterns are limited to 256 items')
+        result = []
+        for target_size in sizes:
+            if isinstance(target_size, bool) or not isinstance(target_size, int):
+                raise TypeError('stretch sizes must be whole numbers from 0 to 256')
+            if not 0 <= target_size <= 256:
+                raise ValueError('stretch sizes must be whole numbers from 0 to 256')
+            if len(result) + target_size > 256:
+                raise ValueError('stretch output is limited to 256 items')
+            result.extend(PStretch(self, target_size))
+        return _FoxDotFinitePattern(result)
+
+    def loop(self, count):
+        counts = (list(count) if isinstance(count, (list, tuple, _FoxDotFinitePattern))
+                  else [count])
+        if not counts:
+            raise ValueError('loop count pattern cannot be empty')
+        if len(counts) > 256:
+            raise ValueError('loop count patterns are limited to 256 items')
+        result = []
+        for repetitions in counts:
+            if isinstance(repetitions, bool) or not isinstance(repetitions, int):
+                raise TypeError('loop counts must be whole numbers from 0 to 256')
+            if not 0 <= repetitions <= 256:
+                raise ValueError('loop counts must be whole numbers from 0 to 256')
+            expanded = len(self) * repetitions
+            if len(result) + expanded > 256:
+                raise ValueError('loop output is limited to 256 items')
+            for _ in range(repetitions):
+                result.extend(self)
+        return _FoxDotFinitePattern(result)
+
+    def shuffle(self, count=1):
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError('shuffle count must be a whole number from 0 to 256')
+        if not 0 <= count <= 256:
+            raise ValueError('shuffle count must be a whole number from 0 to 256')
+        if len(self) * count > 256:
+            raise ValueError('shuffle output is limited to 256 items')
+        result = []
+        for _ in range(count):
+            result.extend(PShuf(self))
+        return _FoxDotFinitePattern(result)
+
     def stutter(self, count=2):
         counts = list(count) if isinstance(count, (list, tuple)) else [count]
         if not counts:
