@@ -1,5 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.95 adds FoxDot-style finite-pattern .sort() and .unduplicate().
+sort() orders comparable values; unduplicate() removes adjacent repeats while
+preserving order and later non-adjacent repeats. See Example 124.
+
 Version 0.4.94 adds FoxDot-style finite-pattern .arp(intervals) and
 .splice(pattern, ...). arp() arpeggiates numeric notes by adding intervals;
 splice() cyclically interleaves numeric phrases or sample-symbol patterns.
@@ -231,6 +235,9 @@ transpose(pattern, interval) on chords and notes.
 
 123-arpeggio-and-splice.py demonstrates .arp() and .splice() on note
 patterns, including chord intervals.
+
+124-sort-and-unduplicate.py demonstrates ascending pattern sorting and
+consecutive-only duplicate removal.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

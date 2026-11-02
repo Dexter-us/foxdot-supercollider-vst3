@@ -1242,6 +1242,16 @@ class _FoxDotFinitePattern(list):
                 result.append(sequence[index % len(sequence)])
         return _FoxDotFinitePattern(result)
 
+    def sort(self):
+        return _FoxDotFinitePattern(sorted(self))
+
+    def unduplicate(self):
+        result = []
+        for item in self:
+            if not result or item != result[-1]:
+                result.append(item)
+        return _FoxDotFinitePattern(result)
+
     def stutter(self, count=2):
         counts = list(count) if isinstance(count, (list, tuple)) else [count]
         if not counts:

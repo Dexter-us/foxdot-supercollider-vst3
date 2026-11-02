@@ -183,6 +183,18 @@ assert namespace['P']['x', '-', 'o'].splice('  ', 'x-') == [
 assert namespace['P'][0, namespace['PGroup'](0, 3, 7)].splice(
     namespace['P'][4, 5]) == [
         0, 4, (0, 3, 7), 5]
+assert namespace['P'][3, 1, 2, 1].sort() == [1, 1, 2, 3]
+assert namespace['P'][-2, 4, 0].sort() == [-2, 0, 4]
+assert namespace['P']['x', 'o', '-', 'x'].sort() == ['-', 'o', 'x', 'x']
+assert namespace['_FoxDotFinitePattern']([]).sort() == []
+assert namespace['P'][1, 1, 2, 1, 1, 3, 3].unduplicate() == [
+    1, 2, 1, 3]
+assert namespace['P'][None, None, 1, 1, None, None].unduplicate() == [
+    None, 1, None]
+assert namespace['P']['x', 'x', '-', '-', 'o', 'x', 'x'].unduplicate() == [
+    'x', '-', 'o', 'x']
+assert namespace['P'][1, namespace['PGroup'](2, 4), namespace['PGroup'](2, 4),
+                      3].unduplicate() == [1, (2, 4), 3]
 for helper in (
         lambda: namespace['P']['x', 'o'].arp(namespace['P'][0, 2]),
         lambda: namespace['P'][0, 2].arp(
@@ -200,6 +212,12 @@ for helper in (
         pass
     else:
         raise AssertionError('arp/splice should reject unsupported or unbounded input')
+try:
+    namespace['P'][2, None, 1].sort()
+except TypeError:
+    pass
+else:
+    raise AssertionError('sort should retain FoxDot ordering requirements')
 try:
     namespace['P'][*range(86)].splice(
         namespace['P'][*range(86)], namespace['P'][*range(86)])
@@ -2329,6 +2347,15 @@ patternCompositionRows, patternCompositionEvents = run_script(
     patternCompositionText, include_events=True)
 assert len(patternCompositionRows) == 3
 assert 0 < len(patternCompositionEvents) <= 256
+sortUnduplicateText = open(
+    os.path.join(sys.argv[2], '124-sort-and-unduplicate.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    sortUnduplicateText)
+sortUnduplicateRows, sortUnduplicateEvents = run_script(
+    sortUnduplicateText, include_events=True)
+assert len(sortUnduplicateRows) == 3
+assert 0 < len(sortUnduplicateEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2589,4 +2616,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 123, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 124, and user SynthDef examples 94, 103, 104, and 105.')
