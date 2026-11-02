@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.97 adds bounded finite-pattern .layer("method", ...). It zips
+the original phrase with an allowlisted transformed copy as chord groups.
+Arbitrary callables are not accepted; results are limited to 256 events.
+See Example 126.
+
 Version 0.4.96 adds FoxDot-style finite-pattern .replace(old, new), replacing
 matching values inside notes, nested patterns, chords, and sample-symbol
 patterns while preserving structure. Nested input is limited to 16 levels.
@@ -246,6 +251,8 @@ consecutive-only duplicate removal.
 
 125-pattern-replace.py demonstrates replacing note degrees, chord tones, and
 sample symbols.
+
+126-pattern-layer.py demonstrates reverse and rotate pattern layers.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

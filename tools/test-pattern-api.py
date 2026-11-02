@@ -216,6 +216,15 @@ untouchedPattern = namespace['P'][1, 2]
 assert untouchedPattern.replace(3, 4) == [1, 2]
 assert untouchedPattern == [1, 2]
 assert namespace['_FoxDotFinitePattern']([]).replace(1, 2) == []
+assert namespace['P'][0, 1, 2, 3].layer('reverse') == [
+    (0, 3), (1, 2), (2, 1), (3, 0)]
+assert namespace['P'][0, 1, 2].layer('rotate', 1) == [
+    (0, 1), (1, 2), (2, 0)]
+assert namespace['P'][0, namespace['PGroup'](0, 4, 7)].layer('reverse') == [
+    (0, 0, 4, 7), (0, 4, 7, 0)]
+assert namespace['P']['x', 'o', '-'].layer('reverse') == [
+    ('x', '-'), ('o', 'o'), ('-', 'x')]
+assert namespace['P'][0, 1].layer('replace', 1, 2) == [(0, 0), (1, 2)]
 for helper in (
         lambda: namespace['P']['x', 'o'].arp(namespace['P'][0, 2]),
         lambda: namespace['P'][0, 2].arp(
@@ -248,6 +257,17 @@ except ValueError as error:
     assert '16 nested pattern levels' in str(error)
 else:
     raise AssertionError('replace must enforce its nested-pattern depth bound')
+for layer_call in (
+        lambda: namespace['P'][0, 1].layer('layer'),
+        lambda: namespace['P'][0, 1].layer('__class__'),
+        lambda: namespace['P'][0, 1].layer(namespace['reverse']),
+        lambda: namespace['P'][*range(255)].layer('stretch', 256)):
+    try:
+        layer_call()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('layer should enforce its transform allowlist and output bound')
 try:
     namespace['P'][*range(86)].splice(
         namespace['P'][*range(86)], namespace['P'][*range(86)])
@@ -2395,6 +2415,15 @@ patternReplaceRows, patternReplaceEvents = run_script(
     patternReplaceText, include_events=True)
 assert len(patternReplaceRows) == 3
 assert 0 < len(patternReplaceEvents) <= 256
+patternLayerText = open(
+    os.path.join(sys.argv[2], '126-pattern-layer.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternLayerText)
+patternLayerRows, patternLayerEvents = run_script(
+    patternLayerText, include_events=True)
+assert len(patternLayerRows) == 3
+assert 0 < len(patternLayerEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2655,4 +2684,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 125, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 126, and user SynthDef examples 94, 103, 104, and 105.')

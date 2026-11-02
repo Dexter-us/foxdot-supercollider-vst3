@@ -1271,6 +1271,35 @@ class _FoxDotFinitePattern(list):
         return _FoxDotFinitePattern([
             replace_item(item, 0) for item in self])
 
+    def layer(self, method, *args, **kwargs):
+        if not isinstance(method, str):
+            raise ValueError(
+                'layer requires an allowed pattern method name')
+        methods = {
+            'reverse': self.reverse,
+            'rotate': self.rotate,
+            'mirror': self.mirror,
+            'invert': self.invert,
+            'palindrome': self.palindrome,
+            'stutter': self.stutter,
+            'repeat': self.repeat,
+            'stretch': self.stretch,
+            'loop': self.loop,
+            'shuffle': self.shuffle,
+            'sort': self.sort,
+            'unduplicate': self.unduplicate,
+            'arp': self.arp,
+            'splice': self.splice,
+            'replace': self.replace,
+        }
+        if method not in methods:
+            raise ValueError(
+                'layer requires an allowed pattern method name')
+        transformed = methods[method](*args, **kwargs)
+        if not isinstance(transformed, _FoxDotFinitePattern):
+            raise TypeError('layer transform must return a finite P pattern')
+        return self._zip_with(transformed)
+
     def stutter(self, count=2):
         counts = list(count) if isinstance(count, (list, tuple)) else [count]
         if not counts:
