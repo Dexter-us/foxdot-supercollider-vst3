@@ -271,6 +271,51 @@ for choose_call in (
         pass
     else:
         raise AssertionError('choose should require a non-empty finite pattern')
+assert namespace['P'][0, 2, 4].zip(namespace['P'][1, 3, 5]) == [
+    (0, 1), (2, 3), (4, 5)]
+assert namespace['P'][0, 2, 4].zip(namespace['P'][1, 3]) == [
+    (0, 1), (2, 3), (4, 1), (0, 3), (2, 1), (4, 3)]
+assert namespace['P'][0, 2].zip(namespace['P'][1, 3, 5]) == [
+    (0, 1), (2, 3), (0, 5), (2, 1), (0, 3), (2, 5)]
+assert namespace['P'][namespace['PGroup'](0, 4), 2].zip(
+    namespace['P'][1, 3]) == [(0, 4, 1), (2, 3)]
+assert namespace['P']['x', 'o'].zip(namespace['P']['h', 't']) == [
+    ('x', 'h'), ('o', 't')]
+deepZipped = namespace['P'][
+    namespace['P'][1, 2], 3].deepzip(namespace['P'][4, 5])
+assert deepZipped == [
+    namespace['P'][(1, 4), (2, 4)], (3, 5)]
+deepRight = namespace['P'][1, 2].deepzip(
+    namespace['P'][namespace['P'][3, 4], 5])
+assert deepRight == [
+    namespace['P'][(1, 3), (1, 4)], (2, 5)]
+deepReversed = namespace['P'][
+    namespace['P'][1, 2], 3].deeprzip(namespace['P'][4, 5])
+assert deepReversed == [
+    namespace['P'][(4, 1), (4, 2)], (5, 3)]
+assert namespace['P'][1, 2].zip(3) == [(1, 3), (2, 3)]
+for zip_call in (
+        lambda: namespace['P'][0, 1].zip(
+            namespace['P'][2, 3], dtype=namespace['PGroup']),
+        lambda: namespace['P'][*range(16)].zip(
+            namespace['P'][*range(17)]),
+        lambda: namespace['P'][*range(16)].deepzip(
+            namespace['P'][*range(17)])):
+    try:
+        zip_call()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('zip helpers must enforce safe output bounds')
+deepPattern = namespace['P'][0]
+for _ in range(17):
+    deepPattern = namespace['_FoxDotFinitePattern']([deepPattern])
+try:
+    deepPattern.deepzip(namespace['P'][1])
+except ValueError as error:
+    assert '16 nested pattern levels' in str(error)
+else:
+    raise AssertionError('deepzip must enforce the nested-depth bound')
 for slice_call in (
         lambda: namespace['P'][0, 1].trim(1.5),
         lambda: namespace['P'][0, 1].ltrim(True)):
@@ -2497,6 +2542,15 @@ patternRandomRows, patternRandomEvents = run_script(
     patternRandomText, include_events=True)
 assert len(patternRandomRows) == 3
 assert 0 < len(patternRandomEvents) <= 256
+patternZipText = open(
+    os.path.join(sys.argv[2], '129-pattern-zip-methods.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternZipText)
+patternZipRows, patternZipEvents = run_script(
+    patternZipText, include_events=True)
+assert len(patternZipRows) == 3
+assert 0 < len(patternZipEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2757,4 +2811,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 128, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 129, and user SynthDef examples 94, 103, 104, and 105.')

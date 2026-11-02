@@ -1304,6 +1304,21 @@ class _FoxDotFinitePattern(list):
             raise ValueError('choose requires a non-empty finite pattern')
         return PRand(self, length=1)[0]
 
+    def zip(self, other, dtype=None):
+        if dtype is not None:
+            raise TypeError('zip accepts only the built-in chord-group output')
+        if isinstance(other, str):
+            other = _FoxDotFinitePattern(list(other))
+        elif not isinstance(other, (list, tuple, _FoxDotFinitePattern)):
+            other = _FoxDotFinitePattern([other])
+        return self._zip_with(other)
+
+    def deepzip(self, other):
+        return _deep_zip_pattern(self, other, reverse=False)
+
+    def deeprzip(self, other):
+        return _deep_zip_pattern(self, other, reverse=True)
+
     def layer(self, method, *args, **kwargs):
         if not isinstance(method, str):
             raise ValueError(
@@ -1327,6 +1342,9 @@ class _FoxDotFinitePattern(list):
             'trim': self.trim,
             'ltrim': self.ltrim,
             'normalise': self.normalise,
+            'zip': self.zip,
+            'deepzip': self.deepzip,
+            'deeprzip': self.deeprzip,
         }
         if method not in methods:
             raise ValueError(
@@ -1486,6 +1504,41 @@ class _FoxDotFinitePattern(list):
 
     def __rand__(self, other):
         return self._zip_with(other, True)
+
+def _deep_zip_pattern(left, right, reverse=False):
+    def is_sequence(value):
+        return isinstance(value, (list, tuple, _FoxDotFinitePattern))
+
+    budget = [0]
+
+    def zip_level(left_value, right_value, depth):
+        if depth > 16:
+            raise ValueError('deep zip is limited to 16 nested pattern levels')
+        left_items = (list(left_value) if is_sequence(left_value)
+                      else [left_value])
+        right_items = (list(right_value) if is_sequence(right_value)
+                       else [right_value])
+        if not left_items or not right_items:
+            return _FoxDotFinitePattern()
+        length = (len(left_items) * len(right_items) //
+                  _FoxDotFinitePattern()._gcd(
+                      len(left_items), len(right_items)))
+        if length > 256 or budget[0] + length > 256:
+            raise ValueError('deep zip output is limited to 256 paired items')
+        budget[0] += length
+        result = []
+        for index in range(length):
+            left_item = left_items[index % len(left_items)]
+            right_item = right_items[index % len(right_items)]
+            if is_sequence(left_item) or is_sequence(right_item):
+                item = zip_level(left_item, right_item, depth + 1)
+            else:
+                item = ((right_item, left_item) if reverse else
+                        (left_item, right_item))
+            result.append(item)
+        return _FoxDotFinitePattern(result)
+
+    return zip_level(left, right, 0)
 
 def _finite_note_number(value):
     return (isinstance(value, (int, float)) and not isinstance(value, bool) and

@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.100 adds bounded .zip(), .deepzip(), and .deeprzip() pattern
+methods. zip() pairs numeric or sample-symbol values into chord-like groups.
+The deep forms preserve nested phrase structure; deeprzip() reverses paired
+values. Deep output is limited to 256 pairs and 16 levels. See Example 129.
+
 Version 0.4.99 adds FoxDot-style .normalise() for non-empty numeric patterns
 and .choose() for one seeded random selection from numeric or sample-symbol
 patterns. normalise() maps values to 0..1 and maps constant phrases to zero;
@@ -265,7 +270,7 @@ sample symbols.
 
 127-pattern-trim.py demonstrates splitting a phrase into front and tail parts.
 
-128-normalise-and-choose.py demonstrates a normalized amplitude contour and a
+128-normalise-and-choose.py demonstrates a normalized pitch contour and a
 selected pitch value.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
