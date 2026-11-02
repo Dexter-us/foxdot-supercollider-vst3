@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.89 adds FoxDot-style per-player `root=` and shared `Group.root`.
+Root changes are applied at note onsets; `var()` and `linvar()` values are
+rounded to MIDI semitones, while note names and numeric pitch classes/MIDI
+notes remain available for fixed roots. Portable Example 118 demonstrates
+shared transposition and a changing root.
+
 Version 0.4.88 adds bounded `var()`/`linvar()` motion to `Group.degree`.
 Pitch is sampled and rounded to a scale degree at each note onset (not a
 continuous glide); rests remain rests and existing chord intervals are

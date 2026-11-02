@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.89 adds per-player `root=` and shared `Group.root`. Root changes
+take effect at note onsets. `var()` and `linvar()` root values are rounded to
+MIDI semitones; fixed roots accept note names or numeric pitch classes/MIDI
+notes. See Example 118.
+
 Version 0.4.88 adds bounded `var()` and `linvar()` pitch motion to `Group.degree`.
 The contour is sampled and rounded to a scale degree at each note onset (not a
 continuous glide); rests remain rests and existing chord intervals are retained.

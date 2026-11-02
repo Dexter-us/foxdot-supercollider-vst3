@@ -177,7 +177,7 @@ _COMPAT_GROUP_CONTROLS = {
     'amp', 'pan', 'cutoff', 'echo', 'delaytime', 'atk', 'rel', 'reverb',
     'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf',
     'hpr', 'bpf', 'bpr', 'decay', 'echomix', 'feedback', 'bpnoise', 'swell',
-    'degree', 'dur', 'sus', 'oct', 'scale'
+    'degree', 'dur', 'sus', 'oct', 'scale', 'root'
 }
 _COMPAT_GROUP_METHODS = {
     'add', 'stop', 'mute', 'unmute', 'solo', 'only',
@@ -1941,7 +1941,7 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
          _octave_control=None, _base_octave=5, _degrees_per_octave=7,
          _attack_control=None, _release_control=None,
          _attack_default=0.01, _release_default=0.04, _time_multipliers=None,
-         _allow_repeated_notes=False, _degree_control=None):
+         _allow_repeated_notes=False, _degree_control=None, _root_control=None):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
     if isinstance(notes, _FoxDotChord):
@@ -2070,7 +2070,9 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                 note += (octave - _base_octave) * _degrees_per_octave
             if degrees:
                 octave, degree = divmod(note, len(_dexter_scale))
-                note = _dexter_root + octave * 12 + _dexter_scale[degree]
+                rootMidi = (int(round(_root_control.at(start)))
+                            if _root_control is not None else _dexter_root)
+                note = rootMidi + octave * 12 + _dexter_scale[degree]
             if not 0 <= note <= 127:
                 raise ValueError('notes must resolve to MIDI pitches 0..127')
             attackValue = _attack_control.at(start) if _attack_control is not None else float(_attack_default)
@@ -2168,6 +2170,22 @@ def var(values, durations=4.0):
 def linvar(values, durations=4.0):
     return _DexterTimeVar(values, durations, True)
 
+def _normalize_root_control(value):
+    if not isinstance(value, _DexterTimeVar):
+        return (None, None) if value is None else (_root_midi(value), None)
+    values = value.values
+    if any(not float(item).is_integer() for item in values):
+        raise ValueError('root var/linvar endpoints must be whole pitch classes or MIDI notes')
+    if all(0.0 <= item <= 11.0 for item in values):
+        midiValues = [60 + int(item) for item in values]
+    elif all(12.0 <= item <= 127.0 for item in values):
+        midiValues = [int(item) for item in values]
+    else:
+        raise ValueError(
+            'root var/linvar must use pitch classes 0..11 or MIDI notes 12..127')
+    control = _DexterTimeVar(midiValues, value.durations, value.linear)
+    return midiValues[0], control
+
 def _control_value(value, name, lower, upper):
     if isinstance(value, _DexterTimeVar):
         if any(item < lower or item > upper for item in value.values):
@@ -2214,7 +2232,7 @@ class PlayerPattern:
         self.velocity = velocity
         self.offset = offset
         self.degrees = degrees
-        self.rootMidi = None if root is None else _root_midi(root)
+        self.rootMidi, self.rootControl = _normalize_root_control(root)
         if synth not in _DEXTER_BUILTIN_SYNTHS and \
                 synth not in _NEW_SYNTHS and \
                 synth not in _dexter_user_synth_names:
@@ -2932,7 +2950,7 @@ _GROUP_PATTERN_FIELDS = {
     'bpr': 'bpr', 'decay': 'echoDecayBeats', 'echomix': 'echoMix',
     'feedback': 'feedback', 'bpnoise': 'bpnoise', 'swell': 'swell',
     'degree': 'degreeControl', 'dur': 'step', 'sus': 'duration',
-    'oct': 'octaveControl', 'scale': 'scaleName'
+    'oct': 'octaveControl', 'scale': 'scaleName', 'root': 'rootMidi'
 }
 
 def _group_degree_items(value):
@@ -3009,6 +3027,8 @@ def _validate_group_time_pattern(value, name):
                     str(lower) + ' and 4096 beats')
 
 def _normalize_group_control(name, value):
+    if name == 'root':
+        return _normalize_root_control(value)
     if name == 'degree':
         return _group_degree_items(value)
     if name in ('dur', 'sus'):
@@ -3032,7 +3052,11 @@ def _normalize_group_control(name, value):
     return value
 
 def _set_group_pattern_control(pattern, name, value):
-    if name == 'degree':
+    if name == 'root':
+        if pattern.synth == 'sample' or not pattern.degrees:
+            raise ValueError('Group.root applies only to scale-degree note players')
+        pattern.rootMidi, pattern.rootControl = value
+    elif name == 'degree':
         if pattern.synth == 'sample':
             raise ValueError('Group.degree applies to numeric note players, not sample players')
         if not pattern.degrees:
@@ -3218,6 +3242,7 @@ class Player:
                    _time_multipliers=pattern.timeMultipliers,
                    _allow_repeated_notes=pattern.allowRepeatedNotes,
                    _degree_control=pattern.degreeControl,
+                    _root_control=pattern.rootControl,
                   strum=pattern.strumControl if pattern.strumControl is not None else pattern.strumBeats)
             compiledLength = _dexter_length
             delayPattern = isinstance(pattern.delayControl, _FoxDotFinitePattern)
@@ -4263,6 +4288,10 @@ class Group:
                     values.append(pattern.octaveControl
                                   if pattern.octaveControl is not None else
                                   pattern.baseOctave)
+                elif name == 'root':
+                    values.append(pattern.rootControl
+                                  if pattern.rootControl is not None else
+                                  pattern.rootMidi)
                 else:
                     values.append(pattern.__dict__.get(fieldName))
             return values

@@ -2132,6 +2132,15 @@ degreeTimevarExampleRows, degreeTimevarExampleEvents = run_script(
     groupDegreeTimevarText, include_events=True)
 assert len(degreeTimevarExampleRows) == 3
 assert len(degreeTimevarExampleEvents) == 12
+groupRootText = open(
+    os.path.join(sys.argv[2], '118-group-root-control.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    groupRootText)
+groupRootExampleRows, groupRootExampleEvents = run_script(
+    groupRootText, include_events=True)
+assert len(groupRootExampleRows) == 3
+assert len(groupRootExampleEvents) == 12
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2174,6 +2183,53 @@ groupPitchReassignmentRows, groupPitchReassignmentEvents = run_script(
     include_events=True)
 assert len(groupPitchReassignmentRows) == 1
 assert [int(event[3]) for event in groupPitchReassignmentEvents] == [60, 62]
+
+groupRootRows, groupRootEvents = run_script(
+    'Scale.default.set("major")\nRoot.default.set("C")\n'
+    'p1 >> triangle([0, 2, 4, 6], dur=1, oct=5)\n'
+    'p2 >> pluck([0, 2, 4, 6], dur=1, oct=4)\n'
+    'pair = Group(p1, p2)\n'
+    'pair.root = "D"\n',
+    include_events=True)
+assert len(groupRootRows) == 2 and len(groupRootEvents) == 8
+assert [int(event[3]) for event in groupRootEvents[:4]] == [62, 66, 69, 73]
+assert [int(event[3]) for event in groupRootEvents[4:]] == [50, 54, 57, 61]
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'pair = Group(p1, p2)\npair.root = "D"\n')
+
+preassignedRootRows, preassignedRootEvents = run_script(
+    'Scale.default.set("major")\n'
+    'pair = Group(p1)\npair.root = 7\n'
+    'p1 >> triangle([0, 2], dur=0.5, oct=5)\n',
+    include_events=True)
+assert len(preassignedRootRows) == 1
+assert [int(event[3]) for event in preassignedRootEvents] == [67, 71]
+
+def group_root_events(root_assignment):
+    return run_script(
+        'Scale.default.set("major")\nRoot.default.set("C")\n'
+        'p1 >> triangle([0, 0, 0, 0], dur=0.5, oct=5)\n'
+        'pair = Group(p1)\npair.root = ' + root_assignment + '\n',
+        include_events=True)[1]
+
+steppedGroupRootEvents = group_root_events('var([0, 7], [1, 1])')
+assert [int(event[3]) for event in steppedGroupRootEvents] == [
+    60, 60, 67, 67]
+linearGroupRootEvents = group_root_events('linvar([0, 4], [1, 1])')
+assert [int(event[3]) for event in linearGroupRootEvents] == [
+    60, 62, 64, 62]
+
+playerRootEvents = run_script(
+    'Scale.default.set("major")\n'
+    'p1 >> triangle([0, 0, 0, 0], dur=0.5, oct=5, '
+    'root=var([0, 7], [1, 1]))\n',
+    include_events=True)[1]
+assert [int(event[3]) for event in playerRootEvents] == [60, 60, 67, 67]
+assert 'root var/linvar must use pitch classes 0..11 or MIDI notes 12..127' in (
+    run_error_script(
+        'p1 >> triangle([0, 0], root=var([0, 12], [1, 1]))\n'))
+assert 'root must be a pitch class' in run_error_script(
+    'pair = Group(p1)\npair.root = "H"\n')
 
 def group_degree_events(degree_assignment):
     return run_script(
@@ -2345,4 +2401,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), shared pitch/timing and dynamic degree controls, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 117, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 118, and user SynthDef examples 94, 103, 104, and 105.')
