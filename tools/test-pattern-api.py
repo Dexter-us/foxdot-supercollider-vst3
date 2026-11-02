@@ -167,6 +167,46 @@ invertedChords = namespace['P'][
 assert invertedChords == [7, (7, 3, 0), 0]
 assert isinstance(invertedChords[1], namespace['_FoxDotChord'])
 assert namespace['_FoxDotFinitePattern']([]).invert() == []
+assert namespace['P'][0, 1, 2, 3].arp(namespace['P'][0, 2]) == [
+    0, 2, 1, 3, 2, 4, 3, 5]
+arpeggiatedChords = namespace['P'][
+    namespace['PGroup'](0, 4, 7), 2].arp(namespace['P'][0, 2])
+assert arpeggiatedChords == [(0, 4, 7), (2, 6, 9), 2, 4]
+assert namespace['P'][0, None].arp(namespace['P'][0, 2]) == [
+    0, 2, None, None]
+assert namespace['P'][0, 1, 2, 3].splice(
+    namespace['P'][4, 5, 6, 7], namespace['P'][8, 9]) == [
+        0, 4, 8, 1, 5, 9, 2, 6, 8, 3, 7, 9]
+assert namespace['P']['x', '-', 'o'].splice('  ', 'x-') == [
+    'x', ' ', 'x', '-', ' ', '-', 'o', ' ', 'x',
+    'x', ' ', '-', '-', ' ', 'x', 'o', ' ', '-']
+assert namespace['P'][0, namespace['PGroup'](0, 3, 7)].splice(
+    namespace['P'][4, 5]) == [
+        0, 4, (0, 3, 7), 5]
+for helper in (
+        lambda: namespace['P']['x', 'o'].arp(namespace['P'][0, 2]),
+        lambda: namespace['P'][0, 2].arp(
+            namespace['_FoxDotFinitePattern']([])),
+        lambda: namespace['P'][0, 1].arp(
+            namespace['P'][*range(129)]),
+        lambda: namespace['P'][0, 1].splice(),
+        lambda: namespace['P'][0, 1].splice(
+            namespace['_FoxDotFinitePattern']([])),
+        lambda: namespace['P'][0, 1].splice(
+            namespace['P']['x', 'o'])):
+    try:
+        helper()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('arp/splice should reject unsupported or unbounded input')
+try:
+    namespace['P'][*range(86)].splice(
+        namespace['P'][*range(86)], namespace['P'][*range(86)])
+except ValueError as error:
+    assert '256 items' in str(error)
+else:
+    raise AssertionError('splice must enforce the 256-item output cap')
 shuffleSource = namespace['P'][(0, 4), None, 7, 2]
 shuffleBefore = list(shuffleSource)
 shuffleCopies = shuffleSource.shuffle(2)
@@ -2280,6 +2320,15 @@ pitchTransformRows, pitchTransformEvents = run_script(
     pitchTransformText, include_events=True)
 assert len(pitchTransformRows) == 3
 assert 0 < len(pitchTransformEvents) <= 256
+patternCompositionText = open(
+    os.path.join(sys.argv[2], '123-arpeggio-and-splice.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternCompositionText)
+patternCompositionRows, patternCompositionEvents = run_script(
+    patternCompositionText, include_events=True)
+assert len(patternCompositionRows) == 3
+assert 0 < len(patternCompositionEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2540,4 +2589,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 122, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 123, and user SynthDef examples 94, 103, 104, and 105.')

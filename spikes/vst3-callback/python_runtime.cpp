@@ -1220,6 +1220,28 @@ class _FoxDotFinitePattern(list):
     def invert(self):
         return _invert_pitch_pattern(self)
 
+    def arp(self, arp_pattern):
+        sequences, kind = _compatible_pattern_sequences(
+            (self, arp_pattern), 'arp', 2)
+        if kind != 'numeric':
+            raise TypeError('arp supports numeric note patterns and chords only')
+        intervals = _FoxDotFinitePattern(sequences[1])
+        return self.stutter(len(intervals)) + intervals
+
+    def splice(self, seq, *seqs):
+        sequences, _ = _compatible_pattern_sequences(
+            (self, seq) + seqs, 'splice', 2)
+        size = 1
+        for sequence in sequences:
+            size = size * len(sequence) // self._gcd(size, len(sequence))
+            if size > 256 // len(sequences):
+                raise ValueError('splice output is limited to 256 items')
+        result = []
+        for index in range(size):
+            for sequence in sequences:
+                result.append(sequence[index % len(sequence)])
+        return _FoxDotFinitePattern(result)
+
     def stutter(self, count=2):
         counts = list(count) if isinstance(count, (list, tuple)) else [count]
         if not counts:

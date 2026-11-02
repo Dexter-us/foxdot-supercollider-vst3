@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.94 adds FoxDot-style finite-pattern .arp(intervals) and
+.splice(pattern, ...). arp() arpeggiates numeric notes by adding intervals;
+splice() cyclically interleaves numeric phrases or sample-symbol patterns.
+Outputs are limited to 256 items. See Example 123.
+
 Version 0.4.93 adds FoxDot's native finite-pattern .invert() method. It reflects
 numeric notes around the phrase's highest note, keeps rests, and inverts chord
 groups independently. Transposition uses the existing transpose(pattern,
@@ -223,6 +228,9 @@ and shuffle(n) on finite numeric, chord, and note patterns.
 
 122-pitch-inversion.py demonstrates .invert() on a numeric phrase and
 transpose(pattern, interval) on chords and notes.
+
+123-arpeggio-and-splice.py demonstrates .arp() and .splice() on note
+patterns, including chord intervals.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 
