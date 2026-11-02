@@ -1,5 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.105 adds finite PDelta(deltas, start=0, length=256). It emits the
+start value, then accumulates a repeating numeric delta pattern. Scalar deltas
+repeat; output is limited to 256 notes and ±1,000,000. See Example 134.
+
 Version 0.4.104 adds finite PChain(mapping, length=256, seed=None). It starts
 at the first mapping key, chooses from that state's destinations, and repeats
 terminal values. Numeric-note and sample-symbol chains are supported, limited
@@ -306,6 +310,9 @@ walk, and drums.
 
 133-pchain-transition-melody.py demonstrates numeric transition chains and a
 sample-symbol drum chain.
+
+134-pdelta-pitch-contour.py demonstrates interval accumulation in a lead and
+bass contour.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

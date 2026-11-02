@@ -59,7 +59,7 @@ constexpr char kPythonKeywords[] =
     "for from global if import in is lambda nonlocal not or pass raise return try "
     "while with yield False None True";
 constexpr char kFoxDotApiKeywords[] =
-    "Clock Scale Root Player P PGroup PWalk PChain var linvar DiskIn VDiskIn DiskOut record play stop sine triangle saw pulse bass varsaw dirt jbass noise "
+    "Clock Scale Root Player P PGroup PWalk PChain PDelta var linvar DiskIn VDiskIn DiskOut record play stop sine triangle saw pulse bass varsaw dirt jbass noise "
     "dub growl soprano crunch lazer rave bell gong marimba pluck twang donk squish "
     "charm spark blip scatter orient zap fuzz bug ripple "
     "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
@@ -69,7 +69,7 @@ constexpr char kFoxDotApiKeywords[] =
     "echo delay mute unmute rate start end loop stretch shuffle repeat stutter "
     "palindrome mirror accum swap reverse rotate invert transpose arp splice sort unduplicate replace layer trim ltrim normalise choose zip deepzip deeprzip map pivot true_shuffle shufflets";
 constexpr char kFoxDotCompletions[] =
-    "Clock P PGroup PWalk PChain Player Root Scale DiskIn VDiskIn DiskOut record slot seconds amp cutoff delay dur echo linvar mute oct pan "
+    "Clock P PGroup PWalk PChain PDelta Player Root Scale DiskIn VDiskIn DiskOut record slot seconds amp cutoff delay dur echo linvar mute oct pan "
     "play p1 p2 p3 p4 p5 p6 p7 p8 pulse reverb resonance room saw sine stop strum "
     "sus triangle unmute var bass varsaw dirt jbass noise dub growl soprano crunch lazer rave "
     "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple rate "
@@ -470,7 +470,7 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.104",
+        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.105",
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),

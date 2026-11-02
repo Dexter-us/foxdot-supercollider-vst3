@@ -139,6 +139,12 @@ sampleChain = namespace['PChain'](
 assert len(sampleChain) == 32 and sampleChain[0] == 'x'
 assert all(value in ('x', 'o', '-') for value in sampleChain)
 assert namespace['PChain']({5: [5]}, length=6) == [5] * 6
+assert namespace['PDelta'](
+    namespace['P'][1, -2, 0.5], start=60, length=7) == [
+        60, 61, 59, 59.5, 60.5, 58.5, 59]
+assert namespace['PDelta'](2, start=-1, length=4) == [-1, 1, 3, 5]
+assert namespace['PDelta'](
+    namespace['P'][1, 2], start=0, length=6) == [0, 1, 3, 4, 6, 7]
 for generator in (
         lambda: namespace['PRand']([], length=2),
         lambda: namespace['PRand'](2.5, length=2),
@@ -167,13 +173,20 @@ for generator in (
         lambda: namespace['PChain']({0: [0]}, seed=True),
         lambda: namespace['PChain']({i: [i] for i in range(33)}),
         lambda: namespace['PChain'](
-            {0: list(range(257))})):
+            {0: list(range(257))}),
+        lambda: namespace['PDelta'](
+            namespace['_FoxDotFinitePattern']([])),
+        lambda: namespace['PDelta'](namespace['P']['x', 'o']),
+        lambda: namespace['PDelta'](namespace['P'][1, None]),
+        lambda: namespace['PDelta'](1, start=float('inf')),
+        lambda: namespace['PDelta'](1, length=257),
+        lambda: namespace['PDelta'](1000000, start=1, length=2)):
     try:
         generator()
     except (TypeError, ValueError):
         pass
     else:
-        raise AssertionError('random pattern generator should reject invalid bounds')
+        raise AssertionError('bounded pattern generator should reject invalid bounds')
 stepVar = namespace['var']([0.2, 0.8], [2, 2])
 linearVar = namespace['linvar']([-1, 1], 4)
 assert stepVar.wire() == 'v:0.2,0.8:2.0,2.0'
@@ -2706,6 +2719,15 @@ patternChainRows, patternChainEvents = run_script(
     patternChainText, include_events=True)
 assert len(patternChainRows) == 3
 assert 0 < len(patternChainEvents) <= 256
+patternDeltaText = open(
+    os.path.join(sys.argv[2], '134-pdelta-pitch-contour.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternDeltaText)
+patternDeltaRows, patternDeltaEvents = run_script(
+    patternDeltaText, include_events=True)
+assert len(patternDeltaRows) == 3
+assert 0 < len(patternDeltaEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2966,4 +2988,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/true_shuffle/shufflets/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip/map/pivot/PWalk/PChain, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 133, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/true_shuffle/shufflets/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose/zip/deepzip/deeprzip/map/pivot/PWalk/PChain/PDelta, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 134, and user SynthDef examples 94, 103, 104, and 105.')

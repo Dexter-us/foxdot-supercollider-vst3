@@ -115,7 +115,7 @@ _COMPAT_CALLS = {
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
-    'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain',
+    'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain', 'PDelta',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -562,6 +562,22 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     positional.add(keyword.arg)
             if not positional.intersection({'mapping'}):
                 self.add(node.lineno, 'PChain requires a transition mapping.')
+        if name == 'PDelta':
+            parameters = ('deltas', 'start', 'length')
+            allowed = set(parameters)
+            if len(node.args) > len(parameters):
+                self.add(node.lineno, 'PDelta accepts deltas, start, and length.')
+            positional = set(parameters[:len(node.args)])
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(node.lineno, 'PDelta accepts only deltas, start, and length.')
+                elif keyword.arg in positional:
+                    self.add(keyword.lineno or node.lineno,
+                             'PDelta received the same argument more than once.')
+                else:
+                    positional.add(keyword.arg)
+            if not positional.intersection({'deltas'}):
+                self.add(node.lineno, 'PDelta requires a finite delta pattern.')
         keyword_names = None
         if name in _COMPAT_WAVES:
             keyword_names = _COMPAT_WAVE_KEYWORDS
@@ -1964,6 +1980,34 @@ def PChain(mapping, length=256, seed=None):
                 state, _ = _random_pattern_step(state)
                 choiceIndex = (state * len(choices)) >> 32
                 value = choices[choiceIndex]
+        result.append(value)
+    return _FoxDotFinitePattern(result)
+
+def PDelta(deltas, start=0, length=256):
+    length = _random_pattern_length(length, 'PDelta')
+    if not _finite_note_number(start) or abs(float(start)) > 1000000.0:
+        raise ValueError('PDelta start must be finite and within -1000000..1000000')
+    if _finite_note_number(deltas):
+        deltaValues = [deltas]
+    else:
+        deltaValues, deltaKind = _pattern_items(deltas, 'PDelta')
+        if not deltaValues:
+            raise ValueError('PDelta delta pattern cannot be empty')
+        if deltaKind != 'numeric':
+            raise TypeError('PDelta requires a numeric delta pattern')
+    if not deltaValues:
+        raise ValueError('PDelta delta pattern cannot be empty')
+    if any(not _finite_note_number(delta) or abs(float(delta)) > 1000000.0
+           for delta in deltaValues):
+        raise ValueError('PDelta deltas must be finite and within -1000000..1000000')
+
+    value = start
+    result = []
+    for index in range(length):
+        if index:
+            value += deltaValues[(index - 1) % len(deltaValues)]
+        if not _finite_note_number(value) or abs(float(value)) > 1000000.0:
+            raise ValueError('PDelta accumulated notes must stay within -1000000..1000000')
         result.append(value)
     return _FoxDotFinitePattern(result)
 
