@@ -1217,6 +1217,62 @@ class _FoxDotFinitePattern(list):
             result.extend(PShuf(self))
         return _FoxDotFinitePattern(result)
 
+    def _shuffle_counts(self, count, name):
+        counts = (list(count) if isinstance(
+            count, (list, tuple, _FoxDotFinitePattern)) else [count])
+        if not counts or len(counts) > 256:
+            raise ValueError(name + ' requires 1 to 256 count values')
+        for value in counts:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(name + ' counts must be whole numbers from 0 to 256')
+            if not 0 <= value <= 256:
+                raise ValueError(name + ' counts must be whole numbers from 0 to 256')
+        return counts
+
+    def true_shuffle(self, count=1):
+        counts = self._shuffle_counts(count, 'true_shuffle')
+
+        expanded = []
+
+        def expand(item, depth):
+            if depth > 16:
+                raise ValueError(
+                    'true_shuffle is limited to 16 nested pattern levels')
+            if isinstance(item, _FoxDotFinitePattern):
+                for child in item:
+                    expand(child, depth + 1)
+            else:
+                expanded.append(item)
+                if len(expanded) > 256:
+                    raise ValueError(
+                        'true_shuffle input is limited to 256 expanded items')
+
+        expand(self, 0)
+        total = sum(counts)
+        if len(expanded) * total > 256:
+            raise ValueError('true_shuffle output is limited to 256 items')
+        result = []
+        source = _FoxDotFinitePattern(expanded)
+        for repetitions in counts:
+            for _ in range(repetitions):
+                result.extend(PShuf(source))
+        return _FoxDotFinitePattern(result)
+
+    def shufflets(self, count=1):
+        counts = self._shuffle_counts(count, 'shufflets')
+        if len(self) > 8:
+            raise ValueError('shufflets chord groups are limited to 8 notes')
+        total = sum(counts)
+        if total > 256:
+            raise ValueError('shufflets output is limited to 256 groups')
+        if total and not self:
+            raise ValueError('shufflets requires a non-empty source pattern')
+        if any(not _finite_note_number(value) for value in self):
+            raise TypeError('shufflets supports numeric note patterns only')
+        return _FoxDotFinitePattern([
+            _FoxDotChord(*PShuf(self))
+            for repetitions in counts for _ in range(repetitions)])
+
     def invert(self):
         return _invert_pitch_pattern(self)
 
@@ -1418,6 +1474,8 @@ class _FoxDotFinitePattern(list):
             'stretch': self.stretch,
             'loop': self.loop,
             'shuffle': self.shuffle,
+            'true_shuffle': self.true_shuffle,
+            'shufflets': self.shufflets,
             'sort': self.sort,
             'unduplicate': self.unduplicate,
             'arp': self.arp,

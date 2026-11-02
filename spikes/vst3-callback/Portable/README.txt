@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.102 adds bounded .true_shuffle(n) and .shufflets(n). true_shuffle()
+scrambles the expanded finite phrase while preserving chord items; shufflets()
+creates seeded shuffled numeric chord groups of up to 8 notes. Output is
+limited to 256 items. See Example 131.
+
 Version 0.4.101 adds bounded .map(mapping) and .pivot(index) pattern methods.
 map() recursively applies a dictionary to nested patterns and chords; unmapped
 values become zero like FoxDot. pivot() mirrors and rotates around one or more
@@ -278,6 +283,14 @@ sample symbols.
 
 128-normalise-and-choose.py demonstrates a normalized pitch contour and a
 selected pitch value.
+
+129-pattern-zip-methods.py demonstrates paired dyads and nested zip order.
+
+130-pattern-map-pivot.py demonstrates dictionary note mapping and rotating/
+mirroring a phrase around selected steps.
+
+131-true-shuffle-and-shufflets.py demonstrates expanded seeded shuffling and
+shuffled chord passes with strum.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 
