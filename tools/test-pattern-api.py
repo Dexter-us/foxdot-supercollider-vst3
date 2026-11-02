@@ -234,6 +234,43 @@ assert namespace['P'][0, 1, 2, 3].ltrim(0) == [0, 1, 2, 3]
 assert namespace['P']['x', '-', 'o'].trim(2) == ['x', '-']
 assert namespace['P'][namespace['PGroup'](0, 4, 7), 2].ltrim(1) == [2]
 assert namespace['_FoxDotFinitePattern']([]).trim(2) == []
+assert namespace['P'][0, 2, 4].normalise() == [0.0, 0.5, 1.0]
+assert namespace['P'][-4, 0, 4].normalise() == [0.0, 0.5, 1.0]
+assert namespace['P'][5, 5, 5].normalise() == [0.0, 0.0, 0.0]
+normalizedPattern = namespace['P'][-10, -5, 0, 5].normalise()
+assert all(0.0 <= value <= 1.0 for value in normalizedPattern)
+for normalize_call in (
+        lambda: namespace['_FoxDotFinitePattern']([]).normalise(),
+        lambda: namespace['P'][0, None, 2].normalise(),
+        lambda: namespace['P'][namespace['PGroup'](0, 2), 4].normalise(),
+        lambda: namespace['P']['x', 'o'].normalise()):
+    try:
+        normalize_call()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('normalise should require a non-empty numeric pattern')
+chooseCounterBefore = namespace['_dexter_random_counter']
+namespace['_dexter_random_counter'] = 0
+chosenOnce = namespace['P'][0, 2, 4, 7].choose()
+namespace['_dexter_random_counter'] = 0
+chosenAgain = namespace['P'][0, 2, 4, 7].choose()
+assert chosenOnce == chosenAgain and chosenOnce in (0, 2, 4, 7)
+chordChoice = namespace['P'][
+    namespace['PGroup'](0, 4, 7), 2].choose()
+assert chordChoice in (namespace['PGroup'](0, 4, 7), 2)
+sampleChoice = namespace['P']['x', '-', 'o'].choose()
+assert sampleChoice in ('x', '-', 'o')
+namespace['_dexter_random_counter'] = chooseCounterBefore
+for choose_call in (
+        lambda: namespace['_FoxDotFinitePattern']([]).choose(),
+        lambda: namespace['P'][0, 'x'].choose()):
+    try:
+        choose_call()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('choose should require a non-empty finite pattern')
 for slice_call in (
         lambda: namespace['P'][0, 1].trim(1.5),
         lambda: namespace['P'][0, 1].ltrim(True)):
@@ -2451,6 +2488,15 @@ patternTrimRows, patternTrimEvents = run_script(
     patternTrimText, include_events=True)
 assert len(patternTrimRows) == 3
 assert 0 < len(patternTrimEvents) <= 256
+patternRandomText = open(
+    os.path.join(sys.argv[2], '128-normalise-and-choose.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternRandomText)
+patternRandomRows, patternRandomEvents = run_script(
+    patternRandomText, include_events=True)
+assert len(patternRandomRows) == 3
+assert 0 < len(patternRandomEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2711,4 +2757,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 127, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace/layer/trim/ltrim/normalise/choose, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 128, and user SynthDef examples 94, 103, 104, and 105.')

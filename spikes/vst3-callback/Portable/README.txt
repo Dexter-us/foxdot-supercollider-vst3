@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.99 adds FoxDot-style .normalise() for non-empty numeric patterns
+and .choose() for one seeded random selection from numeric or sample-symbol
+patterns. normalise() maps values to 0..1 and maps constant phrases to zero;
+choose() returns one item when the script evaluates. See Example 128.
+
 Version 0.4.98 adds FoxDot-compatible .trim(size) and .ltrim(size) front/tail
 slices. Python slice behavior is preserved, including negative sizes; ltrim(0)
 returns the full pattern as in FoxDot. See Example 127.
@@ -259,6 +264,9 @@ sample symbols.
 126-pattern-layer.py demonstrates reverse and rotate pattern layers.
 
 127-pattern-trim.py demonstrates splitting a phrase into front and tail parts.
+
+128-normalise-and-choose.py demonstrates a normalized amplitude contour and a
+selected pitch value.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

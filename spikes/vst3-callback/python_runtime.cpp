@@ -1281,6 +1281,29 @@ class _FoxDotFinitePattern(list):
             raise TypeError('ltrim size must be a whole number')
         return _FoxDotFinitePattern(self[-size:])
 
+    def normalise(self):
+        if not self:
+            raise ValueError('normalise requires a non-empty numeric pattern')
+        if any(not _finite_note_number(value) for value in self):
+            raise TypeError('normalise supports finite numeric patterns only')
+        low = min(self)
+        high = max(self)
+        span = high - low
+        if span == 0:
+            return _FoxDotFinitePattern([0.0 for _ in self])
+        result = []
+        for value in self:
+            normalized = (value - low) / span
+            if not _finite_note_number(normalized):
+                raise ValueError('normalise results must remain finite')
+            result.append(normalized)
+        return _FoxDotFinitePattern(result)
+
+    def choose(self):
+        if not self:
+            raise ValueError('choose requires a non-empty finite pattern')
+        return PRand(self, length=1)[0]
+
     def layer(self, method, *args, **kwargs):
         if not isinstance(method, str):
             raise ValueError(
@@ -1303,6 +1326,7 @@ class _FoxDotFinitePattern(list):
             'replace': self.replace,
             'trim': self.trim,
             'ltrim': self.ltrim,
+            'normalise': self.normalise,
         }
         if method not in methods:
             raise ValueError(
