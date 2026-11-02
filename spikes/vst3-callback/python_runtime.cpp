@@ -1252,6 +1252,25 @@ class _FoxDotFinitePattern(list):
                 result.append(item)
         return _FoxDotFinitePattern(result)
 
+    def replace(self, old, new):
+        def replace_item(item, depth):
+            if depth > 16:
+                raise ValueError('replace is limited to 16 nested pattern levels')
+            if isinstance(item, _FoxDotFinitePattern):
+                return _FoxDotFinitePattern([
+                    replace_item(child, depth + 1) for child in item])
+            if isinstance(item, _FoxDotChord):
+                return _FoxDotChord(*[
+                    replace_item(child, depth + 1) for child in item])
+            if isinstance(item, tuple):
+                return tuple(replace_item(child, depth + 1) for child in item)
+            if isinstance(item, list):
+                return [replace_item(child, depth + 1) for child in item]
+            return new if item == old else item
+
+        return _FoxDotFinitePattern([
+            replace_item(item, 0) for item in self])
+
     def stutter(self, count=2):
         counts = list(count) if isinstance(count, (list, tuple)) else [count]
         if not counts:

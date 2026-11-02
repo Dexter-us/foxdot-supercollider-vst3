@@ -195,6 +195,27 @@ assert namespace['P']['x', 'x', '-', '-', 'o', 'x', 'x'].unduplicate() == [
     'x', '-', 'o', 'x']
 assert namespace['P'][1, namespace['PGroup'](2, 4), namespace['PGroup'](2, 4),
                       3].unduplicate() == [1, (2, 4), 3]
+assert namespace['P'][0, 2, 4, 2].replace(2, 7) == [0, 7, 4, 7]
+assert namespace['P'][0, None, 4].replace(None, 2) == [0, 2, 4]
+assert namespace['P']['x', '-', 'x'].replace('x', 'o') == ['o', '-', 'o']
+replacedChord = namespace['P'][
+    namespace['PGroup'](0, 4, 7), 2].replace(4, 5)
+assert replacedChord == [(0, 5, 7), 2]
+assert isinstance(replacedChord[0], namespace['_FoxDotChord'])
+nestedPattern = namespace['_FoxDotFinitePattern']([
+    namespace['P'][0, 2], namespace['PGroup'](2, 4)])
+replacedNested = nestedPattern.replace(2, 3)
+assert replacedNested == [[0, 3], (3, 4)]
+assert isinstance(replacedNested[0], namespace['_FoxDotFinitePattern'])
+assert isinstance(replacedNested[1], namespace['_FoxDotChord'])
+replacementPattern = namespace['P'][8, 9]
+replacementResult = namespace['P'][1, 2].replace(2, replacementPattern)
+assert replacementResult == [1, [8, 9]]
+assert replacementResult[1] is replacementPattern
+untouchedPattern = namespace['P'][1, 2]
+assert untouchedPattern.replace(3, 4) == [1, 2]
+assert untouchedPattern == [1, 2]
+assert namespace['_FoxDotFinitePattern']([]).replace(1, 2) == []
 for helper in (
         lambda: namespace['P']['x', 'o'].arp(namespace['P'][0, 2]),
         lambda: namespace['P'][0, 2].arp(
@@ -218,6 +239,15 @@ except TypeError:
     pass
 else:
     raise AssertionError('sort should retain FoxDot ordering requirements')
+deepPattern = namespace['P'][1]
+for _ in range(18):
+    deepPattern = namespace['_FoxDotFinitePattern']([deepPattern])
+try:
+    deepPattern.replace(1, 2)
+except ValueError as error:
+    assert '16 nested pattern levels' in str(error)
+else:
+    raise AssertionError('replace must enforce its nested-pattern depth bound')
 try:
     namespace['P'][*range(86)].splice(
         namespace['P'][*range(86)], namespace['P'][*range(86)])
@@ -2356,6 +2386,15 @@ sortUnduplicateRows, sortUnduplicateEvents = run_script(
     sortUnduplicateText, include_events=True)
 assert len(sortUnduplicateRows) == 3
 assert 0 < len(sortUnduplicateEvents) <= 256
+patternReplaceText = open(
+    os.path.join(sys.argv[2], '125-pattern-replace.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternReplaceText)
+patternReplaceRows, patternReplaceEvents = run_script(
+    patternReplaceText, include_events=True)
+assert len(patternReplaceRows) == 3
+assert 0 < len(patternReplaceEvents) <= 256
 groupPitchRows, groupPitchEvents = run_script(
     'Scale.default.set("major")\nRoot.default.set("C")\n'
     'p1 >> triangle([1, 3], dur=1, oct=4)\n'
@@ -2616,4 +2655,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 124, and user SynthDef examples 94, 103, 104, and 105.')
+print('Smoke tests passed: embedded runtime, pattern API including mirror/accum/swap/stretch/loop/shuffle/invert/arp/splice/sort/unduplicate/replace, FoxDot player groups and Master(), shared pitch/timing/root controls, dynamic degree/per-player/global-root timevars, player degree references, bounded stacked .every()/.often()/.sometimes()/.rarely() operations with cycle/ident, WAV sample stutter, static FoxDot compatibility checks, line diagnostics, Portable examples through 125, and user SynthDef examples 94, 103, 104, and 105.')

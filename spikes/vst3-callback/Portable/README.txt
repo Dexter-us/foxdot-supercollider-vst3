@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.96 adds FoxDot-style finite-pattern .replace(old, new), replacing
+matching values inside notes, nested patterns, chords, and sample-symbol
+patterns while preserving structure. Nested input is limited to 16 levels.
+See Example 125.
+
 Version 0.4.95 adds FoxDot-style finite-pattern .sort() and .unduplicate().
 sort() orders comparable values; unduplicate() removes adjacent repeats while
 preserving order and later non-adjacent repeats. See Example 124.
@@ -238,6 +243,9 @@ patterns, including chord intervals.
 
 124-sort-and-unduplicate.py demonstrates ascending pattern sorting and
 consecutive-only duplicate removal.
+
+125-pattern-replace.py demonstrates replacing note degrees, chord tones, and
+sample symbols.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 
