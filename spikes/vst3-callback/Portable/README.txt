@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.116 adds bounded non-mutating .concat(other), .add(other), .abs(),
+.all(predicate), and .startswith(value) helpers. Concatenation preserves groups
+and rejects mixed numeric/sample patterns; predicates must be pure one-argument
+functions. Output is capped at 256 items, with numeric groups limited to 8
+notes and nesting to 16 levels. See Example 147.
+
 Version 0.4.115 adds bounded .zipx(other) for numeric/chord and sample-symbol
 patterns. It cycles both inputs to their LCM length and preserves each zipped
 pair's nested structure; sample pairs play as simultaneous layers. Output is

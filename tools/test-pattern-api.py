@@ -635,6 +635,57 @@ for invalid_zipx_index, invalid_zipx in enumerate((
         raise AssertionError(
             'zipx must enforce pattern, chord, and item bounds: ' +
             str(invalid_zipx_index))
+concatSource = namespace['P'][1, namespace['PGroup'](2, 3)]
+concatResult = concatSource.concat(namespace['P'][4, 5])
+assert concatResult == [1, namespace['PGroup'](2, 3), 4, 5]
+assert concatSource == [1, namespace['PGroup'](2, 3)]
+assert namespace['P'][1, 2].concat([3, 4]) == [1, 2, 3, 4]
+assert namespace['P'][1, 2].concat(range(3, 5)) == [1, 2, 3, 4]
+assert namespace['P'][1, 2].concat(3) == [1, 2, 3]
+assert namespace['_FoxDotFinitePattern']().concat(
+    namespace['P']['x', 'o']) == ['x', 'o']
+assert namespace['P']['x', 'o'].concat('-x') == ['x', 'o', '-', 'x']
+assert namespace['P'][1, 2].add(10) == namespace['P'][1, 2] + 10
+assert namespace['P'][
+    1, namespace['PGroup'](2, 3)].add(10) == [
+        11, namespace['PGroup'](12, 13)]
+assert namespace['P'][-3, namespace['PGroup'](-2, 4), None].abs() == [
+    3, namespace['PGroup'](2, 4), None]
+assert abs(namespace['P'][-2, 3]) == [2, 3]
+assert namespace['P'][1, 2, 3].all()
+assert not namespace['P'][1, 0, 3].all()
+assert namespace['P'][1, 2, 3].all(lambda value: value > 0)
+assert not namespace['_FoxDotFinitePattern']().all()
+assert namespace['P'][1, 2, 3].startswith(1)
+assert not namespace['P'][1, 2, 3].startswith(2)
+assert not namespace['_FoxDotFinitePattern']().startswith(1)
+saved_abs_builtin = namespace.get('abs')
+saved_all_builtin = namespace.get('all')
+namespace['abs'] = lambda value: 0
+namespace['all'] = lambda values: False
+assert namespace['P'][-3].abs() == [3]
+assert namespace['P'][1, 2].all()
+if saved_abs_builtin is None:
+    del namespace['abs']
+else:
+    namespace['abs'] = saved_abs_builtin
+if saved_all_builtin is None:
+    del namespace['all']
+else:
+    namespace['all'] = saved_all_builtin
+for invalid_method_batch in (
+        lambda: namespace['P'][1, 2].concat(namespace['P']['x']),
+        lambda: namespace['P'][1].concat(range(257)),
+        lambda: namespace['P'][1].concat(2).concat(
+            namespace['_FoxDotFinitePattern'](range(255))),
+        lambda: namespace['P']['x'].add(1),
+        lambda: namespace['P'][-1].abs().all(lambda value: value.__class__)):
+    try:
+        invalid_method_batch()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('concat/add/abs/all bounds or type checks failed')
 assert namespace['P'][1, 3, 4].map({1: 6, 4: 2}) == [6, 0, 2]
 assert namespace['P'][
     namespace['P'][1, 3],
@@ -2203,6 +2254,15 @@ example146, example146Events = run_script(
     example146Text, include_events=True)
 assert {int(row[1]) for row in example146 if row[2] == '0'} == {0, 1}
 assert len(example146Events) == 14
+example147Text = open(os.path.join(
+    sys.argv[2], '147-concat-add-abs-and-checks.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example147Text)
+example147, example147Events = run_script(
+    example147Text, include_events=True)
+assert {int(row[1]) for row in example147 if row[2] == '0'} == {0}
+assert len(example147Events) == 6
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)

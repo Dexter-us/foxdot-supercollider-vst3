@@ -137,7 +137,8 @@ _COMPAT_PATTERN_METHODS = {
     'sort', 'unduplicate', 'undup', 'replace', 'trim', 'ltrim', 'compress',
     'select', 'normalise',
     'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
-    'stutter', 'palindrome', 'expand', 'count', 'index', 'submap'
+    'stutter', 'palindrome', 'expand', 'count', 'index', 'submap', 'concat',
+    'add', 'abs', 'all', 'startswith'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
@@ -1287,8 +1288,49 @@ class _FoxDotFinitePattern(list):
     def __add__(self, other):
         return self._binary(other, lambda a, b: a + b)
 
+    def add(self, other):
+        """FoxDot method form of pattern addition."""
+        return self + other
+
     def __radd__(self, other):
         return self._binary(other, lambda a, b: a + b, True)
+
+    def __abs__(self):
+        budget = [0]
+
+        def absolute(item, depth):
+            if depth > 16:
+                raise ValueError('P.abs is limited to 16 nested levels')
+            if item is None:
+                return None
+            if isinstance(item, _FoxDotFinitePattern):
+                if len(item) > 256:
+                    raise ValueError('P.abs nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    absolute(value, depth + 1) for value in item])
+            if isinstance(item, _FoxDotChord):
+                return _FoxDotChord(*[
+                    absolute(value, depth + 1) for value in item])
+            if isinstance(item, tuple):
+                if len(item) > 256:
+                    raise ValueError('P.abs groups are limited to 256 items')
+                return tuple(absolute(value, depth + 1) for value in item)
+            if isinstance(item, list):
+                if len(item) > 256:
+                    raise ValueError('P.abs groups are limited to 256 items')
+                return [absolute(value, depth + 1) for value in item]
+            if not _finite_note_number(item):
+                raise TypeError('P.abs requires finite numeric notes or rests')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError('P.abs output is limited to 256 notes')
+            return item if item >= 0 else -item
+
+        return _FoxDotFinitePattern([
+            absolute(item, 0) for item in self])
+
+    def abs(self):
+        return self.__abs__()
 
     def __sub__(self, other):
         return self._binary(other, lambda a, b: a - b)
@@ -1941,6 +1983,69 @@ class _FoxDotFinitePattern(list):
         if not isinstance(mapping, dict):
             raise TypeError('submap requires a dictionary')
         return self._map_dictionary(mapping, preserve_unmapped=True)
+
+    def concat(self, other):
+        """Return a bounded copy with another finite sequence appended."""
+        if len(self) > 256:
+            raise ValueError('concat input is limited to 256 items')
+        if isinstance(other, _FoxDotFinitePattern):
+            if len(other) > 256:
+                raise ValueError('concat input is limited to 256 items')
+            appended = list(other)
+        elif isinstance(other, range):
+            try:
+                range_length = len(other)
+            except OverflowError:
+                raise ValueError('concat range is too large')
+            if range_length > 256:
+                raise ValueError('concat input is limited to 256 items')
+            appended = list(other)
+        elif isinstance(other, list):
+            if len(other) > 256:
+                raise ValueError('concat input is limited to 256 items')
+            appended = list(other)
+        elif isinstance(other, str):
+            if len(other) > 256:
+                raise ValueError('concat input is limited to 256 items')
+            appended = list(other)
+        else:
+            appended = [other]
+        if len(self) + len(appended) > 256:
+            raise ValueError('concat output is limited to 256 items')
+        combined = list(self) + appended
+        if not combined:
+            return _FoxDotFinitePattern()
+        left_sample = self._sample_sequence(self) if self else None
+        right_sample = self._sample_sequence(appended) if appended else None
+        if left_sample is not None or right_sample is not None:
+            if ((self and left_sample is None) or
+                    (appended and right_sample is None)):
+                raise TypeError(
+                    'concat cannot mix numeric note patterns with sample-symbol patterns')
+        else:
+            for item in combined:
+                if self._zipx_note_count(item) > 8:
+                    raise ValueError('concat chord groups are limited to 8 notes')
+        return _FoxDotFinitePattern(combined)
+
+    def all(self, predicate=bool):
+        """Return whether every top-level item passes a safe predicate."""
+        if len(self) > 256:
+            raise ValueError('all input is limited to 256 items')
+        if not self:
+            return False
+        if not _safe_pattern_mapper(predicate):
+            raise TypeError('all requires a pure one-argument predicate')
+        for item in self:
+            if not predicate(item):
+                return False
+        return True
+
+    def startswith(self, value):
+        """Return whether the first pattern item equals value."""
+        if len(self) > 256:
+            raise ValueError('startswith input is limited to 256 items')
+        return len(self) > 0 and self[0] == value
 
     def pivot(self, index):
         indices = (list(index) if isinstance(
