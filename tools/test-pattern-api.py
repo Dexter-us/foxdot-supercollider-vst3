@@ -11,15 +11,25 @@ import tempfile
 
 if len(sys.argv) != 3:
     raise SystemExit('usage: test-pattern-api.py python_runtime.cpp Portable-directory')
-source = open(sys.argv[1], encoding='utf-8').read()
+
+
+def read_cpp_source(path):
+    # Some existing C++ comments in the merged test branch contain legacy
+    # single-byte characters. These checks only inspect source text, so keep
+    # the test portable across Windows code pages without changing the source.
+    with open(path, encoding='utf-8', errors='replace') as source_file:
+        return source_file.read()
+
+
+source = read_cpp_source(sys.argv[1])
 processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
-processor_source = open(processor_path, encoding='utf-8').read()
+processor_source = read_cpp_source(processor_path)
 editor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
                            'win32_code_editor.cpp')
-editor_source = open(editor_path, encoding='utf-8').read()
+editor_source = read_cpp_source(editor_path)
 editor_host_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
                                 'win32_code_editor.h')
-editor_host_source = open(editor_host_path, encoding='utf-8').read()
+editor_host_source = read_cpp_source(editor_host_path)
 cmake_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
                           'CMakeLists.txt')
 cmake_source = open(cmake_path, encoding='utf-8').read()
@@ -2146,7 +2156,7 @@ def test_embedded_synthdef():
     version = re.search(r'project\([^\n]*\bVERSION\s+([0-9.]+)', cmake_text).group(1)
     factory_text = processor_source.split('BEGIN_FACTORY_DEF', 1)[1]
     assert 'DEXTER_PLUGIN_VERSION' in factory_text, 'VST factory must use the generated CMake version'
-    editor_text = open(os.path.join(plugin_dir, 'win32_code_editor.cpp'), encoding='utf-8').read()
+    editor_text = read_cpp_source(os.path.join(plugin_dir, 'win32_code_editor.cpp'))
     assert 'DEXTER_PLUGIN_VERSION' in editor_text, 'Editor version must use the generated CMake version'
     version_template = open(
         os.path.join(plugin_dir, 'plugin_version.h.in'), encoding='utf-8').read()
@@ -2586,10 +2596,10 @@ parse_source = source[parse_start:parse_end]
 assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers must reach the Python traceback branch'
 assert 'update.synthRate' in parse_source and 'kEmbeddedSynthCount + userSynthCount' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
-processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
-native_effect_source = open(os.path.join(
-    os.path.dirname(sys.argv[1]), 'native_player_effects.h'),
-    encoding='utf-8').read()
+processor_source = read_cpp_source(
+    os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'))
+native_effect_source = read_cpp_source(
+    os.path.join(os.path.dirname(sys.argv[1]), 'native_player_effects.h'))
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
 assert 'processFoxDotShape' in processor_source and 'processFoxDotDrive' in processor_source
 assert 'shapeEffectSmoothed_' in processor_source and 'driveEffectSmoothed_' in processor_source

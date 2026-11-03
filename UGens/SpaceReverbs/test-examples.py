@@ -8,7 +8,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 PORTABLE = Path(__file__).resolve().parent / "Portable"
-SOURCE = (ROOT / "spikes/vst3-callback/python_runtime.cpp").read_text()
+SOURCE = (ROOT / "spikes/vst3-callback/python_runtime.cpp").read_text(
+    encoding="utf-8", errors="replace")
 NAMES = ("JPverb", "Greyhole")
 
 def embedded(name):
@@ -157,7 +158,8 @@ output, scope = evaluate(
     'p1 >> userSynth("AirwindowsTapeDelay2", [0], lforate=2)',
     names=("AirwindowsTapeDelay2",))
 assert scope["_dexter_effect_control_values"][0][2] == 1
-processor = (ROOT / "spikes/vst3-callback/processor.cpp").read_text()
+processor = (ROOT / "spikes/vst3-callback/processor.cpp").read_text(
+    encoding="utf-8", errors="replace")
 for name in NAMES:
     branch = processor.split('else if (is' + name + ') {', 1)[1].split(
         '\n                }', 1)[0]

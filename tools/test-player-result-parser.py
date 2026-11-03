@@ -14,7 +14,7 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 plugin = root / "spikes/vst3-callback"
 source_path = plugin / "python_runtime.cpp"
-source = source_path.read_text()
+source = source_path.read_text(encoding="utf-8", errors="replace")
 sys.argv = ["test-pattern-api.py", str(source_path), str(plugin / "Portable")]
 api_tests = runpy.run_path(str(root / "tools/test-pattern-api.py"))
 parse_start = source.index("bool parseResult(")
