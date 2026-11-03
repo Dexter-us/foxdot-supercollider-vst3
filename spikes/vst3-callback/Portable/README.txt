@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.117 adds .limit(func, value) for finite numeric note patterns. It
+accepts only the pure built-in sum, max, and len aggregators and caps output at
+256 items. Unreachable max thresholds, empty patterns, nested chords, samples,
+rests, and non-finite inputs are rejected. See Example 148.
+
 Version 0.4.116 adds bounded non-mutating .concat(other), .add(other), .abs(),
 .all(predicate), and .startswith(value) helpers. Concatenation preserves groups
 and rejects mixed numeric/sample patterns; predicates must be pure one-argument

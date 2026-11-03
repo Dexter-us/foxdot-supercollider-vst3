@@ -1,5 +1,12 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.117 adds `.limit(func, value)` for finite numeric note patterns.
+Only the pure built-in `sum`, `max`, and `len` aggregators are accepted; the
+pattern cycles until the threshold is reached, with a 256-item output cap.
+Unreachable `max` thresholds, empty patterns, nested chords, samples, rests,
+and non-finite inputs are rejected rather than allowing an unbounded loop.
+Portable Example 148 demonstrates the three supported aggregators.
+
 Version 0.4.116 adds bounded, non-mutating `.concat(other)`, `.add(other)`,
 `.abs()`, `.all(predicate)`, and `.startswith(value)` pattern helpers.
 Concatenation preserves groups and rejects mixed numeric/sample patterns;

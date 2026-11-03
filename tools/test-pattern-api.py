@@ -686,6 +686,38 @@ for invalid_method_batch in (
         pass
     else:
         raise AssertionError('concat/add/abs/all bounds or type checks failed')
+limit_builtins = namespace['__builtins__']
+assert namespace['P'][0, 1, 2, 3].limit(
+    limit_builtins['sum'], 10) == [0, 1, 2, 3, 0, 1, 2, 3]
+assert namespace['P'][1, 2, 3].limit(
+    limit_builtins['sum'], 8) == [1, 2, 3, 1, 2]
+assert namespace['P'][8, 9].limit(limit_builtins['sum'], 0) == []
+assert namespace['P'][1, 2, 3].limit(
+    limit_builtins['len'], 3) == [1, 2, 3]
+assert namespace['P'][1, 4, 7, 2].limit(
+    limit_builtins['max'], 7) == [1, 4, 7]
+for invalid_limit_index, invalid_limit in enumerate((
+        lambda: namespace['P'][1].limit(limit_builtins['sum'], 257),
+        lambda: namespace['P'][-1].limit(limit_builtins['sum'], 1),
+        lambda: namespace['P'][1, 2].limit(
+            limit_builtins['max'], 3),
+        lambda: namespace['P'][1].limit(limit_builtins['min'], 2),
+        lambda: namespace['P'][1].limit(lambda values: len(values), 2),
+        lambda: namespace['P']['x'].limit(limit_builtins['sum'], 1),
+        lambda: namespace['_FoxDotFinitePattern'](
+            [namespace['PGroup'](1, 2)]).limit(
+            limit_builtins['sum'], 2),
+        lambda: namespace['_FoxDotFinitePattern'](range(257)).limit(
+            limit_builtins['len'], 2),
+        lambda: namespace['P']().limit(limit_builtins['sum'], 2))):
+    try:
+        invalid_limit()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError(
+            'limit must enforce numeric, aggregator, and output bounds: ' +
+            str(invalid_limit_index))
 assert namespace['P'][1, 3, 4].map({1: 6, 4: 2}) == [6, 0, 2]
 assert namespace['P'][
     namespace['P'][1, 3],
@@ -2263,6 +2295,15 @@ example147, example147Events = run_script(
     example147Text, include_events=True)
 assert {int(row[1]) for row in example147 if row[2] == '0'} == {0}
 assert len(example147Events) == 6
+example148Text = open(os.path.join(
+    sys.argv[2], '148-bounded-limit-patterns.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example148Text)
+example148, example148Events = run_script(
+    example148Text, include_events=True)
+assert {int(row[1]) for row in example148 if row[2] == '0'} == {0, 1, 2}
+assert len(example148Events) == 16
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)

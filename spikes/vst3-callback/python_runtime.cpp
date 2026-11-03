@@ -138,7 +138,7 @@ _COMPAT_PATTERN_METHODS = {
     'select', 'normalise',
     'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
     'stutter', 'palindrome', 'expand', 'count', 'index', 'submap', 'concat',
-    'add', 'abs', 'all', 'startswith'
+    'add', 'abs', 'all', 'startswith', 'limit'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
@@ -2046,6 +2046,43 @@ class _FoxDotFinitePattern(list):
         if len(self) > 256:
             raise ValueError('startswith input is limited to 256 items')
         return len(self) > 0 and self[0] == value
+
+    def limit(self, aggregator, value):
+        """Repeat numeric items until a safe monotonic aggregate reaches value."""
+        pattern_length = self.__len__()
+        if pattern_length > 256:
+            raise ValueError('limit input is limited to 256 items')
+        if pattern_length == 0:
+            raise ValueError('limit requires a non-empty pattern')
+        if not _finite_note_number(value):
+            raise TypeError('limit threshold must be a finite number')
+        if _dexter_builtin_module is None:
+            raise TypeError('limit requires trusted built-in aggregators')
+        trusted_builtins = _dexter_builtin_module.__dict__
+        max_aggregator = trusted_builtins['max']
+        allowed = (trusted_builtins['sum'], max_aggregator,
+                   trusted_builtins['len'])
+        if not any(aggregator is candidate for candidate in allowed):
+            raise TypeError('limit supports only the built-in sum, max, or len')
+        for item in self:
+            if not _finite_note_number(item):
+                raise TypeError('limit supports finite numeric note patterns only')
+        if (aggregator is max_aggregator and
+                aggregator(list(self)) < value):
+            raise ValueError('limit max threshold is not reachable from this pattern')
+
+        output = []
+        while True:
+            if output or aggregator is not max_aggregator:
+                aggregate = aggregator(output)
+                if not _finite_note_number(aggregate):
+                    raise ValueError('limit aggregate must remain finite')
+                if aggregate >= value:
+                    return _FoxDotFinitePattern(output)
+            output_length = output.__len__()
+            if output_length >= 256:
+                raise ValueError('limit output did not reach its threshold within 256 items')
+            output.append(self[output_length % pattern_length])
 
     def pivot(self, index):
         indices = (list(index) if isinstance(
