@@ -131,8 +131,10 @@ _COMPAT_CALLS = {
 }
 _COMPAT_PATTERN_METHODS = {
     'reverse', 'rotate', 'mirror', 'accum', 'swap', 'repeat', 'stretch',
-    'loop', 'shuffle', 'true_shuffle', 'shufflets', 'invert', 'arp', 'splice',
-    'sort', 'unduplicate', 'undup', 'replace', 'trim', 'ltrim', 'normalise',
+    'loop', 'shuffle', 'deep_shuffle', 'sample', 'true_shuffle', 'shufflets',
+    'invert', 'arp', 'splice',
+    'sort', 'unduplicate', 'undup', 'replace', 'trim', 'ltrim', 'compress',
+    'select', 'normalise',
     'norm', 'choose', 'zip', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
     'stutter', 'palindrome', 'expand', 'count', 'index'
 }
@@ -1416,6 +1418,35 @@ class _FoxDotFinitePattern(list):
             result.extend(PShuf(self))
         return _FoxDotFinitePattern(result)
 
+    def sample(self, count, seed=None):
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError('sample count must be a whole number')
+        if not 0 <= count <= len(self):
+            raise ValueError('sample count must be between 0 and source length')
+        if count > 256:
+            raise ValueError('sample output is limited to 256 items')
+        state = _random_pattern_seed(seed, 'sample')
+        if count == 0:
+            return _FoxDotFinitePattern()
+        shuffled, _ = _seeded_pattern_shuffle(self, state)
+        return _FoxDotFinitePattern(shuffled[:count])
+
+    def deep_shuffle(self, count=1, seed=None):
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError('deep_shuffle count must be a whole number from 0 to 256')
+        if not 0 <= count <= 256:
+            raise ValueError('deep_shuffle count must be a whole number from 0 to 256')
+        if len(self) * count > 256:
+            raise ValueError('deep_shuffle output is limited to 256 items')
+        state = _random_pattern_seed(seed, 'deep_shuffle')
+        if count == 0 or not self:
+            return _FoxDotFinitePattern()
+        result = []
+        for _ in range(count):
+            shuffled, state = _seeded_pattern_shuffle(self, state)
+            result.extend(shuffled)
+        return _FoxDotFinitePattern(result)
+
     def _shuffle_counts(self, count, name):
         counts = (list(count) if isinstance(
             count, (list, tuple, _FoxDotFinitePattern)) else [count])
@@ -1499,6 +1530,54 @@ class _FoxDotFinitePattern(list):
 
     def sort(self):
         return _FoxDotFinitePattern(sorted(self))
+
+    def _selector_values(self, selector, method):
+        if isinstance(selector, _FoxDotFinitePattern):
+            values = list(selector)
+        elif isinstance(selector, (list, tuple)):
+            if len(selector) > 256:
+                raise ValueError(method + ' selector is limited to 256 items')
+            values = list(selector)
+        elif selector is None or isinstance(selector, (bool, int, float, str)):
+            values = [selector]
+        else:
+            raise TypeError(
+                method + ' requires a finite selector pattern or scalar value')
+        if not values:
+            raise ValueError(method + ' selector cannot be empty')
+        if len(values) > 256:
+            raise ValueError(method + ' selector is limited to 256 items')
+        if any(isinstance(value, _DexterTimeVar) for value in values):
+            raise TypeError(
+                method + ' requires a static finite selector; var/linvar masks are not supported')
+        return values
+
+    def compress(self, selector):
+        """Keep truthy items under a cycling selector, bounded by this pattern."""
+        mask = self._selector_values(selector, 'compress')
+        if len(self) > 256:
+            raise ValueError('compress input is limited to 256 items')
+        return _FoxDotFinitePattern([
+            item for index, item in enumerate(self)
+            if bool(mask[index % len(mask)])
+        ])
+
+    def select(self, selector):
+        """Cycle a selector over the LCM span, with a hard 256-item cap."""
+        mask = self._selector_values(selector, 'select')
+        if len(self) > 256:
+            raise ValueError('select input is limited to 256 items')
+        if not self:
+            return _FoxDotFinitePattern()
+        if all(value == 1 for value in mask):
+            return _FoxDotFinitePattern(self)
+        length = self._laced_length(self, mask)
+        if length > 256:
+            raise ValueError('select expansion is limited to 256 items')
+        return _FoxDotFinitePattern([
+            self[index % len(self)] for index in range(length)
+            if bool(mask[index % len(mask)])
+        ])
 
     def unduplicate(self):
         result = []
@@ -2000,6 +2079,14 @@ def _random_pattern_step(state):
     state ^= (state << 5) & 0xffffffff
     state &= 0xffffffff
     return state, state / 4294967296.0
+
+def _seeded_pattern_shuffle(values, state):
+    shuffled = list(values)
+    for index in range(len(shuffled) - 1, 0, -1):
+        state, random_value = _random_pattern_step(state)
+        other = int(random_value * (index + 1))
+        shuffled[index], shuffled[other] = shuffled[other], shuffled[index]
+    return shuffled, state
 
 def PRand(start, stop=None, length=256, seed=None):
     length = _random_pattern_length(length, 'PRand')

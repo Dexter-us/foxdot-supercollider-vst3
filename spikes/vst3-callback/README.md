@@ -1,5 +1,18 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.112 adds bounded FoxDot-style `.sample(n)` and `.deep_shuffle(n)`.
+Both accept an optional 32-bit `seed` for repeatable results; sampling is
+without replacement by source position, and deep shuffle emits independently
+shuffled whole-pattern copies while preserving nested groups. Output is capped
+at 256 items. Portable Example 143 demonstrates both.
+
+Version 0.4.111 adds finite-pattern `.compress(selector)` and `.select(selector)`.
+Both cycle truthy/falsy masks; `compress()` is bounded by its source length,
+while `select()` uses the FoxDot LCM span and rejects expansions over 256.
+All-zero masks produce an empty, silent pattern. Dynamic var/linvar masks are
+not part of this finite subset. Portable Example 142 demonstrates note and
+sample-symbol masks.
+
 Version 0.4.110 adds bounded FoxDot-style `PSq`, `PRange`, `PStep`,
 `PEuclid`, and `PEuclid2`; `.norm()` and `.undup()` aliases; and clearer
 compatibility diagnostics for unsupported methods called directly on `P[...]`.
@@ -453,6 +466,8 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - `PDelta(deltas, start=0, length=256)` emits the start, then accumulates a cyclic finite numeric interval pattern; scalar deltas repeat. Output is limited to 256 items, with accumulated values bounded to ±1,000,000. See Portable Example 134.
 - `PSquare(length=256)` returns the finite square-number sequence starting at zero. Output length is limited to 1–256. See Portable Example 135.
 - `PRange(start, stop=None, step=1)` follows FoxDot's integer range behavior, including automatic step direction, with a maximum of 256 notes. `PSq(a=1, b=2, c=3)` returns bounded powers in the FoxDot form `a**b` through `(a+c-1)**b`; results must stay finite and within ±1,000,000. `PStep(n, value, default=0)` repeats an n-step pattern with `value` on its last step. `PEuclid(n, k)` returns a 1/0 pulse pattern, and `PEuclid2(n, k, lo, hi)` maps those hits/rests to user values; both are limited to 256 steps. Example 141 compares numeric patterns and a sample-symbol rhythm with space rests.
+- Finite `P[...]` patterns support FoxDot-style `.compress(selector)` and `.select(selector)` masks for numeric and sample-symbol patterns. `compress()` cycles the mask but emits at most the source length; `select()` cycles to the least-common-multiple span and rejects expansions over 256. An all-zero mask yields an empty, silent player pattern; dynamic var/linvar selectors are not included. See Portable Example 142.
+- Finite `P[...]` patterns support `.sample(n, seed=None)` without replacement by source position and `.deep_shuffle(n=1, seed=None)` for repeated shuffled copies that keep nested groups intact. A supplied integer seed in `0..4294967295` makes results reproducible; outputs are capped at 256 items. Example 143 demonstrates both.
 - FoxDot aliases `.norm()` and `.undup()` are also available for `.normalise()` and `.unduplicate()`. The compatibility checker now diagnoses unknown methods chained directly from finite `P[...]` patterns before execution.
 - Finite `P[...]` patterns also support `.invert()`, which reflects numeric notes around the phrase's highest note while preserving rests and independently inverting chord groups. The existing `transpose(pattern, interval)` helper transposes notes and chords; FoxDot has no pattern `.transpose()` method. See Portable Example 122.
 - Finite `P[...]` patterns also support FoxDot method forms `.stretch(size)`, `.loop(n)`, and `.shuffle(n)`. They accept bounded scalar arguments; `stretch` and `loop` also lace finite size/count patterns, and all expanded output is capped at 256 items. Shuffling is seeded per script evaluation and preserves nested chord items. See Portable Example 121.

@@ -1,5 +1,17 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.112 adds .sample(n, seed=None) and
+.deep_shuffle(n=1, seed=None). Sampling is without replacement by source
+position; deep_shuffle creates independently shuffled whole-pattern copies and
+keeps nested groups intact. Optional integer seeds from 0 to 4294967295 make
+results repeatable. Output is limited to 256 items. See Example 143.
+
+Version 0.4.111 adds finite-pattern .compress(selector) and .select(selector)
+mask helpers for numeric and sample-symbol patterns. compress cycles the mask
+but never expands beyond the source length; select uses the FoxDot LCM span and
+rejects expansions over 256. All-zero masks produce an empty, silent pattern.
+Dynamic var/linvar masks are not included. See Example 142.
+
 Version 0.4.110 adds bounded FoxDot-style PSq, PRange, PStep, PEuclid, and
 PEuclid2 generators, plus the .norm() and .undup() aliases. The compatibility
 check now reports unsupported methods called directly on P[...] before Run.

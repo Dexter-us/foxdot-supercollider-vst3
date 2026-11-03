@@ -319,6 +319,7 @@ assert namespace['P'][1, 2].loop(namespace['P'][1, 2]) == [
 assert namespace['P'][1, 2].loop(0) == []
 assert namespace['P'][1, 2].stretch(0) == []
 shuffleCounterBeforeMethodTests = namespace['_dexter_shuffle_counter']
+randomCounterBeforeSelectorTests = namespace['_dexter_random_counter']
 assert namespace['P'][0, 2, 4, 7].invert() == [7, 5, 3, 0]
 assert namespace['P'][0, None, 4].invert() == [4, None, 0]
 assert namespace['P'][-4, -2, 0].invert() == [4, 2, 0]
@@ -350,6 +351,114 @@ assert namespace['P']['x', 'o', '-', 'x'].sort() == ['-', 'o', 'x', 'x']
 assert namespace['_FoxDotFinitePattern']([]).sort() == []
 assert namespace['P'][1, 1, 2, 1, 1, 3, 3].unduplicate() == [
     1, 2, 1, 3]
+assert namespace['P'][0, 2, 4, 6, 8, 10].compress(
+    namespace['P'][1, 0, 1]) == [0, 4, 6, 10]
+assert namespace['P'][0, 2, 4, 6, 8, 10].compress(
+    namespace['P'][1, 0]) == [0, 4, 8]
+assert namespace['P'][0, 2, 4].compress(1) == [0, 2, 4]
+assert namespace['P'][0, 2, 4].compress(0) == []
+assert namespace['P']['x', '-', 'o', '-'].compress(
+    namespace['P'][1, 0]) == ['x', 'o']
+assert namespace['P'][0, 1, 2].select(
+    namespace['P'][1, 0]) == [0, 2, 1]
+assert namespace['P'][0, 1, 2].select(
+    namespace['P'][1, 1]) == [0, 1, 2]
+assert namespace['P'][0, 1, 2].select(1) == [0, 1, 2]
+assert namespace['P'][0, 1, 2].select(0) == []
+assert namespace['P'][0, 1, 2].select(
+    namespace['P'][0, 0]) == []
+assert namespace['P'][0, namespace['PGroup'](2, 4), 6].select(
+    namespace['P'][1, 0]) == [0, 6, namespace['PGroup'](2, 4)]
+assert len(namespace['PRange'](0, 256).compress(1)) == 256
+assert len(namespace['PRange'](0, 256).select(
+    namespace['P'][1, 0])) == 128
+sampleSource = namespace['P'][0, 2, 4, 5, 7, 9]
+sampledNotes = sampleSource.sample(4, seed=12345)
+assert sampledNotes == sampleSource.sample(4, seed=12345)
+assert len(sampledNotes) == 4 and len(set(sampledNotes)) == 4
+assert all(note in sampleSource for note in sampledNotes)
+assert namespace['P'][1, 1, 2].sample(
+    3, seed=7).sort() == [1, 1, 2]
+assert namespace['P'][0, 1, 2].sample(0, seed=7) == []
+assert namespace['_FoxDotFinitePattern']([]).sample(0, seed=7) == []
+for invalid_sample in (
+        lambda: sampleSource.sample(-1),
+        lambda: sampleSource.sample(7),
+        lambda: sampleSource.sample(True),
+        lambda: sampleSource.sample(1.5),
+        lambda: namespace['_FoxDotFinitePattern']([]).sample(1)):
+    try:
+        invalid_sample()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('sample must reject invalid sizes and empty sources')
+largeSample = namespace['PRange'](0, 256).sample(256, seed=9876)
+assert len(largeSample) == 256 and set(largeSample) == set(range(256))
+
+shuffleSource = namespace['P'][0, 1, 2, 3, 4, 5]
+deepShuffled = shuffleSource.deep_shuffle(3, seed=2026)
+assert deepShuffled == shuffleSource.deep_shuffle(3, seed=2026)
+assert len(deepShuffled) == 18
+assert all(sorted(deepShuffled[offset:offset + 6]) == list(shuffleSource)
+           for offset in (0, 6, 12))
+assert len(set(deepShuffled[:6])) == 6
+groupedSource = namespace['P'][
+    0, namespace['PGroup'](2, 4, 7), 9]
+groupedShuffle = groupedSource.deep_shuffle(5, seed=11)
+assert len(groupedShuffle) == 15
+assert sum(isinstance(value, namespace['_FoxDotChord'])
+           for value in groupedShuffle) == 5
+assert all(tuple(value) == (2, 4, 7) for value in groupedShuffle
+           if isinstance(value, namespace['_FoxDotChord']))
+assert shuffleSource.deep_shuffle(0, seed=8) == []
+assert namespace['_FoxDotFinitePattern']([]).deep_shuffle(3, seed=8) == []
+for invalid_shuffle in (
+        lambda: shuffleSource.deep_shuffle(-1),
+        lambda: shuffleSource.deep_shuffle(True),
+        lambda: shuffleSource.deep_shuffle(1.5),
+        lambda: shuffleSource.deep_shuffle(43),
+        lambda: namespace['PRange'](0, 129).deep_shuffle(2),
+        lambda: shuffleSource.deep_shuffle(1, seed=-1),
+        lambda: shuffleSource.deep_shuffle(1, seed=0x100000000),
+        lambda: shuffleSource.deep_shuffle(1, seed=True)):
+    try:
+        invalid_shuffle()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('deep_shuffle must reject invalid counts/seeds')
+for invalid_seed in (
+        lambda: sampleSource.sample(1, seed=-1),
+        lambda: sampleSource.sample(1, seed=0x100000000),
+        lambda: sampleSource.sample(1, seed=True)):
+    try:
+        invalid_seed()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('sample must reject invalid seeds')
+for selector_call in (
+        lambda: namespace['P'][0, 2].compress(
+            namespace['_FoxDotFinitePattern']([])),
+        lambda: namespace['P'][0, 2].select(
+            namespace['_FoxDotFinitePattern']([])),
+        lambda: namespace['P'][0, 2].select(namespace['var']([1, 0], 1)),
+        lambda: namespace['P'][0, 2].select(
+            namespace['PRange'](0, 251).compress(
+                namespace['PRange'](0, 250)))):
+    try:
+        selector_call()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('empty, dynamic, or oversized selectors must fail safely')
+try:
+    namespace['P'][0, 2].compress(list(range(257)))
+except ValueError as error:
+    assert 'selector is limited to 256' in str(error)
+else:
+    raise AssertionError('oversized selector was accepted')
 assert namespace['P'][None, None, 1, 1, None, None].unduplicate() == [
     None, 1, None]
 assert namespace['P']['x', 'x', '-', '-', 'o', 'x', 'x'].unduplicate() == [
@@ -1853,10 +1962,14 @@ assert 'script was not executed' in supported_report, supported_report
 generatorCompatibilityReport = run_compatibility_check(
     'p1 >> saw(PSq(0, 2, 5).norm(), dur=0.25)\n'
     'p2 >> play(PEuclid2(3, 8, "-", "x"), dur=0.25, sample=0)\n'
-    'p3 >> saw(PRange(0, 8, 2).undup(), dur=0.5)\n')
+    'p3 >> saw(PRange(0, 8, 2).undup(), dur=0.5)\n'
+    'notes = P[0, 2, 4, 5].compress(P[1, 0])\n'
+    'p4 >> saw(notes.select(P[1, 0]), dur=0.5)\n'
+    'p5 >> saw(notes.sample(2, seed=17), dur=0.5)\n'
+    'p6 >> saw(notes.deep_shuffle(2, seed=17), dur=0.25)\n')
 assert 'No unsupported constructs detected' in generatorCompatibilityReport, (
     generatorCompatibilityReport)
-for unsupported_pattern_method in ('sample', 'compress', 'transpose'):
+for unsupported_pattern_method in ('transpose',):
     for pattern_expression in (
             'P[0, 2, 4]',
             'notes = P[0, 2, 4]\nnotes'):
@@ -1918,6 +2031,30 @@ example141, example141Samples, example141Events = run_script(
 assert {int(row[1]) for row in example141 if row[2] == '0'} == {0, 1, 2, 3}
 assert len(example141Samples) == 3
 assert len(example141Events) == 19
+example142Text = open(os.path.join(
+    sys.argv[2], '142-pattern-select-and-compress.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example142Text)
+example142, example142Samples, example142Events = run_script(
+    example142Text, include_samples=True, include_events=True)
+assert {int(row[1]) for row in example142 if row[2] == '0'} == {0, 1, 2}
+assert len(example142Samples) == 2
+assert len(example142Events) == 11
+example143Text = open(os.path.join(
+    sys.argv[2], '143-sample-and-deep-shuffle.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example143Text)
+example143, example143Samples, example143Events = run_script(
+    example143Text, include_samples=True, include_events=True)
+assert {int(row[1]) for row in example143 if row[2] == '0'} == {0, 1}
+assert not example143Samples
+assert len(example143Events) == 20
+silentMaskRows, silentMaskEvents = run_script(
+    'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
+    include_events=True)
+assert len(silentMaskRows) == 1 and not silentMaskEvents
 example71 = run_example('71-sample-selection-and-reverse.py')
 assert [int(row[6]) for row in example71 if row[2] == '0'] == [57, 57]
 example72 = run_example('72-var-sample-and-rate.py')
