@@ -2219,6 +2219,22 @@ def PStrum(n=4):
     second = _FoxDotFinitePattern([1.5, 0.5]).stutter([1, n])
     return first | second | 1.0
 
+def _pzip_numeric_leaves(item, depth=0):
+    if item is None:
+        return []
+    if _finite_note_number(item):
+        return [item]
+    if not isinstance(item, (list, tuple)):
+        raise TypeError('expected a finite numeric note or chord group')
+    if depth >= 8 or not 1 <= len(item) <= 8:
+        raise TypeError('numeric chord groups are limited to 8 items and 8 levels')
+    notes = []
+    for child in item:
+        notes.extend(_pzip_numeric_leaves(child, depth + 1))
+        if len(notes) > 8:
+            raise ValueError('numeric chord groups are limited to 8 notes')
+    return notes
+
 def _pzip_pattern_values(pattern, name):
     if isinstance(pattern, _FoxDotFinitePattern):
         values = list(pattern)
@@ -2236,13 +2252,15 @@ def _pzip_pattern_values(pattern, name):
         raise ValueError(name + ' input patterns are limited to 256 items')
     kind = None
     for item in values:
-        if item is None or _finite_note_number(item):
+        try:
+            _pzip_numeric_leaves(item)
             item_kind = 'numeric'
-        elif _sample_symbols_for_item(item) is not None:
-            item_kind = 'sample'
-        else:
+        except TypeError:
+            item_kind = ('sample' if _sample_symbols_for_item(item) is not None
+                         else None)
+        if item_kind is None:
             raise TypeError(name +
-                            ' accepts finite numeric notes/rests or sample symbols/space-rests, not nested numeric chords')
+                            ' accepts finite numeric notes/rests/chords or sample symbols/space-rests')
         if kind is not None and item_kind != kind:
             raise TypeError(name +
                             ' cannot mix numeric note patterns with sample-symbol patterns')
@@ -2260,6 +2278,14 @@ def _pzip_laced_length(patterns, name):
         if length > 256:
             raise ValueError(name + ' output is limited to 256 laced items')
     return length
+
+def _pzip_numeric_chord(items, name):
+    notes = []
+    for item in items:
+        notes.extend(_pzip_numeric_leaves(item))
+    if len(notes) > 8:
+        raise ValueError(name + ' zipped chords are limited to 8 notes')
+    return tuple(items)
 
 def PZip(pat1, pat2, *patN):
     parsed = [_pzip_pattern_values(pattern, 'PZip')
@@ -2281,7 +2307,8 @@ def PZip(pat1, pat2, *patN):
             zipped.append(item)
         return _FoxDotFinitePattern(zipped)
     return _FoxDotFinitePattern([
-        tuple(pattern[index % len(pattern)] for pattern in patterns)
+        _pzip_numeric_chord(
+            [pattern[index % len(pattern)] for pattern in patterns], 'PZip')
         for index in range(length)])
 
 def PZip2(pat1, pat2, rule=None):
@@ -2298,7 +2325,8 @@ def PZip2(pat1, pat2, rule=None):
         right = patterns[1][index % len(patterns[1])]
         if rule is None or rule(left, right):
             result.append(sample_zipper._zip_sample_item(left, right)
-                          if sample_zipper is not None else (left, right))
+                          if sample_zipper is not None else
+                          _pzip_numeric_chord((left, right), 'PZip2'))
             if len(result) > 256:
                 raise ValueError('PZip2 output is limited to 256 zipped pairs')
     return _FoxDotFinitePattern(result)
@@ -2755,8 +2783,7 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
             raise ValueError('velocity values must be from 1 to 127')
         if item is None:
             continue
-        chord = list(item) if isinstance(item, (list, tuple)) else [item]
-        chord = [note for note in chord if note is not None]
+        chord = _pzip_numeric_leaves(item)
         if not chord:
             continue
         if _degree_control is not None:
@@ -2940,13 +2967,43 @@ class _DexterPVar:
         if stepValues is not None and (not stepValues or len(stepValues) > 256):
             raise ValueError('Pvar dur patterns are limited to 1..256 values')
         if stepValues is not None:
+            normalizedStepValues = []
             for value in stepValues:
-                if isinstance(value, bool) or not isinstance(value, (int, float)):
-                    raise TypeError('Pvar dur pattern values must be numeric')
-                value = float(value)
+                if isinstance(value, _FoxDotDurationGroup):
+                    if not value:
+                        raise ValueError('Pvar dur groups cannot be empty')
+                    base = value[0]
+                    offsets = value[1:]
+                    if (isinstance(base, bool) or
+                            not isinstance(base, (int, float))):
+                        raise TypeError('Pvar grouped dur bases must be numeric')
+                    base = float(base)
+                    if base != base or not 0.001 <= base <= 4096.0:
+                        raise ValueError(
+                            'Pvar dur values must be between 0.001 and 4096 beats')
+                    if len(offsets) > 255:
+                        raise ValueError(
+                            'Pvar dur groups are limited to 256 note events')
+                    for groupOffset in offsets:
+                        if (isinstance(groupOffset, bool) or
+                                not isinstance(groupOffset, (int, float))):
+                            raise TypeError(
+                                'Pvar grouped dur offsets must be numeric')
+                        groupOffset = float(groupOffset)
+                        if (groupOffset != groupOffset or
+                                groupOffset < 0.0 or groupOffset > 8.0 or
+                                groupOffset > base):
+                            raise ValueError(
+                                'Pvar grouped dur offsets must be within 8 beats and the base duration')
+                    value = base
+                else:
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        raise TypeError('Pvar dur pattern values must be numeric or PRhythm groups')
+                    value = float(value)
                 if value != value or not 0.001 <= value <= 4096.0:
                     raise ValueError('Pvar dur values must be between 0.001 and 4096 beats')
-            stepValues = [float(value) for value in stepValues]
+                normalizedStepValues.append(value)
+            stepValues = normalizedStepValues
         result = []
         stepIndex = 0
         totalElapsed = 0.0

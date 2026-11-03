@@ -164,6 +164,12 @@ pvarLinvarDur = namespace['Pvar'](
     [namespace['P'][0, 2], namespace['P'][7, 5]], [1, 1])
 assert pvarLinvarDur.expand(
     namespace['linvar']([0.25, 1.25], [0.5, 0.5])) == [0, 2, 7, 5]
+pvarGroupedDur = namespace['Pvar'](
+    [namespace['P'][0, 2], namespace['P'][4, 6]], [3, 3])
+pvarGroupedRhythm = namespace['PRhythm']([1, (3, 8)])
+assert pvarGroupedDur.expand(pvarGroupedRhythm) == [0, 2, 4, 6]
+pvarGroupedSampleDur = namespace['Pvar'](['x-', 'o-'], [3, 3])
+assert pvarGroupedSampleDur.expand(pvarGroupedRhythm) == list('x-o-')
 pvarBroadcast = namespace['Pvar'](
     [namespace['P'][0, 1], namespace['P'][2]], 1)
 assert pvarBroadcast.expand(0.5) == [0, 1, 2, 2]
@@ -196,6 +202,10 @@ for pvarFactory in (
         lambda: namespace['Pvar'](
             [namespace['P'][0], namespace['P'][1]], [2, 2]
         ).expand(namespace['var']([0.5, 1.0], [1.0, 1.5])),
+        lambda: pvarGroupedDur.expand(namespace['P'][
+            namespace['_FoxDotDurationGroup']([1.0, 9.0])]),
+        lambda: pvarGroupedDur.expand(namespace['P'][
+            namespace['_FoxDotDurationGroup']([0.5, 0.75])]),
         lambda: pvarVarDur.expand(
             namespace['var']([0.05, 1.0], [1.0, 1.0])),
         lambda: namespace['Pvar'](
@@ -836,7 +846,7 @@ for badRhythm in (
         lambda: namespace['PZip']([1] * 16, [2] * 17),
         lambda: namespace['PZip']([1] * 257, [2]),
         lambda: namespace['PZip']([1], 'xo'),
-        lambda: namespace['PZip']([1], [(2, 3)]),
+        lambda: namespace['PZip']([1], [tuple(range(9))]),
         lambda: namespace['PZip'](["x"] * 16, ["o"] * 17),
         lambda: namespace['PZip'](*[[symbol] for symbol in "abcdefghi"]),
         lambda: namespace['PZip']([("x", "o", "a", "b")], [("c", "d", "e", "f", "g")]),
@@ -2010,6 +2020,22 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     open(os.path.join(
         sys.argv[2], '138-pvar-timevar-durations.py'),
         encoding='utf-8').read())
+pvarGroupedRows, pvarGroupedEvents = run_script(
+    'p1 >> triangle(Pvar([P[0, 2], P[7, 5]], [3, 3]), '
+    'dur=PRhythm([1, (3, 8)]), sus=0.2, oct=4)\n',
+    include_events=True)
+assert len(pvarGroupedRows) == 1 and len(pvarGroupedEvents) == 8
+assert [round(float(row[1]) + float(row[7]), 6)
+        for row in pvarGroupedEvents] == [
+    0.0, 1.0, 1.75, 2.5, 3.0, 4.0, 4.75, 5.5]
+pvarGroupedExample = run_example('139-pvar-grouped-rhythm.py')
+assert len(pvarGroupedExample) == 2
+assert int(pvarGroupedExample[0][5]) == 8
+assert int(pvarGroupedExample[1][5]) == 8
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    open(os.path.join(
+        sys.argv[2], '139-pvar-grouped-rhythm.py'),
+        encoding='utf-8').read())
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> pluck(Pvar([P[0, 2], P[4, 6]], [1, 1]), dur=0.5)\n')
 assert 'No unsupported constructs detected' in run_compatibility_check(
@@ -2197,6 +2223,53 @@ assert 'PQuicken supports only dur, stepsize, and steps keywords' in run_compati
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> saw(PZip(P[0, 2], P[4, 5]), dur=1, sus=0.5)\n'
     'p2 >> sine(PZip2(P[0, 1], P[2, 3], rule=lambda a, b: a != b))')
+numericChordZipText = (
+    'p1 >> pluck(PZip(P[PGroup(0, 4, 7), None], '
+    'P[PGroup(12, 16), PGroup(14, 19)]), dur=1, sus=0.7, oct=4)\n'
+    'p2 >> triangle(PZip2(P[PGroup(0, 3), PGroup(2, 5)], '
+    'P[PGroup(7, 11), PGroup(9, 12)], rule=lambda a, b: a != b), '
+    'dur=1.5, sus=1.2, oct=3)\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    numericChordZipText)
+numericChordZipRows, numericChordZipEvents = run_script(
+    numericChordZipText, include_events=True)
+assert len(numericChordZipRows) == 2
+assert len(numericChordZipEvents) == 15
+assert all(int(event[3]) >= 0 for event in numericChordZipEvents)
+assert sorted(float(event[1]) for event in numericChordZipEvents) == (
+    [0.0] * 9 + [1.0] * 2 + [1.5] * 4)
+assert list(namespace['PZip'](
+    namespace['P'][namespace['PGroup'](0, 4, 7), None],
+    namespace['P'][namespace['PGroup'](12, 16), namespace['PGroup'](14, 19)]
+)) == [
+    (namespace['PGroup'](0, 4, 7), namespace['PGroup'](12, 16)),
+    (None, namespace['PGroup'](14, 19))]
+assert list(namespace['PZip2'](
+    namespace['P'][namespace['PGroup'](0, 4), namespace['PGroup'](2, 5)],
+    namespace['P'][namespace['PGroup'](7, 11), namespace['PGroup'](9, 12)],
+    rule=lambda a, b: a != b
+)) == [
+    (namespace['PGroup'](0, 4), namespace['PGroup'](7, 11)),
+    (namespace['PGroup'](2, 5), namespace['PGroup'](9, 12))]
+for chord_zip in (
+        lambda: namespace['PZip'](
+            namespace['P'][namespace['PGroup'](0, 1, 2, 3, 4),],
+            namespace['P'][namespace['PGroup'](5, 6, 7, 8, 9),]),
+        lambda: namespace['PZip2'](
+            namespace['P'][namespace['PGroup'](0, 1, 2, 3, 4),],
+            namespace['P'][namespace['PGroup'](5, 6, 7, 8, 9),])):
+    try:
+        chord_zip()
+    except ValueError as error:
+        assert 'limited to 8 notes' in str(error)
+    else:
+        raise AssertionError('PZip accepted a chord over the eight-note bound')
+numericChordZipExample = run_example('140-numeric-pzip-chord-groups.py')
+assert len(numericChordZipExample) == 2
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    open(os.path.join(
+        sys.argv[2], '140-numeric-pzip-chord-groups.py'),
+        encoding='utf-8').read())
 assert 'PZip requires 2 to 8 finite numeric or sample-symbol patterns' in run_compatibility_check(
     'p1 >> saw(PZip(P[0]))')
 assert 'No unsupported constructs detected' in run_compatibility_check(
