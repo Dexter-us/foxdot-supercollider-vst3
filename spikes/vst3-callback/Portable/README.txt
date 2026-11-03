@@ -1,5 +1,13 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.113 adds bounded callable .map(func) and FoxDot-compatible
+.submap(mapping). Callable map recursively transforms nested notes and chords;
+only pure one-argument arithmetic/conditional functions and selected pure
+built-ins are accepted. The existing dictionary .map() behavior is preserved,
+including its zero default for unmatched keys. .submap() preserves unmatched
+values. Input/output is limited to 256 values and nested patterns to 16 levels.
+See Example 144.
+
 Version 0.4.112 adds .sample(n, seed=None) and
 .deep_shuffle(n=1, seed=None). Sampling is without replacement by source
 position; deep_shuffle creates independently shuffled whole-pattern copies and
@@ -69,11 +77,12 @@ scrambles the expanded finite phrase while preserving chord items; shufflets()
 creates seeded shuffled numeric chord groups of up to 8 notes. Output is
 limited to 256 items. See Example 131.
 
-Version 0.4.101 adds bounded .map(mapping) and .pivot(index) pattern methods.
-map() recursively applies a dictionary to nested patterns and chords; unmapped
-values become zero like FoxDot. pivot() mirrors and rotates around one or more
-whole-number steps. Results are limited to 256 values and 16 nested levels.
-See Example 130.
+Version 0.4.101 adds bounded dictionary .map(mapping) and .pivot(index) pattern
+methods. The dictionary form remains available for existing scripts and uses
+zero for missing keys. Version 0.4.113 adds FoxDot callable .map(func) and
+.submap(mapping), which leaves unmatched values unchanged. pivot() mirrors and
+rotates around one or more whole-number steps. Results are limited to 256 values
+and 16 nested levels. See Examples 130 and 144.
 
 Version 0.4.100 adds bounded .zip(), .deepzip(), and .deeprzip() pattern
 methods. zip() pairs numeric or sample-symbol values into chord-like groups.

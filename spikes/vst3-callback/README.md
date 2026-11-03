@@ -1,5 +1,13 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.113 adds bounded callable `.map(func)` and FoxDot-compatible
+`.submap(mapping)`. Callable mapping recursively transforms nested notes and
+chords; it accepts pure single-argument arithmetic/conditional functions and
+selected pure built-ins, rejecting attribute/global side effects. Dictionary
+`.map()` remains available with its existing missing-key default of zero;
+`.submap()` instead leaves unmatched values unchanged. Input/output are capped
+at 256 values and nesting at 16 levels. Portable Example 144 demonstrates both.
+
 Version 0.4.112 adds bounded FoxDot-style `.sample(n)` and `.deep_shuffle(n)`.
 Both accept an optional 32-bit `seed` for repeatable results; sampling is
 without replacement by source position, and deep shuffle emits independently
@@ -459,7 +467,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - Finite `P[...]` patterns also support FoxDot-compatible `.trim(size)` and `.ltrim(size)` slices for the front and tail of a phrase. Python slice behavior is preserved, including negative sizes and `ltrim(0)` returning the full pattern. See Portable Example 127.
 - Finite `P[...]` patterns also support FoxDot-style `.normalise()` for numeric contours and `.choose()` for one seeded random selection from a numeric or sample-symbol pattern. `.normalise()` requires a non-empty numeric phrase; constant phrases become zero. `choose()` returns one value when the script evaluates. See Portable Example 128.
 - Finite `P[...]` patterns also support `.zip()`, `.deepzip()`, and `.deeprzip()`. `zip()` makes paired chord-like groups; the deep forms keep nested phrase structure, with `deeprzip()` reversing the pairs. The bounded subset accepts only the built-in output type and limits deep results to 256 pairs/16 levels. See Portable Example 129.
-- Finite `P[...]` patterns also support FoxDot-style `.map(mapping)` and `.pivot(index)`. `map()` recursively remaps nested values and maps missing keys to zero; `pivot()` rotates and mirrors the phrase around selected integer steps. Results are bounded to 256 values and 16 nested levels. See Portable Example 130.
+- Finite `P[...]` patterns also support FoxDot callable `.map(func)` and `.submap(mapping)`, plus the legacy dictionary `.map(mapping)` form. Callable mapping recursively transforms nested values; dictionary map retains the plugin's prior zero default for missing keys, while submap preserves them. `pivot()` rotates and mirrors the phrase around selected integer steps. Results are bounded to 256 values and 16 nested levels. See Portable Examples 130 and 144.
 - Finite `P[...]` patterns also support bounded `.true_shuffle(n)` and `.shufflets(n)`. `true_shuffle()` shuffles expanded nested notes while keeping chord groups intact; `shufflets()` creates seeded shuffled numeric chord groups. See Portable Example 131.
 - `PWalk(max=7, step=1, start=0, length=256, seed=None)` creates a finite, seeded FoxDot-style bidirectional random walk. A finite numeric step pattern cycles; output length is limited to 256 items. See Portable Example 132.
 - `PChain(mapping, length=256, seed=None)` creates a finite seeded transition chain from a dictionary. The first key is the start; values are possible next notes or sample symbols. Unmapped terminal values repeat, and the graph is limited to 32 states/256 choices. See Portable Example 133.

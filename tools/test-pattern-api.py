@@ -1,6 +1,8 @@
 import ast
 import builtins
+import dis
 import os
+import types
 import re
 import struct
 import subprocess
@@ -72,7 +74,7 @@ def make_wrapper(source_path, result_path, user_synth_names=()):
 safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter',
               'float', 'int', 'isinstance', 'len', 'list', 'map', 'max', 'min',
               'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str',
-              'sum', 'tuple', 'zip', 'ValueError', 'TypeError',
+              'sum', 'tuple', 'zip', 'ValueError', 'TypeError', 'AttributeError',
               'ZeroDivisionError', '__build_class__', 'ord', 'chr')
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_bpm_control': None,
@@ -81,6 +83,13 @@ namespace = {
     '_dexter_root': 60, '_dexter_root_control': None,
     '_dexter_updates': {}, '_dexter_mutes': {},
     '_dexter_shuffle_seed': 123456789,
+    '_dexter_dis': dis,
+    '_dexter_function_type': types.FunctionType,
+    '_dexter_builtin_module': builtins,
+    '_dexter_pure_map_builtins': {
+        name: getattr(builtins, name)
+        for name in ('abs', 'bool', 'float', 'int', 'len', 'max', 'min',
+                     'round', 'str')},
     '_dexter_default_touched': False, '__name__': 'dexter_test',
     '__builtins__': {name: getattr(builtins, name) for name in safe_names},
 }
@@ -572,6 +581,56 @@ assert namespace['P'][
 assert namespace['P']['x', 'o'].map({'x': 'o', 'o': 'x'}) == ['o', 'x']
 assert namespace['P'][0, None].map({}) == [0, 0]
 assert namespace['P'][1].map({1: (2, 4)}) == [(2, 4)]
+assert namespace['P'][-3, -1, 2].map(abs) == [3, 1, 2]
+assert namespace['P'][-3, -1, 2].map(func=abs) == [3, 1, 2]
+assert namespace['P'][0, -2, 3].map(lambda value: value * 2) == [0, -4, 6]
+assert namespace['P'][1, 2].map(mapping={1: 9}) == [9, 0]
+callableMappedGroup = namespace['P'][
+    namespace['P'][1, -4], 2].map(lambda value: abs(value) + 1)
+assert callableMappedGroup == [[2, 5], 3]
+assert isinstance(callableMappedGroup[0], namespace['_FoxDotFinitePattern'])
+assert namespace['P'][1, 2, 3].map({1: 8}) == [8, 0, 0]
+assert namespace['P'][1, 2, 3].submap({1: 8}) == [8, 2, 3]
+assert namespace['P'][namespace['P'][1, 2],
+                      namespace['PGroup'](3, 4)].submap(
+                          {1: 8, 3: 9}) == [[8, 2], (9, 4)]
+assert isinstance(namespace['P'][1, 2].submap({1: 8})[0], int)
+assert namespace['_FoxDotFinitePattern'](range(256)).map(
+    lambda value: value + 1) == list(range(1, 257))
+assert namespace['_FoxDotFinitePattern'](range(256)).submap(
+    {0: 9, 255: 8})[1:255] == list(range(1, 255))
+shadowedMapperGlobals = {
+    '__builtins__': {'abs': lambda value: value},
+    'abs': lambda value: value,
+}
+shadowedMapper = types.FunctionType(
+    (lambda value: abs(value)).__code__, shadowedMapperGlobals)
+for invalid_mapper in (
+        lambda: namespace['P'][0, 1].map([1, 2]),
+        lambda: namespace['P'][0, 1].map(lambda value: object()),
+        lambda: namespace['P'][0, 1].map(lambda value: value.__class__),
+        lambda: namespace['P'][0, 1].map(lambda value: value ** 2),
+        lambda: namespace['P'][0, 1].map(shadowedMapper),
+        lambda: namespace['P'][*range(257)].map(abs),
+        lambda: namespace['P'][0, 1].submap([0, 1]),
+        lambda: namespace['P'][0, 1].submap(dict.fromkeys(range(257), 0))):
+    try:
+        invalid_mapper()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('map/submap must validate callables, values, and bounds')
+deepMapPattern = namespace['P'][0]
+for _ in range(17):
+    deepMapPattern = namespace['_FoxDotFinitePattern']([deepMapPattern])
+for method in ('map', 'submap'):
+    try:
+        (deepMapPattern.map(abs) if method == 'map'
+         else deepMapPattern.submap({}))
+    except ValueError as error:
+        assert '16 nested pattern levels' in str(error)
+    else:
+        raise AssertionError(method + ' must enforce its nesting bound')
 assert namespace['P'][0, 1, 2, 3].pivot(0) == [0, 3, 2, 1]
 assert namespace['P'][0, 1, 2, 3].pivot(1) == [2, 1, 0, 3]
 assert namespace['P'][0, 1, 2, 3].pivot(3) == [2, 1, 0, 3]
@@ -2051,6 +2110,16 @@ example143, example143Samples, example143Events = run_script(
 assert {int(row[1]) for row in example143 if row[2] == '0'} == {0, 1}
 assert not example143Samples
 assert len(example143Events) == 20
+example144Text = open(os.path.join(
+    sys.argv[2], '144-callable-map-and-submap.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example144Text)
+example144, example144Samples, example144Events = run_script(
+    example144Text, include_samples=True, include_events=True)
+assert {int(row[1]) for row in example144 if row[2] == '0'} == {0, 1}
+assert len(example144Samples) == 4
+assert len(example144Events) == 9
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)

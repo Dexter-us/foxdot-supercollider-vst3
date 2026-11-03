@@ -136,7 +136,7 @@ _COMPAT_PATTERN_METHODS = {
     'sort', 'unduplicate', 'undup', 'replace', 'trim', 'ltrim', 'compress',
     'select', 'normalise',
     'norm', 'choose', 'zip', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
-    'stutter', 'palindrome', 'expand', 'count', 'index'
+    'stutter', 'palindrome', 'expand', 'count', 'index', 'submap'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
@@ -1168,6 +1168,63 @@ class _FoxDotRootNamespace:
 
 Root = _FoxDotRootNamespace()
 
+def _safe_pattern_mapper(mapper):
+    safe_builtins = _dexter_pure_map_builtins
+    if any(mapper is function for function in safe_builtins.values()):
+        return True
+    if not isinstance(mapper, _dexter_function_type):
+        return False
+    code = mapper.__code__
+    if (code.co_argcount != 1 or code.co_kwonlyargcount or code.co_freevars or
+            code.co_flags & (0x04 | 0x08 | 0x20 | 0x80) or
+            len(code.co_code) > 256):
+        return False
+    allowed_globals = {'abs', 'bool', 'float', 'int', 'len', 'max', 'min',
+                       'round', 'str'}
+    allowed_opcodes = {
+        'BINARY_OP', 'CALL', 'COMPARE_OP', 'CONTAINS_OP', 'COPY',
+        'IS_OP', 'JUMP_FORWARD', 'JUMP_IF_FALSE_OR_POP',
+        'JUMP_IF_TRUE_OR_POP', 'LOAD_CONST', 'LOAD_FAST', 'LOAD_GLOBAL',
+        'NOP', 'POP_JUMP_FORWARD_IF_FALSE', 'POP_JUMP_FORWARD_IF_TRUE',
+        'POP_TOP', 'PRECALL', 'PUSH_NULL', 'RESUME', 'RETURN_VALUE',
+        'SWAP', 'TO_BOOL', 'UNARY_NEGATIVE', 'UNARY_NOT', 'UNARY_POSITIVE'
+    }
+    try:
+        instructions = list(_dexter_dis.get_instructions(mapper))
+    except Exception:
+        return False
+    if len(instructions) > 64:
+        return False
+    for instruction in instructions:
+        if instruction.opname not in allowed_opcodes:
+            return False
+        if (instruction.opname == 'LOAD_GLOBAL' and
+                instruction.argval not in allowed_globals):
+            return False
+        if instruction.opname == 'LOAD_GLOBAL':
+            function_globals = mapper.__globals__
+            if instruction.argval in function_globals:
+                resolved = function_globals[instruction.argval]
+            else:
+                builtin_scope = function_globals.get('__builtins__')
+                if isinstance(builtin_scope, dict):
+                    resolved = builtin_scope.get(instruction.argval)
+                elif builtin_scope is _dexter_builtin_module:
+                    resolved = builtin_scope.__dict__.get(instruction.argval)
+                else:
+                    return False
+            if resolved is not safe_builtins[instruction.argval]:
+                return False
+        if (instruction.opname == 'BINARY_OP' and
+                instruction.argrepr not in ('+', '-', '*', '/', '//', '%')):
+            return False
+    return True
+
+class _FoxDotMapMissing:
+    pass
+
+_FOXDOT_MAP_MISSING = _FoxDotMapMissing()
+
 class _FoxDotFinitePattern(list):
     def _gcd(self, a, b):
         while b:
@@ -1661,9 +1718,79 @@ class _FoxDotFinitePattern(list):
     def deeprzip(self, other):
         return _deep_zip_pattern(self, other, reverse=True)
 
-    def map(self, mapping):
-        if not isinstance(mapping, dict):
-            raise TypeError('map requires a dictionary')
+    def map(self, mapping=_FOXDOT_MAP_MISSING, *, func=_FOXDOT_MAP_MISSING):
+        if mapping is _FOXDOT_MAP_MISSING:
+            mapping = func
+        elif func is not _FOXDOT_MAP_MISSING:
+            raise TypeError('map accepts one callable or dictionary argument')
+        if mapping is _FOXDOT_MAP_MISSING:
+            raise TypeError('map requires a callable or dictionary')
+        if isinstance(mapping, dict):
+            if len(mapping) > 256:
+                raise ValueError('map dictionaries are limited to 256 entries')
+            return self._map_dictionary(mapping, preserve_unmapped=False)
+        if not _safe_pattern_mapper(mapping):
+            raise TypeError(
+                'map requires a dictionary or a pure one-argument mapper')
+        if len(self) > 256:
+            raise ValueError('map input is limited to 256 top-level items')
+        input_budget = [0]
+        output_budget = [0]
+
+        def validate_value(value, depth):
+            if depth > 16:
+                raise ValueError('map is limited to 16 nested pattern levels')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    validate_value(child, depth + 1) for child in value])
+            if isinstance(value, _FoxDotChord):
+                values = [validate_value(child, depth + 1) for child in value]
+                if all(_finite_note_number(child) for child in values):
+                    return _FoxDotChord(*values)
+                return tuple(values)
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return tuple(validate_value(child, depth + 1)
+                             for child in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return [validate_value(child, depth + 1) for child in value]
+            output_budget[0] += 1
+            if output_budget[0] > 256:
+                raise ValueError('map output is limited to 256 values')
+            if (value is None or isinstance(value, str) or
+                    _finite_note_number(value)):
+                return value
+            raise TypeError(
+                'map results must be finite numbers, rests, symbols, or groups')
+
+        def map_item(item, depth):
+            if depth > 16:
+                raise ValueError('map is limited to 16 nested pattern levels')
+            if isinstance(item, _FoxDotFinitePattern):
+                return _FoxDotFinitePattern([
+                    map_item(value, depth + 1) for value in item])
+            if isinstance(item, _FoxDotChord):
+                values = [map_item(value, depth + 1) for value in item]
+                if all(_finite_note_number(value) for value in values):
+                    return _FoxDotChord(*values)
+                return tuple(values)
+            if isinstance(item, tuple):
+                return tuple(map_item(value, depth + 1) for value in item)
+            if isinstance(item, list):
+                return [map_item(value, depth + 1) for value in item]
+            input_budget[0] += 1
+            if input_budget[0] > 256:
+                raise ValueError('map input is limited to 256 values')
+            return validate_value(mapping(item), depth)
+
+        return _FoxDotFinitePattern([map_item(item, 0) for item in self])
+
+    def _map_dictionary(self, mapping, preserve_unmapped):
         if len(mapping) > 256:
             raise ValueError('map dictionaries are limited to 256 entries')
         budget = [0]
@@ -1714,11 +1841,18 @@ class _FoxDotFinitePattern(list):
                 return tuple(map_item(value, depth + 1) for value in item)
             if isinstance(item, list):
                 return [map_item(value, depth + 1) for value in item]
-            return validate_value(mapping.get(item, 0), depth)
+            default = item if preserve_unmapped else 0
+            return validate_value(mapping.get(item, default), depth)
 
         if len(self) > 256:
             raise ValueError('map input is limited to 256 top-level items')
         return _FoxDotFinitePattern([map_item(item, 0) for item in self])
+
+    def submap(self, mapping):
+        """Recursively replace mapped values, leaving unknowns unchanged."""
+        if not isinstance(mapping, dict):
+            raise TypeError('submap requires a dictionary')
+        return self._map_dictionary(mapping, preserve_unmapped=True)
 
     def pivot(self, index):
         indices = (list(index) if isinstance(
@@ -5583,7 +5717,7 @@ DiskOut = _DiskRecorder()
 )PY";
 
     std::ostringstream script;
-    script << "import builtins, traceback, sys, time\n"
+    script << "import builtins, traceback, sys, time, dis, types\n"
            << "_dexter_scope = globals().setdefault(" << pythonLiteral(namespaceName) << ", {})\n"
            << "_dexter_scope['__name__'] = 'dexter'\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_bpm_control': None, "
@@ -5593,11 +5727,16 @@ DiskOut = _DiskRecorder()
             << "'_dexter_swing_seconds': 0.0, '_dexter_disk_commands': [], "
            << "'_dexter_shuffle_seed': int(time.monotonic_ns() & 0xffffffff)})\n"
            << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
-           << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
+            << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
            << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', 'ord', 'chr', "
            << "'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum', 'tuple', "
            << "'zip', 'ValueError', 'TypeError', 'ZeroDivisionError', "
-            << "'AttributeError', 'Exception', '__build_class__')}\n"
+             << "'AttributeError', 'Exception', '__build_class__')}\n"
+            << "_dexter_scope['_dexter_dis'] = dis\n"
+            << "_dexter_scope['_dexter_function_type'] = types.FunctionType\n"
+            << "_dexter_scope['_dexter_builtin_module'] = builtins\n"
+            << "_dexter_scope['_dexter_pure_map_builtins'] = {name: getattr(builtins, name) for name in "
+            << "('abs', 'bool', 'float', 'int', 'len', 'max', 'min', 'round', 'str')}\n"
            << "exec(compile(" << pythonLiteral(api) << ", '<Dexter API>', 'exec'), "
             << "_dexter_scope, _dexter_scope)\n"
             << "_dexter_scope['_dexter_user_synth_names'] = "
