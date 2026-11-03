@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.119 adds non-mutating Pattern .copy(). Pattern/group containers
+are recursively copied, chord groups keep their type, and the copy is limited
+to 256 values and 16 nesting levels. Editing a copied nested pattern does not
+change the source. See Example 150.
+
 Version 0.4.118 adds Pattern .every(n, method, *args). It repeats the original
 finite phrase n-1 times, then appends one transformed copy. The safe supported
 transforms are reverse, rotate, mirror, shuffle, and stutter; output is capped

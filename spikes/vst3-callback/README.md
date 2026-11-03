@@ -1,5 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.119 adds bounded, non-mutating Pattern `.copy()`. It recursively
+copies finite pattern/group containers, keeps chord-group types, and enforces
+256 values and 16 nesting levels. Editing a copied nested pattern does not
+change the source. Portable Example 150 demonstrates an independent phrase.
+
 Version 0.4.118 adds FoxDot-style Pattern `.every(n, method, *args)`.
 It repeats the original finite phrase `n-1` times and appends one transformed
 copy. The embedded subset allows `reverse`, `rotate`, `mirror`, `shuffle`, and

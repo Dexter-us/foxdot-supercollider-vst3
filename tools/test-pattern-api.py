@@ -688,6 +688,38 @@ for invalid_method_batch in (
         raise AssertionError('concat/add/abs/all bounds or type checks failed')
 limit_builtins = namespace['__builtins__']
 every_source = namespace['P'][0, 1, 2]
+copy_source = namespace['_FoxDotFinitePattern']([
+    namespace['_FoxDotFinitePattern']([1, 2]),
+    [3, [4]],
+    namespace['PGroup'](0, 5)])
+copy_result = copy_source.copy()
+assert copy_result == copy_source and copy_result is not copy_source
+assert copy_result[0] is not copy_source[0]
+assert copy_result[1] is not copy_source[1]
+assert copy_result[1][1] is not copy_source[1][1]
+copy_result[0][0] = 9
+copy_result[1][1][0] = 8
+assert copy_source[0][0] == 1 and copy_source[1][1][0] == 4
+assert copy_result[2] == copy_source[2]
+assert copy_result[2] is not copy_source[2]
+copy_scalar_source = namespace['P'][1, 2, 3]
+copy_scalar_result = copy_scalar_source.copy()
+assert copy_scalar_result == [1, 2, 3]
+assert copy_scalar_result is not copy_scalar_source
+too_deep_copy = namespace['P'][1]
+for _ in range(17):
+    too_deep_copy = namespace['_FoxDotFinitePattern']([too_deep_copy])
+for invalid_copy_index, invalid_copy in enumerate((
+        lambda: namespace['_FoxDotFinitePattern'](range(257)).copy(),
+        lambda: too_deep_copy.copy())):
+    try:
+        invalid_copy()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError(
+            'copy must enforce input and nesting bounds: ' +
+            str(invalid_copy_index))
 assert every_source.every(3, 'reverse') == [0, 1, 2, 0, 1, 2, 2, 1, 0]
 assert every_source.every(2, 'rotate', 1) == [0, 1, 2, 1, 2, 0]
 assert namespace['P'][1, 3].every(2, 'stutter', 2) == [
@@ -2342,6 +2374,15 @@ example149, example149Events = run_script(
     example149Text, include_events=True)
 assert {int(row[1]) for row in example149 if row[2] == '0'} == {0, 1, 2}
 assert len(example149Events) == 27
+example150Text = open(os.path.join(
+    sys.argv[2], '150-pattern-copy.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example150Text)
+example150, example150Events = run_script(
+    example150Text, include_events=True)
+assert {int(row[1]) for row in example150 if row[2] == '0'} == {0, 1}
+assert len(example150Events) == 8
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)

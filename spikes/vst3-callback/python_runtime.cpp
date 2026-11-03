@@ -138,7 +138,7 @@ _COMPAT_PATTERN_METHODS = {
     'select', 'normalise',
     'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
     'stutter', 'palindrome', 'expand', 'count', 'index', 'submap', 'concat',
-    'add', 'abs', 'all', 'startswith', 'limit', 'every'
+    'add', 'abs', 'all', 'startswith', 'limit', 'every', 'copy'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
@@ -2122,6 +2122,39 @@ class _FoxDotFinitePattern(list):
             raise ValueError('every output is limited to 256 items')
         return _FoxDotFinitePattern(
             list(self) * (count - 1) + list(transformed))
+
+    def copy(self):
+        """Return an independent, bounded copy of pattern/group containers."""
+        if len(self) > 256:
+            raise ValueError('copy input is limited to 256 items')
+        budget = [0]
+
+        def clone(value, depth):
+            if depth > 16:
+                raise ValueError('copy nesting is limited to 16 levels')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError('copy structure is limited to 256 values')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('copy nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    clone(item, depth + 1) for item in value])
+            if isinstance(value, _FoxDotChord):
+                return _FoxDotChord(*[
+                    clone(item, depth + 1) for item in value])
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('copy groups are limited to 256 items')
+                return tuple(clone(item, depth + 1) for item in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('copy groups are limited to 256 items')
+                return [clone(item, depth + 1) for item in value]
+            return value
+
+        return _FoxDotFinitePattern([
+            clone(item, 1) for item in self])
 
     def pivot(self, index):
         indices = (list(index) if isinstance(
