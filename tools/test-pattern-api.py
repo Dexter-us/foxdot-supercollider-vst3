@@ -599,6 +599,42 @@ deepReversed = namespace['P'][
 assert deepReversed == [
     namespace['P'][(4, 1), (4, 2)], (5, 3)]
 assert namespace['P'][1, 2].zip(3) == [(1, 3), (2, 3)]
+zipxSource = namespace['P'][
+    1, namespace['PGroup'](2, 3)]
+zipxResult = zipxSource.zipx(namespace['P'][4, 5, 6])
+assert len(zipxResult) == 6
+assert zipxResult[0] == (1, 4)
+assert zipxResult[1] == (namespace['PGroup'](2, 3), 5)
+assert isinstance(zipxResult[1][0], namespace['_FoxDotChord'])
+assert zipxResult[1] != zipxSource.zip(
+    namespace['P'][4, 5, 6])[1]
+assert namespace['P'][1, 2].zipx(3) == [(1, 3), (2, 3)]
+assert namespace['_FoxDotFinitePattern']().zipx(namespace['P'][1, 2]) == []
+sampleZipx = namespace['P']['x', 'o'].zipx(
+    namespace['P']['-', 'x'])
+assert sampleZipx == [('x', '-'), ('o', 'x')]
+assert namespace['_sample_symbols_for_item'](sampleZipx[1]) == [
+    'o', 'x']
+deepZipxPattern = namespace['P'][1]
+for _ in range(17):
+    deepZipxPattern = namespace['_FoxDotFinitePattern']([deepZipxPattern])
+for invalid_zipx_index, invalid_zipx in enumerate((
+        lambda: namespace['_FoxDotFinitePattern'](range(17)).zipx(
+            namespace['_FoxDotFinitePattern'](range(19))),
+        lambda: namespace['P'][
+            0, namespace['PGroup'](1, 2, 3, 4, 5)].zipx(
+                namespace['P'][0, namespace['PGroup'](6, 7, 8, 9)]),
+        lambda: deepZipxPattern.zipx(namespace['P'][1, 2]),
+        lambda: namespace['P'][1, 2].zipx(
+            namespace['P']['x', 'o']))):
+    try:
+        invalid_zipx()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError(
+            'zipx must enforce pattern, chord, and item bounds: ' +
+            str(invalid_zipx_index))
 assert namespace['P'][1, 3, 4].map({1: 6, 4: 2}) == [6, 0, 2]
 assert namespace['P'][
     namespace['P'][1, 3],
@@ -2086,6 +2122,9 @@ assert 'not present in Portable/SynthDefs' in missingUserSynthReport
 unsupported_report = run_compatibility_check('from FoxDot import *\nClock.swing = 0.2\np9 >> bass([0, 2], dur=0.5)\nplay("x-o-")\nP["x-o"]\nP[0:]\nP[0:257]\nP[0:8:0]\nP[start:8]\nP[0] | ["x-o"]\n')
 for phrase in ('Line 1:', 'Line 2:', 'Line 5:', 'P sample-symbol literals', 'finite stop', '256 generated items', 'step cannot be zero', 'integer-literal bounds', 'Pattern | and & do not accept sample strings'):
     assert phrase.lower() in unsupported_report.lower(), (phrase, unsupported_report)
+sampleZipxReport = run_compatibility_check(
+    'p1 >> play(P["x", "o"].zipx(P["-", "x"]), sample=0)\n')
+assert 'No unsupported constructs detected' in sampleZipxReport, sampleZipxReport
 syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
 for filename in os.listdir(sys.argv[2]):
@@ -2155,6 +2194,15 @@ example145, example145Events = run_script(
     example145Text, include_events=True)
 assert {int(row[1]) for row in example145 if row[2] == '0'} == {0, 1}
 assert len(example145Events) == 24
+example146Text = open(os.path.join(
+    sys.argv[2], '146-pattern-zipx-nested-pairs.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example146Text)
+example146, example146Events = run_script(
+    example146Text, include_events=True)
+assert {int(row[1]) for row in example146 if row[2] == '0'} == {0, 1}
+assert len(example146Events) == 14
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)

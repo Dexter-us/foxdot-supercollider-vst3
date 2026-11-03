@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.115 adds bounded .zipx(other) for numeric/chord and sample-symbol
+patterns. It cycles both inputs to their LCM length and preserves each zipped
+pair's nested structure; sample pairs play as simultaneous layers. Output is
+capped at 256 items, nesting at 16 levels, and each hit at 8 notes or symbols.
+See Example 146.
+
 Version 0.4.114 adds bounded .duplicate(n) and .iter(n) finite-pattern
 repetition. Both preserve nested groups/patterns, accept counts from 0 to 256,
 and cap expanded output at 256 items. See Example 145.

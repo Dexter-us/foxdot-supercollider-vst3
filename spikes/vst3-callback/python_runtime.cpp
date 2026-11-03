@@ -136,7 +136,7 @@ _COMPAT_PATTERN_METHODS = {
     'invert', 'arp', 'splice',
     'sort', 'unduplicate', 'undup', 'replace', 'trim', 'ltrim', 'compress',
     'select', 'normalise',
-    'norm', 'choose', 'zip', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
+    'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
     'stutter', 'palindrome', 'expand', 'count', 'index', 'submap'
 }
 _COMPAT_PATTERN_CALLS = {
@@ -1729,6 +1729,76 @@ class _FoxDotFinitePattern(list):
         elif not isinstance(other, (list, tuple, _FoxDotFinitePattern)):
             other = _FoxDotFinitePattern([other])
         return self._zip_with(other)
+
+    def _zipx_note_count(self, item, depth=0):
+        if depth > 16:
+            raise ValueError('P.zipx nesting is limited to 16 levels')
+        if item is None:
+            return 0
+        if isinstance(item, (list, tuple, _FoxDotFinitePattern)):
+            if len(item) > 256:
+                raise ValueError('P.zipx nested patterns are limited to 256 items')
+            count = 0
+            for value in item:
+                count += self._zipx_note_count(value, depth + 1)
+                if count > 8:
+                    return count
+            return count
+        if _finite_note_number(item):
+            return 1
+        raise TypeError('P.zipx requires finite numeric notes, rests, or chords')
+
+    def zipx(self, other):
+        """FoxDot-style LCM zip that preserves each nested pair."""
+        left = list(self)
+        if isinstance(other, str):
+            right = list(other)
+        elif isinstance(other, (list, tuple, _FoxDotFinitePattern)):
+            right = list(other)
+        else:
+            right = [other]
+        if not left or not right:
+            return _FoxDotFinitePattern()
+        left_sample = self._sample_sequence(left)
+        right_sample = self._sample_sequence(right)
+        if left_sample is not None or right_sample is not None:
+            if left_sample is None or right_sample is None:
+                raise TypeError(
+                    'P.zipx cannot mix numeric note patterns with sample-symbol patterns')
+            left, right = left_sample, right_sample
+            length = self._laced_length(left, right)
+            if length > 256:
+                raise ValueError('P.zipx output is limited to 256 items')
+            result = []
+            for index in range(length):
+                left_item = left[index % len(left)]
+                right_item = right[index % len(right)]
+                pair = (left_item, right_item)
+                symbols = _sample_symbols_for_item(pair)
+                if symbols is None:
+                    raise TypeError('P.zipx could not form a sample-symbol pair')
+                if len(symbols) > 8:
+                    raise ValueError(
+                        'P.zipx sample pairs can contain at most 8 symbols')
+                result.append(pair)
+            return _FoxDotFinitePattern(result)
+        left = self._composition_items(left)
+        right = self._composition_items(right)
+        if not left or not right:
+            return _FoxDotFinitePattern()
+        length = self._laced_length(left, right)
+        if length > 256:
+            raise ValueError('P.zipx output is limited to 256 items')
+        result = []
+        for index in range(length):
+            left_item = left[index % len(left)]
+            right_item = right[index % len(right)]
+            note_count = (self._zipx_note_count(left_item) +
+                          self._zipx_note_count(right_item))
+            if note_count > 8:
+                raise ValueError('P.zipx chord pairs can contain at most 8 notes')
+            result.append((left_item, right_item))
+        return _FoxDotFinitePattern(result)
 
     def deepzip(self, other):
         return _deep_zip_pattern(self, other, reverse=False)

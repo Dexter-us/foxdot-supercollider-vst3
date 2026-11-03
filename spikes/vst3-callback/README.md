@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.115 adds bounded FoxDot-style `.zipx(other)` for numeric/chord and
+sample-symbol patterns. It cycles both inputs to their LCM length and preserves
+each zipped pair's nested structure; sample pairs play as simultaneous layers.
+Output is capped at 256 items, nesting at 16 levels, and each hit at 8 notes or
+symbols. Portable Example 146 demonstrates both forms.
+
 Version 0.4.114 adds bounded `.duplicate(n)` and `.iter(n)` aliases for
 FoxDot-style finite phrase repetition. Both preserve nested chord/pattern
 items, accept counts from 0 to 256, and cap expanded output at 256 items.
