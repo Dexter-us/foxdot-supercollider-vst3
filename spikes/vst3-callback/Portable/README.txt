@@ -1,5 +1,13 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.108 adds Pvar([...phrases...], dur): repeat each finite note or
+sample-symbol phrase over its beat span, then switch to the next phrase.
+Player dur may be a number, finite numeric pattern, or bounded var/linvar.
+Each phrase span must end on a note boundary; the full cycle must return to the
+duration-pattern phase, or be an exact multiple of a var/linvar cycle. Grouped
+dur is not supported inside Pvar. Limits: 8 phrase states, 256 note slots per
+player, and a 4096-beat phrase cycle. See examples 137 and 138.
+
 Version 0.4.107 adds Clock.bpm = var([...], [...]) and linvar([...], [...]).
 See Example 136 for stepped tempo, plus a commented continuous-ramp option.
 Tempo durations are in beats; the curve continues across shorter player loops.
@@ -335,6 +343,10 @@ bass contour.
 
 135-psquare-pitch-sequence.py demonstrates a square-number pitch pattern.
 136-variable-bpm.py demonstrates stepped BPM and an alternative linvar ramp.
+137-pvar-phrase-switching.py switches a lead phrase and a sample-symbol drum
+phrase on timed boundaries, using alternating lead note durations.
+138-pvar-timevar-durations.py demonstrates var/linvar note durations inside
+bounded Pvar phrases.
 
 14-pattern-composition.py demonstrates FoxDot-style finite phrase concatenation with | and cyclic pattern zipping with &, producing chords while preserving rests.
 

@@ -115,7 +115,7 @@ _COMPAT_CALLS = {
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
-    'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain', 'PDelta',
+    'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar',
     'PSquare',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
@@ -290,6 +290,19 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             arguments.extend(keyword.value for keyword in node.keywords
                              if keyword.arg in {'pat1', 'pat2'})
             kinds = {kind for kind in (self._pattern_kind(value) for value in arguments)
+                     if kind is not None}
+            if 'mixed' in kinds or len(kinds) > 1:
+                return 'mixed'
+            return next(iter(kinds)) if kinds else None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'Pvar':
+            values = (node.args[0] if node.args else next(
+                (keyword.value for keyword in node.keywords
+                 if keyword.arg == 'patterns'), None))
+            if values is None:
+                return None
+            patterns = (values.elts if isinstance(values, (ast.List, ast.Tuple))
+                        else [values])
+            kinds = {kind for kind in (self._pattern_kind(value) for value in patterns)
                      if kind is not None}
             if 'mixed' in kinds or len(kinds) > 1:
                 return 'mixed'
@@ -563,6 +576,33 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     positional.add(keyword.arg)
             if not positional.intersection({'mapping'}):
                 self.add(node.lineno, 'PChain requires a transition mapping.')
+        if name == 'Pvar':
+            parameters = ('patterns', 'dur')
+            allowed = set(parameters)
+            if len(node.args) > len(parameters):
+                self.add(node.lineno, 'Pvar accepts a pattern list and optional dur.')
+            positional = set(parameters[:len(node.args)])
+            for keyword in node.keywords:
+                if keyword.arg is None or keyword.arg not in allowed:
+                    self.add(node.lineno, 'Pvar accepts only patterns and dur.')
+                elif keyword.arg in positional:
+                    self.add(keyword.lineno or node.lineno,
+                             'Pvar received the same argument more than once.')
+                else:
+                    positional.add(keyword.arg)
+            if 'patterns' not in positional:
+                self.add(node.lineno, 'Pvar requires a finite list of phrase patterns.')
+            if node.args:
+                phrases = (node.args[0].elts if isinstance(
+                    node.args[0], (ast.List, ast.Tuple)) else [node.args[0]])
+            else:
+                phraseArgument = next(
+                    (keyword.value for keyword in node.keywords
+                     if keyword.arg == 'patterns'), None)
+                phrases = (phraseArgument.elts if isinstance(
+                    phraseArgument, (ast.List, ast.Tuple)) else
+                    [phraseArgument] if phraseArgument is not None else [])
+            self._check_pattern_kinds(phrases, node.lineno, 'Pvar')
         if name == 'PDelta':
             parameters = ('deltas', 'start', 'length')
             allowed = set(parameters)
@@ -2614,6 +2654,8 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
          _allow_repeated_notes=False, _degree_control=None, _root_control=None):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
+    if isinstance(notes, _DexterPVar):
+        notes = notes.expand(step, offset=offset)
     if isinstance(notes, _FoxDotChord):
         notes = [notes]
     elif isinstance(notes, (int, float)):
@@ -2842,6 +2884,103 @@ def var(values, durations=4.0):
 def linvar(values, durations=4.0):
     return _DexterTimeVar(values, durations, True)
 
+class _DexterPVar:
+    """A finite sequence of whole patterns selected over explicit beat spans."""
+    def __init__(self, patterns, dur=4.0):
+        if not isinstance(patterns, (list, tuple, _FoxDotFinitePattern)):
+            raise TypeError('Pvar expects a finite list of whole patterns')
+        if not 1 <= len(patterns) <= 8:
+            raise ValueError('Pvar supports 1 to 8 phrase states')
+        normalized = []
+        for phrase in patterns:
+            if isinstance(phrase, (int, float)) and not isinstance(phrase, bool):
+                phrase = [phrase]
+            normalized.append(phrase)
+        self.patterns, self.kind = _compatible_pattern_sequences(
+            normalized, 'Pvar')
+        rawDurations = (list(dur) if isinstance(
+            dur, (list, tuple, _FoxDotFinitePattern)) else [dur])
+        if not rawDurations or len(rawDurations) not in (1, len(self.patterns)):
+            raise ValueError('Pvar durations must be one value or match the phrase count')
+        if len(rawDurations) == 1 and len(self.patterns) > 1:
+            rawDurations *= len(self.patterns)
+        self.durations = []
+        for value in rawDurations:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError('Pvar durations must be finite beat values')
+            value = float(value)
+            if value != value or not 0.001 <= value <= 4096.0:
+                raise ValueError('Pvar durations must be between 0.001 and 4096 beats')
+            self.durations.append(value)
+        if sum(self.durations) > 4096.0:
+            raise ValueError('Pvar phrase cycle cannot exceed 4096 beats')
+
+    def expand(self, step, offset=0.0):
+        offset = float(offset)
+        if offset != offset or offset < 0.0 or offset > 4096.0:
+            raise ValueError('Pvar offset must be between 0 and 4096 beats')
+        if isinstance(step, _DexterTimeVar):
+            if any(value < 0.1 or value > 4096.0 for value in step.values):
+                raise ValueError('Pvar var/linvar dur values must be between 0.1 and 4096 beats')
+            stepCycle = sum(step.durations)
+            phraseCycle = sum(self.durations)
+            cycleCount = phraseCycle / stepCycle
+            if abs(cycleCount - round(cycleCount)) > 1e-8 * max(1.0, cycleCount):
+                raise ValueError(
+                    'Pvar cycle must be a whole number of var/linvar dur cycles')
+            stepValues = None
+        elif isinstance(step, bool):
+            raise TypeError('Pvar dur must be a number or finite numeric pattern')
+        elif isinstance(step, (int, float)):
+            stepValues = [float(step)]
+        elif isinstance(step, (list, tuple, _FoxDotFinitePattern)):
+            stepValues = list(step)
+        else:
+            raise TypeError('Pvar dur must be a number or finite numeric pattern')
+        if stepValues is not None and (not stepValues or len(stepValues) > 256):
+            raise ValueError('Pvar dur patterns are limited to 1..256 values')
+        if stepValues is not None:
+            for value in stepValues:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise TypeError('Pvar dur pattern values must be numeric')
+                value = float(value)
+                if value != value or not 0.001 <= value <= 4096.0:
+                    raise ValueError('Pvar dur values must be between 0.001 and 4096 beats')
+            stepValues = [float(value) for value in stepValues]
+        result = []
+        stepIndex = 0
+        totalElapsed = 0.0
+        for phrase, duration in zip(self.patterns, self.durations):
+            elapsed = 0.0
+            phraseIndex = 0
+            while elapsed < duration - 1e-9 * max(1.0, duration):
+                tolerance = 1e-8 * max(1.0, duration)
+                stepValue = (step.at(offset + totalElapsed)
+                             if stepValues is None else
+                             stepValues[stepIndex % len(stepValues)])
+                nextElapsed = elapsed + stepValue
+                if nextElapsed > duration + tolerance:
+                    raise ValueError(
+                        'Pvar phrase spans must align with the repeated dur pattern')
+                if len(result) >= 256:
+                    raise ValueError('Pvar expansion is limited to 256 note slots per player')
+                result.append(phrase[phraseIndex % len(phrase)])
+                elapsed = min(nextElapsed, duration)
+                totalElapsed += stepValue
+                phraseIndex += 1
+                stepIndex += 1
+            if abs(elapsed - duration) > 1e-8 * max(1.0, duration):
+                raise ValueError(
+                    'Pvar phrase spans must end on a note-duration boundary')
+        if stepValues is not None and stepIndex % len(stepValues):
+            raise ValueError(
+                'Pvar cycle must finish at the start of the repeated dur pattern')
+        return _FoxDotFinitePattern(result)
+
+def Pvar(patterns, dur=4.0):
+    """Switch between finite note or sample phrases after bounded beat spans."""
+    return _DexterPVar(patterns, dur)
+
 def _normalize_root_control(value):
     if not isinstance(value, _DexterTimeVar):
         return (None, None) if value is None else (_root_midi(value), None)
@@ -3014,6 +3153,8 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     scaleName = None if scale is None else _scale_intervals(scale)
     degreesPerOctave = len(scaleName) if scaleName is not None else len(_dexter_scale)
     shift = (baseOctave - 5) * degreesPerOctave
+    if isinstance(notes, _DexterPVar):
+        notes = notes.expand(dur)
     def shift_note(note):
         if note is None:
             return None
@@ -3519,6 +3660,8 @@ def _sample_effect_control_values(effect, controls):
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                     start=0.0, end=1.0, loop=False, effect=None, **controls):
     playerEffectUserIndex = -1
+    if isinstance(text, _DexterPVar):
+        text = text.expand(dur)
     if effect is not None:
         if effect not in ('AirwindowsTapeDelay2', 'AirwindowsEchojam'):
             raise ValueError('sample effect must be AirwindowsTapeDelay2 or AirwindowsEchojam')
@@ -3608,7 +3751,8 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
     return pattern
 
 def play(notes, *args, **kwargs):
-    if isinstance(notes, (str, _FoxDotFinitePattern)):
+    if (isinstance(notes, (str, _FoxDotFinitePattern)) or
+            isinstance(notes, _DexterPVar) and notes.kind == 'sample'):
         return _sample_pattern(notes, *args, **kwargs)
     return _play_notes(notes, *args, **kwargs)
 

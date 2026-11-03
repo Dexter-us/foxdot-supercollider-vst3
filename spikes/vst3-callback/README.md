@@ -1,5 +1,18 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.108 adds bounded `Pvar` phrase switching for numeric note and
+sample-symbol patterns. `Pvar([phrase_a, phrase_b], [8, 8])` repeats each
+finite phrase for its beat span, then switches and restarts that phrase at its
+first item. Durations may be one value shared by all phrases or one per phrase.
+`dur` may be one fixed number, a finite numeric pattern, or bounded `var`/
+`linvar`. For predictable looping, every phrase span must end exactly on a
+note-duration boundary; finite duration patterns must finish on their starting
+phase, while a time-var's full cycle must divide the Pvar cycle evenly.
+Time-varying/grouped duration values are evaluated at each note start; grouped
+`dur` is not supported inside Pvar. Pvar remains limited to 8 phrase states,
+256 expanded note slots per player, and a 4096-beat full phrase cycle. Examples
+137–138 demonstrate fixed/patterned durations and var/linvar note lengths.
+
 Version 0.4.107 adds `Clock.bpm = var(values, durations)` and
 `Clock.bpm = linvar(values, durations)`, with a prepared, allocation-free tempo
 map shared by audio/MIDI scheduling. Portable Example 136 has a clear stepped

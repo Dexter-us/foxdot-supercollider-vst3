@@ -149,6 +149,63 @@ assert namespace['PDelta'](
 assert namespace['PSquare']()[:10] == [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 assert len(namespace['PSquare']()) == 256
 assert namespace['PSquare'](length=1) == [0]
+pvarPitched = namespace['Pvar'](
+    [namespace['P'][0, 2], namespace['P'][4, 6]], [1, 1])
+assert pvarPitched.expand(0.5) == [0, 2, 4, 6]
+pvarVariableDur = namespace['Pvar'](
+    [namespace['P'][0, 2, 4, 6], namespace['P'][7, 5, 3, 1]], [3, 3])
+assert pvarVariableDur.expand(namespace['P'][0.5, 1.0]) == [
+    0, 2, 4, 6, 7, 5, 3, 1]
+pvarVarDur = namespace['Pvar'](
+    [namespace['P'][0, 2, 4], namespace['P'][7, 5, 3]], [2, 2])
+assert pvarVarDur.expand(namespace['var']([0.5, 1.0], [1, 1])) == [
+    0, 2, 4, 7, 5, 3]
+pvarLinvarDur = namespace['Pvar'](
+    [namespace['P'][0, 2], namespace['P'][7, 5]], [1, 1])
+assert pvarLinvarDur.expand(
+    namespace['linvar']([0.25, 1.25], [0.5, 0.5])) == [0, 2, 7, 5]
+pvarBroadcast = namespace['Pvar'](
+    [namespace['P'][0, 1], namespace['P'][2]], 1)
+assert pvarBroadcast.expand(0.5) == [0, 1, 2, 2]
+assert namespace['Pvar'](
+    patterns=[namespace['P'][0], namespace['P'][2]], dur=0.5
+).expand(0.5) == [0, 2]
+pvarSamples = namespace['Pvar'](
+    ['x-o-', 'o--x'], [2, 2])
+assert pvarSamples.kind == 'sample'
+assert pvarSamples.expand(0.5) == list('x-o-o--x')
+for pvarFactory in (
+        lambda: namespace['Pvar']([], 1),
+        lambda: namespace['Pvar']([namespace['P'][0]], []),
+        lambda: namespace['Pvar'](
+            [namespace['P'][0], namespace['P'][1]], [1, 2, 3]),
+        lambda: namespace['Pvar'](
+            [namespace['P'][0], namespace['P']['x']], 1),
+        lambda: namespace['Pvar']([namespace['P'][0]], float('inf')),
+        lambda: namespace['Pvar']([namespace['P'][0]] * 2, [4096, 4096]),
+        lambda: namespace['Pvar']([namespace['P'][0]] * 9, 1),
+        lambda: namespace['Pvar']([[0] * 257], 1),
+        lambda: pvarPitched.expand(0.3),
+        lambda: pvarPitched.expand(namespace['P'][0.5, 1.0]),
+        lambda: namespace['Pvar'](
+            [namespace['P'][0], namespace['P'][1]], [1, 1]
+        ).expand(namespace['P'][0.5, 1.0]),
+        lambda: namespace['Pvar'](
+            [namespace['P'][0], namespace['P'][1]], [3, 2]
+        ).expand(namespace['P'][0.5, 1.0]),
+        lambda: namespace['Pvar'](
+            [namespace['P'][0], namespace['P'][1]], [2, 2]
+        ).expand(namespace['var']([0.5, 1.0], [1.0, 1.5])),
+        lambda: pvarVarDur.expand(
+            namespace['var']([0.05, 1.0], [1.0, 1.0])),
+        lambda: namespace['Pvar'](
+            [namespace['P'][0]] * 8, 1).expand(0.001)):
+    try:
+        pvarFactory()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('Pvar accepted an invalid phrase, duration, or expansion')
 for generator in (
         lambda: namespace['PRand']([], length=2),
         lambda: namespace['PRand'](2.5, length=2),
@@ -1898,6 +1955,70 @@ assert [int(row[1]) for row in requests] == [120, 45, 111, 45]
 assert [int(row[2]) for row in requests] == [0, 1, 0, 1]
 assert [float(row[3]) for row in requests] == [1, -1, 1, -1]
 assert all(row[4] == '0' for row in requests)
+pvarNoteRows, pvarNoteEvents = run_script(
+    'p1 >> pluck(Pvar([P[0, 2], P[4, 6]], [1, 1]), '
+    'dur=0.5, sus=0.4, oct=4)\n', include_events=True)
+assert int(pvarNoteRows[0][5]) == 4 and float(pvarNoteRows[0][4]) == 2.0
+assert [int(row[3]) for row in pvarNoteEvents] == [48, 52, 55, 59]
+pvarSampleRows, pvarSampleRequests, pvarSampleEvents = run_script(
+    'p1 >> play(Pvar(["x-o-", "o--x"], [2, 2]), '
+    'dur=0.5, sample=0)\n', include_samples=True, include_events=True)
+assert int(pvarSampleRows[0][5]) == 8
+assert [int(row[1]) for row in pvarSampleRequests] == [
+    120, 45, 111, 45, 111, 45, 45, 120]
+assert [float(row[1]) for row in pvarSampleEvents] == [
+    0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
+pvarVariableNoteRows, pvarVariableNoteEvents = run_script(
+    'p1 >> pluck(Pvar([P[0, 2, 4, 6], P[7, 5, 3, 1]], [3, 3]), '
+    'dur=P[0.5, 1.0], sus=0.4, oct=4)\n', include_events=True)
+assert [float(row[1]) for row in pvarVariableNoteEvents] == [
+    0.0, 0.5, 1.5, 2.0, 3.0, 3.5, 4.5, 5.0]
+pvarVariableSampleRows, pvarVariableSampleRequests = run_script(
+    'p1 >> play(Pvar(["x---", "--xo"], [3, 3]), '
+    'dur=P[0.5, 1.0], sample=0)\n', include_samples=True)
+assert int(pvarVariableSampleRows[0][5]) == 8
+pvarVariableExample = run_example('137-pvar-phrase-switching.py')
+assert len(pvarVariableExample) == 2
+assert all(float(row[4]) == 12.0 for row in pvarVariableExample)
+assert int(pvarVariableExample[0][5]) == 16
+assert int(pvarVariableExample[1][5]) > 0
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    open(os.path.join(
+        sys.argv[2], '137-pvar-phrase-switching.py'), encoding='utf-8').read())
+pvarTimevarNoteRows, pvarTimevarNoteEvents = run_script(
+    'p1 >> pluck(Pvar([P[0, 2, 4], P[7, 5, 3]], [2, 2]), '
+    'dur=var([0.5, 1.0], [1, 1]), sus=0.4, oct=4)\n',
+    include_events=True)
+assert [float(row[1]) for row in pvarTimevarNoteEvents] == [
+    0.0, 0.5, 1.0, 2.0, 2.5, 3.0]
+pvarTimevarSampleRows, pvarTimevarSampleRequests, pvarTimevarSampleEvents = (
+    run_script(
+        'p1 >> play(Pvar(["x-", "-o"], [1, 1]), '
+        'dur=linvar([0.25, 1.25], [0.5, 0.5]), sample=0)\n',
+        include_samples=True, include_events=True))
+assert [float(row[1]) for row in pvarTimevarSampleEvents] == [
+    0.0, 0.25, 1.0, 1.25]
+assert [int(request[1]) for request in pvarTimevarSampleRequests] == [
+    ord('x'), ord('-'), ord('-'), ord('o')]
+pvarTimevarExample = run_example('138-pvar-timevar-durations.py')
+assert len(pvarTimevarExample) == 2
+assert float(pvarTimevarExample[0][4]) == 4.0
+assert float(pvarTimevarExample[1][4]) == 2.0
+assert int(pvarTimevarExample[0][5]) == 6
+assert int(pvarTimevarExample[1][5]) == 4
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    open(os.path.join(
+        sys.argv[2], '138-pvar-timevar-durations.py'),
+        encoding='utf-8').read())
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> pluck(Pvar([P[0, 2], P[4, 6]], [1, 1]), dur=0.5)\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play(Pvar(["x-o-", "o--x"], [2, 2]), dur=0.5)\n')
+assert 'Pvar accepts only patterns and dur' in run_compatibility_check(
+    'p1 >> pluck(Pvar(P[0, 2], invalid=True))\n')
+assert 'Pvar cannot mix numeric note patterns with sample-symbol patterns' in (
+    run_compatibility_check(
+        'p1 >> pluck(Pvar([P[0, 2], P["x", "o"]], [1, 1]), dur=0.5)\n'))
 _, requests = run_script('p1 >> play("x ", sample=P[0, 1, 2])', include_samples=True)
 assert [int(row[2]) for row in requests] == [0, 2, 1], requests
 _, requests = run_script('p1 >> play("a", dur=0.5, sus=0.1, sample=P[-1, 0], rate=P[1, -1, 2, -2])', include_samples=True)
@@ -3033,4 +3154,4 @@ assert 'Group.add accepts one player name' in run_compatibility_check(
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
-print('Smoke tests passed: embedded pattern/player API, Clock.bpm var/linvar, compatibility checks, diagnostics, WAV samples, user SynthDefs, and Portable examples through 136.')
+print('Smoke tests passed: embedded pattern/player API, Pvar phrase switching, Clock.bpm var/linvar, compatibility checks, diagnostics, WAV samples, user SynthDefs, and Portable examples.')
