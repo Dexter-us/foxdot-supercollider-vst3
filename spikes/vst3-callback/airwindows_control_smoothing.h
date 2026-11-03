@@ -4,7 +4,7 @@
 #include <cmath>
 
 // Smooth normalized FoxDot var() changes before they reach block-rate
-// persistent player-insert controls (Airwindows, reverbs, Chorus, Flanger).
+// persistent player-insert controls (Airwindows, reverbs, modulation effects).
 // linvar() targets use the same short smoothing so block
 // boundaries do not introduce parameter steps.
 inline float smoothAirwindowsFxControl(float previous, float target,

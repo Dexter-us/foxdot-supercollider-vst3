@@ -123,6 +123,8 @@ with tempfile.TemporaryDirectory() as directory:
             ("Flanger",) if example.name == "169-flanger-sweep.py" else
             ("Chorus", "Flanger")
             if example.name == "170-chorus-flanger-together.py" else
+            ("Phaser",) if example.name == "171-phaser-sweep.py" else
+            ("Tremolo",) if example.name == "172-tremolo-motion.py" else
             ("JPverb", "Greyhole") if example.parent == space_portable else
             ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
             ("AirwindowsTapeDelay2",)
@@ -182,6 +184,12 @@ with tempfile.TemporaryDirectory() as directory:
             assert "v:0.017721518987" in parsed.stdout, parsed.stdout
         if example.name == "170-chorus-flanger-together.py":
             assert "A:0" in parsed.stdout and "A:1" in parsed.stdout
+        if example.name == "171-phaser-sweep.py":
+            assert "A:0" in parsed.stdout and "v:" in parsed.stdout
+            assert "v:0.06666666666666667,0.16363636363636364,0.3696969696969697" in parsed.stdout, parsed.stdout
+        if example.name == "172-tremolo-motion.py":
+            assert parsed.stdout.count("A:0") == 2
+            assert "l:0.0,0.25:4.0,4.0" in parsed.stdout, parsed.stdout
     for invalid in (
             "OK\t0\t0\t17\n",
             "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",

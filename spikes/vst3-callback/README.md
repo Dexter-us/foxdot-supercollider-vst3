@@ -1,5 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.136 adds self-contained Phaser and Tremolo per-player inserts using
+stock SuperCollider UGens only. Their controls are smoothed and accept scalar,
+`var()`, and `linvar()` values. Portable Examples 171–172 demonstrate the
+effects; no external UGen pack or SuperCollider rebuild is required.
+
 Version 0.4.133 adds bounded FoxDot `chop` and `spin` effects to synth and WAV
 players. `chop` gates the note into pulses across its sustain (0–32); `spin`
 adds the original stereo sine-pan motion (0–40). Both accept scalar, finite
@@ -619,17 +624,18 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
 - A MIDI output event bus is exposed to the host.
 
-## Per-player modulation inserts (0.4.135)
+## Per-player modulation inserts (0.4.135–0.4.136)
 
-Chorus and Flanger are optional per-player inserts loaded from the bundled
-`Portable/SynthDefs/Chorus.scsyndef` and `Flanger.scsyndef` files. Their
-precompiled SynthDefs use stock SuperCollider UGens only (`DelayC`, `SinOsc`,
-`LocalIn/LocalOut`, `LeakDC`, and `LPF`); they add no compiled UGen module,
-third-party DSP library, or SuperCollider rebuild. Each player has independent
-effect state, smoothed `fx_*` controls, stereo modulation, and a dry bypass.
-The `effect=` and `fx_*` syntax is a Dexter U.S. plugin extension rather than
-stock FoxDot syntax. See Portable Examples 168–170. For source regeneration,
-run `python tools/build-modulation-synthdefs.py` with `sclang`; the generated
+Chorus, Flanger, Phaser, and Tremolo are per-player inserts loaded from the
+bundled `Portable/SynthDefs/*.scsyndef` files. Their precompiled SynthDefs use
+stock SuperCollider UGens only; they add no compiled UGen module, third-party
+DSP library, or SuperCollider rebuild. Each player has independent effect
+state, smoothed `fx_*` controls, and dry bypass. The phaser uses seven cascaded
+all-pass stages with bounded feedback; tremolo supports sine/triangle motion
+and stereo phase spread. The `effect=` and `fx_*` syntax is a Dexter U.S.
+plugin extension rather than stock FoxDot syntax. See Portable Examples
+168–172. For source regeneration, run
+`python tools/build-modulation-synthdefs.py` with `sclang`; generated
 SynthDefs are checked in. The optional audio regression is
 `python tools/test-modulation-synthdefs-audio.py`.
 

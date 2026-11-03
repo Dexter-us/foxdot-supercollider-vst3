@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the precompiled Chorus/Flanger SynthDefs through native scsynth NRT."""
+"""Run the precompiled modulation SynthDefs through native scsynth NRT."""
 import math
 from pathlib import Path
 import os
@@ -39,14 +39,19 @@ def main():
         assert result.returncode == 0 and "ERROR:" not in result.stdout, (
             result.stdout + result.stderr)
         source = source_file.read_bytes()
-        for name in ("Chorus", "Flanger"):
+        for name in ("Chorus", "Flanger", "Phaser", "Tremolo"):
             effect = (defs / (name + ".scsyndef")).read_bytes()
             # All inserts have the same positional layout:
             # out, inbus, mix, rate, depth, delay, spread, feedback, tone.
-            base = ([0, 0.0, 1, 16.0, 2, 1.0, 3, 0.8, 4, 0.75, 5, 0.018,
-                     6, 0.9, 7, 0.6, 8, 10000.0] if name == "Chorus" else
-                    [0, 0.0, 1, 16.0, 2, 1.0, 3, 0.5, 4, 0.8,
-                     5, 0.0035, 6, 0.9, 7, 0.95, 8, 12000.0])
+            base = (
+                [0, 0.0, 1, 16.0, 2, 1.0, 3, 0.8, 4, 0.75, 5, 0.018,
+                 6, 0.9, 7, 0.6, 8, 10000.0] if name == "Chorus" else
+                [0, 0.0, 1, 16.0, 2, 1.0, 3, 0.5, 4, 0.8, 5, 0.0035,
+                 6, 0.9, 7, 0.95, 8, 12000.0] if name == "Flanger" else
+                [0, 0.0, 1, 16.0, 2, 1.0, 3, 0.22, 4, 0.7, 5, 650.0,
+                 6, 0.8, 7, 0.35, 8, 11000.0] if name == "Phaser" else
+                [0, 0.0, 1, 16.0, 2, 1.0, 3, 5.0, 4, 0.7, 5, 0.65,
+                 6, 0.9, 7, 0.1, 8, 11000.0])
             dry_controls = base.copy()
             dry_controls[5] = 0.0  # control 2, normalized mix=0
             score = bundle(0, message("/d_recv", source),

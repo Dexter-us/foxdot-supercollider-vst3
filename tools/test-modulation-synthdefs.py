@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check checked-in Chorus/Flanger SynthDef ABI and stock-UGen dependencies."""
+"""Check checked-in modulation SynthDef ABIs and stock-UGen dependencies."""
 from pathlib import Path
 import struct
 import sys
@@ -15,6 +15,11 @@ expected = {
     "Flanger": ("mix rate depth delay spread feedback tone",
                 {"DelayC", "In", "LeakDC", "LocalIn", "LocalOut",
                  "LPF", "Out", "SinOsc", "XFade2"}),
+    "Phaser": ("mix rate depth center spread feedback tone",
+               {"AllpassC", "In", "LeakDC", "LocalIn", "LocalOut",
+                "LPF", "Out", "SinOsc", "XFade2"}),
+    "Tremolo": ("mix rate depth shape spread phase tone",
+                {"In", "LFTri", "LPF", "Out", "SinOsc", "XFade2"}),
 }
 
 def inspect(path):

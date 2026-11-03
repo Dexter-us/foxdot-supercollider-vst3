@@ -1,5 +1,15 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.136 adds per-player Phaser and Tremolo inserts in SynthDefs/.
+Examples 171-172 show independent, time-varying settings. Both use stock
+SuperCollider UGens; no extra module or SuperCollider rebuild is needed.
+Phaser: fx_mix 0-1, fx_rate 0.05-8 Hz, fx_depth 0-1, fx_center 150-1800 Hz,
+fx_spread 0-1, fx_feedback 0-0.85, fx_tone 200-16000 Hz.
+Tremolo: fx_mix 0-1, fx_rate 0.05-20 Hz, fx_depth 0-1, fx_shape 0-1
+(sine to triangle), fx_spread 0-1, fx_phase 0-1, fx_tone 200-16000 Hz.
+These effect= / fx_* controls are Dexter U.S. plugin extensions. They accept
+scalars, var(), and linvar(); controls are smoothed and ranges are enforced.
+
 Version 0.4.135 adds the stock-UGen Chorus and Flanger per-player inserts.
 They are precompiled SynthDefs in SynthDefs/ and need no additional UGen
 module. See Examples 168-170 for isolated and combined usage. The controls

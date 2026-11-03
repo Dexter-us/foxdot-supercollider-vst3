@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile the two stock-UGen chorus/flanger insert definitions with sclang."""
+"""Compile the stock-UGen modulation insert definitions with sclang."""
 import argparse
 import os
 from pathlib import Path
@@ -9,7 +9,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 DESTINATION = ROOT / "spikes/vst3-callback/Portable/SynthDefs"
-NAMES = ("Chorus", "Flanger")
+NAMES = ("Chorus", "Flanger", "Phaser", "Tremolo")
 
 def main():
     parser = argparse.ArgumentParser()

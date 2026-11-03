@@ -89,7 +89,8 @@ constexpr char kFoxDotApiKeywords[] =
     "effect fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
     "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
-    "JPverb Greyhole Chorus Flanger "
+    "fx_center fx_shape fx_phase "
+    "JPverb Greyhole Chorus Flanger Phaser Tremolo "
     "vib depth lforate lfowidth rq fmod blur sample "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
     "echo delay mute unmute rate start end loop stretch shuffle repeat stutter "
@@ -104,7 +105,8 @@ constexpr char kFoxDotCompletions[] =
     "effect fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
     "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
-    "JPverb Greyhole Chorus Flanger "
+    "fx_center fx_shape fx_phase "
+    "JPverb Greyhole Chorus Flanger Phaser Tremolo "
     "vib depth lforate lfowidth rq fmod blur sample start end loop stretch "
     "shuffle repeat stutter palindrome mirror accum swap reverse rotate invert transpose arp splice sort unduplicate replace layer trim ltrim normalise choose zip deepzip deeprzip map pivot true_shuffle shufflets";
 
@@ -919,7 +921,8 @@ private:
                     if (name == "AirwindowsTapeDelay2" ||
                         name == "AirwindowsEchojam" ||
                         name == "JPverb" || name == "Greyhole" ||
-                        name == "Chorus" || name == "Flanger")
+                        name == "Chorus" || name == "Flanger" ||
+                        name == "Phaser" || name == "Tremolo")
                         continue;
                     addPanelRow(fromUtf8(name) + L"  [Portable SynthDef]");
                 }
@@ -956,6 +959,12 @@ private:
                 addPanelRow(loaded("Flanger")
                                 ? L"Flanger  [player effect]"
                                 : L"Flanger  [SynthDef unavailable]");
+                addPanelRow(loaded("Phaser")
+                                ? L"Phaser  [player effect]"
+                                : L"Phaser  [SynthDef unavailable]");
+                addPanelRow(loaded("Tremolo")
+                                ? L"Tremolo  [player effect]"
+                                : L"Tremolo  [SynthDef unavailable]");
             }
             renderLiveEffectsPanel();
         } else if (tab == 3) {

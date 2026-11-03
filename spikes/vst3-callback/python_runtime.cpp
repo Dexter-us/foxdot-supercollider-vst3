@@ -169,7 +169,8 @@ _COMPAT_WAVE_KEYWORDS = {
     'shape', 'drive', 'chop', 'spin', 'effect', 'fx_vib', 'fx_depth',
     'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60',
     'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq',
-    'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone'
+    'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
+    'fx_center', 'fx_shape', 'fx_phase'
 }
 _USER_SYNTH_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
@@ -181,7 +182,8 @@ _USER_SYNTH_KEYWORDS = {
     'shape', 'drive', 'chop', 'spin', 'effect', 'fx_vib', 'fx_depth',
     'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60',
     'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq',
-    'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone'
+    'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
+    'fx_center', 'fx_shape', 'fx_phase'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -191,9 +193,10 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq',
     'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size',
     'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff',
-    'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone'
+    'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center',
+    'fx_shape', 'fx_phase'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'shape', 'drive', 'chop', 'spin', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'shape', 'drive', 'chop', 'spin', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase'}
 _COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop'}
 _COMPAT_PLAY_KEYWORDS = _COMPAT_NOTE_PLAY_KEYWORDS | _COMPAT_SAMPLE_PLAY_KEYWORDS
 _COMPAT_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
@@ -767,9 +770,9 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires a literal installed player-effect name.')
-                elif keyword.value.value not in {'AirwindowsTapeDelay2', 'AirwindowsEchojam', 'JPverb', 'Greyhole', 'Chorus', 'Flanger'}:
+                elif keyword.value.value not in {'AirwindowsTapeDelay2', 'AirwindowsEchojam', 'JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo'}:
                     self.add(keyword.lineno or node.lineno,
-                             'effect= supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus or Flanger.')
+                             'effect= supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser or Tremolo.')
                 elif keyword.value.value not in _USER_SYNTH_NAMES:
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires the matching player-effect SynthDef in Portable/SynthDefs.')
@@ -4618,7 +4621,7 @@ def _make_named_synth(name, defaultRate):
 def userSynth(name, notes=0, **kwargs):
     if not isinstance(name, str) or name not in _dexter_user_synth_names:
         raise ValueError('userSynth name is not a loaded Portable/SynthDefs entry')
-    if name in ('JPverb', 'Greyhole', 'Chorus', 'Flanger'):
+    if name in ('JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo'):
         raise ValueError(name + ' is an insert, not a note source; use effect="' +
                          name + '" on a synth or play() player')
     if name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam') and kwargs.get('effect') is not None:
@@ -5073,6 +5076,22 @@ _PLAYER_EFFECT_SPECS = {
         ('fx_delay', 3, 0.0005, 0.015, 0.0035),
         ('fx_spread', 4, 0.0, 1.0, 0.6),
         ('fx_feedback', 5, 0.0, 0.95, 0.5),
+        ('fx_tone', 6, 200.0, 16000.0, 12000.0)),
+    'Phaser': (
+        ('fx_mix', 0, 0.0, 1.0, 0.45),
+        ('fx_rate', 1, 0.05, 8.0, 0.22),
+        ('fx_depth', 2, 0.0, 1.0, 0.65),
+        ('fx_center', 3, 150.0, 1800.0, 650.0),
+        ('fx_spread', 4, 0.0, 1.0, 0.8),
+        ('fx_feedback', 5, 0.0, 0.85, 0.25),
+        ('fx_tone', 6, 200.0, 16000.0, 11000.0)),
+    'Tremolo': (
+        ('fx_mix', 0, 0.0, 1.0, 1.0),
+        ('fx_rate', 1, 0.05, 20.0, 5.0),
+        ('fx_depth', 2, 0.0, 1.0, 0.7),
+        ('fx_shape', 3, 0.0, 1.0, 0.0),
+        ('fx_spread', 4, 0.0, 1.0, 0.5),
+        ('fx_phase', 5, 0.0, 1.0, 0.0),
         ('fx_tone', 6, 200.0, 16000.0, 12000.0))
 }
 def _player_effect_control_values(effect, controls):
