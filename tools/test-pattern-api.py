@@ -74,7 +74,9 @@ def make_wrapper(source_path, result_path, user_synth_names=()):
 safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter',
               'float', 'int', 'isinstance', 'len', 'list', 'map', 'max', 'min',
               'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str',
-              'sum', 'tuple', 'zip', 'ValueError', 'TypeError', 'AttributeError',
+               'sum', 'tuple', 'zip', 'ValueError', 'TypeError', 'IndexError',
+               'OverflowError',
+               'AttributeError',
               'ZeroDivisionError', '__build_class__', 'ord', 'chr')
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_bpm_control': None,
@@ -806,6 +808,287 @@ except ValueError:
     pass
 else:
     raise AssertionError('append must reject the 257th top-level item')
+insert_source = namespace['P'][0, 2, 4]
+insert_shared = insert_source
+insert_copy = insert_source.copy()
+assert insert_source.insert(1, 1) is None
+assert insert_shared == [0, 1, 2, 4]
+assert insert_copy == [0, 2, 4]
+assert insert_source.insert(-1, 3) is None
+assert insert_source == [0, 1, 2, 3, 4]
+assert insert_source.insert(-99, -1) is None
+assert insert_source[0] == -1
+assert insert_source.insert(999, 5) is None
+assert insert_source[-1] == 5
+nested_insert_source = namespace['P'][0, 2]
+nested_insert_input = [5, 7]
+assert nested_insert_source.insert(1, nested_insert_input) is None
+nested_insert_input[0] = 99
+assert nested_insert_source[1] == [5, 7]
+assert nested_insert_source[1] is not nested_insert_input
+
+pop_source = namespace['P'][0, 2, 4]
+pop_shared = pop_source
+pop_copy = pop_source.copy()
+assert pop_source.pop() == 4
+assert pop_shared == [0, 2]
+assert pop_copy == [0, 2, 4]
+assert pop_source.pop(0) == 0
+assert pop_shared == [2]
+
+remove_source = namespace['P'][2, 2, 4]
+remove_shared = remove_source
+remove_copy = remove_source.copy()
+assert remove_source.remove(2) is None
+assert remove_shared == [2, 4]
+assert remove_copy == [2, 2, 4]
+atomic_pattern = namespace['P'][0, 2, 4]
+atomic_alias = atomic_pattern
+empty_pattern = namespace['_FoxDotFinitePattern']()
+invalid_mutations = (
+    (atomic_pattern, lambda: atomic_pattern.insert(1.5, 2), TypeError),
+    (atomic_pattern, lambda: atomic_pattern.insert(True, 2), TypeError),
+    (atomic_pattern, lambda: atomic_pattern.insert(0, 'x'), TypeError),
+    (namespace['P']['x'], lambda: namespace['P']['x'].insert(0, 2), TypeError),
+    (atomic_pattern, lambda: atomic_pattern.pop(1.5), TypeError),
+    (atomic_pattern, lambda: atomic_pattern.pop(True), TypeError),
+    (empty_pattern, lambda: empty_pattern.pop(), IndexError),
+    (atomic_pattern, lambda: atomic_pattern.pop(3), IndexError),
+    (atomic_pattern, lambda: atomic_pattern.remove(9), ValueError),
+    (atomic_pattern, lambda: atomic_pattern.remove(object()), TypeError),
+    (full_pattern, lambda: full_pattern.insert(0, 256), ValueError),
+)
+for target, invalid_mutation, error_type in invalid_mutations:
+    before = list(target)
+    try:
+        invalid_mutation()
+    except error_type:
+        pass
+    else:
+        raise AssertionError(
+            'insert/pop/remove must reject invalid indices, values, or bounds')
+    assert target == before
+assert atomic_alias == [0, 2, 4]
+assert len(full_pattern_alias) == 256
+boundary_insert = namespace['_FoxDotFinitePattern'](range(255))
+assert boundary_insert.insert(255, 255) is None
+assert len(boundary_insert) == 256 and boundary_insert[-1] == 255
+try:
+    boundary_insert.insert(0, 256)
+except ValueError:
+    pass
+else:
+    raise AssertionError('insert must reject the 257th top-level item')
+
+set_source = namespace['P'][0, 2, 4]
+set_shared = set_source
+set_copy = set_source.copy()
+assert set_source.set(1, 6) is set_source
+assert set_shared == [0, 6, 4]
+assert set_copy == [0, 2, 4]
+set_source.set(-1, namespace['PGroup'](7, 9))
+assert set_source[-1] == namespace['PGroup'](7, 9)
+nested_set_input = [3, 5]
+set_source.set(0, nested_set_input)
+nested_set_input[0] = 99
+assert set_source[0] == [3, 5]
+assert set_source[0] is not nested_set_input
+
+assert namespace['P']['x', 'o', '-'].string() == 'xo-'
+assert namespace['P'][0, None, namespace['PGroup'](2, 4), [5, 7]].string() == \
+    '0 24(57)'
+assert namespace['P'][namespace['P'][1, 2],
+                       namespace['PGroup'](3, 5)].string() == '(12)35'
+assert namespace['P'][1, 2].str().string() == '12'
+assert namespace['P']['|x1|'].string() == '|x1|'
+assert len(namespace['_FoxDotFinitePattern'](range(256)).string()) > 0
+assert len(namespace['P']['x' * 4096].string()) == 4096
+try:
+    namespace['P']['x' * 4097].string()
+except ValueError:
+    pass
+else:
+    raise AssertionError('string must enforce its output-length bound')
+invalid_string_pattern = namespace['P'][object()]
+try:
+    invalid_string_pattern.string()
+except TypeError:
+    pass
+else:
+    raise AssertionError('string must reject unsupported object values')
+try:
+    namespace['_FoxDotFinitePattern'](range(257)).string()
+except ValueError:
+    pass
+else:
+    raise AssertionError('string must reject more than 256 top-level items')
+too_deep_string = namespace['P'][1]
+for _ in range(17):
+    too_deep_string = namespace['_FoxDotFinitePattern']([too_deep_string])
+try:
+    too_deep_string.string()
+except ValueError:
+    pass
+else:
+    raise AssertionError('string must enforce its nesting bound')
+
+items_source = namespace['P'][3, [5, 7], None]
+item_pairs = items_source.items()
+assert isinstance(item_pairs, list)
+assert item_pairs == [(0, 3), (1, [5, 7]), (2, None)]
+assert item_pairs[1][1] is not items_source[1]
+items_source.set(0, 9)
+assert item_pairs[0] == (0, 3)
+assert namespace['_FoxDotFinitePattern']().items() == []
+assert len(namespace['_FoxDotFinitePattern'](range(256)).items()) == 256
+try:
+    namespace['_FoxDotFinitePattern'](range(257)).items()
+except ValueError:
+    pass
+else:
+    raise AssertionError('items must reject more than 256 top-level values')
+
+getitem_source = namespace['P'][10, 20, 30]
+assert getitem_source.getitem(0) == 10
+assert getitem_source.getitem(3) == 10
+assert getitem_source.getitem(-1) == 30
+assert getitem_source.getitem((2, 1)) == [30, 20]
+assert getitem_source.getitem(namespace['P'][0, 2, 4, 6]) == [
+    10, 30, 20, 10]
+assert getitem_source.getitem(slice(1, 3)) == [20, 30]
+nested_getitem = namespace['P'][0, namespace['P'][2, 4]]
+assert [nested_getitem.getitem(index) for index in (0, 1, 3, 5)] == [
+    0, 2, 4, 2]
+invalid_getitem_calls = (
+    lambda: getitem_source.getitem(True),
+    lambda: getitem_source.getitem(1.5),
+    lambda: namespace['_FoxDotFinitePattern']().getitem(0),
+    lambda: getitem_source.getitem(
+        namespace['_FoxDotFinitePattern'](range(257))),
+)
+for invalid_getitem in invalid_getitem_calls:
+    try:
+        invalid_getitem()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('getitem must reject invalid or oversized indices')
+
+comparison_source = namespace['P'][0, 1, 0, 1]
+assert comparison_source.eq(namespace['P'][0, 1]) == [1, 1, 1, 1]
+assert comparison_source.ne(namespace['P'][0, 0]) == [0, 1, 0, 1]
+assert comparison_source.eq(1) == [0, 1, 0, 1]
+assert namespace['P']['x', 'o'].eq('x') == [1, 0]
+assert namespace['_FoxDotFinitePattern']().eq([]) == []
+try:
+    comparison_source.eq([])
+except ValueError:
+    pass
+else:
+    raise AssertionError('eq must reject an empty cycled pattern')
+
+rotate_source = namespace['P'][1, 2, 3]
+rotate_alias = rotate_source
+rotate_copy = rotate_source.copy()
+assert rotate_source.i_rotate(1) is rotate_source
+assert rotate_alias == [2, 3, 1]
+assert rotate_copy == [1, 2, 3]
+rotate_source.i_rotate(-1)
+assert rotate_source == [1, 2, 3]
+reverse_source = namespace['P'][1, 2, 3]
+assert reverse_source.i_reverse() is reverse_source
+assert reverse_source == [3, 2, 1]
+sort_source = namespace['P'][3, 1, 2]
+sort_alias = sort_source
+sort_copy = sort_source.copy()
+assert sort_source.i_sort() is sort_source
+assert sort_alias == [1, 2, 3]
+assert sort_copy == [3, 1, 2]
+unsortable = namespace['P'][None, 1]
+try:
+    unsortable.i_sort()
+except TypeError:
+    pass
+else:
+    raise AssertionError('i_sort must reject incomparable values')
+assert unsortable == [None, 1]
+shuffle_source = namespace['P'][1, 2, 3, 4]
+shuffle_alias = shuffle_source
+shuffle_copy = shuffle_source.copy()
+assert shuffle_source.i_shuf() is shuffle_source
+assert sorted(shuffle_source) == [1, 2, 3, 4]
+assert shuffle_alias is shuffle_source
+assert shuffle_copy == [1, 2, 3, 4]
+
+setitem_source = namespace['P'][1, 2, 3]
+setitem_alias = setitem_source
+setitem_copy = setitem_source.copy()
+assert setitem_source.setitem(1, 8) is None
+assert setitem_alias == [1, 8, 3]
+assert setitem_copy == [1, 2, 3]
+try:
+    setitem_source.setitem(9, 4)
+except IndexError:
+    pass
+else:
+    raise AssertionError('setitem must reject an out-of-range index')
+
+slice_source = namespace['P'][0, 10, 20]
+assert slice_source.getslice(1, 3) == [10, 20]
+assert slice_source.getslice(-2, None) == [10, 20, 0, 10, 20]
+assert slice_source.getslice(0, 3, 2) == [0, 20]
+assert namespace['_FoxDotFinitePattern']().getslice(0, 0) == []
+for invalid_slice_args in ((0, 3, 0), (0.5, 2, 1), (0, 300, 1)):
+    try:
+        slice_source.getslice(*invalid_slice_args)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('getslice must enforce integer and output bounds')
+
+alt_source = namespace['P'][0, 2, 4]
+alt_shared = alt_source
+alt_input = [7, 9, 11]
+alternate = alt_source.alt(alt_input)
+alt_input[0] = 99
+assert alternate == [7, 9, 11]
+assert alternate is not alt_source and alternate is not alt_shared
+assert alt_source == [0, 2, 4] and alt_shared == [0, 2, 4]
+alternate.append(12)
+assert alt_source == [0, 2, 4]
+assert namespace['P'][7].alt(9) == [9]
+assert namespace['P'][0].alt('xo-') == ['x', 'o', '-']
+assert len(namespace['P'][0].alt(range(256))) == 256
+assert namespace['P'][0].alt([]) == []
+set_boundary = namespace['_FoxDotFinitePattern'](range(256))
+assert set_boundary.set(0, 7) is set_boundary
+assert len(set_boundary) == 256 and set_boundary[0] == 7
+
+set_atomic = namespace['P'][0, 2, 4]
+set_alias = set_atomic
+invalid_set_calls = (
+    lambda: set_atomic.set(1.5, 7),
+    lambda: set_atomic.set(True, 7),
+    lambda: set_atomic.set(5, 7),
+    lambda: set_atomic.set(-5, 7),
+    lambda: set_atomic.set(0, 'x'),
+    lambda: set_atomic.set(0, namespace['PGroup'](*range(9))),
+    lambda: alt_source.alt(range(257)),
+    lambda: alt_source.alt([0, 'x']),
+    lambda: alt_source.alt(object()),
+    lambda: alt_source.alt(namespace['P'][0, 1].str()[0]),
+)
+for invalid_set_call in invalid_set_calls:
+    before_set = list(set_atomic)
+    before_alt = list(alt_source)
+    try:
+        invalid_set_call()
+    except (TypeError, ValueError, IndexError):
+        pass
+    else:
+        raise AssertionError('set/alt must reject invalid inputs and bounds')
+    assert set_atomic == before_set and set_alias == before_set
+    assert alt_source == before_alt and alt_shared == before_alt
 too_deep_cast = namespace['P'][1]
 for _ in range(17):
     too_deep_cast = namespace['_FoxDotFinitePattern']([too_deep_cast])
@@ -2568,6 +2851,60 @@ example155, example155Events = run_script(
     example155Text, include_events=True)
 assert {int(row[1]) for row in example155 if row[2] == '0'} == {0, 1, 2}
 assert len(example155Events) == 16
+example156Text = open(os.path.join(
+    sys.argv[2], '156-pattern-insert-pop-remove.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example156Text)
+example156, example156Events = run_script(
+    example156Text, include_events=True)
+assert {int(row[1]) for row in example156 if row[2] == '0'} == {0, 1, 2, 3}
+assert len(example156Events) > 0
+example157Text = open(os.path.join(
+    sys.argv[2], '157-pattern-set-and-alt.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example157Text)
+example157, example157Events = run_script(
+    example157Text, include_events=True)
+assert {int(row[1]) for row in example157 if row[2] == '0'} == {0, 1, 2}
+assert len(example157Events) > 0
+example158Text = open(os.path.join(
+    sys.argv[2], '158-pattern-string-to-samples.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example158Text)
+example158, example158Events = run_script(
+    example158Text, include_events=True)
+assert {int(row[1]) for row in example158 if row[2] == '0'} == {0, 1}
+assert len(example158Events) > 0
+example159Text = open(os.path.join(
+    sys.argv[2], '159-pattern-items.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example159Text)
+example159, example159Events = run_script(
+    example159Text, include_events=True)
+assert {int(row[1]) for row in example159 if row[2] == '0'} == {0, 1}
+assert len(example159Events) > 0
+example160Text = open(os.path.join(
+    sys.argv[2], '160-cyclic-pattern-getitem.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example160Text)
+example160, example160Events = run_script(
+    example160Text, include_events=True)
+assert {int(row[1]) for row in example160 if row[2] == '0'} == {0, 1}
+assert len(example160Events) > 0
+example161Text = open(os.path.join(
+    sys.argv[2], '161-pattern-comparison-and-inplace-helpers.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example161Text)
+example161, example161Events = run_script(
+    example161Text, include_events=True)
+assert {int(row[1]) for row in example161 if row[2] == '0'} == {0, 1, 2, 3}
+assert len(example161Events) > 0
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)

@@ -1,5 +1,37 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.129 adds bounded Pattern .eq()/.ne() comparison masks with cycling,
+in-place .i_rotate(), .i_reverse(), .i_sort(), and .i_shuf(), integer
+.setitem() mutation, and cyclic .getslice(). Mutators keep Pattern identity so
+aliases see edits; sorting rejects incomparable values without partial changes.
+Operations are bounded to 256 values and 16 nested levels. See Example 161.
+
+Version 0.4.128 adds bounded FoxDot-style Pattern .getitem(). Integer indices
+wrap cyclically, nested finite Patterns advance by cycle, and finite index
+Patterns/tuples return bounded Pattern results. Python pattern[index] remains
+ordinary non-wrapping list indexing. Inputs/results are limited to 256 items
+and 16 nested levels. See Example 160.
+
+Version 0.4.127 adds bounded Pattern .items(), returning a materialized list
+of (index, value) pairs. It snapshots nested values and follows the 256-value
+and 16-level copy bounds. See Example 159.
+
+Version 0.4.126 adds bounded FoxDot-style Pattern .string(). It joins sample
+symbols, formats nested patterns with parentheses and chords compactly, renders
+rests as spaces for the embedded play-string parser, and caps output at 256
+values, 16 nesting levels, and 4096 characters. See Example 158.
+
+Version 0.4.125 adds FoxDot-style Pattern .set(index, value) and .alt(other).
+set mutates the selected item and returns the same Pattern; alt returns a fresh
+Pattern without changing its source. Both validate finite numeric/sample data
+and respect the 256-item bound. See Example 157.
+
+Version 0.4.124 adds bounded in-place Pattern .insert(index, item),
+.pop(index=-1), and .remove(item). Inserted values are validated and copied,
+shared references see mutations, and .copy() remains independent. Indexes use
+Python list clamping/error behavior; the 256-item cap still applies. See Example
+156.
+
 Version 0.4.123 adds in-place Pattern .append(item) and .extend(sequence),
 returning None like FoxDot. Shared references to the destination observe the
 mutation, while inserted nested values are copied. Only bounded finite

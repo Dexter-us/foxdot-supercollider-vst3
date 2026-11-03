@@ -1,5 +1,43 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.129 adds bounded `Pattern.eq()`/`.ne()` comparison masks with
+right-side cycling; in-place `.i_rotate()`, `.i_reverse()`, `.i_sort()`, and
+`.i_shuf()`; integer `.setitem()` mutation; and explicit cyclic `.getslice()`.
+Mutators preserve Pattern identity so aliases see edits, while `.copy()` stays
+independent. Sorting is atomic on incomparable values, and all source/result
+sizes are bounded to 256 with 16 nested levels. Example 161 demonstrates masks,
+selection, mutation, and slices.
+
+Version 0.4.128 adds bounded FoxDot-style `Pattern.getitem()`: integer indices
+wrap cyclically, nested finite Patterns advance by cycle, and finite index
+Patterns/tuples return bounded Pattern results. Python `pattern[index]` remains
+ordinary non-wrapping list indexing. Inputs/results are capped at 256 items
+with 16 nested levels. Portable Example 160 demonstrates cyclic selection.
+
+Version 0.4.127 adds bounded `Pattern.items()`, returning a materialized list
+of `(index, value)` pairs. It snapshots nested values, preserving the source
+Pattern from edits through the returned pairs, and is capped by the existing
+256-value and 16-level copy limits. Portable Example 159 uses the indexed
+values to build a reordered phrase.
+
+Version 0.4.126 adds bounded FoxDot-style `Pattern.string()`. It joins finite
+sample symbols, formats nested patterns with parentheses and chords compactly,
+renders rests as spaces for the embedded play-string parser, and caps output at
+256 values, 16 nesting levels, and 4096 characters. Portable Example 158 turns
+Patterns into sample-player rhythms.
+
+Version 0.4.125 adds FoxDot-style Pattern `.set(index, value)` and
+`.alt(other)`. `set` mutates the selected item and returns the same Pattern;
+`alt` returns a fresh Pattern without changing its source. Both validate finite
+numeric/sample data and respect the 256-item bound. Portable Example 157
+demonstrates shared updates and a non-mutating alternate phrase.
+
+Version 0.4.124 adds bounded in-place Pattern `.insert(index, item)`,
+`.pop(index=-1)`, and `.remove(item)`. Inserted values are validated and copied,
+shared references see mutations, and `.copy()` remains independent. Indexes use
+Python list clamping/error behavior; the 256-item cap still applies. Portable
+Example 156 demonstrates insert, pop, remove, and a pre-mutation copy.
+
 Version 0.4.123 adds in-place Pattern `.append(item)` and `.extend(sequence)`,
 matching FoxDot's `None` return behavior. Inputs are copied before insertion,
 shared references to the destination Pattern see the mutation, and numeric-note

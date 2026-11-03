@@ -111,7 +111,8 @@ _COMPAT_CALLS = {
     'abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter',
     'float', 'int', 'isinstance', 'len', 'list', 'map', 'max', 'min',
     'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum',
-    'tuple', 'zip', 'ValueError', 'TypeError', 'ZeroDivisionError',
+    'tuple', 'zip', 'ValueError', 'TypeError', 'IndexError', 'OverflowError',
+    'ZeroDivisionError',
     'tempo', 'scale', 'reverse', 'rotate', 'repeat', 'palindrome', 'stutter',
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
@@ -139,7 +140,10 @@ _COMPAT_PATTERN_METHODS = {
     'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
     'stutter', 'palindrome', 'expand', 'count', 'index', 'submap', 'concat',
     'add', 'abs', 'all', 'startswith', 'limit', 'every', 'copy',
-    'asGroup', 'group', 'int', 'float', 'str', 'append', 'extend'
+    'asGroup', 'group', 'int', 'float', 'str', 'append', 'extend',
+    'insert', 'pop', 'remove', 'set', 'alt', 'string', 'items', 'getitem',
+    'getslice', 'setitem', 'eq', 'ne', 'i_rotate', 'i_reverse', 'i_sort',
+    'i_shuf'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
@@ -1394,6 +1398,38 @@ class _FoxDotFinitePattern(list):
         amount = int(amount) % len(values)
         return _FoxDotFinitePattern(values[amount:] + values[:amount])
 
+    def i_rotate(self, amount=1):
+        """Rotate this Pattern in place using FoxDot's slice-based semantics."""
+        if isinstance(amount, bool) or not isinstance(amount, int):
+            raise TypeError('i_rotate amount must be a whole number')
+        self._validate_mutation_values(self)
+        values = list(self)
+        list.__setitem__(
+            self, slice(None), values[amount:] + values[:amount])
+        return self
+
+    def i_reverse(self):
+        """Reverse this bounded Pattern in place and return it."""
+        self._validate_mutation_values(self)
+        list.reverse(self)
+        return self
+
+    def i_sort(self):
+        """Sort comparable Pattern items in place without partial mutation."""
+        self._validate_mutation_values(self)
+        try:
+            values = sorted(self)
+        except TypeError:
+            raise TypeError('i_sort requires mutually comparable Pattern items')
+        list.__setitem__(self, slice(None), values)
+        return self
+
+    def i_shuf(self):
+        """Shuffle this Pattern in place using the bounded seeded shuffle."""
+        shuffled = PShuf(self)
+        list.__setitem__(self, slice(None), list(shuffled))
+        return self
+
     def mirror(self):
         def mirror_item(item, depth):
             if depth > 16:
@@ -2268,13 +2304,175 @@ class _FoxDotFinitePattern(list):
 
         return convert(self, 0, root=True)
 
+    def string(self):
+        """Build a bounded FoxDot-style play string from finite Pattern data."""
+        if len(self) > 256:
+            raise ValueError('string input is limited to 256 items')
+        budget = [0]
+
+        def join_items(items, depth, wrap):
+            parts = []
+            output_length = 2 if wrap else 0
+            for item in items:
+                part = render_item(item, depth + 1)
+                output_length += len(part)
+                if output_length > 4096:
+                    raise ValueError('string output is limited to 4096 characters')
+                parts.append(part)
+            text = ''.join(parts)
+            return '(' + text + ')' if wrap else text
+
+        def render_item(value, depth):
+            if depth > 16:
+                raise ValueError('string nesting is limited to 16 levels')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError('string structure is limited to 256 values')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('string nested patterns are limited to 256 items')
+                return join_items(value, depth, True)
+            if isinstance(value, _FoxDotChord):
+                if len(value) > 8:
+                    raise ValueError('string chords are limited to 8 notes')
+                return join_items(value, depth, False)
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('string groups are limited to 256 items')
+                return join_items(value, depth, False)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('string nested groups are limited to 256 items')
+                return join_items(value, depth, True)
+            if value is None:
+                return ' '
+            if isinstance(value, _FoxDotNumericText):
+                return str(value)
+            if isinstance(value, str):
+                if len(value) > 4096:
+                    raise ValueError(
+                        'string input is limited to 4096 characters')
+                try:
+                    _sample_parse_nodes(value)
+                except (TypeError, ValueError):
+                    raise TypeError(
+                        'string supports valid sample symbols and numeric text only')
+                return value
+            if _finite_note_number(value):
+                return str(value)
+            raise TypeError(
+                'string supports finite notes, rests, groups, and sample symbols')
+
+        return join_items(self, 0, False)
+
+    def items(self):
+        """Return bounded, independent (index, value) pairs like enumerate."""
+        snapshot = self.copy()
+        return [(index, value) for index, value in enumerate(snapshot)]
+
+    def getitem(self, key):
+        """FoxDot-style cyclic access, with bounded pattern-key expansion."""
+        if len(self) > 256:
+            raise ValueError('getitem source is limited to 256 items')
+        if isinstance(key, slice):
+            return self[key]
+
+        if isinstance(key, (_FoxDotFinitePattern, list, tuple)):
+            if len(key) > 256:
+                raise ValueError('getitem index pattern is limited to 256 items')
+            indices = list(key)
+            return _FoxDotFinitePattern([
+                self._getitem_cyclic(index, 0) for index in indices])
+        return self._getitem_cyclic(key, 0)
+
+    def _getitem_cyclic(self, index, depth):
+        if depth > 16:
+            raise ValueError('getitem nested-pattern depth is limited to 16')
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError('getitem index values must be whole numbers')
+        if not self:
+            raise ValueError('getitem cannot index an empty Pattern')
+        position = index % len(self)
+        value = list.__getitem__(self, position)
+        if isinstance(value, _FoxDotFinitePattern):
+            return value._getitem_cyclic(index // len(self), depth + 1)
+        return value
+
+    def getslice(self, start=None, stop=None, step=1):
+        """FoxDot-style bounded slice using cyclic Pattern access."""
+        if len(self) > 256:
+            raise ValueError('getslice source is limited to 256 items')
+        if start is None:
+            start = 0
+        if stop is None:
+            stop = len(self)
+        if step is None:
+            step = 1
+        for name, value in (('start', start), ('stop', stop), ('step', step)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError('getslice ' + name + ' must be a whole number')
+        if step == 0:
+            raise ValueError('getslice step cannot be zero')
+        if stop < start:
+            stop = len(self) + stop
+        try:
+            indices = range(start, stop, step)
+            if len(indices) > 256:
+                raise ValueError('getslice output is limited to 256 items')
+        except OverflowError:
+            raise ValueError('getslice range is too large')
+        return self.getitem(_FoxDotFinitePattern(indices))
+
+    def _comparison_values(self, other, method_name):
+        if isinstance(other, _FoxDotNumericText):
+            raise TypeError(method_name + ' requires finite Pattern values')
+        if isinstance(other, str):
+            if _sample_symbols_for_item(other) is not None:
+                values = [other]
+            elif all(char.isspace() or char in _SAMPLE_SYMBOLS
+                     for char in other):
+                values = list(other)
+            else:
+                raise TypeError(
+                    method_name + ' accepts simple sample symbols or Patterns')
+        elif isinstance(other, (_FoxDotFinitePattern, list, tuple, range)):
+            if len(other) > 256:
+                raise ValueError(method_name + ' inputs are limited to 256 items')
+            values = list(other)
+        else:
+            values = [other]
+        if len(values) > 256:
+            raise ValueError(method_name + ' inputs are limited to 256 items')
+        self._validate_mutation_values(values)
+        return values
+
+    def eq(self, other):
+        """Return FoxDot-style 0/1 equality values with right-side cycling."""
+        self._validate_mutation_values(self)
+        values = self._comparison_values(other, 'eq')
+        if self and not values:
+            raise ValueError('eq cannot cycle an empty right-hand Pattern')
+        return _FoxDotFinitePattern([
+            1 if value == values[index % len(values)] else 0
+            for index, value in enumerate(self)]) if self else _FoxDotFinitePattern()
+
+    def ne(self, other):
+        """Return FoxDot-style 0/1 inequality values with right-side cycling."""
+        self._validate_mutation_values(self)
+        values = self._comparison_values(other, 'ne')
+        if self and not values:
+            raise ValueError('ne cannot cycle an empty right-hand Pattern')
+        return _FoxDotFinitePattern([
+            1 if value != values[index % len(values)] else 0
+            for index, value in enumerate(self)]) if self else _FoxDotFinitePattern()
+
     def _mutation_kind(self, value, budget, depth=0):
         """Validate one appended value and return numeric/sample/neutral kind."""
         if depth > 16:
-            raise ValueError('append/extend nesting is limited to 16 levels')
+            raise ValueError('Pattern mutation nesting is limited to 16 levels')
         budget[0] += 1
         if budget[0] > 256:
-            raise ValueError('append/extend structure is limited to 256 values')
+            raise ValueError('Pattern mutation is limited to 256 values')
         if value is None:
             return None
         if _finite_note_number(value):
@@ -2284,11 +2482,11 @@ class _FoxDotFinitePattern(list):
                     _sample_symbols_for_item(value) is not None):
                 return 'sample'
             raise TypeError(
-                'append/extend accepts sample symbols, not numeric text')
+                'Pattern mutation accepts sample symbols, not numeric text')
         if isinstance(value, (list, tuple, _FoxDotFinitePattern)):
             if not 1 <= len(value) <= 8:
                 raise ValueError(
-                    'appended chord/sample groups must contain 1..8 items')
+                    'mutated chord/sample groups must contain 1..8 items')
             kinds = []
             for child in value:
                 kind = self._mutation_kind(child, budget, depth + 1)
@@ -2296,14 +2494,14 @@ class _FoxDotFinitePattern(list):
                     kinds.append(kind)
             if len(kinds) > 1:
                 raise TypeError(
-                    'append/extend cannot mix numeric notes and sample symbols')
+                    'Pattern mutation cannot mix notes and sample symbols')
             return kinds[0] if kinds else None
         raise TypeError(
-            'append/extend accepts finite notes, rests, groups, and sample symbols')
+            'Pattern mutation accepts finite notes, rests, groups, and sample symbols')
 
     def _copy_mutation_item(self, value, depth=0):
         if depth > 16:
-            raise ValueError('append/extend nesting is limited to 16 levels')
+            raise ValueError('Pattern mutation nesting is limited to 16 levels')
         if isinstance(value, _FoxDotFinitePattern):
             if len(value) > 256:
                 raise ValueError('nested pattern is limited to 256 items')
@@ -2329,7 +2527,7 @@ class _FoxDotFinitePattern(list):
                 kinds.append(kind)
         if len(kinds) > 1:
             raise TypeError(
-                'append/extend cannot mix numeric notes and sample symbols')
+                'Pattern mutation cannot mix notes and sample symbols')
 
     def append(self, item):
         """Append one bounded value in place and return None, like FoxDot."""
@@ -2365,6 +2563,86 @@ class _FoxDotFinitePattern(list):
         copied = [self._copy_mutation_item(item) for item in additions]
         list.extend(self, copied)
         return None
+
+    def insert(self, index, item):
+        """Insert a bounded value in place, with Python list index clamping."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError('insert index must be a whole number')
+        if len(self) >= 256:
+            raise ValueError('insert result is limited to 256 top-level items')
+        position = index
+        if position < 0:
+            position = max(0, len(self) + position)
+        else:
+            position = min(len(self), position)
+        pending = list(self)
+        pending.insert(position, item)
+        self._validate_mutation_values(pending)
+        copied = self._copy_mutation_item(item)
+        list.insert(self, position, copied)
+        return None
+
+    def pop(self, index=-1):
+        """Remove and return one item, using bounded Python list indexing."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError('pop index must be a whole number')
+        position = index
+        if position < 0:
+            position += len(self)
+        if position < 0 or position >= len(self):
+            raise IndexError('pop index out of range')
+        return list.pop(self, position)
+
+    def remove(self, item):
+        """Remove the first matching bounded item in place and return None."""
+        self._validate_mutation_values([item])
+        try:
+            index = list.index(self, item)
+        except ValueError:
+            raise ValueError('Pattern.remove(x): x is not in the pattern')
+        list.pop(self, index)
+        return None
+
+    def set(self, index, value):
+        """Replace one item in place and return this Pattern, like FoxDot."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError('set index must be a whole number')
+        position = index
+        if position < 0:
+            position += len(self)
+        if position < 0 or position >= len(self):
+            raise IndexError('Pattern.set index out of range')
+        pending = list(self)
+        pending[position] = value
+        self._validate_mutation_values(pending)
+        copied = self._copy_mutation_item(value)
+        list.__setitem__(self, position, copied)
+        return self
+
+    def setitem(self, index, value):
+        """FoxDot-compatible indexed mutation; returns None like the source API."""
+        self.set(index, value)
+        return None
+
+    def alt(self, other):
+        """Return a fresh bounded Pattern containing the alternate sequence."""
+        if isinstance(other, _FoxDotNumericText):
+            raise TypeError('alt requires a finite pattern or valid note/sample values')
+        if isinstance(other, (str, _FoxDotFinitePattern, list, tuple, range)):
+            try:
+                values = list(other)
+            except OverflowError:
+                raise ValueError('alt input is too large')
+        elif other is None or _finite_note_number(other):
+            values = [other]
+        else:
+            raise TypeError(
+                'alt requires a finite pattern or valid note/sample values')
+        if len(values) > 256:
+            raise ValueError('alt input is limited to 256 items')
+        self._validate_mutation_values(values)
+        return _FoxDotFinitePattern([
+            self._copy_mutation_item(item) for item in values])
 
     def pivot(self, index):
         indices = (list(index) if isinstance(
@@ -6247,7 +6525,8 @@ DiskOut = _DiskRecorder()
            << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', 'ord', 'chr', "
            << "'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum', 'tuple', "
            << "'zip', 'ValueError', 'TypeError', 'ZeroDivisionError', "
-             << "'AttributeError', 'Exception', '__build_class__')}\n"
+              << "'AttributeError', 'Exception', 'IndexError', 'OverflowError', "
+              << "'__build_class__')}\n"
             << "_dexter_scope['_dexter_dis'] = dis\n"
             << "_dexter_scope['_dexter_function_type'] = types.FunctionType\n"
             << "_dexter_scope['_dexter_builtin_module'] = builtins\n"
