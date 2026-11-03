@@ -149,6 +149,19 @@ assert namespace['PDelta'](
 assert namespace['PSquare']()[:10] == [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
 assert len(namespace['PSquare']()) == 256
 assert namespace['PSquare'](length=1) == [0]
+assert namespace['PSq']() == [1, 4, 9]
+assert namespace['PSq'](-3, 2, 4) == [9, 4, 1, 0]
+assert namespace['PRange'](5) == [0, 1, 2, 3, 4]
+assert namespace['PRange'](1, 6, 2) == [1, 3, 5]
+assert namespace['PRange'](5, 0) == [5, 4, 3, 2, 1]
+assert namespace['PRange'](3, 3) == [3]
+assert namespace['PStep'](4, 1) == [0, 0, 0, 1]
+assert namespace['PStep'](4, 'x', '-') == ['-', '-', '-', 'x']
+assert namespace['PEuclid'](3, 8) == [1, 0, 0, 1, 0, 0, 1, 0]
+assert namespace['PEuclid2'](3, 8, ' ', 'x') == [
+    'x', ' ', ' ', 'x', ' ', ' ', 'x', ' ']
+assert namespace['P'][0, 2, 2, 4].undup() == [0, 2, 4]
+assert namespace['P'][0, 2, 4].norm() == [0.0, 0.5, 1.0]
 pvarPitched = namespace['Pvar'](
     [namespace['P'][0, 2], namespace['P'][4, 6]], [1, 1])
 assert pvarPitched.expand(0.5) == [0, 2, 4, 6]
@@ -254,7 +267,23 @@ for generator in (
         lambda: namespace['PDelta'](1000000, start=1, length=2),
         lambda: namespace['PSquare'](length=0),
         lambda: namespace['PSquare'](length=257),
-        lambda: namespace['PSquare'](length=1.5)):
+        lambda: namespace['PSquare'](length=1.5),
+        lambda: namespace['PSq'](c=0),
+        lambda: namespace['PSq'](c=257),
+        lambda: namespace['PSq'](b=float('inf')),
+        lambda: namespace['PSq'](b=32),
+        lambda: namespace['PSq'](-2, 0.5, 2),
+        lambda: namespace['PRange'](0, 257),
+        lambda: namespace['PRange'](0, 8, 0),
+        lambda: namespace['PRange'](True, 4),
+        lambda: namespace['PRange'](0, 1000000),
+        lambda: namespace['PStep'](0, 1),
+        lambda: namespace['PStep'](257, 1),
+        lambda: namespace['PStep'](4, 'x'),
+        lambda: namespace['PEuclid'](9, 8),
+        lambda: namespace['PEuclid'](1, 257),
+        lambda: namespace['PEuclid'](1, 8.0),
+        lambda: namespace['PEuclid2'](2, 5, 0, 'x')):
     try:
         generator()
     except (TypeError, ValueError):
@@ -1821,6 +1850,30 @@ for keyword, value in [('vib', float('inf')), ('rq', 0), ('blur', 0), ('lfowidth
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
+generatorCompatibilityReport = run_compatibility_check(
+    'p1 >> saw(PSq(0, 2, 5).norm(), dur=0.25)\n'
+    'p2 >> play(PEuclid2(3, 8, "-", "x"), dur=0.25, sample=0)\n'
+    'p3 >> saw(PRange(0, 8, 2).undup(), dur=0.5)\n')
+assert 'No unsupported constructs detected' in generatorCompatibilityReport, (
+    generatorCompatibilityReport)
+for unsupported_pattern_method in ('sample', 'compress', 'transpose'):
+    for pattern_expression in (
+            'P[0, 2, 4]',
+            'notes = P[0, 2, 4]\nnotes'):
+        patternMethodReport = run_compatibility_check(
+            pattern_expression + '.' + unsupported_pattern_method +
+            '()\np1 >> saw([0])\n')
+        assert 'P pattern method' in patternMethodReport, patternMethodReport
+        assert unsupported_pattern_method in patternMethodReport, patternMethodReport
+for malformed_generator_call, expected_diagnostic in (
+        ('PRange()', 'requires start'),
+        ('PStep(4)', 'requires value'),
+        ('PEuclid(3)', 'requires k'),
+        ('PEuclid2(3, 8, "-", "x", 1)', 'at most 4 positional')):
+    malformedGeneratorReport = run_compatibility_check(
+        'p1 >> saw(' + malformed_generator_call + ')\n')
+    assert expected_diagnostic in malformedGeneratorReport, (
+        malformedGeneratorReport)
 loadedUserSynthReport = run_compatibility_check(
     'p1 >> userSynth("CustomPluck", P[0, 2, 4], dur=0.5, amp=0.3)\n',
     ('CustomPluck',))
@@ -1858,6 +1911,13 @@ example69 = run_example('69-composed-star-and-karp.py')
 assert [int(row[6]) for row in example69 if row[2] == '0'] == [55, 56, 0]
 example70 = run_example('70-portable-sample-beat.py')
 assert int(next(row for row in example70 if row[2] == '0')[6]) == 57
+example141Text = open(os.path.join(
+    sys.argv[2], '141-finite-pattern-generators.py'), encoding='utf-8').read()
+example141, example141Samples, example141Events = run_script(
+    example141Text, include_samples=True, include_events=True)
+assert {int(row[1]) for row in example141 if row[2] == '0'} == {0, 1, 2, 3}
+assert len(example141Samples) == 3
+assert len(example141Events) == 19
 example71 = run_example('71-sample-selection-and-reverse.py')
 assert [int(row[6]) for row in example71 if row[2] == '0'] == [57, 57]
 example72 = run_example('72-var-sample-and-rate.py')

@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.110 adds bounded FoxDot-style PSq, PRange, PStep, PEuclid, and
+PEuclid2 generators, plus the .norm() and .undup() aliases. The compatibility
+check now reports unsupported methods called directly on P[...] before Run.
+Portable Example 141 demonstrates numeric sequences and a Euclidean sample
+rhythm. Generator output is capped at 256 items.
+
 Version 0.4.109 lets Pvar phrase durations use PRhythm grouped timing and lets
 numeric PZip/PZip2 combine chord groups. Grouped PRhythm keeps its base beat
 span and bounded offsets while Pvar switches phrases; zipped chords preserve
@@ -485,3 +491,5 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 
 42-self-contained-ugens.py introduces scatter, orient, zap, fuzz, bug, and ripple. These first six additions use standard SuperCollider UGens and require no extra plugin modules.
 30-player-mute-controls.py shows p2.mute() and p2.unmute(); the comment markers are at column one so uncommenting a command does not introduce Python indentation.
+
+141-finite-pattern-generators.py demonstrates FoxDot-style PSq, PRange, PStep, PEuclid, and PEuclid2. The generated patterns are bounded to 256 items; PEuclid2 can create a sample-symbol drum pattern with space-rests.

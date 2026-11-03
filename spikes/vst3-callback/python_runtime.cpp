@@ -116,7 +116,7 @@ _COMPAT_CALLS = {
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
     'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar',
-    'PSquare',
+    'PSquare', 'PSq', 'PRange', 'PStep', 'PEuclid', 'PEuclid2',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
@@ -128,6 +128,20 @@ _COMPAT_CALLS = {
     'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'Group', 'Master', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
     '__build_class__'
+}
+_COMPAT_PATTERN_METHODS = {
+    'reverse', 'rotate', 'mirror', 'accum', 'swap', 'repeat', 'stretch',
+    'loop', 'shuffle', 'true_shuffle', 'shufflets', 'invert', 'arp', 'splice',
+    'sort', 'unduplicate', 'undup', 'replace', 'trim', 'ltrim', 'normalise',
+    'norm', 'choose', 'zip', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
+    'stutter', 'palindrome', 'expand', 'count', 'index'
+}
+_COMPAT_PATTERN_CALLS = {
+    'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
+    'PDelay', 'PStrum', 'PQuicken', 'PRhythm', 'PZip', 'PZip2', 'PRand',
+    'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar', 'PSquare', 'PSq',
+    'PRange', 'PStep', 'PEuclid', 'PEuclid2', 'reverse', 'rotate', 'repeat',
+    'palindrome', 'stutter', 'interleave', 'transpose', 'euclid'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
                  'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
@@ -224,6 +238,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self._seen = set()
         self.defined = set()
         self.group_names = {'p_all'}
+        self.pattern_names = set()
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 self.defined.add(node.name)
@@ -307,11 +322,39 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             if 'mixed' in kinds or len(kinds) > 1:
                 return 'mixed'
             return next(iter(kinds)) if kinds else None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in {'PRange', 'PSq', 'PEuclid'}:
+                return 'numeric'
+            if node.func.id in {'PStep', 'PEuclid2'}:
+                if node.func.id == 'PStep':
+                    value = (node.args[1] if len(node.args) > 1 else next(
+                        (keyword.value for keyword in node.keywords
+                         if keyword.arg == 'value'), None))
+                    default = (node.args[2] if len(node.args) > 2 else next(
+                        (keyword.value for keyword in node.keywords
+                         if keyword.arg == 'default'), ast.Constant(0)))
+                    candidates = (value, default)
+                else:
+                    low = (node.args[2] if len(node.args) > 2 else next(
+                        (keyword.value for keyword in node.keywords
+                         if keyword.arg == 'lo'), None))
+                    high = (node.args[3] if len(node.args) > 3 else next(
+                        (keyword.value for keyword in node.keywords
+                         if keyword.arg == 'hi'), None))
+                    candidates = (low, high)
+                kinds = {kind for kind in (
+                    self._pattern_kind(value) for value in candidates)
+                         if kind is not None}
+                if 'mixed' in kinds or len(kinds) > 1:
+                    return 'mixed'
+                return next(iter(kinds)) if kinds else None
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             return self._pattern_kind(node.func.value)
         return None
 
     def _finite_pattern_expression(self, node):
+        if isinstance(node, ast.Name):
+            return node.id in self.pattern_names
         if isinstance(node, ast.Subscript) and isinstance(
                 node.value, ast.Name) and node.value.id == 'P':
             return self._pattern_kind(node) is not None
@@ -319,8 +362,12 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 node.op, (ast.BitAnd, ast.BitOr)):
             return (self._finite_pattern_expression(node.left) and
                     self._finite_pattern_expression(node.right))
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            return self._finite_pattern_expression(node.func.value)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                return node.func.id in _COMPAT_PATTERN_CALLS
+            if (isinstance(node.func, ast.Attribute) and
+                    node.func.attr in _COMPAT_PATTERN_METHODS):
+                return self._finite_pattern_expression(node.func.value)
         return False
 
     def _check_pattern_kinds(self, nodes, line, helper_name):
@@ -330,6 +377,30 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self.add(line, helper_name +
                      ' cannot mix numeric note patterns with sample-symbol patterns.')
 
+    def _check_fixed_signature(self, node, function_name, parameters,
+                               required_count):
+        assigned = set(parameters[:len(node.args)])
+        if len(node.args) > len(parameters):
+            self.add(node.lineno, function_name + ' accepts at most ' +
+                     str(len(parameters)) + ' positional arguments.')
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                self.add(keyword.lineno or node.lineno,
+                         function_name + ' does not accept dynamic keyword expansion.')
+            elif keyword.arg not in parameters:
+                self.add(keyword.lineno or node.lineno, function_name +
+                         ' does not support keyword ' + keyword.arg + '.')
+            elif keyword.arg in assigned:
+                self.add(keyword.lineno or node.lineno, function_name +
+                         ' received ' + keyword.arg + ' more than once.')
+            else:
+                assigned.add(keyword.arg)
+        missing = [parameter for parameter in parameters[:required_count]
+                   if parameter not in assigned]
+        if missing:
+            self.add(node.lineno, function_name + ' requires ' +
+                     ', '.join(missing) + '.')
+
     def visit_Import(self, node):
         self.add(node.lineno, 'Python imports are disabled in the portable editor; use the built-in API.')
 
@@ -338,6 +409,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = node.func.id if isinstance(node.func, ast.Name) else None
+        if (isinstance(node.func, ast.Attribute) and
+                self._finite_pattern_expression(node.func.value) and
+                node.func.attr not in _COMPAT_PATTERN_METHODS):
+            self.add(node.lineno, "P pattern method '" + node.func.attr +
+                     "()' is not in the embedded API; use a supported P method or built-in helper.")
         if name == 'Group':
             playerNames = [
                 argument.id for argument in node.args
@@ -395,6 +471,16 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     self.add(keyword.lineno or node.lineno, 'Clock.swing accepts only the amount keyword.')
         if name and name not in _COMPAT_CALLS and name not in self.defined:
             self.add(node.lineno, "Call '" + name + "()' is not in the embedded API (often an unsupported FoxDot synth or pattern helper).")
+        if name == 'PRange':
+            self._check_fixed_signature(node, name, ('start', 'stop', 'step'), 1)
+        if name == 'PSq':
+            self._check_fixed_signature(node, name, ('a', 'b', 'c'), 0)
+        if name == 'PStep':
+            self._check_fixed_signature(node, name, ('n', 'value', 'default'), 2)
+        if name == 'PEuclid':
+            self._check_fixed_signature(node, name, ('n', 'k'), 2)
+        if name == 'PEuclid2':
+            self._check_fixed_signature(node, name, ('n', 'k', 'lo', 'hi'), 4)
         if name == 'PAlt':
             if len(node.args) < 2:
                 self.add(node.lineno, 'PAlt requires at least two finite patterns.')
@@ -701,7 +787,13 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Assign(self, node):
+        is_pattern_value = self._finite_pattern_expression(node.value)
         for target in node.targets:
+            if isinstance(target, ast.Name):
+                if is_pattern_value:
+                    self.pattern_names.add(target.id)
+                else:
+                    self.pattern_names.discard(target.id)
             if (isinstance(target, ast.Attribute) and
                     self._is_group_expression(target.value) and
                     target.attr not in _COMPAT_GROUP_CONTROLS):
@@ -1415,6 +1507,10 @@ class _FoxDotFinitePattern(list):
                 result.append(item)
         return _FoxDotFinitePattern(result)
 
+    def undup(self):
+        """FoxDot-compatible alias for removing adjacent repeated items."""
+        return self.unduplicate()
+
     def replace(self, old, new):
         def replace_item(item, depth):
             if depth > 16:
@@ -1461,6 +1557,10 @@ class _FoxDotFinitePattern(list):
                 raise ValueError('normalise results must remain finite')
             result.append(normalized)
         return _FoxDotFinitePattern(result)
+
+    def norm(self):
+        """FoxDot-compatible alias for numeric pattern normalization."""
+        return self.normalise()
 
     def choose(self):
         if not self:
@@ -1585,12 +1685,14 @@ class _FoxDotFinitePattern(list):
             'shufflets': self.shufflets,
             'sort': self.sort,
             'unduplicate': self.unduplicate,
+            'undup': self.undup,
             'arp': self.arp,
             'splice': self.splice,
             'replace': self.replace,
             'trim': self.trim,
             'ltrim': self.ltrim,
             'normalise': self.normalise,
+            'norm': self.norm,
             'zip': self.zip,
             'deepzip': self.deepzip,
             'deeprzip': self.deeprzip,
@@ -2074,6 +2176,81 @@ def PDelta(deltas, start=0, length=256):
 def PSquare(length=256):
     length = _random_pattern_length(length, 'PSquare')
     return _FoxDotFinitePattern(index * index for index in range(length))
+
+def _bounded_pattern_integer(value, name, argument, minimum, maximum):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(name + ' ' + argument + ' must be a whole number')
+    if not minimum <= value <= maximum:
+        raise ValueError(name + ' ' + argument + ' must be within ' +
+                         str(minimum) + '..' + str(maximum))
+    return value
+
+def PRange(start, stop=None, step=1):
+    """FoxDot-style finite range, limited to at most 256 output notes."""
+    if stop is None:
+        start, stop = 0, start
+    start = _bounded_pattern_integer(
+        start, 'PRange', 'start', -1000000, 1000000)
+    stop = _bounded_pattern_integer(
+        stop, 'PRange', 'stop', -1000000, 1000000)
+    step = _bounded_pattern_integer(
+        step, 'PRange', 'step', -1000000, 1000000)
+    if step == 0:
+        raise ValueError('PRange step cannot be zero')
+    if start == stop:
+        return _FoxDotFinitePattern([start])
+    if (start > stop and step > 0) or (start < stop and step < 0):
+        step = -step
+    values = range(start, stop, step)
+    if len(values) > 256:
+        raise ValueError('PRange output is limited to 256 notes')
+    return _FoxDotFinitePattern(values)
+
+def PSq(a=1, b=2, c=3):
+    """FoxDot-style bounded power sequence: a**b through (a+c-1)**b."""
+    a = _bounded_pattern_integer(a, 'PSq', 'a', -1000000, 1000000)
+    count = _random_pattern_length(c, 'PSq')
+    if not _finite_note_number(b) or abs(float(b)) > 16.0:
+        raise ValueError('PSq exponent must be finite and within -16..16')
+    result = []
+    for value in range(a, a + count):
+        try:
+            powered = value ** b
+        except (OverflowError, ZeroDivisionError, ValueError):
+            raise ValueError('PSq results must remain finite numbers')
+        if (not _finite_note_number(powered) or
+                abs(float(powered)) > 1000000.0):
+            raise ValueError('PSq results must stay within -1000000..1000000')
+        result.append(powered)
+    return _FoxDotFinitePattern(result)
+
+def PStep(n, value, default=0):
+    """FoxDot-style cyclic pattern with value on every nth step."""
+    count = _random_pattern_length(n, 'PStep')
+    output = [default] * (count - 1) + [value]
+    _pattern_items(output, 'PStep')
+    return _FoxDotFinitePattern(output)
+
+def _euclidean_binary_pattern(hits, steps, name):
+    hits = _bounded_pattern_integer(hits, name, 'hits', 0, 256)
+    steps = _bounded_pattern_integer(steps, name, 'steps', 1, 256)
+    if hits > steps:
+        raise ValueError(name + ' requires 0 <= hits <= steps <= 256')
+    # This evenly distributes hits and puts the first hit at step zero,
+    # matching FoxDot's PEuclid(3, 8) orientation.
+    return [1 if (index * hits) % steps < hits else 0
+            for index in range(steps)]
+
+def PEuclid(n, k):
+    """FoxDot-style Euclidean pattern of 1/0 values, capped at 256 steps."""
+    return _FoxDotFinitePattern(_euclidean_binary_pattern(n, k, 'PEuclid'))
+
+def PEuclid2(n, k, lo, hi):
+    """Euclidean pattern using FoxDot-compatible low/high values."""
+    bits = _euclidean_binary_pattern(n, k, 'PEuclid2')
+    output = [hi if bit else lo for bit in bits]
+    _pattern_items(output, 'PEuclid2')
+    return _FoxDotFinitePattern(output)
 
 def PAlt(*patterns):
     sequences, kind = _compatible_pattern_sequences(patterns, 'PAlt', 2)
