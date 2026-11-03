@@ -26,7 +26,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.134' not in cmake_source or
+if ('VERSION 0.4.135' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -39,7 +39,8 @@ for live_panel_fragment in (
         'FoxDot shape (native player effect)',
         'FoxDot drive (native player effect)',
         'FoxDot chop (per-note gate)',
-        'FoxDot spin (stereo pan motion)'):
+        'FoxDot spin (stereo pan motion)',
+        'Chorus  [player effect]', 'Flanger  [player effect]'):
     if live_panel_fragment not in editor_source + editor_host_source:
         raise AssertionError('Live engine panel is missing: ' + live_panel_fragment)
 for snapshot_fragment in (
@@ -62,6 +63,24 @@ for airwindows_layout_fragment in (
             'Persistent Airwindows control ABI is missing or out of sync: ' +
             airwindows_layout_fragment
         )
+for insert_fragment in (
+        'name == "Chorus" || name == "Flanger"',
+        'std::array<float, 7>{{0.0f, 0.05f, 0.0f, 0.005f',
+        'std::array<float, 7>{{1.0f, 5.0f, 1.0f, 0.04f',
+        'std::array<float, 7>{{0.0f, 0.05f, 0.0f, 0.0005f',
+        'std::array<float, 7>{{1.0f, 4.0f, 1.0f, 0.015f',
+        '0.0f, 0.05f, 0.0f, 0.005f, 0.0f, 0.0f, 200.0f',
+        '1.0f, 5.0f, 1.0f, 0.04f, 1.0f, 0.75f, 16000.0f',
+        '0.0f, 0.05f, 0.0f, 0.0005f, 0.0f, 0.0f, 200.0f',
+        '1.0f, 4.0f, 1.0f, 0.015f, 1.0f, 0.95f, 16000.0f',
+        'userDefinition.effectControlIndices ='):
+    if insert_fragment not in re.sub(r'\s+', ' ', processor_source):
+        raise AssertionError('Chorus/Flanger insert configuration is missing: ' +
+                             insert_fragment)
+if "'fx_rate', 1, 0.05, 5.0, 0.8" not in source or \
+        "'fx_spread', 4, 0.0, 1.0, 0.7" not in source or \
+        "'fx_tone', 6, 200.0, 16000.0, 12000.0" not in source:
+    raise AssertionError('Chorus/Flanger controls are missing or out of sync.')
 start_marker = 'static constexpr char api[] = R"PY(' + chr(10)
 end_marker = ')PY";'
 start = source.find(start_marker)
@@ -2883,7 +2902,11 @@ for filename in os.listdir(sys.argv[2]):
             ('AirwindowsEchojam',)
             if filename == '104-sample-player-airwindows-echojam.py' else
             ('AirwindowsTapeDelay2', 'AirwindowsEchojam')
-            if filename == '105-airwindows-timevar-controls.py' else ())
+            if filename == '105-airwindows-timevar-controls.py' else
+            ('Chorus',) if filename == '168-chorus-stereo-width.py' else
+            ('Flanger',) if filename == '169-flanger-sweep.py' else
+            ('Chorus', 'Flanger')
+            if filename == '170-chorus-flanger-together.py' else ())
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
@@ -3187,9 +3210,43 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     ('AirwindowsTapeDelay2',))
 assert 'requires the matching player-effect SynthDef' in run_compatibility_check(
     'p1 >> play("x-o-", effect="AirwindowsTapeDelay2")\n')
-assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb or Greyhole' in run_compatibility_check(
+assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus or Flanger' in run_compatibility_check(
     'p1 >> play("x-o-", effect="NotAnEffect")\n',
     ('NotAnEffect',))
+for name in ('Chorus', 'Flanger'):
+    report = run_compatibility_check(
+        'p1 >> play("x-o-", effect="' + name + '", fx_rate=0.5)\n',
+        (name,))
+    assert 'No unsupported constructs detected' in report, report
+    missing = run_compatibility_check(
+        'p1 >> play("x-o-", effect="' + name + '")\n')
+    assert 'requires the matching player-effect SynthDef' in missing, missing
+for filename, names in (
+        ('168-chorus-stereo-width.py', ('Chorus',)),
+        ('169-flanger-sweep.py', ('Flanger',)),
+        ('170-chorus-flanger-together.py', ('Chorus', 'Flanger'))):
+    rows, effects, controls, variables = run_example(
+        filename, names, include_player_effects=True,
+        include_synth_controls=True, include_effect_control_vars=True)
+    assert len(rows) == len(names)
+    assert [row[2] for row in effects] == [str(i) for i in range(len(names))]
+    assert len(controls) == len(names)
+    assert len(variables) == len(names)
+chorusControls = run_script(
+    'p1 >> play("x", effect="Chorus", fx_rate=linvar([0.1, 2.5], [2, 3]), '
+    'fx_tone=var([1000, 12000], 4))\n',
+    include_player_effects=True, include_synth_controls=True,
+    include_effect_control_vars=True, user_synth_names=('Chorus',))
+chorusTimeVars = next(row for row in chorusControls[3]
+                      if row[1] == '0')
+assert chorusTimeVars[3].startswith('l:0.010101010101'), chorusTimeVars
+assert chorusTimeVars[8].startswith('v:0.050632911392'), chorusTimeVars
+flangerControls = run_script(
+    'p1 >> play("x", effect="Flanger", fx_feedback=var([0, 0.95], 2))\n',
+    include_player_effects=True, include_synth_controls=True,
+    include_effect_control_vars=True, user_synth_names=('Flanger',))
+assert next(row for row in flangerControls[3] if row[1] == '0')[2:8] == [
+    '-', '-', '-', '-', '-', 'v:0.0,1.0:2.0,2.0']
 subprocess.run([sys.executable, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     'UGens', 'SpaceReverbs', 'test-examples.py')], check=True)
@@ -4462,6 +4519,12 @@ assert 'Unsupported Group attribute' in run_compatibility_check(
     'pair = Group(p1, p2)\npair.not_a_control = 1\n')
 assert 'Group.add accepts one player name' in run_compatibility_check(
     'pair = Group(p1)\npair.add(p9)\n')
+
+subprocess.run([
+    sys.executable,
+    os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), '..', '..',
+                 'tools', 'test-modulation-synthdefs.py'),
+    os.path.dirname(os.path.abspath(sys.argv[1]))], check=True)
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6

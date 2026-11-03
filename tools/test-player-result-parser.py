@@ -77,6 +77,10 @@ int main(int argc, char** argv) {
     for (const auto& player : pattern.players) {
         std::cout << player.synthIndex << ' ';
         std::cout << "A:" << player.playerEffectUserIndex << ' ';
+        std::cout << "B:";
+        for (const auto value : player.playerEffectControlValues)
+            std::cout << value << ',';
+        std::cout << ' ';
         std::cout << "W:" << player.swingSeconds << ' ';
         std::cout << "H:" << player.shape << ':' << player.drive << ':'
                   << player.shapeControlToken << ':'
@@ -115,6 +119,10 @@ with tempfile.TemporaryDirectory() as directory:
     for example in examples:
         result = directory / "result.out"
         user_synth_names = (
+            ("Chorus",) if example.name == "168-chorus-stereo-width.py" else
+            ("Flanger",) if example.name == "169-flanger-sweep.py" else
+            ("Chorus", "Flanger")
+            if example.name == "170-chorus-flanger-together.py" else
             ("JPverb", "Greyhole") if example.parent == space_portable else
             ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
             ("AirwindowsTapeDelay2",)
@@ -166,6 +174,14 @@ with tempfile.TemporaryDirectory() as directory:
             assert "N:0.5:0:0:0:0:0:8:2" in parsed.stdout, parsed.stdout
             assert "Y:-,-,-,-,-,-,v:4.0,8.0:4.0,4.0,-," in parsed.stdout, parsed.stdout
             assert "Y:-,-,-,-,-,-,-,l:0.0,6.0:4.0,4.0," in parsed.stdout, parsed.stdout
+        if example.name == "168-chorus-stereo-width.py":
+            assert "A:0" in parsed.stdout and "B:0.35,0.151515" in parsed.stdout
+        if example.name == "169-flanger-sweep.py":
+            assert "A:0" in parsed.stdout and "B:0.2," in parsed.stdout
+            assert "l:0.2,0.55:4.0,4.0" in parsed.stdout, parsed.stdout
+            assert "v:0.017721518987" in parsed.stdout, parsed.stdout
+        if example.name == "170-chorus-flanger-together.py":
+            assert "A:0" in parsed.stdout and "A:1" in parsed.stdout
     for invalid in (
             "OK\t0\t0\t17\n",
             "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",

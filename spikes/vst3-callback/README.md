@@ -619,6 +619,20 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
 - A MIDI output event bus is exposed to the host.
 
+## Per-player modulation inserts (0.4.135)
+
+Chorus and Flanger are optional per-player inserts loaded from the bundled
+`Portable/SynthDefs/Chorus.scsyndef` and `Flanger.scsyndef` files. Their
+precompiled SynthDefs use stock SuperCollider UGens only (`DelayC`, `SinOsc`,
+`LocalIn/LocalOut`, `LeakDC`, and `LPF`); they add no compiled UGen module,
+third-party DSP library, or SuperCollider rebuild. Each player has independent
+effect state, smoothed `fx_*` controls, stereo modulation, and a dry bypass.
+The `effect=` and `fx_*` syntax is a Dexter U.S. plugin extension rather than
+stock FoxDot syntax. See Portable Examples 168–170. For source regeneration,
+run `python tools/build-modulation-synthdefs.py` with `sclang`; the generated
+SynthDefs are checked in. The optional audio regression is
+`python tools/test-modulation-synthdefs-audio.py`.
+
 ## Prototype limits
 
 - Version 0.4.45 rounds both SuperCollider hash-table capacities up to powers of two. The previous graph-definition capacity of 31 violated the pinned hash implementation's bit-mask probing requirement. Compile-time guards and a bounded probing regression test cover this constraint. Lifecycle timing traces remain enabled outside the audio callback; Windows CI preserves validator logs and treats timeout or failure as a workflow failure. Resolution of the host freeze still requires runtime verification.

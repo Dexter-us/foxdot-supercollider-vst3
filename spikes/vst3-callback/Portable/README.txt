@@ -1,5 +1,17 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.135 adds the stock-UGen Chorus and Flanger per-player inserts.
+They are precompiled SynthDefs in SynthDefs/ and need no additional UGen
+module. See Examples 168-170 for isolated and combined usage. The controls
+effect=, fx_mix, fx_rate, fx_depth, fx_delay, fx_spread, fx_feedback, and
+fx_tone are Dexter U.S. plugin extensions, not stock FoxDot controls.
+Chorus ranges: mix 0-1, rate 0.05-5 Hz, depth 0-1, delay 0.005-0.04 s,
+spread 0-1, feedback 0-0.75, tone 200-16000 Hz. Flanger ranges: mix 0-1,
+rate 0.05-4 Hz, depth 0-1, delay 0.0005-0.015 s, spread 0-1, feedback
+0-0.95, tone 200-16000 Hz. Control values accept scalars and var()/linvar();
+they are smoothed by the player insert. Flanger feedback is bounded to prevent
+runaway regeneration.
+
 Version 0.4.134 adds an optional, separately built JPverb/Greyhole UGen pack.
 Use effect="JPverb" or effect="Greyhole" with fx_* controls on synth or sample
 players. Scalar, var(), and linvar() effect controls are smoothed and kept

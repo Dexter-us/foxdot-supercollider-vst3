@@ -2972,7 +2972,8 @@ private:
 
     static bool isPersistentPlayerEffectName(std::string_view name) {
         return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam" ||
-               name == "JPverb" || name == "Greyhole";
+               name == "JPverb" || name == "Greyhole" ||
+               name == "Chorus" || name == "Flanger";
     }
 
     static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
@@ -3108,6 +3109,8 @@ private:
                     userDefinition.name == "AirwindowsEchojam";
                 const bool isJPverb = userDefinition.name == "JPverb";
                 const bool isGreyhole = userDefinition.name == "Greyhole";
+                const bool isChorus = userDefinition.name == "Chorus";
+                const bool isFlanger = userDefinition.name == "Flanger";
                 const uint32 expectedControlCount =
                     isTapeDelay ? 8u : isEchojam ? 6u : 9u;
                 if (loaded->mNumControls != expectedControlCount) {
@@ -3146,6 +3149,24 @@ private:
                     userDefinition.effectControlMaximum =
                         std::array<float, 7>{{1.0f, 1.45f, 0.99f, 3.0f,
                                               0.99f, 0.98f, 1.0f}};
+                } else if (isChorus) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f, 0.005f,
+                                              0.0f, 0.0f, 200.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 5.0f, 1.0f, 0.04f,
+                                              1.0f, 0.75f, 16000.0f}};
+                } else if (isFlanger) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f, 0.0005f,
+                                              0.0f, 0.0f, 200.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 4.0f, 1.0f, 0.015f,
+                                              1.0f, 0.95f, 16000.0f}};
                 }
                 const std::array<bool, 7> requiredEffectControls =
                     isTapeDelay

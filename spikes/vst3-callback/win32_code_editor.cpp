@@ -88,7 +88,8 @@ constexpr char kFoxDotApiKeywords[] =
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
     "effect fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
-    "fx_delay fx_diff fx_feedback JPverb Greyhole "
+    "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
+    "JPverb Greyhole Chorus Flanger "
     "vib depth lforate lfowidth rq fmod blur sample "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
     "echo delay mute unmute rate start end loop stretch shuffle repeat stutter "
@@ -102,7 +103,8 @@ constexpr char kFoxDotCompletions[] =
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
     "effect fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
-    "fx_delay fx_diff fx_feedback JPverb Greyhole "
+    "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
+    "JPverb Greyhole Chorus Flanger "
     "vib depth lforate lfowidth rq fmod blur sample start end loop stretch "
     "shuffle repeat stutter palindrome mirror accum swap reverse rotate invert transpose arp splice sort unduplicate replace layer trim ltrim normalise choose zip deepzip deeprzip map pivot true_shuffle shufflets";
 
@@ -916,7 +918,8 @@ private:
                 for (const auto& name : externalNames) {
                     if (name == "AirwindowsTapeDelay2" ||
                         name == "AirwindowsEchojam" ||
-                        name == "JPverb" || name == "Greyhole")
+                        name == "JPverb" || name == "Greyhole" ||
+                        name == "Chorus" || name == "Flanger")
                         continue;
                     addPanelRow(fromUtf8(name) + L"  [Portable SynthDef]");
                 }
@@ -947,6 +950,12 @@ private:
                 addPanelRow(loaded("Greyhole")
                                 ? L"Greyhole  [loaded optional UGen]"
                                 : L"Greyhole  [install optional UGen pack]");
+                addPanelRow(loaded("Chorus")
+                                ? L"Chorus  [player effect]"
+                                : L"Chorus  [SynthDef unavailable]");
+                addPanelRow(loaded("Flanger")
+                                ? L"Flanger  [player effect]"
+                                : L"Flanger  [SynthDef unavailable]");
             }
             renderLiveEffectsPanel();
         } else if (tab == 3) {
