@@ -1,5 +1,10 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.133 adds bounded FoxDot `chop` and stereo `spin` controls for synth
+and WAV players. `chop` gates the sustain into pulses (0–32); `spin` applies
+FoxDot's stereo sine-pan motion (0–40). Both accept scalar, finite P[], var(),
+and linvar() controls. See Example 165.
+
 Version 0.4.132 adds FoxDot `vibdepth`, `slide`, `slidefrom`, and `bend`
 controls, with `slidedelay`/`benddelay`. Slide and bend follow the bundled
 FoxDot SynthDef amplitude envelopes (not pitch glides). Scalar, var()/linvar(),

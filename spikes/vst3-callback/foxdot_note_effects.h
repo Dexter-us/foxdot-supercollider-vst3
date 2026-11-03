@@ -43,4 +43,34 @@ inline float foxDotNoteEffectGain(double progress, float slide,
         : 1.0f;
 }
 
+// Mirrors FoxDot's chop.scd: LFPulse.kr(chop / sus, add: 0.01).
+// progress is normalized over the note sustain, so `chop` is the number
+// of half-on/half-off cycles across that sustain.
+inline float foxDotChopGain(double progress, float chop) {
+    if (!std::isfinite(progress) || !std::isfinite(chop) || chop <= 0.0f)
+        return 1.0f;
+    const double phase = std::fmod(std::clamp(progress, 0.0, 1.0) * chop, 1.0);
+    return phase < 0.5 ? 1.01f : 0.01f;
+}
+
+struct FoxDotSpinGains {
+    float left = 1.0f;
+    float right = 1.0f;
+};
+
+// Mirrors FoxDot's spinPan.scd: two FSinOscs at spin/2 Hz, with initial
+// phases 1 and 3 radians and outputs scaled from 0 to 1.
+inline FoxDotSpinGains foxDotSpinGains(double elapsedSeconds, float spin) {
+    if (!std::isfinite(elapsedSeconds) || !std::isfinite(spin) ||
+        spin <= 0.0f)
+        return {};
+    const double phase = 2.0 * 3.14159265358979323846 *
+        (static_cast<double>(spin) * 0.5) *
+        std::max(0.0, elapsedSeconds);
+    return {
+        static_cast<float>(0.5 + 0.5 * std::sin(phase + 1.0)),
+        static_cast<float>(0.5 + 0.5 * std::sin(phase + 3.0))
+    };
+}
+
 } // namespace dexter

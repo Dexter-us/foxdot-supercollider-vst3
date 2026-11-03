@@ -860,7 +860,9 @@ private:
                 left[index].echoEnabled != right[index].echoEnabled ||
                 left[index].reverbEnabled != right[index].reverbEnabled ||
                 left[index].shapeEnabled != right[index].shapeEnabled ||
-                left[index].driveEnabled != right[index].driveEnabled)
+                left[index].driveEnabled != right[index].driveEnabled ||
+                left[index].chopEnabled != right[index].chopEnabled ||
+                left[index].spinEnabled != right[index].spinEnabled)
                 return false;
         }
         return true;
@@ -918,6 +920,8 @@ private:
             addPanelRow(L"Low-pass / High-pass / Band-pass");
             addPanelRow(L"FoxDot shape (native player effect)");
             addPanelRow(L"FoxDot drive (native player effect)");
+            addPanelRow(L"FoxDot chop (per-note gate)");
+            addPanelRow(L"FoxDot spin (stereo pan motion)");
             addPanelRow(L"Airwindows TapeDelay2");
             addPanelRow(L"Airwindows Echojam");
             renderLiveEffectsPanel();
@@ -942,7 +946,8 @@ private:
             const auto& state = states[index];
             if (state.effectIndex < 0 && !state.echoEnabled &&
                 !state.reverbEnabled && !state.shapeEnabled &&
-                !state.driveEnabled)
+                !state.driveEnabled && !state.chopEnabled &&
+                !state.spinEnabled)
                 continue;
             foundAssignment = true;
             std::wstring row = L"p" + std::to_wstring(index + 1) + L":";
@@ -956,6 +961,10 @@ private:
                 row += L" Shape";
             if (state.driveEnabled)
                 row += L" Drive";
+            if (state.chopEnabled)
+                row += L" Chop";
+            if (state.spinEnabled)
+                row += L" Spin";
             if (state.reverbEnabled && state.reverbIndex >= 0 &&
                 state.reverbIndex < static_cast<int>(reverbs.size()))
                 row += L" " + std::wstring(
@@ -1092,6 +1101,10 @@ private:
                 row += L"  Shape";
             if (state.driveEnabled)
                 row += L"  Drive";
+            if (state.chopEnabled)
+                row += L"  Chop";
+            if (state.spinEnabled)
+                row += L"  Spin";
             const auto item = static_cast<int>(
                 SendMessageW(panelList_, LB_ADDSTRING, 0,
                              reinterpret_cast<LPARAM>(row.c_str())));

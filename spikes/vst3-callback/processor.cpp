@@ -691,10 +691,10 @@ public:
                                     "Airwindows fx_* modulation requires a selected player effect.");
                             }
                         }
-                        constexpr std::array<double, 6> noteEffectMinimum{
-                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0};
-                        constexpr std::array<double, 6> noteEffectMaximum{
-                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0};
+                        constexpr std::array<double, 8> noteEffectMinimum{
+                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0};
+                        constexpr std::array<double, 8> noteEffectMaximum{
+                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0};
                         for (std::size_t control = 0;
                              control < next.noteEffectControls.size(); ++control) {
                             if (!parseTimeVarControl(
@@ -703,7 +703,7 @@ public:
                                     noteEffectMaximum[control],
                                     next.noteEffectControls[control]))
                                 throw std::runtime_error(
-                                    "Invalid vibdepth/slide/bend var control from Python.");
+                                    "Invalid vibdepth/slide/bend/chop/spin var control from Python.");
                         }
                         if (next.synthIndex == 57) {
                             if (!parseTimeVarControl(player.sampleControlToken, -1000000.0, 1000000.0,
@@ -739,6 +739,16 @@ public:
                         next.drive = static_cast<float>(player.drive);
                         next.eventCount = player.events.size();
                         std::copy(player.events.begin(), player.events.end(), next.events.begin());
+                        next.chopEnabled = next.noteEffectControls[6].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.chop > 0.0;
+                                });
+                        next.spinEnabled = next.noteEffectControls[7].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.spin > 0.0;
+                                });
                         totalNotes += player.events.size();
                         updateMask |= static_cast<std::uint8_t>(1u << player.playerIndex);
                     }
@@ -889,6 +899,8 @@ public:
             state.reverbEnabled = (packed & (1u << 21)) != 0;
             state.shapeEnabled = (packed & (1u << 22)) != 0;
             state.driveEnabled = (packed & (1u << 23)) != 0;
+            state.chopEnabled = (packed & (1u << 24)) != 0;
+            state.spinEnabled = (packed & (1u << 25)) != 0;
         }
     }
 
@@ -1077,7 +1089,9 @@ private:
         float synthRate = 0.0f;
         std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
         std::array<TimeVarControl, 7> effectControlVariables{};
-        std::array<TimeVarControl, 6> noteEffectControls{};
+        std::array<TimeVarControl, 8> noteEffectControls{};
+        bool chopEnabled = false;
+        bool spinEnabled = false;
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -1149,6 +1163,8 @@ private:
                                   pattern.shapeControl.active;
         const bool driveEnabled = pattern.drive > 0.0001f ||
                                   pattern.driveControl.active;
+        const bool chopEnabled = pattern.chopEnabled;
+        const bool spinEnabled = pattern.spinEnabled;
         const auto packed =
             (pattern.active ? 1u : 0u) |
             (mutedPlayers_[player] ? 2u : 0u) |
@@ -1158,7 +1174,9 @@ private:
             (echoEnabled ? (1u << 20) : 0u) |
             (reverbEnabled ? (1u << 21) : 0u) |
             (shapeEnabled ? (1u << 22) : 0u) |
-            (driveEnabled ? (1u << 23) : 0u);
+            (driveEnabled ? (1u << 23) : 0u) |
+            (chopEnabled ? (1u << 24) : 0u) |
+            (spinEnabled ? (1u << 25) : 0u);
         editorPlayerState_[player].store(packed, std::memory_order_release);
     }
 
@@ -1231,6 +1249,8 @@ private:
         float slideDelay = 0.0f;
         float bend = 0.0f;
         float bendDelay = 0.0f;
+        float chop = 0.0f;
+        float spin = 0.0f;
         float leftGain = 0.70710678f;
         float rightGain = 0.70710678f;
         float cutoffHz = 20000.0f;
@@ -1305,6 +1325,8 @@ private:
         float slideDelay = 0.0f;
         float bend = 0.0f;
         float bendDelay = 0.0f;
+        float chop = 0.0f;
+        float spin = 0.0f;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -2492,7 +2514,13 @@ private:
                                         static_cast<float>(event.bend)),
                         evaluateTimeVar(pattern.noteEffectControls[5],
                                         absoluteStartBeat,
-                                        static_cast<float>(event.bendDelay))};
+                                        static_cast<float>(event.bendDelay)),
+                        evaluateTimeVar(pattern.noteEffectControls[6],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.chop)),
+                        evaluateTimeVar(pattern.noteEffectControls[7],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.spin))};
                     ++playerVoices;
                 }
             }
@@ -2589,6 +2617,8 @@ private:
                 found->slideDelay = note.slideDelay;
                 found->bend = note.bend;
                 found->bendDelay = note.bendDelay;
+                found->chop = note.chop;
+                found->spin = note.spin;
                 found->foxDotNativeEnvelope = note.foxDotNativeEnvelope;
                 found->userSynthGateReleased = false;
                 found->releasing = false;
@@ -3620,11 +3650,18 @@ private:
                 const float noteEffectGain = dexter::foxDotNoteEffectGain(
                     effectProgress, voice.slide, voice.slideFrom,
                     voice.slideDelay, voice.bend, voice.bendDelay);
+                const float chopGain = dexter::foxDotChopGain(
+                    effectProgress, voice.chop);
+                const double elapsedSeconds =
+                    static_cast<double>(absoluteSample - voice.startSample) /
+                    sampleRate_;
+                const auto spinGains = dexter::foxDotSpinGains(
+                    elapsedSeconds, voice.spin);
                 const float amplitude = shaped * envelope * velocity *
-                    voice.amplitude * noteEffectGain;
+                    voice.amplitude * noteEffectGain * chopGain;
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
-                playerLeft[player] += amplitude * voice.leftGain;
-                playerRight[player] += amplitude * voice.rightGain;
+                playerLeft[player] += amplitude * voice.leftGain * spinGains.left;
+                playerRight[player] += amplitude * voice.rightGain * spinGains.right;
                 playerHasVoice[player] = playerMuteGain_[player] > 1e-4f;
                 if (playerMuteGain_[player] > 1e-4f)
                     ++contributingVoices;

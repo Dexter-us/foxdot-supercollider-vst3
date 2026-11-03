@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test the per-note FoxDot slide/slidefrom/bend envelope curves."""
+"""Test the per-note FoxDot amplitude, chop, and spin effect curves."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,6 +16,8 @@ static bool near(float actual, float expected) {
 
 int main() {
     using dexter::foxDotNoteEffectGain;
+    using dexter::foxDotChopGain;
+    using dexter::foxDotSpinGains;
     if (!near(foxDotNoteEffectGain(0.0, 0.5f, 0.0f, 0.25f, 0.0f, 0.0f), 1.0f) ||
         !near(foxDotNoteEffectGain(0.25, 0.5f, 0.0f, 0.25f, 0.0f, 0.0f), 1.0f) ||
         !near(foxDotNoteEffectGain(0.625, 0.5f, 0.0f, 0.25f, 0.0f, 0.0f), 1.25f) ||
@@ -40,6 +42,29 @@ int main() {
               0.6f) ||
         foxDotNoteEffectGain(NAN, 0.5f, 0.5f, 0.0f, 0.5f, 0.0f) != 1.0f)
         return 5;
+    if (!near(foxDotChopGain(0.0, 4.0f), 1.01f) ||
+        !near(foxDotChopGain(0.124, 4.0f), 1.01f) ||
+        !near(foxDotChopGain(0.125, 4.0f), 0.01f) ||
+        !near(foxDotChopGain(0.25, 4.0f), 1.01f) ||
+        !near(foxDotChopGain(0.5, 4.0f), 1.01f) ||
+        !near(foxDotChopGain(0.75, 4.0f), 1.01f) ||
+        !near(foxDotChopGain(0.5, 0.0f), 1.0f) ||
+        foxDotChopGain(NAN, 4.0f) != 1.0f)
+        return 6;
+    const auto spinStart = foxDotSpinGains(0.0, 4.0f);
+    const auto spinQuarter = foxDotSpinGains(0.25, 4.0f);
+    if (!near(spinStart.left,
+              static_cast<float>(0.5 + 0.5 * std::sin(1.0))) ||
+        !near(spinStart.right,
+              static_cast<float>(0.5 + 0.5 * std::sin(3.0))) ||
+        !near(spinQuarter.left,
+              static_cast<float>(0.5 + 0.5 * std::sin(3.14159265358979323846 + 1.0))) ||
+        !near(spinQuarter.right,
+              static_cast<float>(0.5 + 0.5 * std::sin(3.14159265358979323846 + 3.0))) ||
+        foxDotSpinGains(0.0, 0.0f).left != 1.0f ||
+        foxDotSpinGains(0.0, 0.0f).right != 1.0f ||
+        foxDotSpinGains(NAN, 4.0f).left != 1.0f)
+        return 7;
     return 0;
 }
 """
@@ -54,4 +79,4 @@ with tempfile.TemporaryDirectory() as directory:
     ], check=True)
     subprocess.run([str(binary)], check=True)
 
-print("PASS: FoxDot slide/slidefrom/bend per-note envelope curves")
+print("PASS: FoxDot slide/bend envelopes, chop gating, and spin panning curves")

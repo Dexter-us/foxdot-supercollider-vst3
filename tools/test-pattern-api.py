@@ -26,7 +26,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.132' not in cmake_source or
+if ('VERSION 0.4.133' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -37,13 +37,17 @@ for live_panel_fragment in (
         'renderSamplePanel()', 'Open Samples Folder', 'panelVersion_',
         'setEditorPlayerMuted(', 'stopEditorPlayer(',
         'FoxDot shape (native player effect)',
-        'FoxDot drive (native player effect)'):
+        'FoxDot drive (native player effect)',
+        'FoxDot chop (per-note gate)',
+        'FoxDot spin (stereo pan motion)'):
     if live_panel_fragment not in editor_source + editor_host_source:
         raise AssertionError('Live engine panel is missing: ' + live_panel_fragment)
 for snapshot_fragment in (
         'editorPlayerState_[player].store',
         'editorPlayerState_[player].load',
-        'publishEditorPlayerState(player)'):
+        'publishEditorPlayerState(player)',
+        '1u << 24',
+        '1u << 25'):
     if snapshot_fragment not in processor_source:
         raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (
@@ -2772,6 +2776,38 @@ assert [float(row[4]) for row in shapeDriveExampleControls] == [0.0, 0.0, 0.25]
 assert [float(row[5]) for row in shapeDriveExampleControls] == [0.0, 0.1, 0.0]
 assert shapeDriveExampleControls[0][8].startswith('v:')
 assert shapeDriveExampleControls[1][9].startswith('l:')
+chopSpinExampleText = open(os.path.join(
+    sys.argv[2], '165-foxdot-chop-spin.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    chopSpinExampleText)
+chopSpinRows, chopSpinEvents = run_script(
+    chopSpinExampleText, include_events=True)
+assert len(chopSpinRows) == 3
+assert any(float(event[14]) == 4.0 for event in chopSpinEvents)
+assert any(float(event[15]) == 2.0 for event in chopSpinEvents)
+for fxName, invalidFxValues in (
+        ('chop', (-0.01, 32.01, float('nan'), True)),
+        ('spin', (-0.01, 40.01, float('nan'), True))):
+    for invalidFxValue in invalidFxValues:
+        try:
+            namespace['saw']([0], **{fxName: invalidFxValue})
+        except (ValueError, TypeError):
+            pass
+        else:
+            raise AssertionError(f'{fxName} accepted out-of-range input')
+        if not isinstance(invalidFxValue, bool):
+            try:
+                namespace['saw'](
+                    [0], **{fxName: namespace['var']([0, invalidFxValue], 4)})
+            except (ValueError, TypeError):
+                pass
+            else:
+                raise AssertionError(f'{fxName} var accepted out-of-range input')
+compat_chop_spin = run_compatibility_check(
+    'p1 >> saw([0, 2], chop=var([4, 8], 4), spin=linvar([0, 6], 8))\n'
+    'p2 >> play("x---", dur=1, chop=8, spin=2)\n'
+    'Group(p1, p2).spin = var([2, 4], 4)\n')
+assert 'No unsupported constructs detected' in compat_chop_spin, compat_chop_spin
 compat_pattern_internal_methods = run_compatibility_check(
     'notes = P[0, 2, 4]\n'
     'notes.eq(2)\n'

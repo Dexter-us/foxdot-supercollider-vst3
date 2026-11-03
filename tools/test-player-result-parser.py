@@ -94,7 +94,8 @@ int main(int argc, char** argv) {
         for (const auto& event : player.events)
             std::cout << "N:" << event.vibDepth << ':' << event.slide << ':'
                       << event.slideFrom << ':' << event.slideDelay << ':'
-                      << event.bend << ':' << event.bendDelay << ' ';
+                      << event.bend << ':' << event.bendDelay << ':'
+                      << event.chop << ':' << event.spin << ' ';
         std::cout << "Y:";
         for (const auto& token : player.noteEffectControlTokens)
             std::cout << token << ',';
@@ -123,7 +124,8 @@ with tempfile.TemporaryDirectory() as directory:
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
                                 capture_output=True, text=True)
-        assert parsed.returncode == 0, (example.name, parsed.stderr)
+        assert parsed.returncode == 0, (
+            example.name, parsed.stderr, result.read_text())
         if example.name == "106-diskin-streaming.py":
             assert "D:1:0:DiskIO/drum-loop.wav:1:0" in parsed.stdout, parsed.stdout
         if example.name == "107-vdiskin-variable-rate.py":
@@ -154,8 +156,13 @@ with tempfile.TemporaryDirectory() as directory:
         if example.name == "164-foxdot-vibrato-slide-bend.py":
             assert "N:0.02:0:0:0:0.25:0.2" in parsed.stdout, parsed.stdout
             assert "N:0.5:0.55:0:0.35:0:0" in parsed.stdout, parsed.stdout
-            assert "Y:-,-,-,v:0.35,0.5:4.0,4.0,-,-," in parsed.stdout, parsed.stdout
-            assert "Y:v:0.02,0.04:4.0,4.0,-,-,-,-," in parsed.stdout, parsed.stdout
+            assert "Y:-,-,-,v:0.35,0.5:4.0,4.0,-,-,-,-," in parsed.stdout, parsed.stdout
+            assert "Y:v:0.02,0.04:4.0,4.0,-,-,-,-,-,-," in parsed.stdout, parsed.stdout
+        if example.name == "165-foxdot-chop-spin.py":
+            assert "N:0.5:0:0:0:0:0:4:0" in parsed.stdout, parsed.stdout
+            assert "N:0.5:0:0:0:0:0:8:2" in parsed.stdout, parsed.stdout
+            assert "Y:-,-,-,-,-,-,v:4.0,8.0:4.0,4.0,-," in parsed.stdout, parsed.stdout
+            assert "Y:-,-,-,-,-,-,-,l:0.0,6.0:4.0,4.0," in parsed.stdout, parsed.stdout
     for invalid in (
             "OK\t0\t0\t17\n",
             "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",
@@ -182,7 +189,28 @@ with tempfile.TemporaryDirectory() as directory:
     rejected_vibdepth = subprocess.run([str(binary), str(result), "0"],
                                        capture_output=True, text=True)
     assert rejected_vibdepth.returncode == 1
-    assert "vibdepth/slide/bend var control" in rejected_vibdepth.stderr
+    assert "vibdepth/slide/bend/chop/spin var control" in rejected_vibdepth.stderr
+    chop_spin_example = plugin / "Portable" / "165-foxdot-chop-spin.py"
+    chop_spin_wrapper = api_tests["make_wrapper"](
+        str(chop_spin_example), str(result))
+    exec(chop_spin_wrapper, {"__name__": "__main__"})
+    valid_chop_spin = result.read_text()
+    invalid_chop = re.sub(
+        r"^(Y\t\d+\t-\t-\t-\t-\t-\t-\t)v:4\.0,8\.0:",
+        r"\g<1>v:33,8.0:", valid_chop_spin, count=1, flags=re.M)
+    assert invalid_chop != valid_chop_spin
+    result.write_text(invalid_chop)
+    rejected_chop = subprocess.run([str(binary), str(result), "0"],
+                                   capture_output=True, text=True)
+    assert rejected_chop.returncode == 1
+    invalid_spin = re.sub(
+        r"^(Y\t\d+\t-\t-\t-\t-\t-\t-\t-\t)l:0\.0,6\.0:",
+        r"\g<1>l:0.0,41:", valid_chop_spin, count=1, flags=re.M)
+    assert invalid_spin != valid_chop_spin
+    result.write_text(invalid_spin)
+    rejected_spin = subprocess.run([str(binary), str(result), "0"],
+                                   capture_output=True, text=True)
+    assert rejected_spin.returncode == 1
     user_synth_example = plugin / "Portable" / "94-user-synthdef-loader.py"
     user_synth_wrapper = api_tests["make_wrapper"](
         str(user_synth_example), str(result), ("CustomPluck",))

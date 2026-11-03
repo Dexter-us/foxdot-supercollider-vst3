@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.133 adds bounded FoxDot `chop` and `spin` effects to synth and WAV
+players. `chop` gates the note into pulses across its sustain (0–32); `spin`
+adds the original stereo sine-pan motion (0–40). Both accept scalar, finite
+Pattern, `var()`, and `linvar()` controls and appear in the live Effects panel
+and compatibility checker. Portable Example 165 demonstrates both.
+
 Version 0.4.132 adds FoxDot-compatible `vibdepth`, `slide`, `slidefrom`, and
 `bend` note controls, including `slidedelay` and `benddelay`. The slide and bend
 controls follow FoxDot's bundled SynthDef amplitude envelopes; they do not
