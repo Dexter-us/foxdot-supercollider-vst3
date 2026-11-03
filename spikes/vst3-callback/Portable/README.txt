@@ -1,5 +1,11 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.118 adds Pattern .every(n, method, *args). It repeats the original
+finite phrase n-1 times, then appends one transformed copy. The safe supported
+transforms are reverse, rotate, mirror, shuffle, and stutter; output is capped
+at 256 items. Arbitrary method names and keyword arguments are rejected. See
+Example 149.
+
 Version 0.4.117 adds .limit(func, value) for finite numeric note patterns. It
 accepts only the pure built-in sum, max, and len aggregators and caps output at
 256 items. Unreachable max thresholds, empty patterns, nested chords, samples,

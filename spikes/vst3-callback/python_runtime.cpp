@@ -138,7 +138,7 @@ _COMPAT_PATTERN_METHODS = {
     'select', 'normalise',
     'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
     'stutter', 'palindrome', 'expand', 'count', 'index', 'submap', 'concat',
-    'add', 'abs', 'all', 'startswith', 'limit'
+    'add', 'abs', 'all', 'startswith', 'limit', 'every'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
@@ -2083,6 +2083,45 @@ class _FoxDotFinitePattern(list):
             if output_length >= 256:
                 raise ValueError('limit output did not reach its threshold within 256 items')
             output.append(self[output_length % pattern_length])
+
+    def every(self, count, method, *args, **kwargs):
+        """Repeat a phrase, then append one allowlisted transformed copy."""
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError('every count must be a whole number')
+        if not 1 <= count <= 256:
+            raise ValueError('every count must be from 1 to 256')
+        if len(self) > 256:
+            raise ValueError('every input is limited to 256 items')
+        if not isinstance(method, str):
+            raise TypeError('every transform must be a supported method name')
+        if kwargs:
+            raise TypeError('every does not accept keyword arguments')
+
+        if method in ('reverse', 'mirror'):
+            if args:
+                raise TypeError('every ' + method + ' takes no arguments')
+            transformed = self.reverse() if method == 'reverse' else self.mirror()
+        elif method == 'rotate':
+            amount = 1 if not args else args[0]
+            if len(args) > 1 or isinstance(amount, bool) or not isinstance(amount, int):
+                raise TypeError('every rotate accepts one whole-number amount')
+            transformed = self.rotate(amount)
+        elif method in ('shuffle', 'stutter'):
+            if len(args) > 1:
+                raise TypeError('every ' + method + ' accepts at most one count')
+            amount = (1 if method == 'shuffle' else 2) if not args else args[0]
+            if isinstance(amount, bool) or not isinstance(amount, int):
+                raise TypeError('every ' + method + ' count must be a whole number')
+            transformed = self.shuffle(amount) if method == 'shuffle' else self.stutter(amount)
+        else:
+            raise ValueError(
+                'every supports only reverse, rotate, mirror, shuffle, and stutter')
+
+        expanded_length = len(self) * (count - 1) + len(transformed)
+        if expanded_length > 256:
+            raise ValueError('every output is limited to 256 items')
+        return _FoxDotFinitePattern(
+            list(self) * (count - 1) + list(transformed))
 
     def pivot(self, index):
         indices = (list(index) if isinstance(

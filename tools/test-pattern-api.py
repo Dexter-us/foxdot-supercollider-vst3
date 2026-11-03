@@ -687,6 +687,35 @@ for invalid_method_batch in (
     else:
         raise AssertionError('concat/add/abs/all bounds or type checks failed')
 limit_builtins = namespace['__builtins__']
+every_source = namespace['P'][0, 1, 2]
+assert every_source.every(3, 'reverse') == [0, 1, 2, 0, 1, 2, 2, 1, 0]
+assert every_source.every(2, 'rotate', 1) == [0, 1, 2, 1, 2, 0]
+assert namespace['P'][1, 3].every(2, 'stutter', 2) == [
+    1, 3, 1, 1, 3, 3]
+assert namespace['P'][1, 2].every(2, 'mirror') == [1, 2, 2, 1]
+every_shuffle = namespace['P'][1, 2, 3].every(2, 'shuffle')
+assert len(every_shuffle) == 6 and every_shuffle[:3] == [1, 2, 3]
+assert sorted(every_shuffle[3:]) == [1, 2, 3]
+assert namespace['P']['x', 'o', '-'].every(2, 'reverse') == [
+    'x', 'o', '-', '-', 'o', 'x']
+assert every_source == [0, 1, 2]
+for invalid_every_index, invalid_every in enumerate((
+        lambda: every_source.every(0, 'reverse'),
+        lambda: every_source.every(257, 'reverse'),
+        lambda: every_source.every(True, 'reverse'),
+        lambda: every_source.every(2, 'append', 3),
+        lambda: every_source.every(2, 'reverse', unexpected=True),
+        lambda: every_source.every(2, 'rotate', 1.5),
+        lambda: namespace['P'][1].every(257, 'reverse'),
+        lambda: namespace['P'][0, 1].every(200, 'stutter', 2))):
+    try:
+        invalid_every()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError(
+            'every must enforce transform and output bounds: ' +
+            str(invalid_every_index))
 assert namespace['P'][0, 1, 2, 3].limit(
     limit_builtins['sum'], 10) == [0, 1, 2, 3, 0, 1, 2, 3]
 assert namespace['P'][1, 2, 3].limit(
@@ -2304,6 +2333,15 @@ example148, example148Events = run_script(
     example148Text, include_events=True)
 assert {int(row[1]) for row in example148 if row[2] == '0'} == {0, 1, 2}
 assert len(example148Events) == 16
+example149Text = open(os.path.join(
+    sys.argv[2], '149-pattern-every-transforms.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example149Text)
+example149, example149Events = run_script(
+    example149Text, include_events=True)
+assert {int(row[1]) for row in example149 if row[2] == '0'} == {0, 1, 2}
+assert len(example149Events) == 27
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)

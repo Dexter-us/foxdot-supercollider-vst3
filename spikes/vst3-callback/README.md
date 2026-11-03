@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.118 adds FoxDot-style Pattern `.every(n, method, *args)`.
+It repeats the original finite phrase `n-1` times and appends one transformed
+copy. The embedded subset allows `reverse`, `rotate`, `mirror`, `shuffle`, and
+`stutter`, caps output at 256 items, and rejects arbitrary method names and
+keyword arguments. Portable Example 149 demonstrates the transforms.
+
 Version 0.4.117 adds `.limit(func, value)` for finite numeric note patterns.
 Only the pure built-in `sum`, `max`, and `len` aggregators are accepted; the
 pattern cycles until the threshold is reached, with a 256-item output cap.
