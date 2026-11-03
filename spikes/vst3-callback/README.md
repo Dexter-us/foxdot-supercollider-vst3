@@ -1,5 +1,30 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.123 adds in-place Pattern `.append(item)` and `.extend(sequence)`,
+matching FoxDot's `None` return behavior. Inputs are copied before insertion,
+shared references to the destination Pattern see the mutation, and numeric-note
+patterns cannot be mixed with sample-symbol patterns. Only bounded finite
+sequences are accepted; top-level output, nested values, and groups are limited
+to 256 items, 256 values, and 8 notes respectively. Portable Example 154 shows
+shared mutation and an independent `.copy()`.
+
+Version 0.4.122 adds bounded Pattern `.str()` conversion. Numeric values become
+text, while sample symbols and rests remain unchanged; numeric text carries an
+internal marker so it is not treated as sample notation or a numeric chord.
+Nested groups are preserved, with a 256-value and 16-level limit. Portable
+Example 153 demonstrates the separate sample-string and numeric-note paths.
+
+Version 0.4.121 adds bounded Pattern `.int()` and `.float()` conversions.
+They recursively convert finite numeric notes and chord members, preserve rests
+and nested pattern/group structure, and leave the source unchanged. Inputs are
+limited to 256 values and 16 nesting levels; sample strings, booleans, and
+non-finite values are rejected. Portable Example 152 demonstrates both.
+
+Version 0.4.120 adds bounded Pattern `.asGroup()` and `.group()` aliases.
+Each wraps a flat finite numeric note pattern as one simultaneous chord, matching
+FoxDot; the embedded chord limit is 8 notes, and empty, nested, sample, rest,
+and non-finite inputs are rejected. Portable Example 151 demonstrates both.
+
 Version 0.4.119 adds bounded, non-mutating Pattern `.copy()`. It recursively
 copies finite pattern/group containers, keeps chord-group types, and enforces
 256 values and 16 nesting levels. Editing a copied nested pattern does not

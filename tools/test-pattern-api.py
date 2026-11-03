@@ -706,6 +706,142 @@ copy_scalar_source = namespace['P'][1, 2, 3]
 copy_scalar_result = copy_scalar_source.copy()
 assert copy_scalar_result == [1, 2, 3]
 assert copy_scalar_result is not copy_scalar_source
+group_source = namespace['P'][0, 2, 4, 7]
+as_group_result = group_source.asGroup()
+group_result = group_source.group()
+assert isinstance(as_group_result, namespace['_FoxDotChord'])
+assert as_group_result == (0, 2, 4, 7)
+assert isinstance(group_result, namespace['_FoxDotChord'])
+assert group_result == as_group_result
+assert group_source == [0, 2, 4, 7]
+int_source = namespace['_FoxDotFinitePattern']([
+    1.9, -1.9, None,
+    namespace['_FoxDotFinitePattern']([2.8, -3.8]),
+    namespace['PGroup'](4.9, 5)])
+int_result = int_source.int()
+assert int_result == [1, -1, None, [2, -3], namespace['PGroup'](4, 5)]
+assert isinstance(int_result[3], namespace['_FoxDotFinitePattern'])
+assert isinstance(int_result[4], namespace['_FoxDotChord'])
+assert int_source[0] == 1.9 and int_source[3][0] == 2.8
+float_result = int_source.float()
+assert float_result == [1.9, -1.9, None, [2.8, -3.8],
+                        namespace['PGroup'](4.9, 5.0)]
+assert isinstance(float_result[4], namespace['_FoxDotChord'])
+str_source = namespace['_FoxDotFinitePattern']([
+    0, 1.5, -2, None, namespace['PGroup'](3, 4),
+    namespace['_FoxDotFinitePattern'](['x', 'o', '-'])])
+str_result = str_source.str()
+assert str_result == [
+    '0', '1.5', '-2', None, ('3', '4'),
+    namespace['_FoxDotFinitePattern'](['x', 'o', '-'])]
+assert isinstance(str_result[0], namespace['_FoxDotNumericText'])
+assert not isinstance(str_result[4], namespace['_FoxDotChord'])
+assert isinstance(str_result[5], namespace['_FoxDotFinitePattern'])
+assert str_source[0] == 0 and str_source[4] == namespace['PGroup'](3, 4)
+sample_str_result = namespace['P']['x', 'o', '-'].str()
+assert sample_str_result == ['x', 'o', '-']
+assert all(namespace['_sample_symbols_for_item'](item) is not None
+           for item in sample_str_result)
+numeric_str_result = namespace['P'][0, 2, 4].str()
+assert numeric_str_result == ['0', '2', '4']
+assert all(isinstance(item, namespace['_FoxDotNumericText'])
+           for item in numeric_str_result)
+assert all(namespace['_sample_symbols_for_item'](item) is None
+           for item in numeric_str_result)
+assert namespace['_sample_symbols_for_item']('2') == ['2']
+try:
+    numeric_str_result.asGroup()
+except (TypeError, ValueError):
+    pass
+else:
+    raise AssertionError('numeric text must not become chord pitch data')
+assert namespace['_FoxDotFinitePattern']().int() == []
+assert namespace['_FoxDotFinitePattern']().float() == []
+mutation_source = namespace['P'][0, 2, 4]
+mutation_shared = mutation_source
+mutation_copy = mutation_source.copy()
+assert mutation_source.append(6) is None
+assert mutation_shared == [0, 2, 4, 6]
+assert mutation_copy == [0, 2, 4]
+nested_append_input = [7, 9]
+assert mutation_source.append(nested_append_input) is None
+nested_append_input[0] = 99
+assert mutation_source[-1] == [7, 9]
+assert mutation_source[-1] is not nested_append_input
+extend_source = namespace['P'][1]
+extend_shared = extend_source
+assert extend_source.extend([3, 5]) is None
+assert extend_shared == [1, 3, 5]
+assert extend_source.extend(namespace['P'][7, 9]) is None
+assert extend_source == [1, 3, 5, 7, 9]
+sample_mutation = namespace['P']['x']
+assert sample_mutation.extend('o-') is None
+assert sample_mutation == ['x', 'o', '-']
+full_pattern = namespace['_FoxDotFinitePattern'](range(256))
+full_pattern_alias = full_pattern
+for invalid_mutation in (
+        lambda: full_pattern.append(256),
+        lambda: extend_source.extend(iter([11, 12])),
+        lambda: namespace['P'][0].extend(range(257)),
+        lambda: namespace['P'][0].extend(range(256)),
+        lambda: namespace['P'][0].append('x'),
+        lambda: namespace['P']['x'].append(1),
+        lambda: namespace['P'][0].append(float('inf')),
+        lambda: namespace['P'][0].append(namespace['PGroup'](*range(9))),
+        lambda: namespace['P'][0].append(namespace['P'][0, 1].str()[0])):
+    try:
+        invalid_mutation()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError(
+            'append/extend must enforce mutation type and size bounds')
+assert len(full_pattern_alias) == 256
+boundary_pattern = namespace['_FoxDotFinitePattern'](range(255))
+assert boundary_pattern.extend([255]) is None
+assert len(boundary_pattern) == 256 and boundary_pattern[-1] == 255
+try:
+    boundary_pattern.append(256)
+except ValueError:
+    pass
+else:
+    raise AssertionError('append must reject the 257th top-level item')
+too_deep_cast = namespace['P'][1]
+for _ in range(17):
+    too_deep_cast = namespace['_FoxDotFinitePattern']([too_deep_cast])
+for invalid_cast in (
+        lambda: namespace['_FoxDotFinitePattern'](range(257)).int(),
+        lambda: namespace['_FoxDotFinitePattern'](
+            [namespace['_FoxDotFinitePattern'](range(129)),
+             namespace['_FoxDotFinitePattern'](range(128))]).float(),
+        lambda: too_deep_cast.int(),
+        lambda: namespace['P'][True].int(),
+        lambda: namespace['P']['x'].float(),
+        lambda: namespace['P'][float('inf')].int(),
+        lambda: namespace['P'][float('nan')].float(),
+        lambda: namespace['P'][float('nan')].str(),
+        lambda: namespace['_FoxDotFinitePattern'](range(257)).str(),
+        lambda: too_deep_cast.str()):
+    try:
+        invalid_cast()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError(
+            'int/float must enforce numeric and finite structure bounds')
+for invalid_group in (
+        lambda: namespace['_FoxDotFinitePattern']().asGroup(),
+        lambda: namespace['P'][0, 1, 2, 3, 4, 5, 6, 7, 8].group(),
+        lambda: namespace['P'][0, None].asGroup(),
+        lambda: namespace['P']['x', 'o'].group(),
+        lambda: namespace['P'][namespace['PGroup'](0, 2), 4].asGroup()):
+    try:
+        invalid_group()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError(
+            'asGroup/group must enforce finite, flat, bounded note input')
 too_deep_copy = namespace['P'][1]
 for _ in range(17):
     too_deep_copy = namespace['_FoxDotFinitePattern']([too_deep_copy])
@@ -2383,6 +2519,55 @@ example150, example150Events = run_script(
     example150Text, include_events=True)
 assert {int(row[1]) for row in example150 if row[2] == '0'} == {0, 1}
 assert len(example150Events) == 8
+example151Text = open(os.path.join(
+    sys.argv[2], '151-pattern-as-group-chords.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example151Text)
+example151, example151Events = run_script(
+    example151Text, include_events=True)
+assert {int(row[1]) for row in example151 if row[2] == '0'} == {0, 1}
+assert len(example151Events) == 7
+assert [round(float(event[1]), 6) for event in example151Events[:4]] == [
+    0.0, 0.0, 0.0, 0.0]
+assert [round(float(event[1]), 6) for event in example151Events[4:]] == [
+    0.0, 0.0, 0.0]
+example152Text = open(os.path.join(
+    sys.argv[2], '152-pattern-numeric-casts.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example152Text)
+example152, example152Events = run_script(
+    example152Text, include_events=True)
+assert {int(row[1]) for row in example152 if row[2] == '0'} == {0, 1, 2}
+assert len(example152Events) == 11
+example153Text = open(os.path.join(
+    sys.argv[2], '153-pattern-string-casts.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example153Text)
+example153, example153Events = run_script(
+    example153Text, include_events=True)
+assert {int(row[1]) for row in example153 if row[2] == '0'} == {0, 1}
+assert len(example153Events) == 8
+example154Text = open(os.path.join(
+    sys.argv[2], '154-pattern-append-extend.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example154Text)
+example154, example154Events = run_script(
+    example154Text, include_events=True)
+assert {int(row[1]) for row in example154 if row[2] == '0'} == {0, 1, 2}, example154
+assert len(example154Events) == 20, len(example154Events)
+example155Text = open(os.path.join(
+    sys.argv[2], '155-live-pattern-mutation.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example155Text)
+example155, example155Events = run_script(
+    example155Text, include_events=True)
+assert {int(row[1]) for row in example155 if row[2] == '0'} == {0, 1, 2}
+assert len(example155Events) == 16
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)

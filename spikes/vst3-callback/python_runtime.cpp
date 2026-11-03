@@ -138,7 +138,8 @@ _COMPAT_PATTERN_METHODS = {
     'select', 'normalise',
     'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
     'stutter', 'palindrome', 'expand', 'count', 'index', 'submap', 'concat',
-    'add', 'abs', 'all', 'startswith', 'limit', 'every', 'copy'
+    'add', 'abs', 'all', 'startswith', 'limit', 'every', 'copy',
+    'asGroup', 'group', 'int', 'float', 'str', 'append', 'extend'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
@@ -2156,6 +2157,215 @@ class _FoxDotFinitePattern(list):
         return _FoxDotFinitePattern([
             clone(item, 1) for item in self])
 
+    def asGroup(self):
+        """Treat this finite note pattern as one simultaneous chord."""
+        if not 1 <= len(self) <= 8:
+            raise ValueError('asGroup requires 1..8 notes')
+        if any(not _finite_note_number(note) for note in self):
+            raise TypeError(
+                'asGroup supports flat finite numeric note patterns only')
+        return _FoxDotChord(*self)
+
+    def group(self):
+        """FoxDot-compatible alias for asGroup()."""
+        return self.asGroup()
+
+    def _convert_numeric(self, converter, method_name):
+        """Recursively convert a bounded numeric pattern, preserving rests."""
+        if len(self) > 256:
+            raise ValueError(method_name + ' input is limited to 256 items')
+        budget = [0]
+
+        def convert(value, depth, root=False):
+            if depth > 16:
+                raise ValueError(method_name + ' nesting is limited to 16 levels')
+            if not root:
+                budget[0] += 1
+                if budget[0] > 256:
+                    raise ValueError(
+                        method_name + ' structure is limited to 256 values')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError(
+                        method_name + ' nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    convert(item, depth + 1) for item in value])
+            if isinstance(value, _FoxDotChord):
+                return _FoxDotChord(*[
+                    convert(item, depth + 1) for item in value])
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError(
+                        method_name + ' groups are limited to 256 items')
+                return tuple(convert(item, depth + 1) for item in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError(
+                        method_name + ' groups are limited to 256 items')
+                return [convert(item, depth + 1) for item in value]
+            if value is None:
+                return None
+            if not _finite_note_number(value):
+                raise TypeError(
+                    method_name + ' supports finite numeric notes and rests only')
+            try:
+                converted = converter(value)
+            except (OverflowError, TypeError, ValueError):
+                raise ValueError(
+                    method_name + ' could not convert a numeric note')
+            if not _finite_note_number(converted):
+                raise ValueError(method_name + ' results must remain finite')
+            return converted
+
+        return convert(self, 0, root=True)
+
+    def int(self):
+        """Recursively truncate finite numeric notes to whole degrees."""
+        return self._convert_numeric(int, 'int')
+
+    def float(self):
+        """Recursively convert finite numeric notes to floating-point degrees."""
+        return self._convert_numeric(float, 'float')
+
+    def str(self):
+        """Convert numeric values to text while preserving sample symbols."""
+        if len(self) > 256:
+            raise ValueError('str input is limited to 256 items')
+        budget = [0]
+
+        def convert(value, depth, root=False):
+            if depth > 16:
+                raise ValueError('str nesting is limited to 16 levels')
+            if not root:
+                budget[0] += 1
+                if budget[0] > 256:
+                    raise ValueError('str structure is limited to 256 values')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('str nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    convert(item, depth + 1) for item in value])
+            if isinstance(value, _FoxDotChord):
+                if len(value) > 8:
+                    raise ValueError('str chord groups are limited to 8 items')
+                # A tuple of text is no longer a numeric chord, so do not
+                # preserve the chord marker after converting its notes.
+                return tuple(convert(item, depth + 1) for item in value)
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('str groups are limited to 256 items')
+                return tuple(convert(item, depth + 1) for item in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('str groups are limited to 256 items')
+                return [convert(item, depth + 1) for item in value]
+            if value is None or isinstance(value, str):
+                return value
+            if not _finite_note_number(value):
+                raise TypeError(
+                    'str supports finite numeric values, sample strings, and rests only')
+            return _FoxDotNumericText(str(value))
+
+        return convert(self, 0, root=True)
+
+    def _mutation_kind(self, value, budget, depth=0):
+        """Validate one appended value and return numeric/sample/neutral kind."""
+        if depth > 16:
+            raise ValueError('append/extend nesting is limited to 16 levels')
+        budget[0] += 1
+        if budget[0] > 256:
+            raise ValueError('append/extend structure is limited to 256 values')
+        if value is None:
+            return None
+        if _finite_note_number(value):
+            return 'numeric'
+        if isinstance(value, str):
+            if (value.__class__ is str and
+                    _sample_symbols_for_item(value) is not None):
+                return 'sample'
+            raise TypeError(
+                'append/extend accepts sample symbols, not numeric text')
+        if isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+            if not 1 <= len(value) <= 8:
+                raise ValueError(
+                    'appended chord/sample groups must contain 1..8 items')
+            kinds = []
+            for child in value:
+                kind = self._mutation_kind(child, budget, depth + 1)
+                if kind is not None and kind not in kinds:
+                    kinds.append(kind)
+            if len(kinds) > 1:
+                raise TypeError(
+                    'append/extend cannot mix numeric notes and sample symbols')
+            return kinds[0] if kinds else None
+        raise TypeError(
+            'append/extend accepts finite notes, rests, groups, and sample symbols')
+
+    def _copy_mutation_item(self, value, depth=0):
+        if depth > 16:
+            raise ValueError('append/extend nesting is limited to 16 levels')
+        if isinstance(value, _FoxDotFinitePattern):
+            if len(value) > 256:
+                raise ValueError('nested pattern is limited to 256 items')
+            return _FoxDotFinitePattern([
+                self._copy_mutation_item(item, depth + 1) for item in value])
+        if isinstance(value, _FoxDotChord):
+            return _FoxDotChord(*[
+                self._copy_mutation_item(item, depth + 1) for item in value])
+        if isinstance(value, tuple):
+            return tuple(self._copy_mutation_item(item, depth + 1)
+                         for item in value)
+        if isinstance(value, list):
+            return [self._copy_mutation_item(item, depth + 1)
+                    for item in value]
+        return value
+
+    def _validate_mutation_values(self, values):
+        budget = [0]
+        kinds = []
+        for value in values:
+            kind = self._mutation_kind(value, budget)
+            if kind is not None and kind not in kinds:
+                kinds.append(kind)
+        if len(kinds) > 1:
+            raise TypeError(
+                'append/extend cannot mix numeric notes and sample symbols')
+
+    def append(self, item):
+        """Append one bounded value in place and return None, like FoxDot."""
+        if len(self) >= 256:
+            raise ValueError('append result is limited to 256 top-level items')
+        pending = list(self) + [item]
+        self._validate_mutation_values(pending)
+        copied = self._copy_mutation_item(item)
+        list.append(self, copied)
+        return None
+
+    def extend(self, sequence):
+        """Append a bounded finite sequence in place and return None."""
+        if isinstance(sequence, _FoxDotNumericText):
+            raise TypeError('extend requires sample text or a finite sequence')
+        if isinstance(sequence, (str, _FoxDotFinitePattern, list, tuple, range)):
+            try:
+                sequence_length = len(sequence)
+            except OverflowError:
+                raise ValueError('extend input is too large')
+            if sequence_length > 256:
+                raise ValueError('extend input is limited to 256 items')
+            if len(self) + sequence_length > 256:
+                raise ValueError('extend result is limited to 256 top-level items')
+            additions = list(sequence)
+        else:
+            raise TypeError(
+                'extend requires a finite Pattern, list, tuple, range, or string')
+        if not additions:
+            return None
+        pending = list(self) + additions
+        self._validate_mutation_values(pending)
+        copied = [self._copy_mutation_item(item) for item in additions]
+        list.extend(self, copied)
+        return None
+
     def pivot(self, index):
         indices = (list(index) if isinstance(
             index, (list, tuple, _FoxDotFinitePattern)) else [index])
@@ -3234,6 +3444,10 @@ class _FoxDotChord(tuple):
                 raise ValueError('PGroup chords accept numeric scale degrees only')
         return tuple.__new__(cls, notes)
 
+class _FoxDotNumericText(str):
+    """Text produced from a numeric note; never interpret it as a sample symbol."""
+    pass
+
 def PGroup(*notes):
     return _FoxDotChord(*notes)
 
@@ -4073,11 +4287,11 @@ _SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/
 _dexter_sample_eval_count = 0
 
 def _sample_symbols_for_item(item):
-    if isinstance(item, str) and len(item) == 1 and (
+    if item.__class__ is str and len(item) == 1 and (
             item == ' ' or item in _SAMPLE_SYMBOLS):
         return [] if item == ' ' else [item]
     if isinstance(item, (list, tuple)) and 1 <= len(item) <= 8:
-        if all(isinstance(symbol, str) and len(symbol) == 1 and
+        if all(symbol.__class__ is str and len(symbol) == 1 and
                (symbol == ' ' or symbol in _SAMPLE_SYMBOLS)
                for symbol in item):
             return [symbol for symbol in item if symbol != ' ']

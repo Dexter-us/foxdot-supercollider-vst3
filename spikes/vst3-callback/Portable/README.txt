@@ -1,5 +1,28 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.123 adds in-place Pattern .append(item) and .extend(sequence),
+returning None like FoxDot. Shared references to the destination observe the
+mutation, while inserted nested values are copied. Only bounded finite
+sequences are accepted. Numeric and sample-symbol patterns cannot be mixed;
+output is limited to 256 top-level items, nested values to 256, and groups to
+8 notes. Examples 154 and 155 demonstrate sharing and independent snapshots.
+
+Version 0.4.122 adds bounded Pattern .str(). Numeric values become text, while
+sample symbols and rests are kept unchanged. Numeric text carries an internal
+marker, keeping it distinct from playable sample notation and numeric chords.
+Nested groups are preserved, with 256-value and 16-level limits. See Example 153.
+
+Version 0.4.121 adds bounded Pattern .int() and .float() conversions. They
+recursively convert finite numeric notes/chord members, preserve rests and
+nested groups, and do not mutate the source. Inputs are limited to 256 values
+and 16 nesting levels; sample strings, booleans, and non-finite values are
+rejected. See Example 152.
+
+Version 0.4.120 adds bounded Pattern .asGroup() and .group() aliases. Each
+converts a flat finite numeric note pattern into one simultaneous chord, matching
+FoxDot. Chords are limited to 8 notes; empty, nested, sample, rest, and
+non-finite input is rejected. See Example 151.
+
 Version 0.4.119 adds non-mutating Pattern .copy(). Pattern/group containers
 are recursively copied, chord groups keep their type, and the copy is limited
 to 256 values and 16 nesting levels. Editing a copied nested pattern does not
