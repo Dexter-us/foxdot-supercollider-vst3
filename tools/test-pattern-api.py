@@ -26,7 +26,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.131' not in cmake_source or
+if ('VERSION 0.4.132' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2675,6 +2675,14 @@ assert namespace['swell'](0).synthRate == 1.0
 assert namespace['razz'](0).synthRate == 0.3
 assert namespace['pads'](0).attackSeconds == 0.1
 assert namespace['viola'](0, vib=8, fmod=0.5, blur=2).synthControls == (8, 0.5, 1, 0.5, 0.5, 0.5, 2)
+assert namespace['saw'](0, vib=6, vibdepth=0.02).synthControls[0:2] == (6.0, 0.02)
+assert namespace['saw'](0, vib=6, depth=0.3).synthControls[0:2] == (6.0, 0.3)
+try:
+    namespace['saw'](0, depth=0.2, vibdepth=0.3)
+except ValueError:
+    pass
+else:
+    raise AssertionError('depth and vibdepth must not silently conflict')
 for keyword, value in [('vib', float('inf')), ('rq', 0), ('blur', 0), ('lfowidth', 2)]:
     try:
         namespace['viola'](0, **{keyword: value})
@@ -2682,6 +2690,39 @@ for keyword, value in [('vib', float('inf')), ('rq', 0), ('blur', 0), ('lfowidth
         pass
     else:
         raise AssertionError('Invalid synth control accepted: ' + keyword)
+pitchEffectRows, pitchEffectEvents = run_script(
+    'p1 >> saw([0, 2, 4], dur=0.5, vib=6, '
+    'vibdepth=var([0.02, 0.04], [0.5, 0.5]), slide=P[0, 0.5, -0.25], '
+    'slidefrom=0.2, slidedelay=0.25, bend=P[0, 0.3, 0], benddelay=0.5)\n',
+    include_events=True)
+assert len(pitchEffectRows) == 1 and len(pitchEffectEvents) == 3
+assert [float(event[8]) for event in pitchEffectEvents] == [0.02, 0.04, 0.02]
+assert [float(event[9]) for event in pitchEffectEvents] == [0.0, 0.5, -0.25]
+assert all(float(event[10]) == 0.2 and float(event[11]) == 0.25
+           for event in pitchEffectEvents)
+assert [float(event[12]) for event in pitchEffectEvents] == [0.0, 0.3, 0.0]
+assert all(float(event[13]) == 0.5 for event in pitchEffectEvents)
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw([0, 2], vib=6, vibdepth=0.02, slide=0.5, '
+    'slidefrom=-0.2, slidedelay=0.3, bend=0.4, benddelay=0.1)\n')
+samplePitchRows, samplePitchBuffers, samplePitchEvents = run_script(
+    'p1 >> play("x-o", dur=0.5, slide=var([0, 0.5], [1, 1]), '
+    'slidedelay=0.25, bend=0.2, benddelay=0.4)\n',
+    include_samples=True, include_events=True)
+assert len(samplePitchRows) == 1 and len(samplePitchBuffers) == 3, (
+    len(samplePitchRows), len(samplePitchBuffers), len(samplePitchEvents))
+assert len(samplePitchEvents) == 3
+assert all(float(event[12]) == 0.2 and float(event[13]) == 0.4
+           for event in samplePitchEvents)
+for keyword, value in [('vibdepth', float('inf')), ('slide', -1.01),
+                       ('slidefrom', 4.01), ('slidedelay', 1.01),
+                       ('bend', -1.01), ('benddelay', 1.01)]:
+    try:
+        namespace['saw'](0, **{keyword: value})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Invalid note control accepted: ' + keyword)
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report

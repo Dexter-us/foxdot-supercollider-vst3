@@ -29,6 +29,7 @@
 #include "airwindows_control_smoothing.h"
 #include "master_output_gain.h"
 #include "native_player_effects.h"
+#include "foxdot_note_effects.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
@@ -690,6 +691,20 @@ public:
                                     "Airwindows fx_* modulation requires a selected player effect.");
                             }
                         }
+                        constexpr std::array<double, 6> noteEffectMinimum{
+                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0};
+                        constexpr std::array<double, 6> noteEffectMaximum{
+                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0};
+                        for (std::size_t control = 0;
+                             control < next.noteEffectControls.size(); ++control) {
+                            if (!parseTimeVarControl(
+                                    player.noteEffectControlTokens[control],
+                                    noteEffectMinimum[control],
+                                    noteEffectMaximum[control],
+                                    next.noteEffectControls[control]))
+                                throw std::runtime_error(
+                                    "Invalid vibdepth/slide/bend var control from Python.");
+                        }
                         if (next.synthIndex == 57) {
                             if (!parseTimeVarControl(player.sampleControlToken, -1000000.0, 1000000.0,
                                                      next.sampleControl) ||
@@ -1062,6 +1077,7 @@ private:
         float synthRate = 0.0f;
         std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
         std::array<TimeVarControl, 7> effectControlVariables{};
+        std::array<TimeVarControl, 6> noteEffectControls{};
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -1209,6 +1225,12 @@ private:
         int synthIndex = 0;
         float amplitude = 1.0f;
         float pan = 0.0f;
+        float vibDepth = 0.5f;
+        float slide = 0.0f;
+        float slideFrom = 0.0f;
+        float slideDelay = 0.0f;
+        float bend = 0.0f;
+        float bendDelay = 0.0f;
         float leftGain = 0.70710678f;
         float rightGain = 0.70710678f;
         float cutoffHz = 20000.0f;
@@ -1277,6 +1299,12 @@ private:
         double sampleEnd = 1.0;
         bool sampleLoop = false;
         double beatDurationSeconds = 0.5;
+        float vibDepth = 0.5f;
+        float slide = 0.0f;
+        float slideFrom = 0.0f;
+        float slideDelay = 0.0f;
+        float bend = 0.0f;
+        float bendDelay = 0.0f;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -2446,7 +2474,25 @@ private:
                             std::llround(sustainSeconds * sampleRate_)),
                         foxDotNativeEnvelope, selectedSampleBuffer,
                         event.sampleStart, event.sampleEnd, event.sampleLoop,
-                        sustainSeconds / event.durationBeats};
+                        sustainSeconds / event.durationBeats,
+                        evaluateTimeVar(pattern.noteEffectControls[0],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.vibDepth)),
+                        evaluateTimeVar(pattern.noteEffectControls[1],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.slide)),
+                        evaluateTimeVar(pattern.noteEffectControls[2],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.slideFrom)),
+                        evaluateTimeVar(pattern.noteEffectControls[3],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.slideDelay)),
+                        evaluateTimeVar(pattern.noteEffectControls[4],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.bend)),
+                        evaluateTimeVar(pattern.noteEffectControls[5],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.bendDelay))};
                     ++playerVoices;
                 }
             }
@@ -2537,6 +2583,12 @@ private:
                 found->startSample = note.startSample;
                 found->sustainEndSample = note.sustainEndSample;
                 found->endSample = note.endSample;
+                found->vibDepth = note.vibDepth;
+                found->slide = note.slide;
+                found->slideFrom = note.slideFrom;
+                found->slideDelay = note.slideDelay;
+                found->bend = note.bend;
+                found->bendDelay = note.bendDelay;
                 found->foxDotNativeEnvelope = note.foxDotNativeEnvelope;
                 found->userSynthGateReleased = false;
                 found->releasing = false;
@@ -2705,6 +2757,7 @@ private:
                             for (std::size_t control = 0; control < state.synthControls.size(); ++control)
                                 Graph_SetControl(found->activeSynth, static_cast<int>(11 + control),
                                                 static_cast<float>(state.synthControls[control]));
+                            Graph_SetControl(found->activeSynth, 12, note.vibDepth);
                             Graph_SetControl(found->activeSynth, 10, note.amplitude);
                             Graph_SetControl(found->activeSynth, 18, note.cutoffHz);
                             Graph_SetControl(found->activeSynth, 19, static_cast<float>(note.attackSeconds));
@@ -3555,7 +3608,20 @@ private:
                 shaped = processBiquad(voice.hpfState, shaped);
                 shaped = processBiquad(voice.bpfState, shaped);
                 shaped = processBiquad(voice.swellState, shaped);
-                const float amplitude = shaped * envelope * velocity * voice.amplitude;
+                const double effectDuration =
+                    voice.sustainEndSample > voice.startSample
+                    ? static_cast<double>(voice.sustainEndSample -
+                                          voice.startSample)
+                    : 0.0;
+                const double effectProgress = effectDuration > 0.0
+                    ? static_cast<double>(absoluteSample - voice.startSample) /
+                          effectDuration
+                    : 1.0;
+                const float noteEffectGain = dexter::foxDotNoteEffectGain(
+                    effectProgress, voice.slide, voice.slideFrom,
+                    voice.slideDelay, voice.bend, voice.bendDelay);
+                const float amplitude = shaped * envelope * velocity *
+                    voice.amplitude * noteEffectGain;
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
                 playerLeft[player] += amplitude * voice.leftGain;
                 playerRight[player] += amplitude * voice.rightGain;

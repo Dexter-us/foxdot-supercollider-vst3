@@ -1,5 +1,14 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.132 adds FoxDot `vibdepth`, `slide`, `slidefrom`, and `bend`
+controls, with `slidedelay`/`benddelay`. Slide and bend follow the bundled
+FoxDot SynthDef amplitude envelopes (not pitch glides). Scalar, var()/linvar(),
+and finite P[] control values are bounded and applied per note. vib is rate;
+vibdepth is depth, sharing the older depth= control (do not specify both).
+Ranges: depth 0–10, slide/bend -1–4, delays 0–1. vibdepth is wired to bundled
+synths with FoxDot vibrato controls (Example 164 uses viola); basic oscillator
+aliases do not yet expose vibrato. See Example 164.
+
 Version 0.4.131 adds native per-player FoxDot-style shape and drive controls.
 Both accept numbers, var(), and linvar(), are smoothed to reduce zipper noise,
 and work on synth and WAV-player signals. The supported range is 0 to 4;

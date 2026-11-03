@@ -91,6 +91,13 @@ int main(int argc, char** argv) {
         if (player.synthIndex == 57)
             std::cout << "Q:" << player.sampleControlToken << ':'
                       << player.sampleRateControlToken << ' ';
+        for (const auto& event : player.events)
+            std::cout << "N:" << event.vibDepth << ':' << event.slide << ':'
+                      << event.slideFrom << ':' << event.slideDelay << ':'
+                      << event.bend << ':' << event.bendDelay << ' ';
+        std::cout << "Y:";
+        for (const auto& token : player.noteEffectControlTokens)
+            std::cout << token << ',';
     }
     return 0;
 }
@@ -144,6 +151,11 @@ with tempfile.TemporaryDirectory() as directory:
             assert "H:0.25:0:-:v:0.0,0.35:4.0,4.0" in parsed.stdout, parsed.stdout
             assert "H:0:0:v:0.0,0.45,0.9:2.0,2.0,2.0:-" in parsed.stdout, parsed.stdout
             assert "H:0:0.1:-:l:0.1,0.8:4.0,4.0" in parsed.stdout, parsed.stdout
+        if example.name == "164-foxdot-vibrato-slide-bend.py":
+            assert "N:0.02:0:0:0:0.25:0.2" in parsed.stdout, parsed.stdout
+            assert "N:0.5:0.55:0:0.35:0:0" in parsed.stdout, parsed.stdout
+            assert "Y:-,-,-,v:0.35,0.5:4.0,4.0,-,-," in parsed.stdout, parsed.stdout
+            assert "Y:v:0.02,0.04:4.0,4.0,-,-,-,-," in parsed.stdout, parsed.stdout
     for invalid in (
             "OK\t0\t0\t17\n",
             "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",
@@ -156,6 +168,21 @@ with tempfile.TemporaryDirectory() as directory:
         rejected = subprocess.run([str(binary), str(result), "0"],
                                   capture_output=True, text=True)
         assert rejected.returncode == 1, (invalid, rejected.stdout, rejected.stderr)
+    pitch_effect_example = plugin / "Portable" / "164-foxdot-vibrato-slide-bend.py"
+    pitch_effect_wrapper = api_tests["make_wrapper"](
+        str(pitch_effect_example), str(result), ())
+    exec(pitch_effect_wrapper, {"__name__": "__main__"})
+    valid_pitch_effects = result.read_text()
+    invalid_vibdepth = re.sub(
+        r"^(Y\t\d+\t)v:0\.02,0\.04:",
+        r"\1v:11,0.04:", valid_pitch_effects,
+        count=1, flags=re.M)
+    assert invalid_vibdepth != valid_pitch_effects
+    result.write_text(invalid_vibdepth)
+    rejected_vibdepth = subprocess.run([str(binary), str(result), "0"],
+                                       capture_output=True, text=True)
+    assert rejected_vibdepth.returncode == 1
+    assert "vibdepth/slide/bend var control" in rejected_vibdepth.stderr
     user_synth_example = plugin / "Portable" / "94-user-synthdef-loader.py"
     user_synth_wrapper = api_tests["make_wrapper"](
         str(user_synth_example), str(result), ("CustomPluck",))

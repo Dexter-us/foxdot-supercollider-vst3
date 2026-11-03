@@ -14,6 +14,12 @@ struct PythonNoteEvent {
     double attackSeconds = 0.01;
     double releaseSeconds = 0.04;
     double delayBeats = 0.0;
+    double vibDepth = 0.5;
+    double slide = 0.0;
+    double slideFrom = 0.0;
+    double slideDelay = 0.0;
+    double bend = 0.0;
+    double bendDelay = 0.0;
     int sampleSymbol = 0;
     int sampleIndex = 0;
     double sampleRate = 1.0;
@@ -57,6 +63,9 @@ struct PythonPlayerUpdate {
     std::string sampleRateControlToken = "-";
     std::array<std::string, 7> effectControlTokens{
         "-", "-", "-", "-", "-", "-", "-"
+    };
+    std::array<std::string, 6> noteEffectControlTokens{
+        "-", "-", "-", "-", "-", "-"
     };
     int playerIndex = 0;
     bool stopped = false;

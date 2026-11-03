@@ -1,5 +1,17 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.132 adds FoxDot-compatible `vibdepth`, `slide`, `slidefrom`, and
+`bend` note controls, including `slidedelay` and `benddelay`. The slide and bend
+controls follow FoxDot's bundled SynthDef amplitude envelopes; they do not
+retune pitch. Scalar, `var()`/`linvar()`, and finite `P[...]` control values are
+bounded and evaluated per note. `vib` is the rate; `vibdepth` is the depth.
+`vibdepth` and the older `depth=` name share one control and cannot both be
+specified; omitting both preserves the existing `depth` default. Supported
+ranges are 0–10 for depth, -1–4 for slide/bend amounts, and 0–1 for delay
+fractions. `vibdepth` applies to bundled synth graphs that expose FoxDot's
+vibrato controls; the simple sine/saw/triangle/pulse oscillator aliases do not
+yet have a vibrato input. Portable Example 164 uses `viola` for that control.
+
 Version 0.4.131 adds smoothly modulated, native per-player FoxDot `shape` and
 `drive` effects for synths and WAV sample players, plus Portable Example 163.
 Both accept 0–4 (FoxDot's usual range is 0–1); the self-contained VST DSP

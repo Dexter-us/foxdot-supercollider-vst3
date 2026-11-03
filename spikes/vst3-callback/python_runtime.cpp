@@ -164,7 +164,8 @@ _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum',
-    'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
+    'vib', 'depth', 'vibdepth', 'slide', 'slidefrom', 'slidedelay',
+    'bend', 'benddelay', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
     'shape', 'drive'
 }
 _USER_SYNTH_KEYWORDS = {
@@ -172,13 +173,15 @@ _USER_SYNTH_KEYWORDS = {
     'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'velocity',
     'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime',
     'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell',
-    'strum', 'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
+    'strum', 'vib', 'depth', 'vibdepth', 'slide', 'slidefrom', 'slidedelay',
+    'bend', 'benddelay', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
     'shape', 'drive'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
     'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate',
-    'shape', 'drive'
+    'shape', 'drive', 'vib', 'depth', 'vibdepth', 'slide', 'slidefrom',
+    'slidedelay', 'bend', 'benddelay'
 }
 _COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'shape', 'drive'}
 _COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'}
@@ -950,6 +953,7 @@ _dexter_sample_base_events = {}
 _dexter_sample_controls = {}
 _dexter_player_effect_indices = {}
 _dexter_effect_control_variables = {}
+_dexter_note_effect_control_variables = {}
 _dexter_shuffle_counter = 0
 _dexter_random_counter = 0
 _dexter_swing_seconds = 0.0
@@ -3874,7 +3878,9 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
          _octave_control=None, _base_octave=5, _degrees_per_octave=7,
          _attack_control=None, _release_control=None,
          _attack_default=0.01, _release_default=0.04, _time_multipliers=None,
-         _allow_repeated_notes=False, _degree_control=None, _root_control=None):
+         _allow_repeated_notes=False, _degree_control=None, _root_control=None,
+         vibdepth=0.5, slide=0.0, slidefrom=0.0, slidedelay=0.0,
+         bend=0.0, benddelay=0.0):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
     if isinstance(notes, _DexterPVar):
@@ -3915,6 +3921,18 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
         raise ValueError('atk values must be from 0 to 3 seconds')
     if _release_control is not None and any(value < 0.0 or value > 3.0 for value in _release_control.values):
         raise ValueError('rel values must be from 0 to 3 seconds')
+    vibDepthDefault, vibDepthControl = _note_effect_control(
+        vibdepth, 'vibdepth', 0.0, 10.0)
+    slideDefault, slideControl = _note_effect_control(
+        slide, 'slide', -1.0, 4.0)
+    slideFromDefault, slideFromControl = _note_effect_control(
+        slidefrom, 'slidefrom', -1.0, 4.0)
+    slideDelayDefault, slideDelayControl = _note_effect_control(
+        slidedelay, 'slidedelay', 0.0, 1.0)
+    bendDefault, bendControl = _note_effect_control(
+        bend, 'bend', -1.0, 4.0)
+    bendDelayDefault, bendDelayControl = _note_effect_control(
+        benddelay, 'benddelay', 0.0, 1.0)
     strumIsVar = isinstance(strum, _DexterTimeVar)
     if strumIsVar:
         if any(value < 0.0 or value > 1.0 for value in strum.values):
@@ -4019,13 +4037,25 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                 raise ValueError('rel must be between 0 and 3 seconds')
             groupOffset = offsets[groupIndex % len(offsets)]
             sustainValue = sustainValues[groupIndex % len(sustainValues)]
+            vibDepthValue = _note_effect_value(
+                vibDepthDefault, vibDepthControl, start, i)
+            slideValue = _note_effect_value(slideDefault, slideControl, start, i)
+            slideFromValue = _note_effect_value(
+                slideFromDefault, slideFromControl, start, i)
+            slideDelayValue = _note_effect_value(
+                slideDelayDefault, slideDelayControl, start, i)
+            bendValue = _note_effect_value(bendDefault, bendControl, start, i)
+            bendDelayValue = _note_effect_value(
+                bendDelayDefault, bendDelayControl, start, i)
             additions.append((start, sustainValue, note, noteVelocity,
                               attackValue, releaseValue,
                               strumValue * chordIndex + groupOffset,
                               bool(_allow_repeated_notes or
                                    stepGroupOffsets[i] or
                                    len(sustainValues) > 1),
-                              i, chordIndex))
+                              i, chordIndex, vibDepthValue, slideValue,
+                              slideFromValue, slideDelayValue, bendValue,
+                              bendDelayValue))
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
@@ -4269,6 +4299,44 @@ def _event_control(value, name, lower, upper):
         raise ValueError(name + ' is outside the supported range')
     return result, None
 
+class _FoxDotNoteEffectPattern:
+    def __init__(self, values):
+        self.values = tuple(values)
+
+    def at_event(self, index):
+        return self.values[index % len(self.values)]
+
+def _note_effect_control(value, name, lower, upper):
+    if isinstance(value, bool):
+        raise TypeError(name + ' requires a number or var/linvar, not bool')
+    if isinstance(value, _FoxDotNoteEffectPattern):
+        return value.values[0], value
+    if isinstance(value, _FoxDotFinitePattern):
+        if not value or len(value) > 256:
+            raise ValueError(name + ' P pattern must contain 1 to 256 values')
+        values = []
+        for item in value:
+            if isinstance(item, bool) or isinstance(item, (list, tuple,
+                                                          _FoxDotChord,
+                                                          _FoxDotFinitePattern)):
+                raise TypeError(name + ' P pattern values must be flat numbers')
+            number = float(item)
+            if number != number or not lower <= number <= upper:
+                raise ValueError(name + ' P pattern values are outside the supported range')
+            values.append(number)
+        pattern = _FoxDotNoteEffectPattern(values)
+        return values[0], pattern
+    return _event_control(value, name, lower, upper)
+
+def _note_effect_value(default, control, beat, eventIndex):
+    if control is None:
+        return default
+    if isinstance(control, _DexterTimeVar):
+        return control.at(beat)
+    if isinstance(control, _FoxDotNoteEffectPattern):
+        return control.at_event(eventIndex)
+    return default
+
 def _player_effect_control(value, name):
     if isinstance(value, bool):
         raise TypeError(name + ' requires a number or var/linvar, not bool')
@@ -4292,7 +4360,9 @@ class PlayerPattern:
                  reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
                    lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, synthRate=None, bpnoise=0.0, swell=0.0,
                     timeMultipliers=None, allowRepeatedNotes=False,
-                    shape=0.0, drive=0.0):
+                     shape=0.0, drive=0.0, vib=0.0, depth=None,
+                     vibdepth=None, slide=0.0, slidefrom=0.0,
+                     slidedelay=0.0, bend=0.0, benddelay=0.0):
         self.notes = notes
         self.step = step
         self.timeMultipliers = timeMultipliers
@@ -4310,6 +4380,35 @@ class PlayerPattern:
         self.playerEffectUserIndex = -1
         self.synthControls = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
         self.effectControlVariables = ('-', '-', '-', '-', '-', '-', '-')
+        if isinstance(vib, bool) or isinstance(vib, _DexterTimeVar):
+            raise TypeError('vib requires a scalar rate from 0 to 100')
+        self.vibRate = float(vib)
+        if self.vibRate != self.vibRate or not 0.0 <= self.vibRate <= 100.0:
+            raise ValueError('vib must be between 0 and 100')
+        if depth is not None and vibdepth is not None:
+            raise ValueError('use depth or vibdepth, not both')
+        depthValue = (vibdepth if vibdepth is not None else depth)
+        if depthValue is None:
+            depthValue = 0.5
+        self.vibDepth, self.vibDepthControl = _note_effect_control(
+            depthValue, 'vibdepth', 0.0, 10.0)
+        self.slide, self.slideControl = _note_effect_control(
+            slide, 'slide', -1.0, 4.0)
+        self.slideFrom, self.slideFromControl = _note_effect_control(
+            slidefrom, 'slidefrom', -1.0, 4.0)
+        self.slideDelay, self.slideDelayControl = _note_effect_control(
+            slidedelay, 'slidedelay', 0.0, 1.0)
+        self.bend, self.bendControl = _note_effect_control(
+            bend, 'bend', -1.0, 4.0)
+        self.bendDelay, self.bendDelayControl = _note_effect_control(
+            benddelay, 'benddelay', 0.0, 1.0)
+        self.noteEffectControlVariables = tuple(
+            control.wire() if isinstance(control, _DexterTimeVar) else '-'
+            for control in (self.vibDepthControl, self.slideControl,
+                            self.slideFromControl, self.slideDelayControl,
+                            self.bendControl, self.bendDelayControl))
+        self.synthControls = (self.vibRate, self.vibDepth, 1.0, 0.5,
+                              0.5, 0.0, 1.0)
         if synthRate is None:
             synthRate = 1.0 if synth == 'bug' else 0.0
         try:
@@ -4386,7 +4485,7 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
              offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
              cutoff=20000.0, echo=0.0, delay=0.0, atk=0.01, rel=0.04,
              reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                      lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, rate=None, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, _time_multipliers=None, _allow_repeated_notes=False):
+                      lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, rate=None, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, _time_multipliers=None, _allow_repeated_notes=False):
     if isinstance(notes, _FoxDotChord):
         notes = [notes]
     if rate is None:
@@ -4394,13 +4493,13 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
                         synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
                         reverb=reverb, room=room, mix=mix, damp=damp,
-                           revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, timeMultipliers=_time_multipliers, allowRepeatedNotes=_allow_repeated_notes, shape=shape, drive=drive)
+                           revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, timeMultipliers=_time_multipliers, allowRepeatedNotes=_allow_repeated_notes, shape=shape, drive=drive, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay)
 
 def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
               amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0,
               velocity=100, rate=0.0, atk=0.01, rel=0.04,
               reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                   lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
+                   lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0):
     octaveControl = oct if isinstance(oct, _DexterTimeVar) else None
     if octaveControl is not None:
         if any(value < 0.0 or value > 10.0 for value in octaveControl.values):
@@ -4433,38 +4532,38 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     return PlayerPattern(notes, dur, sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
                          scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave,
-                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
+                           reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay)
 def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0):
     return _fox_wave('saw', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
+                        reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay)
 
 def pulse(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
           pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-          lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
+          lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0):
     return _fox_wave('square', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
+                        reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay)
 
 def sine(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0):
     return _fox_wave('sine', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
+                        reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay)
 
 def triangle(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
              pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-             lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
+              lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0):
     return _fox_wave('triangle', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
+                        reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay)
 
 def _make_named_synth(name, defaultRate):
     def synth(notes=0, **kwargs):
@@ -4475,19 +4574,22 @@ def _make_named_synth(name, defaultRate):
 def userSynth(name, notes=0, **kwargs):
     if not isinstance(name, str) or name not in _dexter_user_synth_names:
         raise ValueError('userSynth name is not a loaded Portable/SynthDefs entry')
-    controls = []
+    vib = kwargs.pop('vib', 0.0)
+    depth = kwargs.pop('depth', None)
+    vibdepth = kwargs.pop('vibdepth', None)
+    extraControls = []
     specifications = (
-        ('vib', 0.0, 0.0, 100.0),
-        ('depth', 0.5, 0.0, 10.0), ('lforate', 1.0, 0.0, 100.0),
+        ('lforate', 1.0, 0.0, 100.0),
         ('lfowidth', 0.5, 0.0, 1.0), ('rq', 0.5, 0.01, 3.0),
         ('fmod', 0.0, -2000.0, 2000.0), ('blur', 1.0, 0.01, 8.0))
     for key, default, minimum, maximum in specifications:
         value = float(kwargs.pop(key, default))
         if value != value or not minimum <= value <= maximum:
             raise ValueError(key + ' must be a finite scalar in the supported range')
-        controls.append(value)
-    pattern = _fox_wave(name, notes, **kwargs)
-    pattern.synthControls = tuple(controls)
+        extraControls.append(value)
+    pattern = _fox_wave(name, notes, vib=vib, depth=depth,
+                        vibdepth=vibdepth, **kwargs)
+    pattern.synthControls = tuple(pattern.synthControls[:2] + tuple(extraControls))
     if name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam'):
         pattern.playerEffectUserIndex = _dexter_user_synth_names.index(name)
     return pattern
@@ -4522,26 +4624,31 @@ ripple = _make_named_synth('ripple', 0.0)
 
 def _make_core_synth(name):
     def synth(notes=0, **kwargs):
-        controls = []
+        vib = kwargs.pop('vib', 6.0 if name == 'viola' else 0.0)
+        depth = kwargs.pop('depth', None)
+        vibdepth = kwargs.pop('vibdepth', None)
+        extraControls = []
         specifications = (
-            ('vib', 6.0 if name == 'viola' else 0.0, 0.0, 100.0),
-            ('depth', 0.5, 0.0, 10.0), ('lforate', 1.0, 0.0, 100.0),
+            ('lforate', 1.0, 0.0, 100.0),
             ('lfowidth', 0.5, 0.0, 1.0), ('rq', 0.5 if name != 'prophet' else 0.4, 0.01, 3.0),
             ('fmod', 0.0, -2000.0, 2000.0), ('blur', 1.0, 0.01, 8.0))
         for key, default, minimum, maximum in specifications:
             value = float(kwargs.pop(key, default))
             if value != value or not minimum <= value <= maximum:
                 raise ValueError(key + ' must be a finite scalar in the supported range')
-            controls.append(value)
+            extraControls.append(value)
         kwargs.setdefault('rate', 0.04 if name == 'scratch' else
-                          1.0 if name == 'swell' else 0.3 if name == 'razz' else 0.0)
+                          1.0 if name == 'swell' else
+                          0.3 if name == 'razz' else 0.0)
         if name == 'pads':
             kwargs.setdefault('atk', 0.1)
         if name in ('sawbass', 'prophet', 'keys', 'pasha'):
             kwargs.setdefault('cutoff', {'sawbass': 1000.0, 'prophet': 6000.0,
-                                        'keys': 400.0, 'pasha': 8000.0}[name])
-        pattern = _fox_wave(name, notes, **kwargs)
-        pattern.synthControls = tuple(controls)
+                                         'keys': 400.0, 'pasha': 8000.0}[name])
+        pattern = _fox_wave(name, notes, vib=vib, depth=depth,
+                            vibdepth=vibdepth, **kwargs)
+        pattern.synthControls = tuple(pattern.synthControls[:2] +
+                                      tuple(extraControls))
         return pattern
     return synth
 
@@ -5330,7 +5437,13 @@ class Player:
                    _allow_repeated_notes=pattern.allowRepeatedNotes,
                    _degree_control=pattern.degreeControl,
                     _root_control=pattern.rootControl,
-                  strum=pattern.strumControl if pattern.strumControl is not None else pattern.strumBeats)
+                  strum=pattern.strumControl if pattern.strumControl is not None else pattern.strumBeats,
+                  vibdepth=pattern.vibDepthControl if pattern.vibDepthControl is not None else pattern.vibDepth,
+                  slide=pattern.slideControl if pattern.slideControl is not None else pattern.slide,
+                  slidefrom=pattern.slideFromControl if pattern.slideFromControl is not None else pattern.slideFrom,
+                  slidedelay=pattern.slideDelayControl if pattern.slideDelayControl is not None else pattern.slideDelay,
+                  bend=pattern.bendControl if pattern.bendControl is not None else pattern.bend,
+                  benddelay=pattern.bendDelayControl if pattern.bendDelayControl is not None else pattern.bendDelay)
             compiledLength = _dexter_length
             delayPattern = isinstance(pattern.delayControl, _FoxDotFinitePattern)
             if delayPattern:
@@ -5410,7 +5523,7 @@ class Player:
                     raise ValueError('sample layers exceed the available MIDI pitch range')
                 assignedMidiIntervals.append((midiNote, startBeat, endBeat))
                 note[2] = midiNote
-                adjusted.append(tuple(note[:7]))
+                adjusted.append(tuple(note))
             compiledEvents = adjusted
             _dexter_sample_events[playerIndex] = requests
             _dexter_sample_base_events[playerIndex] = list(requests)
@@ -5421,6 +5534,8 @@ class Player:
         _dexter_effect_control_variables[playerIndex] = pattern.effectControlVariables
         effectUserIndex = pattern.playerEffectUserIndex
         _dexter_player_effect_indices[playerIndex] = effectUserIndex
+        _dexter_note_effect_control_variables[playerIndex] = \
+            pattern.noteEffectControlVariables
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
                                         compiledEvents, synthIndex, pattern.amp,
                                         pattern.pan, pattern.cutoff, pattern.echoBeats,
@@ -6315,6 +6430,8 @@ class Player:
 
     def stop(self):
         _dexter_effect_control_variables[self.number - 1] = ('-', '-', '-', '-', '-', '-', '-')
+        _dexter_note_effect_control_variables[self.number - 1] = \
+            ('-', '-', '-', '-', '-', '-')
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
                                              0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None, _dexter_swing_seconds)
         self._active = False
@@ -6594,11 +6711,14 @@ DiskOut = _DiskRecorder()
              << "            _f.write('A' + chr(9) + str(_player) + chr(9) + str(_effect_user_index) + chr(10))\n"
              << "            _effect_control_variables = _dexter_scope['_dexter_effect_control_variables'].get(_player, ('-', '-', '-', '-', '-', '-', '-'))\n"
              << "            _f.write('X' + chr(9) + str(_player) + chr(9) + chr(9).join(_effect_control_variables) + chr(10))\n"
+             << "            _note_effect_control_variables = _dexter_scope['_dexter_note_effect_control_variables'].get(_player, ('-', '-', '-', '-', '-', '-'))\n"
+             << "            _f.write('Y' + chr(9) + str(_player) + chr(9) + chr(9).join(_note_effect_control_variables) + chr(10))\n"
              << "            if _synth == 57:\n"
              << "                _sample_control, _rate_control = _dexter_scope['_dexter_sample_controls'].get(_player, ('-', '-'))\n"
              << "                _f.write('Q' + chr(9) + str(_player) + chr(9) + _sample_control + chr(9) + _rate_control + chr(10))\n"
             << "            for _event_index, _e in enumerate(_events):\n"
-            << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\t{}\\n'.format(*_e))\n"
+             << "                _fx = _e[10:16] if len(_e) >= 16 else (0.5, 0.0, 0.0, 0.0, 0.0, 0.0)\n"
+             << "                _f.write('N\\t{}\t{}\t{}\t{}\t{}\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(*_e[:7], *_fx))\n"
             << "                if _synth == 57:\n"
             << "                    _f.write('B\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(*_dexter_scope['_dexter_sample_events'][_player][_event_index]))\n"
             << "        for _player, _muted in sorted(_mutes.items()):\n"
@@ -6913,6 +7033,74 @@ bool parseResult(const std::filesystem::path& resultPath,
                 return false;
             }
         }
+        const auto validNoteEffectControlToken =
+            [](const std::string& token, double minimum, double maximum) {
+                if (token == "-")
+                    return true;
+                if (token.size() > 256 || token.size() < 5 ||
+                    (token[0] != 'v' && token[0] != 'l') || token[1] != ':')
+                    return false;
+                const auto middle = token.find(':', 2);
+                if (middle == std::string::npos || middle == 2 ||
+                    middle + 1 >= token.size() ||
+                    token.find(':', middle + 1) != std::string::npos)
+                    return false;
+                const auto parseList = [](const std::string& text,
+                                          double low, double high,
+                                          bool durations,
+                                          std::size_t& count) {
+                    if (text.empty() || text.front() == ',' ||
+                        text.back() == ',' || text.find(",,") != std::string::npos)
+                        return false;
+                    std::istringstream values(text);
+                    std::string part;
+                    count = 0;
+                    while (std::getline(values, part, ',')) {
+                        if (part.empty() || count >= 8)
+                            return false;
+                        try {
+                            std::size_t used = 0;
+                            const double value = std::stod(part, &used);
+                            if (used != part.size() || !std::isfinite(value) ||
+                                (durations ? value <= 0.0 || value > 4096.0
+                                           : value < low || value > high))
+                                return false;
+                        } catch (...) {
+                            return false;
+                        }
+                        ++count;
+                    }
+                    return count > 0;
+                };
+                std::size_t valueCount = 0;
+                std::size_t durationCount = 0;
+                return parseList(token.substr(2, middle - 2), minimum,
+                                 maximum, false, valueCount) &&
+                       parseList(token.substr(middle + 1), 0.0, 4096.0,
+                                 true, durationCount) &&
+                       (durationCount == 1 || durationCount == valueCount);
+            };
+        char noteEffectRecord = 0;
+        int noteEffectPlayer = -1;
+        if (!(input >> noteEffectRecord >> noteEffectPlayer) ||
+            noteEffectRecord != 'Y' || noteEffectPlayer != update.playerIndex) {
+            error = "Python returned malformed note-effect time-var controls.";
+            return false;
+        }
+        constexpr std::array<double, 6> noteEffectMinimum{
+            0.0, -1.0, -1.0, 0.0, -1.0, 0.0};
+        constexpr std::array<double, 6> noteEffectMaximum{
+            10.0, 4.0, 4.0, 1.0, 4.0, 1.0};
+        for (std::size_t index = 0;
+             index < update.noteEffectControlTokens.size(); ++index) {
+            auto& token = update.noteEffectControlTokens[index];
+            if (!(input >> token) ||
+                !validNoteEffectControlToken(
+                    token, noteEffectMinimum[index], noteEffectMaximum[index])) {
+                error = "Python returned an invalid vibdepth/slide/bend var control.";
+                return false;
+            }
+        }
         if (update.synthIndex == 57) {
             char controlRecord = 0;
             int controlPlayer = -1;
@@ -6944,10 +7132,25 @@ bool parseResult(const std::filesystem::path& resultPath,
             char noteRecord = 0;
             PythonNoteEvent event;
             if (!(input >> noteRecord >> event.beat >> event.durationBeats >>
-                  event.midiNote >> event.velocity >> event.attackSeconds >> event.releaseSeconds >> event.delayBeats) ||
+                  event.midiNote >> event.velocity >> event.attackSeconds >>
+                  event.releaseSeconds >> event.delayBeats >> event.vibDepth >>
+                  event.slide >> event.slideFrom >> event.slideDelay >>
+                  event.bend >> event.bendDelay) ||
                 noteRecord != 'N' ||
                 !std::isfinite(event.beat) || !std::isfinite(event.durationBeats) ||
                 !std::isfinite(event.delayBeats) || event.delayBeats < 0.0 || event.delayBeats > 15.0 ||
+                !std::isfinite(event.vibDepth) || event.vibDepth < 0.0 ||
+                event.vibDepth > 10.0 ||
+                !std::isfinite(event.slide) || event.slide < -1.0 ||
+                event.slide > 4.0 ||
+                !std::isfinite(event.slideFrom) || event.slideFrom < -1.0 ||
+                event.slideFrom > 4.0 ||
+                !std::isfinite(event.slideDelay) || event.slideDelay < 0.0 ||
+                event.slideDelay > 1.0 ||
+                !std::isfinite(event.bend) || event.bend < -1.0 ||
+                event.bend > 4.0 ||
+                !std::isfinite(event.bendDelay) || event.bendDelay < 0.0 ||
+                event.bendDelay > 1.0 ||
                 event.beat < 0.0 || event.beat > update.lengthBeats ||
                 event.durationBeats < 0.02 ||
                 event.durationBeats > std::min(4096.0, update.lengthBeats * 8.0) + 1e-9 ||
