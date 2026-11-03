@@ -28,6 +28,7 @@
 #include "clock_tempo_map.h"
 #include "airwindows_control_smoothing.h"
 #include "master_output_gain.h"
+#include "native_player_effects.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
@@ -671,7 +672,9 @@ public:
                             !parseTimeVarControl(player.bpfControlToken, 0.0, 20000.0, next.bpfControl) ||
                             !parseTimeVarControl(player.bprControlToken, 0.05, 1.0, next.bprControl) ||
                             !parseTimeVarControl(player.bpnoiseControlToken, 0.0, 10.0, next.bpnoiseControl) ||
-                            !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl))
+                            !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl) ||
+                            !parseTimeVarControl(player.shapeControlToken, 0.0, 4.0, next.shapeControl) ||
+                            !parseTimeVarControl(player.driveControlToken, 0.0, 4.0, next.driveControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
                         for (std::size_t control = 0;
                              control < next.effectControlVariables.size(); ++control) {
@@ -717,6 +720,8 @@ public:
                         next.bpr = static_cast<float>(player.bpr);
                         next.bpnoise = static_cast<float>(player.bpnoise);
                         next.swell = static_cast<float>(player.swell);
+                        next.shape = static_cast<float>(player.shape);
+                        next.drive = static_cast<float>(player.drive);
                         next.eventCount = player.events.size();
                         std::copy(player.events.begin(), player.events.end(), next.events.begin());
                         totalNotes += player.events.size();
@@ -867,6 +872,8 @@ public:
             state.reverbIndex = static_cast<int>((packed >> 18) & 0x03u);
             state.echoEnabled = (packed & (1u << 20)) != 0;
             state.reverbEnabled = (packed & (1u << 21)) != 0;
+            state.shapeEnabled = (packed & (1u << 22)) != 0;
+            state.driveEnabled = (packed & (1u << 23)) != 0;
         }
     }
 
@@ -1073,6 +1080,8 @@ private:
         TimeVarControl bprControl;
         TimeVarControl bpnoiseControl;
         TimeVarControl swellControl;
+        TimeVarControl shapeControl;
+        TimeVarControl driveControl;
         TimeVarControl echoControl;
         TimeVarControl delayControl;
         TimeVarControl echoMixControl;
@@ -1098,6 +1107,8 @@ private:
         float bpr = 1.0f;
         float bpnoise = 0.0f;
         float swell = 0.0f;
+        float shape = 0.0f;
+        float drive = 0.0f;
         bool active = false;
     };
 
@@ -1118,6 +1129,10 @@ private:
                                  pattern.echoMixControl.active;
         const bool reverbEnabled = pattern.reverbMix > 0.0001f &&
                                    pattern.reverbIndex > 0;
+        const bool shapeEnabled = pattern.shape > 0.0001f ||
+                                  pattern.shapeControl.active;
+        const bool driveEnabled = pattern.drive > 0.0001f ||
+                                  pattern.driveControl.active;
         const auto packed =
             (pattern.active ? 1u : 0u) |
             (mutedPlayers_[player] ? 2u : 0u) |
@@ -1125,7 +1140,9 @@ private:
             (effectIndex << 10) |
             (reverbIndex << 18) |
             (echoEnabled ? (1u << 20) : 0u) |
-            (reverbEnabled ? (1u << 21) : 0u);
+            (reverbEnabled ? (1u << 21) : 0u) |
+            (shapeEnabled ? (1u << 22) : 0u) |
+            (driveEnabled ? (1u << 23) : 0u);
         editorPlayerState_[player].store(packed, std::memory_order_release);
     }
 
@@ -3297,6 +3314,8 @@ private:
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
         playerEffectGraphs_.fill(nullptr);
+        shapeEffectSmoothed_.fill(0.0f);
+        driveEffectSmoothed_.fill(0.0f);
         playerEffectDefinitionIndices_.fill(-1);
         playerEffectControlEffectIndices_.fill(-1);
         for (auto& controls : playerEffectControlSmoothed_)
@@ -3557,6 +3576,35 @@ private:
                 contributingVoices;
         }
 
+        // Native FoxDot-compatible player inserts run on the summed player
+        // signal, before optional user SynthDef effects. Modulated controls
+        // are smoothed sample-by-sample to avoid zipper noise.
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            const auto& pattern = activePatterns_[player];
+            auto& shape = shapeEffectSmoothed_[player];
+            auto& drive = driveEffectSmoothed_[player];
+            for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
+                const double beat = controlBeatStart[player] +
+                    controlBeatStep[player] * sampleIndex;
+                const float targetShape = evaluateTimeVar(
+                    pattern.shapeControl, beat, pattern.shape);
+                const float targetDrive = evaluateTimeVar(
+                    pattern.driveControl, beat, pattern.drive);
+                shape = dexter::smoothPlayerEffectControl(
+                    shape, targetShape, mouseSmoothing);
+                drive = dexter::smoothPlayerEffectControl(
+                    drive, targetDrive, mouseSmoothing);
+                auto& left = playerLeftBlock[player][
+                    static_cast<std::size_t>(sampleIndex)];
+                auto& right = playerRightBlock[player][
+                    static_cast<std::size_t>(sampleIndex)];
+                left = dexter::processFoxDotDrive(
+                    dexter::processFoxDotShape(left, shape), drive);
+                right = dexter::processFoxDotDrive(
+                    dexter::processFoxDotShape(right, shape), drive);
+            }
+        }
+
         const auto busLength = static_cast<std::size_t>(world_->mBufLength);
         for (std::size_t player = 0; player < kPlayerCount; ++player) {
             auto* graph = playerEffectGraphs_[player];
@@ -3803,6 +3851,8 @@ private:
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
         playerEffectGraphs_.fill(nullptr);
+        shapeEffectSmoothed_.fill(0.0f);
+        driveEffectSmoothed_.fill(0.0f);
         playerEffectDefinitionIndices_.fill(-1);
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
@@ -3852,6 +3902,8 @@ private:
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
     std::array<Graph*, kPlayerCount> playerEffectGraphs_{};
+    std::array<float, kPlayerCount> shapeEffectSmoothed_{};
+    std::array<float, kPlayerCount> driveEffectSmoothed_{};
     std::array<std::array<float, 7>, kPlayerCount> playerEffectControlSmoothed_{};
     std::array<int, kPlayerCount> playerEffectControlEffectIndices_ = [] {
         std::array<int, kPlayerCount> indices{};

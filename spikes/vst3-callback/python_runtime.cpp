@@ -164,20 +164,23 @@ _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum',
-    'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur'
+    'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
+    'shape', 'drive'
 }
 _USER_SYNTH_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
     'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'velocity',
     'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime',
     'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell',
-    'strum', 'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur'
+    'strum', 'vib', 'depth', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
+    'shape', 'drive'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
-    'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate'
+    'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate',
+    'shape', 'drive'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'shape', 'drive'}
 _COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'}
 _COMPAT_PLAY_KEYWORDS = _COMPAT_NOTE_PLAY_KEYWORDS | _COMPAT_SAMPLE_PLAY_KEYWORDS
 _COMPAT_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
@@ -201,7 +204,7 @@ _COMPAT_GROUP_CONTROLS = {
     'amp', 'pan', 'cutoff', 'echo', 'delaytime', 'atk', 'rel', 'reverb',
     'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf',
     'hpr', 'bpf', 'bpr', 'decay', 'echomix', 'feedback', 'bpnoise', 'swell',
-    'degree', 'dur', 'sus', 'oct', 'scale', 'root'
+    'degree', 'dur', 'sus', 'oct', 'scale', 'root', 'shape', 'drive'
 }
 _COMPAT_GROUP_METHODS = {
     'add', 'stop', 'mute', 'unmute', 'solo', 'only',
@@ -4266,6 +4269,11 @@ def _event_control(value, name, lower, upper):
         raise ValueError(name + ' is outside the supported range')
     return result, None
 
+def _player_effect_control(value, name):
+    if isinstance(value, bool):
+        raise TypeError(name + ' requires a number or var/linvar, not bool')
+    return _event_control(value, name, 0.0, 4.0)
+
 def _note_delay_control(value):
     if isinstance(value, _FoxDotFinitePattern):
         if not value or len(value) > 256:
@@ -4283,7 +4291,8 @@ class PlayerPattern:
                  atk=0.01, rel=0.04, octaveControl=None, baseOctave=5, degreesPerOctave=7,
                  reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
                    lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, synthRate=None, bpnoise=0.0, swell=0.0,
-                    timeMultipliers=None, allowRepeatedNotes=False):
+                    timeMultipliers=None, allowRepeatedNotes=False,
+                    shape=0.0, drive=0.0):
         self.notes = notes
         self.step = step
         self.timeMultipliers = timeMultipliers
@@ -4360,6 +4369,8 @@ class PlayerPattern:
         self.bpr, self.bprControl = _event_control(bpr, 'bpr', 0.05, 1.0)
         self.bpnoise, self.bpnoiseControl = _event_control(bpnoise, 'bpnoise', 0.0, 10.0)
         self.swell, self.swellControl = _event_control(swell, 'swell', 0.0, 4.0)
+        self.shape, self.shapeControl = _player_effect_control(shape, 'shape')
+        self.drive, self.driveControl = _player_effect_control(drive, 'drive')
         self.echoDecayBeats, self.echoDecayControl = _event_control(decay, 'decay', 0.0, 64.0)
         self.strumBeats, self.strumControl = _event_control(strum, 'strum', 0.0, 1.0)
         self.octaveControl = octaveControl
@@ -4375,7 +4386,7 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
              offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
              cutoff=20000.0, echo=0.0, delay=0.0, atk=0.01, rel=0.04,
              reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                      lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, rate=None, bpnoise=0.0, swell=0.0, _time_multipliers=None, _allow_repeated_notes=False):
+                      lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, rate=None, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, _time_multipliers=None, _allow_repeated_notes=False):
     if isinstance(notes, _FoxDotChord):
         notes = [notes]
     if rate is None:
@@ -4383,13 +4394,13 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
                         synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
                         reverb=reverb, room=room, mix=mix, damp=damp,
-                           revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, timeMultipliers=_time_multipliers, allowRepeatedNotes=_allow_repeated_notes)
+                           revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, timeMultipliers=_time_multipliers, allowRepeatedNotes=_allow_repeated_notes, shape=shape, drive=drive)
 
 def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
               amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0,
               velocity=100, rate=0.0, atk=0.01, rel=0.04,
               reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                   lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0):
+                   lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
     octaveControl = oct if isinstance(oct, _DexterTimeVar) else None
     if octaveControl is not None:
         if any(value < 0.0 or value > 10.0 for value in octaveControl.values):
@@ -4422,38 +4433,38 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     return PlayerPattern(notes, dur, sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
                          scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave,
-                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell)
+                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
 def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
     return _fox_wave('saw', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell)
+                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
 
 def pulse(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
           pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-          lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0):
+          lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
     return _fox_wave('square', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell)
+                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
 
 def sine(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0):
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
     return _fox_wave('sine', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell)
+                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
 
 def triangle(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
              pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-             lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0):
+             lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0):
     return _fox_wave('triangle', notes, dur, oct, sus, scale, amp, pan, cutoff,
                      echo, delay, velocity, rate, atk, rel,
-                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell)
+                       reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive)
 
 def _make_named_synth(name, defaultRate):
     def synth(notes=0, **kwargs):
@@ -5014,6 +5025,7 @@ _GROUP_PATTERN_FIELDS = {
     'lpr': 'lpr', 'hpf': 'hpfHz', 'hpr': 'hpr', 'bpf': 'bpfHz',
     'bpr': 'bpr', 'decay': 'echoDecayBeats', 'echomix': 'echoMix',
     'feedback': 'feedback', 'bpnoise': 'bpnoise', 'swell': 'swell',
+    'shape': 'shape', 'drive': 'drive',
     'degree': 'degreeControl', 'dur': 'step', 'sus': 'duration',
     'oct': 'octaveControl', 'scale': 'scaleName', 'root': 'rootMidi'
 }
@@ -5114,6 +5126,9 @@ def _normalize_group_control(name, value):
         if isinstance(value, _DexterTimeVar):
             raise TypeError('Group.scale does not accept var/linvar')
         return _scale_intervals(value)
+    if name in ('shape', 'drive'):
+        _player_effect_control(value, name)
+        return value
     return value
 
 def _set_group_pattern_control(pattern, name, value):
@@ -5241,6 +5256,10 @@ def _set_group_pattern_control(pattern, name, value):
     elif name == 'swell':
         pattern.swell, pattern.swellControl = _event_control(
             value, 'swell', 0.0, 4.0)
+    elif name == 'shape':
+        pattern.shape, pattern.shapeControl = _player_effect_control(value, 'shape')
+    elif name == 'drive':
+        pattern.drive, pattern.driveControl = _player_effect_control(value, 'drive')
     else:
         raise AttributeError('unsupported shared player control ' + name)
 
@@ -5418,6 +5437,7 @@ class Player:
                                          pattern.bpfControl, pattern.bprControl, pattern.echoDecayBeats, pattern.echoDecayControl,
                                          pattern.echoMix, pattern.echoMixControl, pattern.feedback, pattern.feedbackControl, serializedDelayControl, pattern.synthRate,
                                          pattern.bpnoise, pattern.bpnoiseControl, pattern.swell, pattern.swellControl,
+                                         pattern.shape, pattern.shapeControl, pattern.drive, pattern.driveControl,
                                          _dexter_swing_seconds)
         if playerIndex == 0:
             _dexter_default_touched = False
@@ -6296,7 +6316,7 @@ class Player:
     def stop(self):
         _dexter_effect_control_variables[self.number - 1] = ('-', '-', '-', '-', '-', '-', '-')
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, _dexter_swing_seconds)
+                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None, _dexter_swing_seconds)
         self._active = False
         return self
 
@@ -6551,12 +6571,12 @@ DiskOut = _DiskRecorder()
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-              << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None) + (_dexter_scope['_dexter_swing_seconds'],)\n"
+              << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None) + (_dexter_scope['_dexter_swing_seconds'],)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _mutes = _dexter_scope['_dexter_mutes']\n"
             << "        _f.write('OK\\t{}\\t{}\\t{}\\n'.format(len(_updates), len(_mutes), len(_dexter_scope['_dexter_disk_commands'])))\n"
             << "        for _player in sorted(_updates):\n"
-              << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control, _swing_seconds = _updates[_player]\n"
+              << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control, _shape, _shape_control, _drive, _drive_control, _swing_seconds = _updates[_player]\n"
              << "            _bpm = _dexter_scope['_dexter_bpm']\n"
              << "            _tempo_control = _dexter_scope['_dexter_bpm_control']\n"
              << "            _p_values = (_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _synth_rate, _swing_seconds)\n"
@@ -6566,7 +6586,7 @@ DiskOut = _DiskRecorder()
              << "            _f.write('E\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _decay, _decay_control.wire() if _decay_control is not None else '-', _echo_mix, _echo_mix_control, _feedback, _feedback_control if _feedback_control is not None else '-', _note_delay_control.wire() if hasattr(_note_delay_control, 'wire') else (_note_delay_control if _note_delay_control is not None else '-')))\n"
               << "            _controls = (_lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control)\n"
              << "            _f.write('F\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, *[control.wire() if control is not None else '-' for control in _controls]))\n"
-            << "            _modulation_values = (_player, _bpnoise, _swell, _bpnoise_control.wire() if _bpnoise_control is not None else '-', _swell_control.wire() if _swell_control is not None else '-')\n"
+            << "            _modulation_values = (_player, _bpnoise, _swell, _shape, _drive, _bpnoise_control.wire() if _bpnoise_control is not None else '-', _swell_control.wire() if _swell_control is not None else '-', _shape_control.wire() if _shape_control is not None else '-', _drive_control.wire() if _drive_control is not None else '-')\n"
             << "            _f.write('G' + chr(9) + chr(9).join(map(str, _modulation_values)) + chr(10))\n"
             << "            _synth_controls = _dexter_scope['_dexter_synth_controls'].get(_player, (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))\n"
             << "            _f.write('S' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _synth_controls)) + chr(10))\n"
@@ -6741,14 +6761,62 @@ bool parseResult(const std::filesystem::path& resultPath,
             error = "Python returned malformed filter controls.";
             return false;
         }
+        const auto validPlayerEffectControlToken = [](const std::string& token) {
+            if (token == "-")
+                return true;
+            if (token.size() > 256 || token.size() < 5 ||
+                (token[0] != 'v' && token[0] != 'l') || token[1] != ':')
+                return false;
+            const auto middle = token.find(':', 2);
+            if (middle == std::string::npos || middle == 2 ||
+                middle + 1 >= token.size() ||
+                token.find(':', middle + 1) != std::string::npos)
+                return false;
+            const auto parseList = [](const std::string& text, double minimum,
+                                      double maximum, bool positive,
+                                      std::vector<double>& output) {
+                std::istringstream values(text);
+                std::string part;
+                while (std::getline(values, part, ',')) {
+                    if (part.empty() || output.size() >= 8)
+                        return false;
+                    try {
+                        std::size_t used = 0;
+                        const double value = std::stod(part, &used);
+                        if (used != part.size() || !std::isfinite(value) ||
+                            (positive ? value <= 0.0 || value > maximum
+                                      : value < minimum || value > maximum))
+                            return false;
+                        output.push_back(value);
+                    } catch (...) {
+                        return false;
+                    }
+                }
+                return !output.empty();
+            };
+            std::vector<double> values;
+            std::vector<double> durations;
+            return parseList(token.substr(2, middle - 2), 0.0, 4.0, false,
+                             values) &&
+                   parseList(token.substr(middle + 1), 0.0, 4096.0, true,
+                             durations) &&
+                   values.size() == durations.size();
+        };
         char modulationRecord = 0;
         int modulationPlayer = -1;
         if (!(input >> modulationRecord >> modulationPlayer >> update.bpnoise >>
-              update.swell >> update.bpnoiseControlToken >> update.swellControlToken) ||
+              update.swell >> update.shape >> update.drive >>
+              update.bpnoiseControlToken >> update.swellControlToken >>
+              update.shapeControlToken >> update.driveControlToken) ||
             modulationRecord != 'G' || modulationPlayer != update.playerIndex ||
             !std::isfinite(update.bpnoise) || update.bpnoise < 0.0 ||
             update.bpnoise > 10.0 || !std::isfinite(update.swell) ||
-            update.swell < 0.0 || update.swell > 4.0) {
+            update.swell < 0.0 || update.swell > 4.0 ||
+            !std::isfinite(update.shape) || update.shape < 0.0 ||
+            update.shape > 4.0 || !std::isfinite(update.drive) ||
+            update.drive < 0.0 || update.drive > 4.0 ||
+            !validPlayerEffectControlToken(update.shapeControlToken) ||
+            !validPlayerEffectControlToken(update.driveControlToken)) {
             error = "Python returned malformed filter-modulation controls.";
             return false;
         }

@@ -15,6 +15,8 @@ struct EditorPlayerState {
     int reverbIndex = 0;
     bool echoEnabled = false;
     bool reverbEnabled = false;
+    bool shapeEnabled = false;
+    bool driveEnabled = false;
 };
 
 class ICodeEditorHost {

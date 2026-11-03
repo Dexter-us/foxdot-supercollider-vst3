@@ -78,6 +78,9 @@ int main(int argc, char** argv) {
         std::cout << player.synthIndex << ' ';
         std::cout << "A:" << player.playerEffectUserIndex << ' ';
         std::cout << "W:" << player.swingSeconds << ' ';
+        std::cout << "H:" << player.shape << ':' << player.drive << ':'
+                  << player.shapeControlToken << ':'
+                  << player.driveControlToken << ' ';
         std::cout << "T:" << player.bpmControlToken << ' ';
         if (player.playerEffectUserIndex >= 0) {
             std::cout << "X:";
@@ -136,6 +139,11 @@ with tempfile.TemporaryDirectory() as directory:
             assert parsed.stdout.count("X:") == 2, parsed.stdout
             assert "v:0.22,0.68:2.0,2.0" in parsed.stdout, parsed.stdout
             assert "l:0.18,0.62:3.0,3.0" in parsed.stdout, parsed.stdout
+        if example.name == "163-foxdot-shape-drive-effects.py":
+            assert parsed.stdout.count("H:") == 3, parsed.stdout
+            assert "H:0.25:0:-:v:0.0,0.35:4.0,4.0" in parsed.stdout, parsed.stdout
+            assert "H:0:0:v:0.0,0.45,0.9:2.0,2.0,2.0:-" in parsed.stdout, parsed.stdout
+            assert "H:0:0.1:-:l:0.1,0.8:4.0,4.0" in parsed.stdout, parsed.stdout
     for invalid in (
             "OK\t0\t0\t17\n",
             "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",
@@ -183,6 +191,22 @@ with tempfile.TemporaryDirectory() as directory:
         parsed = subprocess.run([str(binary), str(result), "0"],
                                 capture_output=True, text=True)
         assert parsed.returncode == 1, (bad_value, parsed.stderr)
+    effect_example = plugin / "Portable" / "163-foxdot-shape-drive-effects.py"
+    effect_wrapper = api_tests["make_wrapper"](str(effect_example), str(result))
+    exec(effect_wrapper, {"__name__": "__main__"})
+    valid_effects = result.read_text()
+    for field_index, bad_value in ((4, "5.0"), (8, "v:0.0,1.0:0.0,2.0")):
+        lines = valid_effects.splitlines()
+        modulation_line = next(i for i, line in enumerate(lines)
+                               if line.startswith("G\t"))
+        fields = lines[modulation_line].split("\t")
+        fields[field_index] = bad_value
+        lines[modulation_line] = "\t".join(fields)
+        result.write_text("\n".join(lines) + "\n")
+        rejected_effect = subprocess.run(
+            [str(binary), str(result), "0"], capture_output=True, text=True)
+        assert rejected_effect.returncode == 1, (
+            bad_value, rejected_effect.stdout, rejected_effect.stderr)
     sample_example = plugin / "Portable" / "83-pbeat-pdur-rhythm-durations.py"
     sample_wrapper = api_tests["make_wrapper"](str(sample_example), str(result))
     exec(sample_wrapper, {"__name__": "__main__"})

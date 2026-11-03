@@ -1,5 +1,12 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.131 adds native per-player FoxDot-style shape and drive controls.
+Both accept numbers, var(), and linvar(), are smoothed to reduce zipper noise,
+and work on synth and WAV-player signals. The supported range is 0 to 4;
+0 to 1 is the normal FoxDot range, while higher values are stronger. These
+self-contained VST DSP curves are not bit-for-bit SuperCollider effect
+emulations. See Example 163.
+
 Version 0.4.130 adds a live local-engine browser: Players, Synths, Effects, and
 Samples tabs. Player rows show active/muted state, synth, and effect assignments;
 the selected player can be muted or stopped. The Samples tab lists Portable

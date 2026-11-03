@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.131 adds smoothly modulated, native per-player FoxDot `shape` and
+`drive` effects for synths and WAV sample players, plus Portable Example 163.
+Both accept 0–4 (FoxDot's usual range is 0–1); the self-contained VST DSP
+curves are FoxDot-style controls, not bit-for-bit SuperCollider effect
+emulations.
+
 Version 0.4.130 adds a live local-engine browser with Players, Synths, Effects,
 and Samples tabs. Player rows track active/muted state, synth selection, and
 per-player effects; selected players can be muted or stopped without editing

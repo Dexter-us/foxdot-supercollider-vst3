@@ -858,7 +858,9 @@ private:
                 left[index].effectIndex != right[index].effectIndex ||
                 left[index].reverbIndex != right[index].reverbIndex ||
                 left[index].echoEnabled != right[index].echoEnabled ||
-                left[index].reverbEnabled != right[index].reverbEnabled)
+                left[index].reverbEnabled != right[index].reverbEnabled ||
+                left[index].shapeEnabled != right[index].shapeEnabled ||
+                left[index].driveEnabled != right[index].driveEnabled)
                 return false;
         }
         return true;
@@ -914,6 +916,8 @@ private:
             addPanelRow(L"Reverb: GVerb");
             addPanelRow(L"Echo / Delay");
             addPanelRow(L"Low-pass / High-pass / Band-pass");
+            addPanelRow(L"FoxDot shape (native player effect)");
+            addPanelRow(L"FoxDot drive (native player effect)");
             addPanelRow(L"Airwindows TapeDelay2");
             addPanelRow(L"Airwindows Echojam");
             renderLiveEffectsPanel();
@@ -937,7 +941,8 @@ private:
         for (std::size_t index = 0; index < states.size(); ++index) {
             const auto& state = states[index];
             if (state.effectIndex < 0 && !state.echoEnabled &&
-                !state.reverbEnabled)
+                !state.reverbEnabled && !state.shapeEnabled &&
+                !state.driveEnabled)
                 continue;
             foundAssignment = true;
             std::wstring row = L"p" + std::to_wstring(index + 1) + L":";
@@ -947,6 +952,10 @@ private:
                     externalNames[static_cast<std::size_t>(state.effectIndex)]);
             if (state.echoEnabled)
                 row += L" Echo";
+            if (state.shapeEnabled)
+                row += L" Shape";
+            if (state.driveEnabled)
+                row += L" Drive";
             if (state.reverbEnabled && state.reverbIndex >= 0 &&
                 state.reverbIndex < static_cast<int>(reverbs.size()))
                 row += L" " + std::wstring(
@@ -1079,6 +1088,10 @@ private:
                 state.reverbIndex < static_cast<int>(reverbs.size()))
                 row += L"  " + std::wstring(reverbs[static_cast<std::size_t>(
                     state.reverbIndex)]);
+            if (state.shapeEnabled)
+                row += L"  Shape";
+            if (state.driveEnabled)
+                row += L"  Drive";
             const auto item = static_cast<int>(
                 SendMessageW(panelList_, LB_ADDSTRING, 0,
                              reinterpret_cast<LPARAM>(row.c_str())));

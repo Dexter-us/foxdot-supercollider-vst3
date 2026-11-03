@@ -50,6 +50,8 @@ struct PythonPlayerUpdate {
     std::string bprControlToken = "-";
     std::string bpnoiseControlToken = "-";
     std::string swellControlToken = "-";
+    std::string shapeControlToken = "-";
+    std::string driveControlToken = "-";
     std::string bpmControlToken = "-";
     std::string sampleControlToken = "-";
     std::string sampleRateControlToken = "-";
@@ -88,6 +90,8 @@ struct PythonPlayerUpdate {
     double bpr = 1.0;
     double bpnoise = 0.0;
     double swell = 0.0;
+    double shape = 0.0;
+    double drive = 0.0;
     bool mousePan = false;
     bool mouseCutoff = false;
     double attackSeconds = 0.01;

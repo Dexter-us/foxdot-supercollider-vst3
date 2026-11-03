@@ -26,7 +26,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.130' not in cmake_source or
+if ('VERSION 0.4.131' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -35,7 +35,9 @@ for live_panel_fragment in (
         'L"Players"', 'L"Synths"', 'L"Effects"', 'L"Samples"',
         'refreshPlayersPanel()', 'renderLiveEffectsPanel()',
         'renderSamplePanel()', 'Open Samples Folder', 'panelVersion_',
-        'setEditorPlayerMuted(', 'stopEditorPlayer('):
+        'setEditorPlayerMuted(', 'stopEditorPlayer(',
+        'FoxDot shape (native player effect)',
+        'FoxDot drive (native player effect)'):
     if live_panel_fragment not in editor_source + editor_host_source:
         raise AssertionError('Live engine panel is missing: ' + live_panel_fragment)
 for snapshot_fragment in (
@@ -2555,7 +2557,13 @@ assert "header.back() == '\\r'" in parse_source, 'Windows CRLF error headers mus
 assert 'update.synthRate' in parse_source and 'kEmbeddedSynthCount + userSynthCount' in parse_source
 assert 'update.bpnoise' in source and 'update.swell' in source
 processor_source = open(os.path.join(os.path.dirname(sys.argv[1]), 'processor.cpp'), encoding='utf-8').read()
+native_effect_source = open(os.path.join(
+    os.path.dirname(sys.argv[1]), 'native_player_effects.h'),
+    encoding='utf-8').read()
 assert 'advanceNoise1' in processor_source and 'swellEnvelopeAt' in processor_source
+assert 'processFoxDotShape' in processor_source and 'processFoxDotDrive' in processor_source
+assert 'shapeEffectSmoothed_' in processor_source and 'driveEffectSmoothed_' in processor_source
+assert 'processFoxDotShape' in native_effect_source and 'processFoxDotDrive' in native_effect_source
 assert 'kReverbSendReleaseSeconds' in processor_source and 'beginReverbTail' in processor_source
 assert '(voice.midiNote < 0 && !voice.releasing)' in processor_source
 assert 'struct ActiveMidiGate' in processor_source and 'activeMidiGates_' in processor_source
@@ -2630,7 +2638,7 @@ assert len(example37Rows) == 3 and len(example37Modulations) == 3
 assert [row[0] for row in example37Modulations] == ['G', 'G', 'G']
 assert [round(float(row[2]), 2) for row in example37Modulations] == [0.18, 0.0, 0.22]
 assert [round(float(row[3]), 2) for row in example37Modulations] == [0.0, 1.2, 0.2]
-assert example37Modulations[2][4].startswith('v:') and example37Modulations[2][5].startswith('l:')
+assert example37Modulations[2][6].startswith('v:') and example37Modulations[2][7].startswith('l:')
 example38Rows = run_example('38-bass-varsaw-release-check.py')
 assert len(example38Rows) == 2 and [int(row[6]) for row in example38Rows] == [4, 5]
 assert [float(row[14]) for row in example38Rows] == [0.04, 0.04]
@@ -2677,6 +2685,52 @@ for keyword, value in [('vib', float('inf')), ('rq', 0), ('blur', 0), ('lfowidth
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
+shapeDriveScript = (
+    'p1 >> saw([0, 2, 4, 7], dur=0.5, shape=var([0.25, 0.75], [2, 2]), '
+    'drive=linvar([0.5, 1.0], [4, 4]))\n'
+    'p2 >> play("x-o-", dur=0.5, shape=0.2, drive=0.3)\n')
+shapeDriveRows, shapeDriveControls = run_script(
+    shapeDriveScript, include_modulations=True)
+assert len(shapeDriveRows) == len(shapeDriveControls) == 2
+assert shapeDriveControls[0][0:6] == ['G', '0', '0.0', '0.0', '0.25', '0.5']
+assert shapeDriveControls[0][8] == 'v:0.25,0.75:2.0,2.0'
+assert shapeDriveControls[0][9] == 'l:0.5,1.0:4.0,4.0'
+assert shapeDriveControls[1][4:10] == ['0.2', '0.3', '-', '-', '-', '-']
+groupShapeRows, groupShapeControls = run_script(
+    'p1 >> saw([0, 2], dur=0.5)\n'
+    'p2 >> bass([0, 3], dur=0.5)\n'
+    'Group(p1, p2).shape = var([0.3, 0.7], [2, 2])\n',
+    include_modulations=True)
+assert len(groupShapeRows) == len(groupShapeControls) == 2
+assert all(row[8] == 'v:0.3,0.7:2.0,2.0' for row in groupShapeControls)
+shapeDriveReport = run_compatibility_check(shapeDriveScript)
+assert 'No unsupported constructs detected' in shapeDriveReport, shapeDriveReport
+for invalidFxValue in (-0.01, 4.01, float('nan'), True):
+    for fxName in ('shape', 'drive'):
+        try:
+            namespace['saw']([0], **{fxName: invalidFxValue})
+        except (ValueError, TypeError):
+            pass
+        else:
+            raise AssertionError(f'{fxName} accepted out-of-range input')
+for fxName in ('shape', 'drive'):
+    try:
+        setattr(namespace['Group'](), fxName, float('nan'))
+    except (ValueError, TypeError):
+        pass
+    else:
+        raise AssertionError(f'empty Group accepted invalid {fxName}')
+shapeDriveExampleText = open(os.path.join(
+    sys.argv[2], '163-foxdot-shape-drive-effects.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    shapeDriveExampleText)
+shapeDriveExampleRows, shapeDriveExampleControls = run_script(
+    shapeDriveExampleText, include_modulations=True)
+assert len(shapeDriveExampleRows) == len(shapeDriveExampleControls) == 3
+assert [float(row[4]) for row in shapeDriveExampleControls] == [0.0, 0.0, 0.25]
+assert [float(row[5]) for row in shapeDriveExampleControls] == [0.0, 0.1, 0.0]
+assert shapeDriveExampleControls[0][8].startswith('v:')
+assert shapeDriveExampleControls[1][9].startswith('l:')
 compat_pattern_internal_methods = run_compatibility_check(
     'notes = P[0, 2, 4]\n'
     'notes.eq(2)\n'
