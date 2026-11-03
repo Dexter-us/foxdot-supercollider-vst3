@@ -20,6 +20,7 @@
 #include "foxdot_synthdefs.h"
 #include "sample_synthdef.h"
 #include "portable_samples.h"
+#include "plugin_version.h"
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
 #include "portable_diskio.h"
@@ -482,6 +483,7 @@ public:
                     }
                     patternStartSamples_[player] = newStart;
                     updatePlayerReverb(player);
+                    publishEditorPlayerState(player);
                 }
             }
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
@@ -491,6 +493,7 @@ public:
                 mutedPlayers_[player] = pendingMuteStates_[player];
                 if (!wasMuted && mutedPlayers_[player])
                     stopPlayerMidiNotes(data.outputEvents, 0, static_cast<int>(player));
+                publishEditorPlayerState(player);
             }
             pendingPlayerMask_ = 0;
             pendingMuteMask_ = 0;
@@ -500,8 +503,10 @@ public:
         if (stopRequested_.exchange(false, std::memory_order_acq_rel)) {
             stopActiveMidiNotes(data.outputEvents, 0);
             stopAudioVoices();
-            for (auto& pattern : activePatterns_)
-                pattern.active = false;
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                activePatterns_[player].active = false;
+                publishEditorPlayerState(player);
+            }
         }
 
         emitPatternMidi(data);
@@ -848,6 +853,60 @@ public:
                                 std::memory_order_release);
     }
 
+    void editorPlayerStates(
+        std::array<EditorPlayerState, 8>& states) override {
+        for (std::size_t player = 0; player < states.size(); ++player) {
+            const auto packed =
+                editorPlayerState_[player].load(std::memory_order_acquire);
+            auto& state = states[player];
+            state.active = (packed & 1u) != 0;
+            state.muted = (packed & 2u) != 0;
+            state.synthIndex = static_cast<int>((packed >> 2) & 0xffu);
+            state.effectIndex =
+                static_cast<int>((packed >> 10) & 0xffu) - 1;
+            state.reverbIndex = static_cast<int>((packed >> 18) & 0x03u);
+            state.echoEnabled = (packed & (1u << 20)) != 0;
+            state.reverbEnabled = (packed & (1u << 21)) != 0;
+        }
+    }
+
+    std::vector<std::string> editorExternalSynthNames() override {
+        std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+        return editorExternalSynthNames_;
+    }
+
+    void stopEditorPlayer(int playerIndex) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        const auto mask = static_cast<std::uint8_t>(1u << player);
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            auto next = (pendingPlayerMask_ & mask) != 0
+                            ? pendingPatterns_[player]
+                            : activePatterns_[player];
+            next.active = false;
+            pendingPatterns_[player] = next;
+            pendingPlayerMask_ |= mask;
+        }
+        setEditorStatus("Stopping p" + std::to_string(playerIndex + 1) + ".");
+    }
+
+    void setEditorPlayerMuted(int playerIndex, bool muted) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            pendingMuteStates_[player] = muted;
+            pendingMuteMask_ |= static_cast<std::uint8_t>(1u << player);
+        }
+        setEditorStatus("p" + std::to_string(playerIndex + 1) +
+                        (muted ? " mute queued." : " unmute queued."));
+    }
+
     OBJ_METHODS(DexterSCTone, SingleComponentEffect)
     REFCOUNT_METHODS(SingleComponentEffect)
 
@@ -1041,6 +1100,34 @@ private:
         float swell = 0.0f;
         bool active = false;
     };
+
+    void publishEditorPlayerState(std::size_t player) {
+        if (player >= kPlayerCount)
+            return;
+        const auto& pattern = activePatterns_[player];
+        const auto synthIndex = static_cast<std::uint32_t>(
+            std::clamp(pattern.synthIndex, 0, 255));
+        const auto effectIndex = static_cast<std::uint32_t>(
+            std::clamp(pattern.playerEffectUserIndex + 1, 0, 255));
+        const auto reverbIndex = static_cast<std::uint32_t>(
+            std::clamp(pattern.reverbIndex, 0, 3));
+        const bool echoEnabled = pattern.echoBeats > 0.0 ||
+                                 pattern.delayTimeSeconds > 0.0 ||
+                                 pattern.echoControl.active ||
+                                 pattern.delayControl.active ||
+                                 pattern.echoMixControl.active;
+        const bool reverbEnabled = pattern.reverbMix > 0.0001f &&
+                                   pattern.reverbIndex > 0;
+        const auto packed =
+            (pattern.active ? 1u : 0u) |
+            (mutedPlayers_[player] ? 2u : 0u) |
+            (synthIndex << 2) |
+            (effectIndex << 10) |
+            (reverbIndex << 18) |
+            (echoEnabled ? (1u << 20) : 0u) |
+            (reverbEnabled ? (1u << 21) : 0u);
+        editorPlayerState_[player].store(packed, std::memory_order_release);
+    }
 
     struct UserSynthDefinition {
         std::string name;
@@ -2834,7 +2921,12 @@ private:
             error = "Portable/SynthDefs changed after the engine started. Close and reopen the DAW to load the updated SynthDef list.";
             return {};
         }
-        return worldIsReady ? loadedNames : names;
+        auto result = worldIsReady ? loadedNames : names;
+        {
+            std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+            editorExternalSynthNames_ = result;
+        }
+        return result;
     }
 
     bool loadUserSynthDefinitions(std::string& error) {
@@ -2956,6 +3048,13 @@ private:
 
         for (auto& voice : audioVoices_)
             voice.userSynthGraphs.assign(userSynthDefinitions_.size(), nullptr);
+        {
+            std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+            editorExternalSynthNames_.clear();
+            editorExternalSynthNames_.reserve(userSynthDefinitions_.size());
+            for (const auto& definition : userSynthDefinitions_)
+                editorExternalSynthNames_.push_back(definition.name);
+        }
         return true;
     }
 
@@ -3719,15 +3818,22 @@ private:
         echoFeedbackSmoothed_.fill(0.0f);
         reverbMixSmoothed_.fill(0.0f);
         mixGain_ = 0.0f;
-        for (auto& pattern : activePatterns_)
-            pattern = {};
-        for (auto& playerGates : activeMidiGates_)
-            playerGates.fill({});
-        pendingPlayerMask_ = 0;
-        pendingMuteMask_ = 0;
-        pendingMuteStates_.fill(false);
-        mutedPlayers_.fill(false);
-        playerMuteGain_.fill(1.0f);
+        {
+            std::lock_guard<std::mutex> patternLock(patternMutex_);
+            for (auto& pattern : activePatterns_)
+                pattern = {};
+            for (auto& pattern : pendingPatterns_)
+                pattern = {};
+            for (auto& playerGates : activeMidiGates_)
+                playerGates.fill({});
+            pendingPlayerMask_ = 0;
+            pendingMuteMask_ = 0;
+            pendingMuteStates_.fill(false);
+            mutedPlayers_.fill(false);
+            playerMuteGain_.fill(1.0f);
+            for (std::size_t player = 0; player < kPlayerCount; ++player)
+                publishEditorPlayerState(player);
+        }
     }
 
     std::string scriptNamespace_;
@@ -3779,6 +3885,7 @@ private:
     std::uint64_t sampleWorldGeneration_ = 1;
     std::array<PatternState, kPlayerCount> activePatterns_{};
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
+    std::array<std::atomic<std::uint32_t>, kPlayerCount> editorPlayerState_{};
     std::uint8_t pendingPlayerMask_ = 0;
     std::array<bool, kPlayerCount> pendingMuteStates_{};
     std::uint8_t pendingMuteMask_ = 0;
@@ -3798,6 +3905,8 @@ private:
     std::atomic<std::uint64_t> scriptGeneration_{0};
     std::mutex statusMutex_;
     std::string editorStatus_ = "Ready. Use p1 >> sequence(...) or play().";
+    std::mutex editorCatalogMutex_;
+    std::vector<std::string> editorExternalSynthNames_;
     std::mutex editorStateMutex_;
     std::string editorSource_ =
         "tempo(120)\r\nplay([60, 64, 67, 72], step=0.5, duration=0.45)\r\n";
@@ -3814,7 +3923,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-    "0.4.129",
+    DEXTER_PLUGIN_VERSION,
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

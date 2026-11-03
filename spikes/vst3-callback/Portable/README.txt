@@ -1,5 +1,13 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.130 adds a live local-engine browser: Players, Synths, Effects, and
+Samples tabs. Player rows show active/muted state, synth, and effect assignments;
+the selected player can be muted or stopped. The Samples tab lists Portable
+letter-bank WAVs and opens the Samples folder. The compatibility check now
+regression-tests .eq(), .getslice(), .i_rotate(), .i_reverse(), .i_sort(),
+.i_shuf(), and .setitem() so those supported finite Pattern methods are accepted.
+Example 162 demonstrates letter WAV banks, sample= selection, and per-hit |x1|.
+
 Version 0.4.129 adds bounded Pattern .eq()/.ne() comparison masks with cycling,
 in-place .i_rotate(), .i_reverse(), .i_sort(), and .i_shuf(), integer
 .setitem() mutation, and cyclic .getslice(). Mutators keep Pattern identity so

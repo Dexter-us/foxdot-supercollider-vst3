@@ -7,6 +7,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <commctrl.h>
+#include <shellapi.h>
 #include <shobjidl.h>
 
 #include "base/source/fobject.h"
@@ -17,18 +18,21 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "Scintilla.h"
 #include "ILexer.h"
 #include "Lexilla.h"
 #include "SciLexer.h"
 #include "master_output_gain.h"
+#include "plugin_version.h"
 
 
 namespace {
@@ -46,14 +50,32 @@ constexpr int kFileNameId = 111;
 constexpr int kMasterGainSliderId = 112;
 constexpr int kMasterGainValueId = 113;
 constexpr int kMasterGainLabelId = 114;
-constexpr int kViewWidth = 720;
-constexpr int kViewHeight = 480;
+constexpr int kPanelTabsId = 115;
+constexpr int kPanelListId = 116;
+constexpr int kPanelMuteId = 117;
+constexpr int kPanelStopId = 118;
+constexpr int kPanelSamplesId = 119;
+constexpr int kPanelVersionId = 120;
+constexpr int kViewWidth = 1000;
+constexpr int kViewHeight = 600;
 constexpr int kMargin = 10;
 constexpr int kToolbarHeight = 32;
 constexpr int kGainRowHeight = 28;
 constexpr int kStatusHeight = 24;
+constexpr int kPanelWidth = 270;
 constexpr std::size_t kMaxScriptBytes = 256 * 1024;
 constexpr std::size_t kMaxScriptCharacters = 65536;
+constexpr std::array<const char*, 58> kEmbeddedSynthNames{
+    "sine", "triangle", "saw", "square", "bass", "varsaw", "dirt", "jbass",
+    "noise", "dub", "growl", "soprano", "crunch", "lazer", "rave", "bell",
+    "gong", "marimba", "pluck", "twang", "donk", "squish", "charm", "spark",
+    "blip", "scatter", "orient", "zap", "fuzz", "bug", "ripple", "viola",
+    "nylon", "arpy", "dab", "sawbass", "dbass", "prophet", "pads", "pasha",
+    "ambi", "sinepad", "keys", "klank", "feel", "glass", "soft", "quin",
+    "space", "scratch", "creep", "snick", "swell", "razz", "sitar", "star",
+    "karp", "sample"};
+constexpr std::array<const wchar_t*, 4> kPanelTabNames{
+    L"Players", L"Synths", L"Effects", L"Samples"};
 constexpr char kPythonKeywords[] =
     "and as assert async await break class continue def del elif else except finally "
     "for from global if import in is lambda nonlocal not or pass raise return try "
@@ -356,6 +378,11 @@ private:
         }
         case WM_NOTIFY: {
             const auto* header = reinterpret_cast<const NMHDR*>(lParam);
+            if (header && header->hwndFrom == view->panelTabs_ &&
+                header->code == TCN_SELCHANGE) {
+                view->onPanelTabChanged();
+                return 0;
+            }
             if (header && header->hwndFrom == view->editor_) {
                 const auto* notification = reinterpret_cast<const SCNotification*>(lParam);
                 if (notification->nmhdr.code == SCN_MODIFIED &&
@@ -406,9 +433,32 @@ private:
                 view->copyLastError();
                 return 0;
             }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kPanelMuteId) {
+                view->toggleSelectedPlayerMute();
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kPanelStopId) {
+                view->stopSelectedPlayer();
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kPanelSamplesId) {
+                view->openSamplesFolder();
+                return 0;
+            }
+            if (HIWORD(wParam) == LBN_SELCHANGE && LOWORD(wParam) == kPanelListId) {
+                view->updatePlayerActionButtons();
+                return 0;
+            }
             break;
         case WM_TIMER:
             view->refreshStatus();
+            if (view->selectedPanelTab() == 0) {
+                view->refreshPlayersPanel();
+            } else if (view->selectedPanelTab() == 1) {
+                view->refreshSynthCatalog();
+            } else if (view->selectedPanelTab() == 2) {
+                view->refreshEffectsPanel();
+            }
             return 0;
         case WM_DESTROY:
             KillTimer(window, 1);
@@ -423,7 +473,10 @@ private:
                 view->openButton_ = view->saveButton_ = view->saveAsButton_ =
                     view->status_ = view->brand_ = view->fileName_ =
                         view->copyErrorButton_ = view->masterGainSlider_ =
-                        view->masterGainValue_ = view->masterGainLabel_ = nullptr;
+                        view->masterGainValue_ = view->masterGainLabel_ =
+                        view->panelTabs_ = view->panelList_ =
+                        view->panelMuteButton_ = view->panelStopButton_ =
+                        view->panelSamplesButton_ = view->panelVersion_ = nullptr;
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
@@ -432,7 +485,7 @@ private:
     void createChildren() {
         INITCOMMONCONTROLSEX controls{};
         controls.dwSize = sizeof(controls);
-        controls.dwICC = ICC_BAR_CLASSES;
+        controls.dwICC = ICC_BAR_CLASSES | ICC_TAB_CLASSES;
         InitCommonControlsEx(&controls);
         runButton_ = CreateWindowExW(0, L"BUTTON", L"Run",
                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
@@ -470,7 +523,9 @@ private:
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
-        brand_ = CreateWindowExW(0, L"STATIC", L"Dexter U.S FoxDot  |  v0.4.129",
+        const auto brandText =
+            fromUtf8("Dexter U.S FoxDot  |  v" DEXTER_PLUGIN_VERSION);
+        brand_ = CreateWindowExW(0, L"STATIC", brandText.c_str(),
                                  WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
                                  0, 0, 210, kStatusHeight, window_,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrandId)),
@@ -508,6 +563,54 @@ private:
             SendMessageW(masterGainSlider_, TBM_SETPOS, TRUE, position);
             updateMasterGainText(position);
         }
+        panelTabs_ = CreateWindowExW(
+            0, WC_TABCONTROLW, L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS,
+            0, 0, 260, 28, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelTabsId)),
+            moduleInstance(), nullptr);
+        if (panelTabs_) {
+            for (std::size_t index = 0; index < kPanelTabNames.size(); ++index) {
+                TCITEMW item{};
+                item.mask = TCIF_TEXT;
+                item.pszText = const_cast<wchar_t*>(kPanelTabNames[index]);
+                TabCtrl_InsertItem(panelTabs_, static_cast<int>(index), &item);
+            }
+            TabCtrl_SetCurSel(panelTabs_, 0);
+        }
+        panelList_ = CreateWindowExW(
+            WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+                LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+            0, 0, 260, 360, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelListId)),
+            moduleInstance(), nullptr);
+        panelMuteButton_ = CreateWindowExW(
+            0, L"BUTTON", L"Mute player",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 88, 24, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelMuteId)),
+            moduleInstance(), nullptr);
+        panelStopButton_ = CreateWindowExW(
+            0, L"BUTTON", L"Stop player",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 88, 24, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelStopId)),
+            moduleInstance(), nullptr);
+        panelSamplesButton_ = CreateWindowExW(
+            0, L"BUTTON", L"Open Samples Folder",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 150, 24, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelSamplesId)),
+            moduleInstance(), nullptr);
+        const auto panelVersionText =
+            fromUtf8(std::string("v") + DEXTER_PLUGIN_VERSION);
+        panelVersion_ = CreateWindowExW(
+            0, L"STATIC", panelVersionText.c_str(),
+            WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
+            0, 0, 80, 24, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelVersionId)),
+            moduleInstance(), nullptr);
         if (!sourceInitialized_) {
             currentSource_ = host_ && host_->hasEditorSource()
                                  ? fromUtf8(host_->editorSource())
@@ -529,6 +632,7 @@ private:
         updatingEditor_ = false;
         SetTimer(window_, 1, 250, nullptr);
         layoutChildren(kViewWidth, kViewHeight);
+        renderPanelTab();
         updateSaveButton();
     }
 
@@ -733,6 +837,338 @@ private:
                          reinterpret_cast<LPARAM>(kFoxDotCompletions));
     }
 
+    int selectedPanelTab() const {
+        return panelTabs_ ? TabCtrl_GetCurSel(panelTabs_) : 0;
+    }
+
+    void onPanelTabChanged() {
+        panelPlayersInitialized_ = false;
+        panelEffectsInitialized_ = false;
+        panelSynthsInitialized_ = false;
+        renderPanelTab();
+    }
+
+    static bool samePlayerStates(
+        const std::array<EditorPlayerState, 8>& left,
+        const std::array<EditorPlayerState, 8>& right) {
+        for (std::size_t index = 0; index < left.size(); ++index) {
+            if (left[index].active != right[index].active ||
+                left[index].muted != right[index].muted ||
+                left[index].synthIndex != right[index].synthIndex ||
+                left[index].effectIndex != right[index].effectIndex ||
+                left[index].reverbIndex != right[index].reverbIndex ||
+                left[index].echoEnabled != right[index].echoEnabled ||
+                left[index].reverbEnabled != right[index].reverbEnabled)
+                return false;
+        }
+        return true;
+    }
+
+    void addPanelRow(const std::wstring& row, int itemData = -1) {
+        if (!panelList_)
+            return;
+        const auto index = static_cast<int>(
+            SendMessageW(panelList_, LB_ADDSTRING, 0,
+                         reinterpret_cast<LPARAM>(row.c_str())));
+        if (index != LB_ERR && itemData >= 0)
+            SendMessageW(panelList_, LB_SETITEMDATA, index, itemData);
+    }
+
+    std::wstring synthNameForIndex(
+        int synthIndex, const std::vector<std::string>& externalNames) const {
+        if (synthIndex >= 0 &&
+            synthIndex < static_cast<int>(kEmbeddedSynthNames.size()))
+            return fromUtf8(kEmbeddedSynthNames[static_cast<std::size_t>(synthIndex)]);
+        const int externalIndex =
+            synthIndex - static_cast<int>(kEmbeddedSynthNames.size());
+        if (externalIndex >= 0 &&
+            externalIndex < static_cast<int>(externalNames.size()))
+            return fromUtf8(externalNames[static_cast<std::size_t>(externalIndex)]);
+        return L"unknown";
+    }
+
+    void renderPanelTab() {
+        if (!panelList_)
+            return;
+        SendMessageW(panelList_, LB_RESETCONTENT, 0, 0);
+        const int tab = selectedPanelTab();
+        ShowWindow(panelMuteButton_, tab == 0 ? SW_SHOW : SW_HIDE);
+        ShowWindow(panelStopButton_, tab == 0 ? SW_SHOW : SW_HIDE);
+        ShowWindow(panelSamplesButton_, tab == 3 ? SW_SHOW : SW_HIDE);
+        if (tab == 0) {
+            panelPlayersInitialized_ = false;
+            refreshPlayersPanel();
+        } else if (tab == 1) {
+            for (const auto* name : kEmbeddedSynthNames)
+                addPanelRow(fromUtf8(name));
+            if (host_) {
+                const auto externalNames = host_->editorExternalSynthNames();
+                for (const auto& name : externalNames)
+                    addPanelRow(fromUtf8(name) + L"  [Portable SynthDef]");
+                lastPanelSynthNames_ = externalNames;
+                panelSynthsInitialized_ = true;
+            }
+        } else if (tab == 2) {
+            addPanelRow(L"Reverb: Freeverb");
+            addPanelRow(L"Reverb: Freeverb2");
+            addPanelRow(L"Reverb: GVerb");
+            addPanelRow(L"Echo / Delay");
+            addPanelRow(L"Low-pass / High-pass / Band-pass");
+            addPanelRow(L"Airwindows TapeDelay2");
+            addPanelRow(L"Airwindows Echojam");
+            renderLiveEffectsPanel();
+        } else if (tab == 3) {
+            renderSamplePanel();
+        }
+        updatePlayerActionButtons();
+    }
+
+    void renderLiveEffectsPanel() {
+        if (!host_)
+            return;
+        std::array<EditorPlayerState, 8> states{};
+        host_->editorPlayerStates(states);
+        lastPanelPlayers_ = states;
+        panelEffectsInitialized_ = true;
+        const auto externalNames = host_->editorExternalSynthNames();
+        static constexpr std::array<const wchar_t*, 4> reverbs{
+            L"none", L"Freeverb", L"Freeverb2", L"GVerb"};
+        bool foundAssignment = false;
+        for (std::size_t index = 0; index < states.size(); ++index) {
+            const auto& state = states[index];
+            if (state.effectIndex < 0 && !state.echoEnabled &&
+                !state.reverbEnabled)
+                continue;
+            foundAssignment = true;
+            std::wstring row = L"p" + std::to_wstring(index + 1) + L":";
+            if (state.effectIndex >= 0 &&
+                state.effectIndex < static_cast<int>(externalNames.size()))
+                row += L" " + fromUtf8(
+                    externalNames[static_cast<std::size_t>(state.effectIndex)]);
+            if (state.echoEnabled)
+                row += L" Echo";
+            if (state.reverbEnabled && state.reverbIndex >= 0 &&
+                state.reverbIndex < static_cast<int>(reverbs.size()))
+                row += L" " + std::wstring(
+                    reverbs[static_cast<std::size_t>(state.reverbIndex)]);
+            if (!state.active)
+                row += L" [tail/idle]";
+            addPanelRow(row);
+        }
+        if (!foundAssignment)
+            addPanelRow(L"No player effects are active.");
+    }
+
+    void refreshEffectsPanel() {
+        if (!host_ || selectedPanelTab() != 2)
+            return;
+        std::array<EditorPlayerState, 8> states{};
+        host_->editorPlayerStates(states);
+        if (!panelEffectsInitialized_ ||
+            !samePlayerStates(states, lastPanelPlayers_))
+            renderPanelTab();
+    }
+
+    void refreshSynthCatalog() {
+        if (!host_ || selectedPanelTab() != 1)
+            return;
+        const auto names = host_->editorExternalSynthNames();
+        if (!panelSynthsInitialized_ || names != lastPanelSynthNames_)
+            renderPanelTab();
+    }
+
+    static bool isWaveFile(const std::filesystem::path& path) {
+        auto extension = path.extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](wchar_t character) {
+                           return static_cast<wchar_t>(std::towlower(character));
+                       });
+        return extension == L".wav" || extension == L".wave";
+    }
+
+    void appendSampleBank(const std::filesystem::path& folder,
+                          const std::wstring& symbol,
+                          std::size_t& displayedFiles) {
+        std::error_code error;
+        if (!std::filesystem::is_directory(folder, error) || error)
+            return;
+        std::vector<std::filesystem::path> waves;
+        for (std::filesystem::directory_iterator it(folder, error), end;
+             !error && it != end && displayedFiles < 256; it.increment(error)) {
+            if (!it->is_regular_file(error) || it->is_symlink(error) ||
+                !isWaveFile(it->path()))
+                continue;
+            waves.push_back(it->path());
+        }
+        if (error || waves.empty())
+            return;
+        std::sort(waves.begin(), waves.end());
+        for (std::size_t index = 0;
+             index < waves.size() && displayedFiles < 256; ++index) {
+            addPanelRow(symbol + L"[" + std::to_wstring(index) + L"]  " +
+                        fromUtf8(waves[index].filename().u8string()));
+            ++displayedFiles;
+        }
+    }
+
+    void renderSamplePanel() {
+        const auto root = portableScriptDirectory() / L"Samples";
+        addPanelRow(L"One row per sample: symbol[index] and WAV filename.");
+        addPanelRow(L"x-o- uses x/o letter banks; spaces are rests.");
+        addPanelRow(L"sample=1 picks bank item 1; |x1| changes one hit.");
+        addPanelRow(L"Use new filenames, then Run; replacing same file needs host restart.");
+        std::size_t displayedFiles = 0;
+        std::error_code error;
+        for (wchar_t letter = L'a'; letter <= L'z' && displayedFiles < 256;
+             ++letter) {
+            const std::wstring symbol(1, letter);
+            const auto bank = root / symbol;
+            appendSampleBank(bank / L"lower", symbol + L" (lower)",
+                             displayedFiles);
+            appendSampleBank(bank / L"upper", symbol + L" (upper)",
+                             displayedFiles);
+            appendSampleBank(bank, symbol, displayedFiles);
+        }
+        const auto specialRoot = root / L"_";
+        for (std::filesystem::directory_iterator it(specialRoot, error), end;
+             !error && it != end && displayedFiles < 256; it.increment(error)) {
+            if (!it->is_directory(error) || it->is_symlink(error))
+                continue;
+            appendSampleBank(it->path(), L"_" +
+                it->path().filename().wstring(), displayedFiles);
+        }
+        if (displayedFiles == 0)
+            addPanelRow(L"No WAV banks yet. Open the folder to add some.");
+        else if (displayedFiles >= 256)
+            addPanelRow(L"List capped at 256 WAVs; more may be installed.");
+    }
+
+    void refreshPlayersPanel() {
+        if (!host_ || !panelList_ || selectedPanelTab() != 0)
+            return;
+        std::array<EditorPlayerState, 8> states{};
+        host_->editorPlayerStates(states);
+        if (panelPlayersInitialized_ &&
+            samePlayerStates(states, lastPanelPlayers_))
+            return;
+        int selectedPlayer = -1;
+        const int selectedItem = static_cast<int>(
+            SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
+        if (selectedItem != LB_ERR)
+            selectedPlayer = static_cast<int>(
+                SendMessageW(panelList_, LB_GETITEMDATA, selectedItem, 0));
+        SendMessageW(panelList_, LB_RESETCONTENT, 0, 0);
+        const auto externalNames = host_->editorExternalSynthNames();
+        static constexpr std::array<const wchar_t*, 4> reverbs{
+            L"none", L"Freeverb", L"Freeverb2", L"GVerb"};
+        for (std::size_t index = 0; index < states.size(); ++index) {
+            const auto& state = states[index];
+            std::wstring row = L"p" + std::to_wstring(index + 1) +
+                (state.active ? L"  PLAY  " : L"  stopped  ") +
+                synthNameForIndex(state.synthIndex, externalNames);
+            if (state.muted)
+                row += L"  [MUTED]";
+            if (state.effectIndex >= 0 &&
+                state.effectIndex < static_cast<int>(externalNames.size())) {
+                row += L"  FX:" +
+                    fromUtf8(externalNames[static_cast<std::size_t>(state.effectIndex)]);
+            }
+            if (state.echoEnabled)
+                row += L"  Echo";
+            if (state.reverbEnabled && state.reverbIndex >= 0 &&
+                state.reverbIndex < static_cast<int>(reverbs.size()))
+                row += L"  " + std::wstring(reverbs[static_cast<std::size_t>(
+                    state.reverbIndex)]);
+            const auto item = static_cast<int>(
+                SendMessageW(panelList_, LB_ADDSTRING, 0,
+                             reinterpret_cast<LPARAM>(row.c_str())));
+            if (item != LB_ERR)
+                SendMessageW(panelList_, LB_SETITEMDATA, item,
+                             static_cast<LPARAM>(index));
+        }
+        lastPanelPlayers_ = states;
+        panelPlayersInitialized_ = true;
+        if (selectedPlayer >= 0 &&
+            selectedPlayer < static_cast<int>(states.size()))
+            SendMessageW(panelList_, LB_SETCURSEL, selectedPlayer, 0);
+        updatePlayerActionButtons();
+    }
+
+    int selectedPlayerIndex() const {
+        if (!panelList_ || selectedPanelTab() != 0)
+            return -1;
+        const int selectedItem = static_cast<int>(
+            SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
+        if (selectedItem == LB_ERR)
+            return -1;
+        const int player = static_cast<int>(
+            SendMessageW(panelList_, LB_GETITEMDATA, selectedItem, 0));
+        return player >= 0 && player < 8 ? player : -1;
+    }
+
+    void updatePlayerActionButtons() {
+        const int player = selectedPlayerIndex();
+        if (player < 0 || !host_) {
+            if (panelMuteButton_)
+                EnableWindow(panelMuteButton_, FALSE);
+            if (panelStopButton_)
+                EnableWindow(panelStopButton_, FALSE);
+            return;
+        }
+        std::array<EditorPlayerState, 8> states{};
+        host_->editorPlayerStates(states);
+        const auto& state = states[static_cast<std::size_t>(player)];
+        const auto muteText = state.muted
+            ? L"Unmute p" + std::to_wstring(player + 1)
+            : L"Mute p" + std::to_wstring(player + 1);
+        if (panelMuteButton_) {
+            SetWindowTextW(panelMuteButton_, muteText.c_str());
+            EnableWindow(panelMuteButton_, state.active ? TRUE : FALSE);
+        }
+        if (panelStopButton_)
+            EnableWindow(panelStopButton_, state.active ? TRUE : FALSE);
+    }
+
+    void toggleSelectedPlayerMute() {
+        const int player = selectedPlayerIndex();
+        if (player < 0 || !host_)
+            return;
+        std::array<EditorPlayerState, 8> states{};
+        host_->editorPlayerStates(states);
+        host_->setEditorPlayerMuted(player,
+                                    !states[static_cast<std::size_t>(player)].muted);
+        updatePlayerActionButtons();
+    }
+
+    void stopSelectedPlayer() {
+        const int player = selectedPlayerIndex();
+        if (player >= 0 && host_)
+            host_->stopEditorPlayer(player);
+    }
+
+    void openSamplesFolder() {
+        const auto portable = portableScriptDirectory();
+        if (portable.empty()) {
+            MessageBoxW(window_, L"The plugin bundle path is not available.",
+                        L"Samples", MB_OK | MB_ICONERROR);
+            return;
+        }
+        std::error_code error;
+        const auto directory = portable / L"Samples";
+        std::filesystem::create_directories(directory, error);
+        if (error) {
+            MessageBoxW(window_, L"Could not create or open Portable\\Samples.",
+                        L"Samples", MB_OK | MB_ICONERROR);
+            return;
+        }
+        const auto result = reinterpret_cast<INT_PTR>(
+            ShellExecuteW(window_, L"open", directory.c_str(), nullptr, nullptr,
+                          SW_SHOWNORMAL));
+        if (result <= 32)
+            MessageBoxW(window_, L"Windows could not open Portable\\Samples.",
+                        L"Samples", MB_OK | MB_ICONERROR);
+    }
+
     void layoutChildren(int width, int height) {
         if (!editor_)
             return;
@@ -755,7 +1191,20 @@ private:
         }
         const int editorTop = kMargin + kToolbarHeight + kGainRowHeight;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
-        MoveWindow(editor_, kMargin, editorTop, std::max(160, width - 2 * kMargin), editorHeight, TRUE);
+        const int panelX = width - kMargin - kPanelWidth;
+        const int editorWidth = std::max(280, panelX - kMargin - 12);
+        MoveWindow(editor_, kMargin, editorTop, editorWidth, editorHeight, TRUE);
+        MoveWindow(panelTabs_, panelX, editorTop, kPanelWidth, 28, TRUE);
+        MoveWindow(panelList_, panelX + 2, editorTop + 30, kPanelWidth - 4,
+                   std::max(80, editorHeight - 62), TRUE);
+        MoveWindow(panelMuteButton_, panelX + 2, editorTop + editorHeight - 27,
+                   88, 24, TRUE);
+        MoveWindow(panelStopButton_, panelX + 96, editorTop + editorHeight - 27,
+                   88, 24, TRUE);
+        MoveWindow(panelSamplesButton_, panelX + 2,
+                   editorTop + editorHeight - 27, 160, 24, TRUE);
+        MoveWindow(panelVersion_, panelX + kPanelWidth - 84,
+                   editorTop + editorHeight - 27, 80, 24, TRUE);
         const int footerY = height - kStatusHeight - kMargin;
         MoveWindow(fileName_, kMargin, footerY, std::max(120, width - 250),
                    kStatusHeight, TRUE);
@@ -1163,6 +1612,17 @@ private:
     HWND masterGainSlider_ = nullptr;
     HWND masterGainValue_ = nullptr;
     HWND masterGainLabel_ = nullptr;
+    HWND panelTabs_ = nullptr;
+    HWND panelList_ = nullptr;
+    HWND panelMuteButton_ = nullptr;
+    HWND panelStopButton_ = nullptr;
+    HWND panelSamplesButton_ = nullptr;
+    HWND panelVersion_ = nullptr;
+    std::array<EditorPlayerState, 8> lastPanelPlayers_{};
+    bool panelPlayersInitialized_ = false;
+    bool panelEffectsInitialized_ = false;
+    bool panelSynthsInitialized_ = false;
+    std::vector<std::string> lastPanelSynthNames_;
     std::wstring lastDiagnostic_;
     bool copyDiagnosticPinned_ = false;
     std::wstring currentFilePath_;

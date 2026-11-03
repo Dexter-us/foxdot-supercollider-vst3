@@ -1,5 +1,15 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.130 adds a live local-engine browser with Players, Synths, Effects,
+and Samples tabs. Player rows track active/muted state, synth selection, and
+per-player effects; selected players can be muted or stopped without editing
+their other players. The Samples tab lists WAVs in the Portable letter banks and
+opens that folder. The compatibility checker now has direct coverage for
+`.eq()`, `.getslice()`, `.i_rotate()`, `.i_reverse()`, `.i_sort()`, `.i_shuf()`,
+and `.setitem()` so supported finite Pattern internals are not reported as
+unknown methods. Portable Example 162 demonstrates per-letter WAV banks,
+`sample=` selection, and the per-hit `|x1|` override.
+
 Version 0.4.129 adds bounded `Pattern.eq()`/`.ne()` comparison masks with
 right-side cycling; in-place `.i_rotate()`, `.i_reverse()`, `.i_sort()`, and
 `.i_shuf()`; integer `.setitem()` mutation; and explicit cyclic `.getslice()`.

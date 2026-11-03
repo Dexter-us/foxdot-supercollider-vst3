@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.129)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.130)
+
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/plugin_version.h.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/plugin_version.h"
+  @ONLY)
 
 set(VST3_SDK_ROOT "" CACHE PATH "Path to Steinberg VST3 SDK checkout")
 set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")
@@ -156,6 +162,7 @@ smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Lice
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/Scintilla-Lexilla-License.txt" "Licenses")
 target_compile_features(dexter_sc_tone PRIVATE cxx_std_17)
 target_include_directories(dexter_sc_tone PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}/generated"
   "${SC_SOURCE_DIR}/include/common" "${SC_SOURCE_DIR}/common"
   "${SC_SOURCE_DIR}/include/server" "${SC_SOURCE_DIR}/include/plugin_interface"
   "${SC_SOURCE_DIR}/server/scsynth" "${SC_SOURCE_DIR}/external_libraries"

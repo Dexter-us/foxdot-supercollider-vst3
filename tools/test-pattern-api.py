@@ -14,6 +14,36 @@ if len(sys.argv) != 3:
 source = open(sys.argv[1], encoding='utf-8').read()
 processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
 processor_source = open(processor_path, encoding='utf-8').read()
+editor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
+                           'win32_code_editor.cpp')
+editor_source = open(editor_path, encoding='utf-8').read()
+editor_host_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
+                                'win32_code_editor.h')
+editor_host_source = open(editor_host_path, encoding='utf-8').read()
+cmake_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
+                          'CMakeLists.txt')
+cmake_source = open(cmake_path, encoding='utf-8').read()
+version_template_path = os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
+version_template = open(version_template_path, encoding='utf-8').read()
+if ('VERSION 0.4.130' not in cmake_source or
+        '@PROJECT_VERSION@' not in version_template or
+        'DEXTER_PLUGIN_VERSION' not in processor_source or
+        'DEXTER_PLUGIN_VERSION' not in editor_source):
+    raise AssertionError('Plugin, panel, and generated module versions are not unified.')
+for live_panel_fragment in (
+        'L"Players"', 'L"Synths"', 'L"Effects"', 'L"Samples"',
+        'refreshPlayersPanel()', 'renderLiveEffectsPanel()',
+        'renderSamplePanel()', 'Open Samples Folder', 'panelVersion_',
+        'setEditorPlayerMuted(', 'stopEditorPlayer('):
+    if live_panel_fragment not in editor_source + editor_host_source:
+        raise AssertionError('Live engine panel is missing: ' + live_panel_fragment)
+for snapshot_fragment in (
+        'editorPlayerState_[player].store',
+        'editorPlayerState_[player].load',
+        'publishEditorPlayerState(player)'):
+    if snapshot_fragment not in processor_source:
+        raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (
     'const uint32 expectedControlCount = isTapeDelay ? 8u : 6u;',
     'userDefinition.outControl = 0;',
@@ -2083,9 +2113,13 @@ def test_embedded_synthdef():
     cmake_text = open(os.path.join(plugin_dir, 'CMakeLists.txt'), encoding='utf-8').read()
     version = re.search(r'project\([^\n]*\bVERSION\s+([0-9.]+)', cmake_text).group(1)
     factory_text = processor_source.split('BEGIN_FACTORY_DEF', 1)[1]
-    assert '"' + version + '"' in factory_text, 'VST factory version differs from CMake/moduleinfo'
+    assert 'DEXTER_PLUGIN_VERSION' in factory_text, 'VST factory must use the generated CMake version'
     editor_text = open(os.path.join(plugin_dir, 'win32_code_editor.cpp'), encoding='utf-8').read()
-    assert 'v' + version + '"' in editor_text, 'editor version differs from VST factory/moduleinfo'
+    assert 'DEXTER_PLUGIN_VERSION' in editor_text, 'Editor version must use the generated CMake version'
+    version_template = open(
+        os.path.join(plugin_dir, 'plugin_version.h.in'), encoding='utf-8').read()
+    assert '@PROJECT_VERSION@' in version_template, (
+        'Generated VST/panel version must match the CMake project version')
     generator = os.path.join(repo_root, 'spikes', 'direct-world', 'testdata', 'generate_tone.py')
     header = os.path.join(plugin_dir, 'tone_synthdef.h')
     with tempfile.TemporaryDirectory() as directory:
@@ -2643,6 +2677,18 @@ for keyword, value in [('vib', float('inf')), ('rq', 0), ('blur', 0), ('lfowidth
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
+compat_pattern_internal_methods = run_compatibility_check(
+    'notes = P[0, 2, 4]\n'
+    'notes.eq(2)\n'
+    'notes.getslice(0, 2)\n'
+    'notes.i_rotate(1)\n'
+    'notes.i_reverse()\n'
+    'notes.i_sort()\n'
+    'notes.i_shuf()\n'
+    'notes.setitem(0, 1)\n'
+    'p1 >> saw(notes, dur=0.5)\n')
+assert 'No unsupported constructs detected' in compat_pattern_internal_methods, (
+    compat_pattern_internal_methods)
 generatorCompatibilityReport = run_compatibility_check(
     'p1 >> saw(PSq(0, 2, 5).norm(), dur=0.25)\n'
     'p2 >> play(PEuclid2(3, 8, "-", "x"), dur=0.25, sample=0)\n'
