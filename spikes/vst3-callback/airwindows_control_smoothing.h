@@ -3,8 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
-// Smooth abrupt FoxDot var() changes before they reach block-rate Airwindows
-// SynthDef controls. linvar() targets use the same short smoothing so block
+// Smooth normalized FoxDot var() changes before they reach block-rate
+// persistent SynthDef controls (Airwindows / JPverb / Greyhole).
+// linvar() targets use the same short smoothing so block
 // boundaries do not introduce parameter steps.
 inline float smoothAirwindowsFxControl(float previous, float target,
                                        double blockSeconds) noexcept {

@@ -79,6 +79,8 @@ struct PythonPlayerUpdate {
     double swingSeconds = 0.0;
     // vib, depth, lforate, lfowidth, rq, fmod, blur
     std::array<double, 7> synthControls{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
+    // Normalized to 0..1; the selected SynthDef maps these to its control ranges.
+    std::array<double, 7> playerEffectControlValues{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
     double amplitude = 1.0;
     double pan = 0.0;
     double cutoffHz = 20000.0;

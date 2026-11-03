@@ -26,7 +26,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.133' not in cmake_source or
+if ('VERSION 0.4.134' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -51,7 +51,7 @@ for snapshot_fragment in (
     if snapshot_fragment not in processor_source:
         raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (
-    'const uint32 expectedControlCount = isTapeDelay ? 8u : 6u;',
+    'isTapeDelay ? 8u : isEchojam ? 6u : 9u;',
     'userDefinition.outControl = 0;',
     'userDefinition.inputBusControl = 1;',
     'std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}',
@@ -1881,7 +1881,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, include_tempo=False, user_synth_names=()):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, include_tempo=False, user_synth_names=(), include_player_effect_values=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -1901,6 +1901,7 @@ def run_script(script_text, include_events=False, include_effects=False, include
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
         player_effect_rows = [line.split('\t') for line in lines if line.startswith('A\t')]
+        player_effect_values = [line.split('\t') for line in lines if line.startswith('W\t')]
         synth_control_rows = [line.split('\t') for line in lines if line.startswith('S\t')]
         effect_control_var_rows = [line.split('\t') for line in lines if line.startswith('X\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
@@ -1909,6 +1910,10 @@ def run_script(script_text, include_events=False, include_effects=False, include
         mute_rows = [line.split('\t') for line in lines if line.startswith('M\t')]
         if include_tempo:
             return player_rows, [line.split('\t') for line in lines if line.startswith('T\t')]
+        if include_player_effect_values:
+            if include_player_effects:
+                return player_rows, player_effect_rows, player_effect_values
+            return player_rows, player_effect_values
         if include_group_controls:
             return (player_rows, effect_rows, filter_rows, decay_rows,
                     modulation_rows)
@@ -1980,11 +1985,13 @@ def run_error_script(script_text, user_synth_names=()):
         return open(result_path, encoding='utf-8').read()
 
 def run_example(name, user_synth_names=(), include_player_effects=False,
-                include_synth_controls=False, include_effect_control_vars=False):
+                include_synth_controls=False, include_effect_control_vars=False,
+                include_player_effect_values=False):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read(),
                       user_synth_names=user_synth_names,
                       include_player_effects=include_player_effects,
+                      include_player_effect_values=include_player_effect_values,
                       include_synth_controls=include_synth_controls,
                       include_effect_control_vars=include_effect_control_vars)
 
@@ -3113,14 +3120,14 @@ assert [int(row[5]) for row in example103 if row[0] == 'P'] == [28, 6]
 assert example103EffectRows == [['A', '0', '0'], ['A', '1', '-1']]
 example103, example103ControlRows = run_example(
     '103-sample-player-airwindows-delay.py', ('AirwindowsTapeDelay2',),
-    include_synth_controls=True)
+    include_player_effect_values=True)
 example103TapeControls = next(row for row in example103ControlRows
                               if row[1] == '0')
 assert [float(value) for value in example103TapeControls[2:]] == [
     0.72, 0.64, 0.35, 0.42, 0.18, 0.0, 0.76]
 example104, example104EffectRows, example104ControlRows = run_example(
     '104-sample-player-airwindows-echojam.py', ('AirwindowsEchojam',),
-    include_player_effects=True, include_synth_controls=True)
+    include_player_effects=True, include_player_effect_values=True)
 assert [int(row[5]) for row in example104 if row[0] == 'P'] == [28, 6]
 assert example104EffectRows == [['A', '0', '0'], ['A', '1', '-1']]
 example104EchojamControls = next(row for row in example104ControlRows
@@ -3149,7 +3156,7 @@ assert echojamControlVars[2:] == [
 badTapeControl = run_error_script(
     'p1 >> play("x", effect="AirwindowsTapeDelay2", fx_depth=1.1)\n',
     ('AirwindowsTapeDelay2',))
-assert 'fx_depth must be a finite number or var/linvar from 0 to 1' in badTapeControl
+assert 'fx_depth must be between 0.0 and 1.0' in badTapeControl
 unsupportedEchojamControl = run_error_script(
     'p1 >> play("x", effect="AirwindowsEchojam", fx_rq=0.4)\n',
     ('AirwindowsEchojam',))
@@ -3161,7 +3168,7 @@ assert not timeVaryingEffectControl.startswith('ERROR'), timeVaryingEffectContro
 invalidTimeVaryingEffectControl = run_error_script(
     'p1 >> play("x", effect="AirwindowsEchojam", '
     'fx_depth=linvar([0.2, 1.2]))\n', ('AirwindowsEchojam',))
-assert 'time-var values must be between 0 and 1' in invalidTimeVaryingEffectControl
+assert 'fx_depth must be between 0.0 and 1.0' in invalidTimeVaryingEffectControl
 example105, example105Effects, example105Controls, example105ControlVars = run_example(
     '105-airwindows-timevar-controls.py',
     ('AirwindowsTapeDelay2', 'AirwindowsEchojam'),
@@ -3178,11 +3185,14 @@ assert 'fx_* controls require effect=' in orphanEffectControl
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play("x-o-", effect="AirwindowsTapeDelay2")\n',
     ('AirwindowsTapeDelay2',))
-assert 'requires the matching Airwindows SynthDef' in run_compatibility_check(
+assert 'requires the matching player-effect SynthDef' in run_compatibility_check(
     'p1 >> play("x-o-", effect="AirwindowsTapeDelay2")\n')
-assert 'supports AirwindowsTapeDelay2 or AirwindowsEchojam' in run_compatibility_check(
+assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb or Greyhole' in run_compatibility_check(
     'p1 >> play("x-o-", effect="NotAnEffect")\n',
     ('NotAnEffect',))
+subprocess.run([sys.executable, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'UGens', 'SpaceReverbs', 'test-examples.py')], check=True)
 _, duplicateLayerRequests, duplicateLayerEvents = run_script(
     'p1 >> play("<x><x>", dur=1)', include_samples=True, include_events=True)
 assert [int(row[1]) for row in duplicateLayerRequests] == [120, 120]

@@ -1,5 +1,15 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.134 adds an optional, separately built JPverb/Greyhole UGen pack.
+Use effect="JPverb" or effect="Greyhole" with fx_* controls on synth or sample
+players. Scalar, var(), and linvar() effect controls are smoothed and kept
+separate from instrument controls. These Python insert keywords are plugin
+extensions; the actual DSP is the original pinned sc3-plugins code.
+Examples 166-167 and the complete control/install guide are in the optional
+pack, not this base VST download. Installing either reverb SynthDef reserves
+a 256 MiB SC realtime pool per plugin instance, following upstream guidance.
+The standard VST workflow still uses the existing cached SC engine.
+
 Version 0.4.133 adds bounded FoxDot `chop` and stereo `spin` controls for synth
 and WAV players. `chop` gates the sustain into pulses (0–32); `spin` applies
 FoxDot's stereo sine-pan motion (0–40). Both accept scalar, finite P[], var(),

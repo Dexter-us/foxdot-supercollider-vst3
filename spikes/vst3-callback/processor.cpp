@@ -650,6 +650,8 @@ public:
                         next.playerEffectUserIndex = player.playerEffectUserIndex;
                         next.synthRate = static_cast<float>(player.synthRate);
                         next.synthControls = player.synthControls;
+                        next.playerEffectControlValues =
+                            player.playerEffectControlValues;
                         next.amplitude = static_cast<float>(player.amplitude);
                         next.pan = static_cast<float>(player.pan);
                         next.cutoffHz = static_cast<float>(player.cutoffHz);
@@ -683,12 +685,12 @@ public:
                                                      0.0, 1.0,
                                                      next.effectControlVariables[control])) {
                                 throw std::runtime_error(
-                                    "Invalid Airwindows fx_* var/linvar control from Python.");
+                                    "Invalid persistent-effect fx_* var/linvar control from Python.");
                             }
                             if (next.effectControlVariables[control].active &&
                                 next.playerEffectUserIndex < 0) {
                                 throw std::runtime_error(
-                                    "Airwindows fx_* modulation requires a selected player effect.");
+                                    "fx_* modulation requires a selected persistent player effect.");
                             }
                         }
                         constexpr std::array<double, 8> noteEffectMinimum{
@@ -1088,6 +1090,7 @@ private:
         int playerEffectUserIndex = -1;
         float synthRate = 0.0f;
         std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
+        std::array<double, 7> playerEffectControlValues{0, 0.5, 1, 0.5, 0.5, 0, 1};
         std::array<TimeVarControl, 7> effectControlVariables{};
         std::array<TimeVarControl, 8> noteEffectControls{};
         bool chopEnabled = false;
@@ -1194,6 +1197,8 @@ private:
         int releaseControl = -1;
         int sustainControl = -1;
         std::array<int, 7> effectControlIndices{};
+        std::array<float, 7> effectControlMinimum{};
+        std::array<float, 7> effectControlMaximum{{1, 1, 1, 1, 1, 1, 1}};
     };
 
     struct TimedMidiEvent {
@@ -1946,9 +1951,15 @@ private:
         for (std::size_t control = 0;
              control < definition.effectControlIndices.size(); ++control) {
             const auto controlIndex = definition.effectControlIndices[control];
-            if (controlIndex >= 0)
+            if (controlIndex >= 0) {
+                const auto normalized = std::clamp(controls[control], 0.0, 1.0);
+                const auto value =
+                    definition.effectControlMinimum[control] +
+                    normalized * (definition.effectControlMaximum[control] -
+                                 definition.effectControlMinimum[control]);
                 Graph_SetControl(created, controlIndex,
-                                 static_cast<float>(controls[control]));
+                                 value);
+            }
         }
 
         Group_AddTail(rootGroup_, &created->mNode);
@@ -2171,12 +2182,12 @@ private:
                         userSynthDefinitions_.size() ||
                     !userSynthDefinitions_[static_cast<std::size_t>(
                         effectUserIndex)].persistentPlayerEffect) {
-                    error = "The selected player effect is not a registered Airwindows delay.";
+                    error = "The selected player effect is not a registered persistent insert.";
                     return false;
                 }
                 if (!createPlayerEffectGraph(
                         player, static_cast<std::size_t>(effectUserIndex),
-                        updates[player].synthControls, error))
+                        updates[player].playerEffectControlValues, error))
                     return false;
             }
             if (static_cast<std::size_t>(synthIndex) >=
@@ -2186,7 +2197,7 @@ private:
                 if (userSynthDefinitions_[userIndex].persistentPlayerEffect &&
                     effectUserIndex != static_cast<int>(userIndex)) {
                     if (!createPlayerEffectGraph(player, userIndex,
-                                                 updates[player].synthControls, error))
+                                                 updates[player].playerEffectControlValues, error))
                         return false;
                 }
             }
@@ -2960,7 +2971,8 @@ private:
     }
 
     static bool isPersistentPlayerEffectName(std::string_view name) {
-        return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam";
+        return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam" ||
+               name == "JPverb" || name == "Greyhole";
     }
 
     static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
@@ -3090,30 +3102,57 @@ private:
                 return false;
             }
             if (userDefinition.persistentPlayerEffect) {
-                // These two bundled SynthDefs have a deliberately fixed,
-                // regression-tested positional ABI. Resolve their control
-                // indices from that ABI rather than GraphDef's named-parameter
-                // lookup: some embedded SC builds omit the longer names from
-                // mParamSpecs even though the serialized SynthDef contains them.
                 const bool isTapeDelay =
                     userDefinition.name == "AirwindowsTapeDelay2";
-                const uint32 expectedControlCount = isTapeDelay ? 8u : 6u;
+                const bool isEchojam =
+                    userDefinition.name == "AirwindowsEchojam";
+                const bool isJPverb = userDefinition.name == "JPverb";
+                const bool isGreyhole = userDefinition.name == "Greyhole";
+                const uint32 expectedControlCount =
+                    isTapeDelay ? 8u : isEchojam ? 6u : 9u;
                 if (loaded->mNumControls != expectedControlCount) {
                     error = synthFile.path.filename().string() +
-                            " has an incompatible Airwindows control layout (expected " +
+                            " has an incompatible persistent-effect control layout (expected " +
                             std::to_string(expectedControlCount) + " controls).";
                     return false;
                 }
+                // Persistent insert SynthDefs have a fixed positional ABI:
+                // out, inbus, then the effect controls. Normalized player
+                // values are mapped to these controls' raw ranges. Resolve
+                // positions rather than relying on optional GraphDef names.
                 userDefinition.outControl = 0;
                 userDefinition.inputBusControl = 1;
-                userDefinition.effectControlIndices =
-                    isTapeDelay
-                    ? std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}
-                    : std::array<int, 7>{{2, 3, 4, -1, -1, -1, 5}};
+                if (isTapeDelay) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}};
+                } else if (isEchojam) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, -1, 5}};
+                } else if (isJPverb) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.1f, 0.0f, 0.5f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 60.0f, 0.999f, 3.0f,
+                                              0.99f, 1.0f, 10.0f}};
+                } else if (isGreyhole) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.001f, 0.0f, 0.5f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.45f, 0.99f, 3.0f,
+                                              0.99f, 0.98f, 1.0f}};
+                }
                 const std::array<bool, 7> requiredEffectControls =
                     isTapeDelay
                     ? std::array<bool, 7>{{true, true, true, true, true, false, true}}
-                    : std::array<bool, 7>{{true, true, true, false, false, false, true}};
+                    : isEchojam
+                    ? std::array<bool, 7>{{true, true, true, false, false, false, true}}
+                    : std::array<bool, 7>{{true, true, true, true, true, true, true}};
                 bool missingRequiredEffectControl = false;
                 for (std::size_t index = 0;
                      index < requiredEffectControls.size(); ++index)
@@ -3122,7 +3161,7 @@ private:
                 if (userDefinition.inputBusControl < 0 ||
                     missingRequiredEffectControl) {
                     error = synthFile.path.filename().string() +
-                            " is missing a required inbus or Airwindows effect control.";
+                            " is missing a required inbus or persistent-effect control.";
                     return false;
                 }
                 if (!hasOutUnit(loaded, 2)) {
@@ -3218,12 +3257,16 @@ private:
         options.mBufLength = kSCBlockSize;
         options.mMaxNodes = static_cast<uint32>(kWorldNodeCapacity);
         options.mMaxGraphDefs = static_cast<uint32>(graphDefinitionCapacity);
-        // Size both SuperCollider pools from the actual embedded graph bank,
-        // voice slots, and reverb bank; adding a registered synth grows them.
-        // SuperCollider measures this field in KiB. 64 MiB is enough for
-        // persistent Airwindows delay state on all eight players, without
-        // multiplying those large delay buffers by note polyphony.
-        options.mRealTimeMemorySize = 65536;
+        // SuperCollider measures this field in KiB. 64 MiB is enough for the
+        // normal graph bank and persistent delay inserts. Both reverbs' upstream
+        // documentation explicitly requires memSize_(65536 * 4), so reserve
+        // 256 MiB only when either optional SynthDef is installed.
+        const bool hasSpaceReverb = std::any_of(
+            userSynthFiles_.begin(), userSynthFiles_.end(),
+            [](const UserSynthFile& file) {
+                return file.name == "JPverb" || file.name == "Greyhole";
+            });
+        options.mRealTimeMemorySize = hasSpaceReverb ? 65536u * 4u : 65536u;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
         options.mNumAudioBusChannels = kNumAudioBusChannels;
@@ -3749,17 +3792,22 @@ private:
                     const auto controlIndex = definition.effectControlIndices[control];
                     if (controlIndex < 0)
                         continue;
-                    const float target = evaluateTimeVar(
+                    const float normalizedTarget = evaluateTimeVar(
                         pattern.effectControlVariables[control], effectBeat,
-                        static_cast<float>(pattern.synthControls[control]));
+                        static_cast<float>(
+                            pattern.playerEffectControlValues[control]));
                     auto& current = playerEffectControlSmoothed_[player][control];
                     if (newEffect) {
-                        current = target;
+                        current = normalizedTarget;
                     } else {
-                        current = smoothAirwindowsFxControl(current, target,
+                        current = smoothAirwindowsFxControl(current,
+                                                            normalizedTarget,
                                                             blockSeconds);
                     }
-                    Graph_SetControl(graph, controlIndex, current);
+                    const float mapped = definition.effectControlMinimum[control] +
+                        current * (definition.effectControlMaximum[control] -
+                                   definition.effectControlMinimum[control]);
+                    Graph_SetControl(graph, controlIndex, mapped);
                 }
                 playerEffectControlEffectIndices_[player] =
                     pattern.playerEffectUserIndex;

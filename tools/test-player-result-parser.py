@@ -110,9 +110,12 @@ with tempfile.TemporaryDirectory() as directory:
     subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
                     "-I", str(plugin), str(unit), "-o", str(binary)], check=True)
     examples = sorted((plugin / "Portable").glob("*.py"))
+    space_portable = root / "UGens/SpaceReverbs/Portable"
+    examples += sorted(space_portable.glob("*.py"))
     for example in examples:
         result = directory / "result.out"
         user_synth_names = (
+            ("JPverb", "Greyhole") if example.parent == space_portable else
             ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
             ("AirwindowsTapeDelay2",)
             if example.name == "103-sample-player-airwindows-delay.py" else
@@ -175,6 +178,19 @@ with tempfile.TemporaryDirectory() as directory:
         rejected = subprocess.run([str(binary), str(result), "0"],
                                   capture_output=True, text=True)
         assert rejected.returncode == 1, (invalid, rejected.stdout, rejected.stderr)
+    reverb_example = space_portable / "167-space-reverb-timevars.py"
+    exec(api_tests["make_wrapper"](str(reverb_example), str(result),
+                                  ("JPverb", "Greyhole")),
+         {"__name__": "__main__"})
+    valid_reverbs = result.read_text()
+    for bad in ("-0.1", "1.1", "inf", "nan"):
+        malformed = re.sub(r"^(W\t0\t)[^\t]+", r"\g<1>" + bad,
+                           valid_reverbs, count=1, flags=re.M)
+        assert malformed != valid_reverbs
+        result.write_text(malformed)
+        rejected = subprocess.run([str(binary), str(result), "2"],
+                                  capture_output=True, text=True)
+        assert rejected.returncode == 1 and "player-effect controls" in rejected.stderr
     pitch_effect_example = plugin / "Portable" / "164-foxdot-vibrato-slide-bend.py"
     pitch_effect_wrapper = api_tests["make_wrapper"](
         str(pitch_effect_example), str(result), ())
