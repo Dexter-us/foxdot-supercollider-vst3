@@ -130,7 +130,8 @@ _COMPAT_CALLS = {
     '__build_class__'
 }
 _COMPAT_PATTERN_METHODS = {
-    'reverse', 'rotate', 'mirror', 'accum', 'swap', 'repeat', 'stretch',
+    'reverse', 'rotate', 'mirror', 'accum', 'swap', 'repeat', 'duplicate',
+    'iter', 'stretch',
     'loop', 'shuffle', 'deep_shuffle', 'sample', 'true_shuffle', 'shufflets',
     'invert', 'arp', 'splice',
     'sort', 'unduplicate', 'undup', 'replace', 'trim', 'ltrim', 'compress',
@@ -1424,6 +1425,23 @@ class _FoxDotFinitePattern(list):
         if count < 1 or len(self) * count > 256:
             raise ValueError('repeat is limited to 256 expanded items and requires a positive count')
         return _FoxDotFinitePattern(list(self) * count)
+
+    def _repeat_finite_pattern(self, count, method_name):
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError(method_name + ' count must be a whole number')
+        if count < 0 or count > 256:
+            raise ValueError(method_name + ' count must be from 0 to 256')
+        if len(self) * count > 256:
+            raise ValueError(method_name + ' output is limited to 256 items')
+        return _FoxDotFinitePattern(list(self) * count)
+
+    def duplicate(self, count):
+        """Repeat top-level items without flattening nested groups."""
+        return self._repeat_finite_pattern(count, 'duplicate')
+
+    def iter(self, count):
+        """Cycle the finite pattern count times, preserving nested items."""
+        return self._repeat_finite_pattern(count, 'iter')
 
     def stretch(self, size):
         sizes = (list(size) if isinstance(size, (list, tuple, _FoxDotFinitePattern))

@@ -1,5 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.114 adds bounded `.duplicate(n)` and `.iter(n)` aliases for
+FoxDot-style finite phrase repetition. Both preserve nested chord/pattern
+items, accept counts from 0 to 256, and cap expanded output at 256 items.
+Portable Example 145 compares both methods on nested phrases.
+
 Version 0.4.113 adds bounded callable `.map(func)` and FoxDot-compatible
 `.submap(mapping)`. Callable mapping recursively transforms nested notes and
 chords; it accepts pure single-argument arithmetic/conditional functions and

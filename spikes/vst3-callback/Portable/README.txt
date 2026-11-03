@@ -1,5 +1,9 @@
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.114 adds bounded .duplicate(n) and .iter(n) finite-pattern
+repetition. Both preserve nested groups/patterns, accept counts from 0 to 256,
+and cap expanded output at 256 items. See Example 145.
+
 Version 0.4.113 adds bounded callable .map(func) and FoxDot-compatible
 .submap(mapping). Callable map recursively transforms nested notes and chords;
 only pure one-argument arithmetic/conditional functions and selected pure

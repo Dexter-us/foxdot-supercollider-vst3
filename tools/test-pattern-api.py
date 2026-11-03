@@ -319,6 +319,32 @@ assert pattern.rotate(1) == [None, (3, 5), 4, 1]
 assert pattern.rotate(-1) == [4, 1, None, (3, 5)]
 assert namespace['P'][0, 1, 2, 3].stutter([1, 3]) == [0, 1, 1, 1, 2, 3, 3, 3]
 assert namespace['P'][1, None, 3].repeat(2) == [1, None, 3, 1, None, 3]
+nestedRepeatSource = namespace['P'][
+    0, namespace['PGroup'](1, 3),
+    namespace['P'][4, namespace['PGroup'](5, 7)]]
+nestedDuplicate = nestedRepeatSource.duplicate(2)
+nestedIter = nestedRepeatSource.iter(2)
+assert nestedDuplicate == list(nestedRepeatSource) * 2
+assert nestedIter == list(nestedRepeatSource) * 2
+assert isinstance(nestedDuplicate[1], namespace['_FoxDotChord'])
+assert isinstance(nestedDuplicate[2], namespace['_FoxDotFinitePattern'])
+assert isinstance(nestedIter[1], namespace['_FoxDotChord'])
+assert isinstance(nestedIter[2], namespace['_FoxDotFinitePattern'])
+assert namespace['P'][1, 2].duplicate(0) == []
+assert namespace['P'][1, 2].iter(0) == []
+assert namespace['P'][1, 2].duplicate(2) == namespace['P'][1, 2].repeat(2)
+assert namespace['P'][1, 2].iter(2) == namespace['P'][1, 2].repeat(2)
+for bounded_repeat in (
+        lambda: namespace['P'][1].duplicate(-1),
+        lambda: namespace['P'][1].iter(257),
+        lambda: namespace['P'][1, 2].duplicate(1.5),
+        lambda: namespace['P'][*range(129)].iter(2)):
+    try:
+        bounded_repeat()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('duplicate/iter must enforce integer and expansion bounds')
 assert namespace['P'][0, 1, 2].stretch(5) == [0, 1, 2, 0, 1]
 assert namespace['P']['x', 'o'].stretch(namespace['P'][2, 3]) == [
     'x', 'o', 'x', 'o', 'x']
@@ -2120,6 +2146,15 @@ example144, example144Samples, example144Events = run_script(
 assert {int(row[1]) for row in example144 if row[2] == '0'} == {0, 1}
 assert len(example144Samples) == 4
 assert len(example144Events) == 9
+example145Text = open(os.path.join(
+    sys.argv[2], '145-duplicate-and-iter.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    example145Text)
+example145, example145Events = run_script(
+    example145Text, include_events=True)
+assert {int(row[1]) for row in example145 if row[2] == '0'} == {0, 1}
+assert len(example145Events) == 24
 silentMaskRows, silentMaskEvents = run_script(
     'p1 >> sine(P[0, 2, 4].select(P[0, 0]), dur=0.5)\n',
     include_events=True)
