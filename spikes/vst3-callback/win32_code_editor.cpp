@@ -1003,6 +1003,14 @@ private:
         return std::to_string(selectedPanelTab()) + ":" + category;
     }
 
+    bool catalogCategoryCollapsed(const std::string& category) {
+        const auto key = catalogCategoryKey(category);
+        auto state = collapsedCatalogCategories_.find(key);
+        if (state == collapsedCatalogCategories_.end())
+            state = collapsedCatalogCategories_.emplace(key, true).first;
+        return state->second;
+    }
+
     void onPanelListSelectionChanged() {
         if (!panelList_) {
             updatePlayerActionButtons();
@@ -1014,8 +1022,8 @@ private:
         if (selected != LB_ERR && header != catalogCategoryHeaderRows_.end()) {
             const auto category = header->second;
             const auto key = catalogCategoryKey(category);
-            collapsedCatalogCategories_[key] =
-                !collapsedCatalogCategories_[key];
+            const bool collapsed = catalogCategoryCollapsed(category);
+            collapsedCatalogCategories_[key] = !collapsed;
             renderPanelTab();
             for (const auto& row : catalogCategoryHeaderRows_) {
                 if (row.second == category) {
@@ -1270,15 +1278,15 @@ private:
             const auto& entry = panelCatalog_[index];
             if (entry.category != currentCategory) {
                 currentCategory = entry.category;
-                const auto key = catalogCategoryKey(currentCategory);
-                const bool collapsed = collapsedCatalogCategories_[key];
+                const bool collapsed =
+                    catalogCategoryCollapsed(currentCategory);
                 const int row = static_cast<int>(
                     SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
                 addPanelRow((collapsed ? L"[+] " : L"[-] ") +
                             fromUtf8(currentCategory));
                 catalogCategoryHeaderRows_[row] = currentCategory;
             }
-            if (collapsedCatalogCategories_[catalogCategoryKey(currentCategory)])
+            if (catalogCategoryCollapsed(currentCategory))
                 continue;
             const auto label = entry.available
                 ? entry.label : entry.label + " [not loaded]";

@@ -724,3 +724,9 @@ voices retune smoothly, while MIDI output applies the changed shift to later
 note-ons. Releasing writes a scalar value back into the player call. Synths and
 Effects category headings can be clicked to collapse or expand their entries.
 Examples 181 and 182 demonstrate these changes.
+
+0.4.145 adds finite PIndex(length), seeded PxRand choices without adjacent
+repeats, and seeded PwRand weighted choices. Inputs and output patterns are
+bounded to 256 items; weights must be whole numbers in the supported range.
+Example 183 demonstrates numeric and sample-symbol choices. Synth and Effect
+catalog family headings now start collapsed; click a heading to expand it.

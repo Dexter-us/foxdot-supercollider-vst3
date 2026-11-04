@@ -1,5 +1,9 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.145 adds bounded `PIndex`, seeded `PxRand` without adjacent
+repeats, and seeded weighted `PwRand`; see Portable Example 183. Synth and
+Effect family categories now start collapsed, with a click to expand.
+
 Version 0.4.144 adds the finite FoxDot generators `P10`, `PBern`, `PSine`,
 `PTri`, and `PSum`, fixes `.expand()` compatibility checking for `Pvar`,
 exposes PShift as a live semitone slider on any selected player, and makes

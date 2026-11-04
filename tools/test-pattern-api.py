@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.144' not in cmake_source or
+if ('VERSION 0.4.145' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -58,6 +58,7 @@ for live_panel_fragment in (
         'makeInstrumentCatalog(', 'makeEffectCatalog(', 'applyCatalogEntry(',
         'renderCatalogEntries()', 'entry.category',
         'collapsedCatalogCategories_', 'catalogCategoryHeaderRows_',
+        'catalogCategoryCollapsed(', 'collapsedCatalogCategories_.emplace(key, true)',
         'onPanelListSelectionChanged()', 'L"[+] "', 'L"[-] "',
         'instrumentCategory(', 'effectCategory(',
         '179-editor-catalog-about.html',
@@ -85,7 +86,8 @@ bitcrusher_example = os.path.join(
 if not os.path.isfile(bitcrusher_example):
     raise AssertionError('Live Bits/Crush slider example is missing.')
 for example_name in ('181-finite-pattern-generator-pack.py',
-                     '182-live-pshift-slider.py'):
+                     '182-live-pshift-slider.py',
+                     '183-seeded-random-pattern-helpers.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -320,6 +322,37 @@ assert len(namespace['PSum'](256, 32)) == 256
 assert namespace['PSum'](4, 0) == [0.0, 0.0, 0.0, 0.0]
 assert abs(sum(namespace['PSum'](17, 13.25, lim=0.015625)) -
            13.25) < 0.02
+assert namespace['PIndex'](8) == list(range(8))
+assert namespace['PIndex'](1) == [0]
+assert len(namespace['PIndex']()) == 256
+pxrand = namespace['PxRand'](
+    namespace['P'][0, 2, 4, 7], length=128, seed=37)
+assert len(pxrand) == 128 and set(pxrand) <= {0, 2, 4, 7}
+assert pxrand == namespace['PxRand'](
+    namespace['P'][0, 2, 4, 7], length=128, seed=37)
+assert all(left != right for left, right in zip(pxrand, pxrand[1:]))
+assert all(left != right for left, right in zip(
+    namespace['PxRand'](-4, 4, length=256, seed=31),
+    namespace['PxRand'](-4, 4, length=256, seed=31)[1:]))
+samplePxRand = namespace['PxRand']('xo-', length=64, seed=9)
+assert set(samplePxRand) <= {'x', 'o', '-'}
+assert all(left != right for left, right in
+           zip(samplePxRand, samplePxRand[1:]))
+assert namespace['PxRand'](namespace['P'][5], length=1, seed=2) == [5]
+assert namespace['PwRand'](
+    namespace['P'][0, 2, 4], namespace['P'][0, 1], length=16,
+    seed=12) == [2] * 16
+weighted = namespace['PwRand'](
+    namespace['P'][0, 7], namespace['P'][1, 3], length=256, seed=42)
+assert len(weighted) == 256 and set(weighted) == {0, 7}
+assert weighted == namespace['PwRand'](
+    namespace['P'][0, 7], namespace['P'][1, 3], length=256, seed=42)
+assert namespace['PwRand'](
+    namespace['P']['x', 'o'], namespace['P'][0, 1], length=32,
+    seed=6) == ['o'] * 32
+assert len(namespace['PwRand'](
+    namespace['_FoxDotFinitePattern'](list(range(256))), 256,
+    length=256, seed=1)) == 256
 assert namespace['P'][0, 2, 2, 4].undup() == [0, 2, 4]
 assert namespace['P'][0, 2, 4].norm() == [0.0, 0.5, 1.0]
 pvarPitched = namespace['Pvar'](
@@ -428,6 +461,23 @@ for generator in (
         lambda: namespace['PSquare'](length=0),
         lambda: namespace['PSquare'](length=257),
         lambda: namespace['PSquare'](length=1.5),
+        lambda: namespace['PIndex'](length=0),
+        lambda: namespace['PIndex'](length=257),
+        lambda: namespace['PIndex'](True),
+        lambda: namespace['PxRand']([], length=2),
+        lambda: namespace['PxRand'](namespace['P'][1, 1], length=2),
+        lambda: namespace['PxRand'](3, 3, length=2),
+        lambda: namespace['PxRand'](1, length=257),
+        lambda: namespace['PxRand'](namespace['P'][0, 1], seed=True),
+        lambda: namespace['PxRand'](namespace['P'][0, 1], stop=2),
+        lambda: namespace['PwRand']([], [1]),
+        lambda: namespace['PwRand'](namespace['P'][0, 2], []),
+        lambda: namespace['PwRand'](namespace['P'][0, 2], [0, 0]),
+        lambda: namespace['PwRand'](namespace['P'][0, 2], [1, 1.5]),
+        lambda: namespace['PwRand'](namespace['P'][0, 2], [-1, 1]),
+        lambda: namespace['PwRand'](namespace['P'][0, 2], [257, 1]),
+        lambda: namespace['PwRand'](namespace['P'][0, 1], 1, length=257),
+        lambda: namespace['PwRand'](namespace['P'][0, 1], 1, seed=True),
         lambda: namespace['PSq'](c=0),
         lambda: namespace['PSq'](c=257),
         lambda: namespace['PSq'](b=float('inf')),
@@ -3026,9 +3076,17 @@ generatorCompatibilityReport = run_compatibility_check(
     'notes = P[0, 2, 4, 5].compress(P[1, 0])\n'
     'p4 >> saw(notes.select(P[1, 0]), dur=0.5)\n'
     'p5 >> saw(notes.sample(2, seed=17), dur=0.5)\n'
-    'p6 >> saw(notes.deep_shuffle(2, seed=17), dur=0.25)\n')
+    'p6 >> saw(notes.deep_shuffle(2, seed=17), dur=0.25)\n'
+    'p7 >> saw(PIndex(16), dur=0.25)\n'
+    'p8 >> saw(PxRand(P[0, 2, 4, 7], length=32, seed=9), dur=0.25)\n'
+    'p1 >> saw(PwRand(P[0, 2, 4, 7], P[1, 2, 3, 1], length=32, seed=8), dur=0.25)\n'
+    'p2 >> play(PxRand("x-o", length=32, seed=7), dur=0.25, sample=0)\n')
 assert 'No unsupported constructs detected' in generatorCompatibilityReport, (
     generatorCompatibilityReport)
+mixedRandomGeneratorReport = run_compatibility_check(
+    'PZip(PxRand("xo", length=8, seed=1), P[0, 1])\n')
+assert 'cannot mix numeric note patterns with sample-symbol patterns' in (
+    mixedRandomGeneratorReport), mixedRandomGeneratorReport
 compat_pvar_expand = run_compatibility_check(
     'phrases = Pvar([P[0, 2], P[4, 5]], [1, 1])\n'
     'phrases.expand(0.5)\n')
@@ -3056,10 +3114,15 @@ for malformed_generator_call, expected_diagnostic in (
         ('PBern(16, 0.5, 1, 2)', 'at most 3 positional'),
         ('PSine(16, 2)', 'at most 1 positional'),
         ('PTri()', 'requires start'),
-        ('PSum(8)', 'requires total')):
+        ('PSum(8)', 'requires total'),
+        ('PIndex(8, 2)', 'at most 1 positional'),
+        ('PxRand()', 'requires a start'),
+        ('PwRand(P[0, 2])', 'requires weights'),
+        ('PwRand(P[0, 2], P[1, 2], 8, 1, 9)', 'at most 4 positional')):
     malformedGeneratorReport = run_compatibility_check(
         'p1 >> saw(' + malformed_generator_call + ')\n')
     assert expected_diagnostic in malformedGeneratorReport, (
+        malformed_generator_call, expected_diagnostic,
         malformedGeneratorReport)
 loadedUserSynthReport = run_compatibility_check(
     'p1 >> userSynth("CustomPluck", P[0, 2, 4], dur=0.5, amp=0.3)\n',

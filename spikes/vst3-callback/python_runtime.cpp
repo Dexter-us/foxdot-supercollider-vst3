@@ -117,7 +117,7 @@ _COMPAT_CALLS = {
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
     'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar',
-    'P10', 'PBern', 'PSine', 'PTri', 'PSum',
+    'P10', 'PBern', 'PSine', 'PTri', 'PSum', 'PIndex', 'PxRand', 'PwRand',
     'PSquare', 'PSq', 'PRange', 'PStep', 'PEuclid', 'PEuclid2',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
@@ -151,7 +151,7 @@ _COMPAT_PATTERN_CALLS = {
     'PDelay', 'PStrum', 'PQuicken', 'PRhythm', 'PZip', 'PZip2', 'PRand',
     'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar', 'PSquare', 'PSq',
     'PRange', 'PStep', 'PEuclid', 'PEuclid2', 'P10', 'PBern', 'PSine',
-    'PTri', 'PSum', 'reverse', 'rotate', 'repeat',
+    'PTri', 'PSum', 'PIndex', 'PxRand', 'PwRand', 'reverse', 'rotate', 'repeat',
     'palindrome', 'stutter', 'interleave', 'transpose', 'euclid'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
@@ -363,6 +363,15 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 return 'mixed'
             return next(iter(kinds)) if kinds else None
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == 'PIndex':
+                return 'numeric'
+            if node.func.id in {'PxRand', 'PwRand'}:
+                sourceName = 'start' if node.func.id == 'PxRand' else 'values'
+                source = (node.args[0] if node.args else next(
+                    (keyword.value for keyword in node.keywords
+                     if keyword.arg == sourceName), None))
+                if source is not None:
+                    return self._pattern_kind(source)
             if node.func.id in {'PRange', 'PSq', 'PEuclid', 'P10', 'PBern',
                                 'PSine', 'PTri', 'PSum'}:
                 return 'numeric'
@@ -537,6 +546,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if name == 'PSum':
             self._check_fixed_signature(
                 node, name, ('n', 'total', 'lim'), 2)
+        if name == 'PIndex':
+            self._check_fixed_signature(node, name, ('length',), 0)
+        if name == 'PwRand':
+            self._check_fixed_signature(
+                node, name, ('values', 'weights', 'length', 'seed'), 2)
         if name == 'PAlt':
             if len(node.args) < 2:
                 self.add(node.lineno, 'PAlt requires at least two finite patterns.')
@@ -669,8 +683,9 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 self.add(node.lineno, 'Embedded player scheduling accepts only constant cycle= and ident= keywords.')
             if not validCount or not validCommand or not validInterval or not validAmount or not validCycle or not validIdent:
                 self.add(node.lineno, "Use bounded transforms such as p1.every(8, 'reverse'), p1.every(1, 'stutter', 3, cycle=8, ident='fill'), p1.often('shuffle'), or p1.rarely('stutter', 2).")
-        if name in {'PRand', 'PWhite'}:
-            parameters = ('start', 'stop') if name == 'PRand' else ('lo', 'hi')
+        if name in {'PRand', 'PxRand', 'PWhite'}:
+            parameters = (('lo', 'hi') if name == 'PWhite'
+                          else ('start', 'stop'))
             allowed = set(parameters) | {'length', 'seed'}
             if len(node.args) > 2:
                 self.add(node.lineno, name + ' accepts at most two positional bounds/patterns.')
@@ -685,8 +700,9 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                              name + ' received the same argument more than once.')
                 elif keyword.arg in parameters:
                     positional.add(keyword.arg)
-            if name == 'PRand' and not positional.intersection({'start'}):
-                self.add(node.lineno, 'PRand requires a start value or source pattern.')
+            if name in {'PRand', 'PxRand'} and not positional.intersection({'start'}):
+                self.add(node.lineno,
+                         name + ' requires a start value or source pattern.')
         if name == 'PWalk':
             parameters = ('max', 'step', 'start', 'length', 'seed')
             allowed = set(parameters)
@@ -3376,6 +3392,101 @@ def PSum(n, total, lim=0.125):
                 for value in data)):
         raise ValueError('PSum generated values outside the finite pattern bounds')
     return _FoxDotFinitePattern(data)
+
+def PIndex(length=256):
+    """Finite FoxDot PIndex: return the access index for each item."""
+    length = _random_pattern_length(length, 'PIndex')
+    return _FoxDotFinitePattern(range(length))
+
+def PxRand(start, stop=None, length=256, seed=None):
+    """FoxDot PxRand with bounded output and seeded no-adjacent-repeat choice."""
+    length = _random_pattern_length(length, 'PxRand')
+    state = _random_pattern_seed(seed, 'PxRand')
+    if isinstance(start, (str, list, tuple, _FoxDotFinitePattern)):
+        if stop is not None:
+            raise TypeError('PxRand accepts one finite source pattern or integer bounds')
+        values, _ = _pattern_items(start, 'PxRand')
+        if not values:
+            raise ValueError('PxRand source pattern cannot be empty')
+        result = []
+        previous = None
+        hasPrevious = False
+        for _ in range(length):
+            choices = ([value for value in values if value != previous]
+                       if hasPrevious else values)
+            if not choices:
+                raise ValueError(
+                    'PxRand needs at least two distinct choices for repeated output')
+            state, _ = _random_pattern_step(state)
+            index = (state * len(choices)) >> 32
+            previous = choices[index]
+            result.append(previous)
+            hasPrevious = True
+        return _FoxDotFinitePattern(result)
+
+    if isinstance(start, bool) or not isinstance(start, int):
+        raise TypeError('PxRand bounds must be whole numbers or a finite source pattern')
+    low = 0 if stop is None else start
+    high = start if stop is None else stop
+    if isinstance(high, bool) or not isinstance(high, int):
+        raise TypeError('PxRand bounds must be whole numbers')
+    if not -1000000 <= low <= high <= 1000000:
+        raise ValueError(
+            'PxRand bounds must be ordered and within -1000000..1000000')
+    span = high - low + 1
+    if length > 1 and span < 2:
+        raise ValueError(
+            'PxRand needs at least two distinct choices for repeated output')
+    result = []
+    previous = None
+    hasPrevious = False
+    for _ in range(length):
+        state, _ = _random_pattern_step(state)
+        if hasPrevious:
+            choiceIndex = (state * (span - 1)) >> 32
+            previousIndex = previous - low
+            if choiceIndex >= previousIndex:
+                choiceIndex += 1
+        else:
+            choiceIndex = (state * span) >> 32
+        previous = low + choiceIndex
+        result.append(previous)
+        hasPrevious = True
+    return _FoxDotFinitePattern(result)
+
+def PwRand(values, weights, length=256, seed=None):
+    """FoxDot weighted random choices with bounded weights and seeded output."""
+    length = _random_pattern_length(length, 'PwRand')
+    valueItems, _ = _pattern_items(values, 'PwRand values')
+    if not valueItems:
+        raise ValueError('PwRand values cannot be empty')
+    if _finite_note_number(weights):
+        weightItems = [weights]
+    else:
+        weightItems, weightKind = _pattern_items(weights, 'PwRand weights')
+        if weightKind != 'numeric':
+            raise TypeError('PwRand weights must be numeric whole numbers')
+    stretchedWeights = list(
+        _FoxDotFinitePattern(weightItems).stretch(len(valueItems)))
+    if any(isinstance(weight, bool) or not isinstance(weight, int)
+           for weight in stretchedWeights):
+        raise TypeError('PwRand weights must be whole numbers')
+    if any(weight < 0 or weight > 256 for weight in stretchedWeights):
+        raise ValueError('PwRand weights must be within 0..256')
+    poolSize = sum(stretchedWeights)
+    if not 1 <= poolSize <= 65536:
+        raise ValueError('PwRand total weight must be within 1..65536')
+    state = _random_pattern_seed(seed, 'PwRand')
+    result = []
+    for _ in range(length):
+        state, _ = _random_pattern_step(state)
+        choice = (state * poolSize) >> 32
+        for value, weight in zip(valueItems, stretchedWeights):
+            choice -= weight
+            if choice < 0:
+                result.append(value)
+                break
+    return _FoxDotFinitePattern(result)
 
 def PSquare(length=256):
     length = _random_pattern_length(length, 'PSquare')

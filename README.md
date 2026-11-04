@@ -2,6 +2,11 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.145 adds bounded `PIndex`, seeded `PxRand` (no adjacent
+repeats), and seeded weighted `PwRand`, with Portable Example 183. Synth and
+Effect family categories now start collapsed, and their first click expands
+them.
+
 Version 0.4.144 adds the FoxDot finite generators `P10`, `PBern`, `PSine`,
 `PTri`, and `PSum`; corrects the compatibility checker so `.expand()` is
 accepted on `Pvar` but not ordinary finite `P` patterns; adds a live PShift
