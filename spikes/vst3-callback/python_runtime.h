@@ -25,6 +25,7 @@ struct PythonNoteEvent {
     double bendDelay = 0.0;
     double chop = 0.0;
     double spin = 0.0;
+    double cut = 1.0;
     int sampleSymbol = 0;
     int sampleIndex = 0;
     double sampleRate = 1.0;
@@ -77,8 +78,8 @@ struct PythonPlayerUpdate {
     std::array<std::string, 7> effectControlTokens{
         "-", "-", "-", "-", "-", "-", "-"
     };
-    std::array<std::string, 8> noteEffectControlTokens{
-        "-", "-", "-", "-", "-", "-", "-", "-"
+    std::array<std::string, 9> noteEffectControlTokens{
+        "-", "-", "-", "-", "-", "-", "-", "-", "-"
     };
     std::vector<PythonPlayerEffect> playerEffects;
     int playerIndex = 0;

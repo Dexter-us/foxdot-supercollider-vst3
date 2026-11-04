@@ -7,6 +7,28 @@
 
 inline constexpr std::size_t kMaxPlayerEffectChain = 4;
 
+inline double foxDotCutSustainSeconds(double sustainSeconds,
+                                      double cut) noexcept {
+    if (!std::isfinite(sustainSeconds) || sustainSeconds < 0.0)
+        sustainSeconds = 0.0;
+    if (!std::isfinite(cut))
+        cut = 1.0;
+    return sustainSeconds * std::clamp(cut, 0.0, 1.0);
+}
+
+inline double foxDotCutEnvelopeSeconds(double naturalEnvelopeSeconds,
+                                       double sustainSeconds,
+                                       double cut) noexcept {
+    if (!std::isfinite(naturalEnvelopeSeconds) || naturalEnvelopeSeconds < 0.0)
+        naturalEnvelopeSeconds = 0.0;
+    if (!std::isfinite(cut))
+        cut = 1.0;
+    if (cut >= 1.0)
+        return naturalEnvelopeSeconds;
+    return std::min(naturalEnvelopeSeconds,
+                    foxDotCutSustainSeconds(sustainSeconds, cut) + 0.010);
+}
+
 inline int playerEffectChainOutputBus(std::size_t player, std::size_t slot,
                                      int outputBase) noexcept {
     return outputBase +

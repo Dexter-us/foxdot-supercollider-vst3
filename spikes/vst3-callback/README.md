@@ -624,6 +624,15 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
 - A MIDI output event bus is exposed to the host.
 
+## FoxDot-style note cut (0.4.138)
+
+The `cut` player control shortens a note to a fraction of its sustain without
+altering its rhythmic step or the next event's position. It accepts scalar,
+pattern, `var()` and `linvar()` values in the range 0–1 for both synth and WAV
+sample players. A 10 ms release prevents a hard waveform discontinuity.
+`Portable/175-foxdot-cut-controls.py` demonstrates changing cut per note and
+over time.
+
 ## Ordered player-effect chains (0.4.137)
 
 `effects=[("Phaser", {"fx_mix": 0.5}), ("Tremolo", {"fx_rate": 5})]`

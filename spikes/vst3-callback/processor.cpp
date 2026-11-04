@@ -703,10 +703,10 @@ public:
                         next.effectControlVariables = next.playerEffectCount > 0
                             ? next.playerEffects[0].controlVariables
                             : std::array<TimeVarControl, 7>{};
-                        constexpr std::array<double, 8> noteEffectMinimum{
-                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0};
-                        constexpr std::array<double, 8> noteEffectMaximum{
-                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0};
+                        constexpr std::array<double, 9> noteEffectMinimum{
+                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0};
+                        constexpr std::array<double, 9> noteEffectMaximum{
+                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0, 1.0};
                         for (std::size_t control = 0;
                              control < next.noteEffectControls.size(); ++control) {
                             if (!parseTimeVarControl(
@@ -1118,7 +1118,7 @@ private:
         std::array<TimeVarControl, 7> effectControlVariables{};
         std::array<PlayerEffectState, kMaxPlayerEffectChain> playerEffects{};
         std::size_t playerEffectCount = 0;
-        std::array<TimeVarControl, 8> noteEffectControls{};
+        std::array<TimeVarControl, 9> noteEffectControls{};
         bool chopEnabled = false;
         bool spinEnabled = false;
         float amplitude = 1.0f;
@@ -2510,6 +2510,11 @@ private:
                         event.durationBeats);
                     const double absoluteStartBeat = timing.startBeat;
                     const double sustainSeconds = timing.sustainSeconds;
+                    const double noteCut = std::clamp(
+                        static_cast<double>(evaluateTimeVar(
+                            pattern.noteEffectControls[8], absoluteStartBeat,
+                            static_cast<float>(event.cut))),
+                        0.0, 1.0);
                     std::size_t selectedVariant = 0;
                     int selectedSampleBuffer = event.sampleBuffer;
                     double selectedSampleRate = event.sampleRate;
@@ -2559,15 +2564,21 @@ private:
                     const bool appliesBlur = !isUserSynth && pattern.synthIndex >= 31 &&
                         !(pattern.synthIndex >= 35 && pattern.synthIndex <= 40) &&
                         pattern.synthIndex != 42 && pattern.synthIndex != 48;
-                    const double envelopeSustain = sustainSeconds *
+                    const double cutSustainSeconds =
+                        foxDotCutSustainSeconds(sustainSeconds, noteCut);
+                    const double envelopeSustain = cutSustainSeconds *
                         (appliesBlur ? pattern.synthControls[6] : 1.0);
-                    const double sourceEnvelopeSeconds = isSample ? selectedSampleSeconds
+                    double sourceEnvelopeSeconds = isSample ? selectedSampleSeconds
                         : foxDotNativeEnvelope
                             ? foxDotEnvelopeDurationSeconds(pattern.synthIndex,
                                                             envelopeSustain,
                                                             event.attackSeconds)
-                            : sustainSeconds + (isUserSynth
+                            : cutSustainSeconds + (isUserSynth
                                 ? std::max(0.005, event.releaseSeconds) : 0.0);
+                    sourceEnvelopeSeconds = foxDotCutEnvelopeSeconds(
+                        sourceEnvelopeSeconds, sustainSeconds, noteCut);
+                    const double cutReleaseSeconds =
+                        noteCut < 1.0 ? 0.010 : event.releaseSeconds;
                     const auto startSample = patternStart + static_cast<std::uint64_t>(
                         std::llround(timing.startSeconds * sampleRate_));
                     const auto endSample = startSample + static_cast<std::uint64_t>(
@@ -2582,10 +2593,10 @@ private:
                         pattern.amplitude, pattern.pan, pattern.cutoffHz,
                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
                         pattern.mousePan, pattern.mouseCutoff,
-                        event.attackSeconds, event.releaseSeconds,
+                        event.attackSeconds, cutReleaseSeconds,
                         startSample, endSample,
                         startSample + static_cast<std::uint64_t>(
-                            std::llround(sustainSeconds * sampleRate_)),
+                            std::llround(cutSustainSeconds * sampleRate_)),
                         foxDotNativeEnvelope, selectedSampleBuffer,
                         event.sampleStart, event.sampleEnd, event.sampleLoop,
                         sustainSeconds / event.durationBeats,

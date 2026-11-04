@@ -107,6 +107,12 @@ int main(int argc, char** argv) {
         std::abs(foxDotClockSwingOffsetBeats(-0.1, 120.0, 0.5) + 0.2) > 1e-9 ||
         foxDotClockSwingOffsetBeats(0.0, 120.0, 0.5) != 0.0)
         return 4;
+    if (std::abs(foxDotCutSustainSeconds(2.0, 0.25) - 0.5) > 1e-12 ||
+        std::abs(foxDotCutSustainSeconds(2.0, 2.0) - 2.0) > 1e-12 ||
+        std::abs(foxDotCutEnvelopeSeconds(4.0, 2.0, 0.25) - 0.51) > 1e-12 ||
+        foxDotCutEnvelopeSeconds(4.0, 2.0, 1.0) != 4.0 ||
+        std::abs(foxDotCutEnvelopeSeconds(4.0, 2.0, 0.0) - 0.01) > 1e-12)
+        return 18;
     PythonPattern pattern;
     std::string error;
     if (!parseResult(argv[1], pattern,
@@ -150,7 +156,8 @@ int main(int argc, char** argv) {
             std::cout << "N:" << event.vibDepth << ':' << event.slide << ':'
                       << event.slideFrom << ':' << event.slideDelay << ':'
                       << event.bend << ':' << event.bendDelay << ':'
-                      << event.chop << ':' << event.spin << ' ';
+                      << event.chop << ':' << event.spin << ':'
+                      << event.cut << ' ';
         std::cout << "Y:";
         for (const auto& token : player.noteEffectControlTokens)
             std::cout << token << ',';
@@ -220,15 +227,15 @@ with tempfile.TemporaryDirectory() as directory:
             assert "H:0:0:v:0.0,0.45,0.9:2.0,2.0,2.0:-" in parsed.stdout, parsed.stdout
             assert "H:0:0.1:-:l:0.1,0.8:4.0,4.0" in parsed.stdout, parsed.stdout
         if example.name == "164-foxdot-vibrato-slide-bend.py":
-            assert "N:0.02:0:0:0:0.25:0.2" in parsed.stdout, parsed.stdout
-            assert "N:0.5:0.55:0:0.35:0:0" in parsed.stdout, parsed.stdout
-            assert "Y:-,-,-,v:0.35,0.5:4.0,4.0,-,-,-,-," in parsed.stdout, parsed.stdout
-            assert "Y:v:0.02,0.04:4.0,4.0,-,-,-,-,-,-," in parsed.stdout, parsed.stdout
+            assert "N:0.02:0:0:0:0.25:0.2:0:0:1" in parsed.stdout, parsed.stdout
+            assert "N:0.5:0.55:0:0.35:0:0:0:0:1" in parsed.stdout, parsed.stdout
+            assert "Y:-,-,-,v:0.35,0.5:4.0,4.0,-,-,-,-,-," in parsed.stdout, parsed.stdout
+            assert "Y:v:0.02,0.04:4.0,4.0,-,-,-,-,-,-,-," in parsed.stdout, parsed.stdout
         if example.name == "165-foxdot-chop-spin.py":
-            assert "N:0.5:0:0:0:0:0:4:0" in parsed.stdout, parsed.stdout
-            assert "N:0.5:0:0:0:0:0:8:2" in parsed.stdout, parsed.stdout
-            assert "Y:-,-,-,-,-,-,v:4.0,8.0:4.0,4.0,-," in parsed.stdout, parsed.stdout
-            assert "Y:-,-,-,-,-,-,-,l:0.0,6.0:4.0,4.0," in parsed.stdout, parsed.stdout
+            assert "N:0.5:0:0:0:0:0:4:0:1" in parsed.stdout, parsed.stdout
+            assert "N:0.5:0:0:0:0:0:8:2:1" in parsed.stdout, parsed.stdout
+            assert "Y:-,-,-,-,-,-,v:4.0,8.0:4.0,4.0,-,-," in parsed.stdout, parsed.stdout
+            assert "Y:-,-,-,-,-,-,-,l:0.0,6.0:4.0,4.0,-," in parsed.stdout, parsed.stdout
         if example.name == "168-chorus-stereo-width.py":
             assert "A:0" in parsed.stdout and "B:0.35,0.151515" in parsed.stdout
         if example.name == "169-flanger-sweep.py":
@@ -249,6 +256,10 @@ with tempfile.TemporaryDirectory() as directory:
         if example.name == "174-drum-effect-chain.py":
             assert "J:2:0[" in parsed.stdout and "J:0:" in parsed.stdout, parsed.stdout
             assert "l:0.2,0.65:4.0,4.0" in parsed.stdout, parsed.stdout
+        if example.name == "175-foxdot-cut-controls.py":
+            assert "N:0.5:0:0:0:0:0:0:0:0.75" in parsed.stdout, parsed.stdout
+            assert "N:0.5:0:0:0:0:0:0:0:0.35" in parsed.stdout, parsed.stdout
+            assert "Y:-,-,-,-,-,-,-,-,v:0.8,0.35:1.0,1.0," in parsed.stdout, parsed.stdout
     for invalid in (
             "OK\t0\t0\t17\n",
             "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",
@@ -288,7 +299,28 @@ with tempfile.TemporaryDirectory() as directory:
     rejected_vibdepth = subprocess.run([str(binary), str(result), "0"],
                                        capture_output=True, text=True)
     assert rejected_vibdepth.returncode == 1
-    assert "vibdepth/slide/bend/chop/spin var control" in rejected_vibdepth.stderr
+    assert "invalid note-effect time-var control" in rejected_vibdepth.stderr
+    cut_example = plugin / "Portable" / "175-foxdot-cut-controls.py"
+    cut_wrapper = api_tests["make_wrapper"](str(cut_example), str(result), ())
+    exec(cut_wrapper, {"__name__": "__main__"})
+    valid_cut = result.read_text()
+    invalid_cut_event = re.sub(
+        r"^(N\t[^\n]*\t)0\.75$", r"\g<1>1.2", valid_cut,
+        count=1, flags=re.M)
+    assert invalid_cut_event != valid_cut
+    result.write_text(invalid_cut_event)
+    rejected_cut_event = subprocess.run([str(binary), str(result), "0"],
+                                        capture_output=True, text=True)
+    assert rejected_cut_event.returncode == 1
+    invalid_cut_var = re.sub(
+        r"^(Y\t\d+\t-\t-\t-\t-\t-\t-\t-\t-\t)v:0\.8,0\.35:",
+        r"\g<1>v:0.8,1.2:", valid_cut, count=1, flags=re.M)
+    assert invalid_cut_var != valid_cut
+    result.write_text(invalid_cut_var)
+    rejected_cut_var = subprocess.run([str(binary), str(result), "0"],
+                                      capture_output=True, text=True)
+    assert rejected_cut_var.returncode == 1
+    assert "invalid note-effect time-var control" in rejected_cut_var.stderr
     chop_spin_example = plugin / "Portable" / "165-foxdot-chop-spin.py"
     chop_spin_wrapper = api_tests["make_wrapper"](
         str(chop_spin_example), str(result))

@@ -36,7 +36,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.137' not in cmake_source or
+if ('VERSION 0.4.138' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2073,6 +2073,15 @@ def assert_player_polyphony_ok(player_row, event_rows):
         assert 0 <= active <= 8, ('player exceeds eight-note polyphony', beat, active)
 
 initial_live_run = run_script('p1 >> saw([0, 2, 4], dur=0.5)\np2 >> pulse([0, None, 3], dur=0.25)\n')
+cut_note_rows, cut_sample_buffers, cut_event_rows = run_script(
+    'p1 >> saw(P[0, 2], dur=1, sus=0.8, cut=P[0.5, 1.0])\n'
+    'p2 >> play("xo", dur=1, sus=0.9, cut=var([0.25, 0.75], 1))\n',
+    include_events=True, include_samples=True)
+assert [float(row[16]) for row in cut_event_rows] == [0.5, 1.0, 0.25, 0.75]
+assert len(cut_sample_buffers) == 2
+for bad_cut in ('-0.1', '1.01', 'True'):
+    assert 'cut' in run_error_script(
+        'p1 >> saw([0, 2], cut=' + bad_cut + ')').lower()
 assert [row[1] for row in initial_live_run] == ['0', '1']
 edit_one_player = run_script('p1 >> saw([0, 4, 2], dur=0.5)\n')
 assert [row[1] for row in edit_one_player] == ['0']
@@ -2089,6 +2098,10 @@ def run_compatibility_check(script_text, user_synth_names=()):
                      '_USER_SYNTH_NAMES': tuple(user_synth_names)}
         exec(compile(compatibility_checker, '<embedded compatibility checker>', 'exec'), namespace, namespace)
         return open(report_path, encoding='utf-8').read()
+
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw([0, 2], cut=P[1, 0.5])\n'
+    'p2 >> play("xo", cut=var([0.2, 0.8], 2))\n')
 
 def read_synthdef_manifest(data, validate_builtin_controls=True, return_controls=False):
     offset = 0
@@ -4615,6 +4628,10 @@ for exampleName, names in (
     assert 'No unsupported constructs detected' in run_compatibility_check(text, names)
     run_script(text, user_synth_names=names)
     assert 'Portable/SynthDefs' in run_compatibility_check(text)
+cutExample = open(os.path.join(sys.argv[2], '175-foxdot-cut-controls.py'),
+                  encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(cutExample)
+run_script(cutExample)
 for malformed in (
         'effects=[("Phaser", {})]*5', 'effects="Phaser"',
         'effects=[("Phaser", {}, {})]',

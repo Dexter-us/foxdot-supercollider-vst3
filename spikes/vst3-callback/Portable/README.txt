@@ -1,3 +1,11 @@
+0.4.138 adds FoxDot-style note cut:
+
+- `cut` accepts a value from 0 to 1 and ends each note at that fraction of its
+  sustain, with a short 10 ms release to avoid a hard discontinuity.
+- Scalar, pattern, `var()` and `linvar()` values work on synth and sample players.
+- `dur` and the rhythmic event grid stay unchanged; `cut` changes note length.
+- Example 175 demonstrates per-note and time-varying cut.
+
 0.4.137 adds ordered player-effect chains:
   effects=[("Phaser", {"fx_mix": 0.5}), ("Tremolo", {"fx_rate": 5})]
 Effects run left-to-right; each has independent scalar/var/linvar controls.
