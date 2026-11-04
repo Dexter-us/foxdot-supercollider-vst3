@@ -2,6 +2,13 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.140 adds per-note FoxDot-style `pshift` semitone transposition
+(-24 to +24), including WAV playback, plus a native per-player `bits`/`crush`
+bitcrusher. `bits=0` bypasses; `bits=1–24` quantizes, and `crush=1–128`
+reduces sample-hold rate. The bitcrusher controls accept scalar, `var()`, and
+`linvar()` values with smoothing; see Portable Example 177. No external UGen
+or SuperCollider rebuild is needed.
+
 Version 0.4.79 adds beat-synced `var()`/`linvar()` modulation for the
 per-player Airwindows TapeDelay2 and Echojam controls, with 15 ms smoothing for
 changes and Portable Example 105. The current sample pack and UGen requirements

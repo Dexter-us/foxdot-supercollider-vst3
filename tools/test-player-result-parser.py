@@ -24,12 +24,14 @@ cpp = r"""
 #include "clock_swing.h"
 #include "airwindows_control_smoothing.h"
 #include "foxdot_note_effects.h"
+#include "foxdot_bitcrusher.h"
 #include "player_effect_chain.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -125,6 +127,37 @@ int main(int argc, char** argv) {
         dexter::foxDotFormantSample(bypassState, 0.25f, 0.0f, 4000.0) !=
             0.25f)
         return 22;
+    if (dexter::quantizeFoxDotBits(-1.0f, 1.0f) != -1.0f ||
+        dexter::quantizeFoxDotBits(1.0f, 24.0f) != 1.0f ||
+        std::abs(dexter::quantizeFoxDotBits(0.251f, 8.0f) - 0.251f) >
+            1.0f / 255.0f)
+        return 23;
+    dexter::FoxDotBitcrusherState crushState;
+    const auto crushedFirst = dexter::processFoxDotBitcrusher(
+        crushState, 0.25f, -0.25f, 8.0f, 128.0f, 48000.0, 1.0f);
+    const auto crushedHeld = dexter::processFoxDotBitcrusher(
+        crushState, -0.5f, 0.5f, 8.0f, 128.0f, 48000.0, 1.0f);
+    if (crushedFirst[0] != crushedHeld[0] ||
+        crushedFirst[1] != crushedHeld[1] ||
+        crushedFirst[0] == 0.25f)
+        return 24;
+    dexter::FoxDotBitcrusherState fullRateState;
+    const auto fullRateFirst = dexter::processFoxDotBitcrusher(
+        fullRateState, 0.25f, -0.25f, 8.0f, 1.0f, 96000.0, 1.0f);
+    const auto fullRateNext = dexter::processFoxDotBitcrusher(
+        fullRateState, -0.5f, 0.5f, 8.0f, 1.0f, 96000.0, 1.0f);
+    if (fullRateFirst[0] == fullRateNext[0] ||
+        fullRateFirst[1] == fullRateNext[1])
+        return 27;
+    const auto bypassed = dexter::processFoxDotBitcrusher(
+        crushState, 0.125f, -0.375f, 0.0f, 12.0f, 48000.0, 1.0f);
+    if (bypassed[0] != 0.125f || bypassed[1] != -0.375f)
+        return 25;
+    const auto nonfinite = dexter::processFoxDotBitcrusher(
+        crushState, std::numeric_limits<float>::quiet_NaN(), 0.5f,
+        8.0f, 4.0f, 48000.0, 1.0f);
+    if (!std::isfinite(nonfinite[0]) || !std::isfinite(nonfinite[1]))
+        return 26;
     if (std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.0)) > 1e-9 ||
         std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.25)) > 1e-9 ||
         std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.5) - 0.2) > 1e-9 ||
@@ -168,6 +201,9 @@ int main(int argc, char** argv) {
         std::cout << "H:" << player.shape << ':' << player.drive << ':'
                   << player.shapeControlToken << ':'
                   << player.driveControlToken << ' ';
+        std::cout << "V:" << player.bits << ':' << player.crush << ':'
+                  << player.bitsControlToken << ':'
+                  << player.crushControlToken << ' ';
         std::cout << "T:" << player.bpmControlToken << ' ';
         if (player.playerEffectUserIndex >= 0) {
             std::cout << "X:";
@@ -184,7 +220,7 @@ int main(int argc, char** argv) {
                       << event.bend << ':' << event.bendDelay << ':'
                       << event.chop << ':' << event.spin << ':'
                       << event.cut << ':' << event.coarse << ':'
-                      << event.formant << ' ';
+                      << event.formant << ':' << event.pshift << ' ';
         std::cout << "Y:";
         for (const auto& token : player.noteEffectControlTokens)
             std::cout << token << ',';
@@ -225,7 +261,7 @@ with tempfile.TemporaryDirectory() as directory:
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
                                 capture_output=True, text=True)
         assert parsed.returncode == 0, (
-            example.name, parsed.stderr, result.read_text())
+            example.name, parsed.returncode, parsed.stderr, result.read_text())
         if example.name == "106-diskin-streaming.py":
             assert "D:1:0:DiskIO/drum-loop.wav:1:0" in parsed.stdout, parsed.stdout
         if example.name == "107-vdiskin-variable-rate.py":
@@ -287,6 +323,15 @@ with tempfile.TemporaryDirectory() as directory:
             assert "N:0.5:0:0:0:0:0:0:0:0.75" in parsed.stdout, parsed.stdout
             assert "N:0.5:0:0:0:0:0:0:0:0.35" in parsed.stdout, parsed.stdout
             assert "Y:-,-,-,-,-,-,-,-,v:0.8,0.35:1.0,1.0," in parsed.stdout, parsed.stdout
+        if example.name == "177-pshift-bits-crush.py":
+            assert "V:0:1:v:0.0,10.0,6.0:4.0,4.0,4.0:v:1.0,4.0,12.0:4.0,4.0,4.0" in parsed.stdout, parsed.stdout
+            assert "v:1.0,4.0,12.0:4.0,4.0,4.0" in parsed.stdout, parsed.stdout
+            assert "V:8:6:-:-" in parsed.stdout, parsed.stdout
+            assert "v:0.0,7.0,12.0,-12.0:2.0,2.0,2.0,2.0" in parsed.stdout, parsed.stdout
+            noteRows = [token for token in parsed.stdout.split()
+                        if token.startswith("N:")]
+            assert any(row.endswith(":12") for row in noteRows), parsed.stdout
+            assert any(row.endswith(":-12") for row in noteRows), parsed.stdout
     for invalid in (
             "OK\t0\t0\t17\n",
             "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",

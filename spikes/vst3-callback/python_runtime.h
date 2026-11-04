@@ -28,6 +28,7 @@ struct PythonNoteEvent {
     double cut = 1.0;
     double coarse = 0.0;
     double formant = -1.0;
+    double pshift = 0.0;
     int sampleSymbol = 0;
     int sampleIndex = 0;
     double sampleRate = 1.0;
@@ -74,14 +75,16 @@ struct PythonPlayerUpdate {
     std::string swellControlToken = "-";
     std::string shapeControlToken = "-";
     std::string driveControlToken = "-";
+    std::string bitsControlToken = "-";
+    std::string crushControlToken = "-";
     std::string bpmControlToken = "-";
     std::string sampleControlToken = "-";
     std::string sampleRateControlToken = "-";
     std::array<std::string, 7> effectControlTokens{
         "-", "-", "-", "-", "-", "-", "-"
     };
-    std::array<std::string, 11> noteEffectControlTokens{
-        "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"
+    std::array<std::string, 12> noteEffectControlTokens{
+        "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"
     };
     std::vector<PythonPlayerEffect> playerEffects;
     int playerIndex = 0;
@@ -120,6 +123,8 @@ struct PythonPlayerUpdate {
     double swell = 0.0;
     double shape = 0.0;
     double drive = 0.0;
+    double bits = 0.0;
+    double crush = 1.0;
     bool mousePan = false;
     bool mouseCutoff = false;
     double attackSeconds = 0.01;

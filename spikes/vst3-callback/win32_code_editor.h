@@ -22,6 +22,8 @@ struct EditorPlayerState {
     bool spinEnabled = false;
     bool coarseEnabled = false;
     bool formantEnabled = false;
+    bool pshiftEnabled = false;
+    bool bitcrusherEnabled = false;
 };
 
 class ICodeEditorHost {

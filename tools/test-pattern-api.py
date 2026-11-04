@@ -36,7 +36,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.139' not in cmake_source or
+if ('VERSION 0.4.140' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -54,6 +54,8 @@ for live_panel_fragment in (
         'FoxDot formant (Formlet-style note filter)',
         'if (state.coarseEnabled)', 'if (state.formantEnabled)',
         'L" Coarse"', 'L" Formant"',
+        'if (state.pshiftEnabled)', 'if (state.bitcrusherEnabled)',
+        'L" PShift"', 'L" Bits/Crush"',
         'Chorus  [player effect]', 'Flanger  [player effect]',
         'Phaser  [player effect]', 'Tremolo  [player effect]'):
     if live_panel_fragment not in editor_source + editor_host_source:
@@ -4680,4 +4682,17 @@ print('PASS ordered effects: legacy form, four-insert bound, independent modulat
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6
+pitchCrusherExample = open(os.path.join(
+    sys.argv[2], '177-pshift-bits-crush.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    pitchCrusherExample), run_compatibility_check(pitchCrusherExample)
+run_script(pitchCrusherExample)
+for controls in ('pshift=-24, bits=0, crush=1',
+                 'pshift=24, bits=24, crush=128'):
+    run_script('p1 >> sine(0, ' + controls + ')\n')
+for controls in ('pshift=-24.1', 'pshift=24.1', 'bits=-1', 'bits=25',
+                 'crush=0', 'crush=129', 'bits=True', 'crush=False'):
+    error = run_error_script('p1 >> sine(0, ' + controls + ')\n')
+    assert ('outside the supported range' in error.lower() or
+            'not bool' in error.lower()), (controls, error)
 print('Smoke tests passed: embedded pattern/player API, Pvar phrase switching, Clock.bpm var/linvar, compatibility checks, diagnostics, WAV samples, user SynthDefs, and Portable examples.')

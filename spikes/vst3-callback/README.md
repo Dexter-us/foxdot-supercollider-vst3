@@ -1,5 +1,14 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.140 adds bounded FoxDot-style `pshift` (semitones, -24 to +24)
+and native per-player `bits`/`crush` controls. `bits=0` bypasses bit-depth
+reduction; 1–24 quantizes the player's summed signal, while `crush=1–128`
+reduces the hold rate. Both bitcrusher controls are smoothed and support scalar,
+`var()`, and `linvar()` input. `pshift` is applied per note, accepts scalar,
+finite `P[...]`, `var()`, and `linvar()` values, and transposes WAV playback as
+well as pitched synths. The native effect needs no external UGen or
+SuperCollider rebuild. Portable Example 177 demonstrates the controls.
+
 Version 0.4.139 adds native FoxDot-style `coarse` pulse gating and a bounded
 `formant` control for synth and WAV players. `coarse` ranges from 0–32;
 `formant` ranges from -1 (bypass) to 7. Both accept scalar, finite Pattern,

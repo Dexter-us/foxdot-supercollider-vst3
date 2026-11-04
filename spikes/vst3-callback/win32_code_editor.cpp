@@ -875,7 +875,9 @@ private:
                 left[index].chopEnabled != right[index].chopEnabled ||
                 left[index].spinEnabled != right[index].spinEnabled ||
                 left[index].coarseEnabled != right[index].coarseEnabled ||
-                left[index].formantEnabled != right[index].formantEnabled)
+                left[index].formantEnabled != right[index].formantEnabled ||
+                left[index].pshiftEnabled != right[index].pshiftEnabled ||
+                left[index].bitcrusherEnabled != right[index].bitcrusherEnabled)
                 return false;
         }
         return true;
@@ -995,7 +997,8 @@ private:
                 !state.reverbEnabled && !state.shapeEnabled &&
                 !state.driveEnabled && !state.chopEnabled &&
                 !state.spinEnabled && !state.coarseEnabled &&
-                !state.formantEnabled)
+                !state.formantEnabled && !state.pshiftEnabled &&
+                !state.bitcrusherEnabled)
                 continue;
             foundAssignment = true;
             std::wstring row = L"p" + std::to_wstring(index + 1) + L":";
@@ -1023,6 +1026,10 @@ private:
                 row += L" Coarse";
             if (state.formantEnabled)
                 row += L" Formant";
+            if (state.pshiftEnabled)
+                row += L" PShift";
+            if (state.bitcrusherEnabled)
+                row += L" Bits/Crush";
             if (state.reverbEnabled && state.reverbIndex >= 0 &&
                 state.reverbIndex < static_cast<int>(reverbs.size()))
                 row += L" " + std::wstring(
@@ -1167,6 +1174,10 @@ private:
                 row += L"  Coarse";
             if (state.formantEnabled)
                 row += L"  Formant";
+            if (state.pshiftEnabled)
+                row += L"  PShift";
+            if (state.bitcrusherEnabled)
+                row += L"  Bits/Crush";
             const auto item = static_cast<int>(
                 SendMessageW(panelList_, LB_ADDSTRING, 0,
                              reinterpret_cast<LPARAM>(row.c_str())));

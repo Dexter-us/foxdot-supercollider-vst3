@@ -1,3 +1,11 @@
+0.4.140 adds bounded FoxDot-style `pshift` semitone transposition (-24 to +24)
+and native per-player `bits`/`crush` controls. `bits=0` bypasses quantization;
+1–24 selects bit depth, and `crush=1–128` reduces the sample-hold rate.
+`bits` and `crush` accept scalar, `var()`, and `linvar()` values with smoothing.
+`pshift` also accepts finite `P[...]` per-note patterns and transposes WAV
+playback as well as pitched synths. The effect runs in the plugin and needs no
+external UGen. See Example 177.
+
 0.4.139 adds native FoxDot-style `coarse` pulse gating (0–32) and `formant`
 (0–7; use -1 to bypass) controls for synth and WAV players. Both accept scalar,
 finite Pattern, `var()`, and `linvar()` values and appear in the live Effects

@@ -30,6 +30,7 @@
 #include "master_output_gain.h"
 #include "native_player_effects.h"
 #include "foxdot_note_effects.h"
+#include "foxdot_bitcrusher.h"
 #include "player_effect_chain.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
@@ -698,15 +699,17 @@ public:
                             !parseTimeVarControl(player.bpnoiseControlToken, 0.0, 10.0, next.bpnoiseControl) ||
                             !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl) ||
                             !parseTimeVarControl(player.shapeControlToken, 0.0, 4.0, next.shapeControl) ||
-                            !parseTimeVarControl(player.driveControlToken, 0.0, 4.0, next.driveControl))
+                            !parseTimeVarControl(player.driveControlToken, 0.0, 4.0, next.driveControl) ||
+                            !parseTimeVarControl(player.bitsControlToken, 0.0, 24.0, next.bitsControl) ||
+                            !parseTimeVarControl(player.crushControlToken, 1.0, 128.0, next.crushControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
                         next.effectControlVariables = next.playerEffectCount > 0
                             ? next.playerEffects[0].controlVariables
                             : std::array<TimeVarControl, 7>{};
-                        constexpr std::array<double, 11> noteEffectMinimum{
-                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0};
-                        constexpr std::array<double, 11> noteEffectMaximum{
-                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0, 1.0, 32.0, 7.0};
+                        constexpr std::array<double, 12> noteEffectMinimum{
+                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, -24.0};
+                        constexpr std::array<double, 12> noteEffectMaximum{
+                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0, 1.0, 32.0, 7.0, 24.0};
                         for (std::size_t control = 0;
                              control < next.noteEffectControls.size(); ++control) {
                             if (!parseTimeVarControl(
@@ -771,6 +774,15 @@ public:
                                 [](const PythonNoteEvent& event) {
                                     return event.formant >= 0.0;
                                 });
+                        next.pshiftEnabled = next.noteEffectControls[11].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.pshift != 0.0;
+                                });
+                        next.bits = static_cast<float>(player.bits);
+                        next.crush = static_cast<float>(player.crush);
+                        next.bitsEnabled = next.bits > 0.0f ||
+                                           next.bitsControl.active;
                         totalNotes += player.events.size();
                         updateMask |= static_cast<std::uint8_t>(1u << player.playerIndex);
                     }
@@ -930,6 +942,8 @@ public:
             state.spinEnabled = (packed & (1u << 25)) != 0;
             state.coarseEnabled = (packed & (1u << 26)) != 0;
             state.formantEnabled = (packed & (1u << 27)) != 0;
+            state.pshiftEnabled = (packed & (1u << 28)) != 0;
+            state.bitcrusherEnabled = (packed & (1u << 29)) != 0;
         }
     }
 
@@ -1130,11 +1144,13 @@ private:
         std::array<TimeVarControl, 7> effectControlVariables{};
         std::array<PlayerEffectState, kMaxPlayerEffectChain> playerEffects{};
         std::size_t playerEffectCount = 0;
-        std::array<TimeVarControl, 11> noteEffectControls{};
+        std::array<TimeVarControl, 12> noteEffectControls{};
         bool chopEnabled = false;
         bool spinEnabled = false;
         bool coarseEnabled = false;
         bool formantEnabled = false;
+        bool pshiftEnabled = false;
+        bool bitsEnabled = false;
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -1155,6 +1171,8 @@ private:
         TimeVarControl swellControl;
         TimeVarControl shapeControl;
         TimeVarControl driveControl;
+        TimeVarControl bitsControl;
+        TimeVarControl crushControl;
         TimeVarControl echoControl;
         TimeVarControl delayControl;
         TimeVarControl echoMixControl;
@@ -1182,6 +1200,8 @@ private:
         float swell = 0.0f;
         float shape = 0.0f;
         float drive = 0.0f;
+        float bits = 0.0f;
+        float crush = 1.0f;
         bool active = false;
     };
 
@@ -1223,7 +1243,9 @@ private:
             (chopEnabled ? (1u << 24) : 0u) |
             (spinEnabled ? (1u << 25) : 0u) |
             (coarseEnabled ? (1u << 26) : 0u) |
-            (formantEnabled ? (1u << 27) : 0u);
+            (formantEnabled ? (1u << 27) : 0u) |
+            (pattern.pshiftEnabled ? (1u << 28) : 0u) |
+            (pattern.bitsEnabled ? (1u << 29) : 0u);
         editorPlayerState_[player].store(packed, std::memory_order_release);
         std::uint64_t chain = 0;
         for (std::size_t slot = 0; slot < pattern.playerEffectCount; ++slot)
@@ -1308,6 +1330,7 @@ private:
         float spin = 0.0f;
         float coarse = 0.0f;
         float formant = -1.0f;
+        float pshift = 0.0f;
         dexter::FoxDotFormantState formantState{};
         float leftGain = 0.70710678f;
         float rightGain = 0.70710678f;
@@ -1387,6 +1410,7 @@ private:
         float spin = 0.0f;
         float coarse = 0.0f;
         float formant = -1.0f;
+        float pshift = 0.0f;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -1756,9 +1780,11 @@ private:
         return amplitude;
     }
 
-    float safeSynthFrequency(int synthIndex, int midiNote) const {
+    float safeSynthFrequency(int synthIndex, int midiNote,
+                             float pitchShift = 0.0f) const {
         const float requested = 440.0f * std::pow(
-            2.0f, static_cast<float>(midiNote - 69) / 12.0f);
+            2.0f, static_cast<float>(midiNote - 69) / 12.0f +
+                      std::clamp(pitchShift, -24.0f, 24.0f) / 12.0f);
         float highestPartial = 1.0f;
         if (synthIndex == 5)
             highestPartial = 1.005f;
@@ -2407,6 +2433,11 @@ private:
                     const auto timing = clockNoteTiming(
                         pattern, baseEventBeat, note.delayBeats + dynamicDelay,
                         note.durationBeats);
+                    const double pitchShift = std::clamp(
+                        static_cast<double>(evaluateTimeVar(
+                            pattern.noteEffectControls[11], baseEventBeat,
+                            static_cast<float>(note.pshift))),
+                        -24.0, 24.0);
                     const auto onSample = patternStart + static_cast<std::uint64_t>(
                         std::llround(timing.startSeconds * sampleRate_));
                     const auto offSample = onSample + static_cast<std::uint64_t>(
@@ -2414,10 +2445,13 @@ private:
                     const auto noteId = static_cast<int32>(
                         ((player * kMaxPatternEvents + i) << 16) |
                         (static_cast<std::uint64_t>(cycle) & 0xffffu));
+                    const int midiNote = std::clamp(
+                        static_cast<int>(std::lround(note.midiNote + pitchShift)),
+                        0, 127);
                     append(onSample, noteId, static_cast<int>(player),
-                           note.midiNote, note.velocity, true);
+                           midiNote, note.velocity, true);
                     append(offSample, noteId, static_cast<int>(player),
-                           note.midiNote, 0, false);
+                           midiNote, 0, false);
                 }
             }
         }
@@ -2505,6 +2539,16 @@ private:
                             minimumSampleRate = std::min(
                                 minimumSampleRate,
                                 std::abs(pattern.sampleRateControl.values[value]));
+                    double minimumPitchShift = event.pshift;
+                    if (pattern.noteEffectControls[11].active)
+                        for (std::size_t value = 0;
+                             value < pattern.noteEffectControls[11].count; ++value)
+                            minimumPitchShift = std::min(
+                                minimumPitchShift,
+                                static_cast<double>(
+                                    pattern.noteEffectControls[11].values[value]));
+                    minimumSampleRate *= std::exp2(
+                        std::clamp(minimumPitchShift, -24.0, 24.0) / 12.0);
                 }
                 double sampleSeconds = isSample && minimumSampleRate > 0.0
                     ? longestSampleSeconds / minimumSampleRate : 0.0;
@@ -2533,6 +2577,11 @@ private:
                         event.durationBeats);
                     const double absoluteStartBeat = timing.startBeat;
                     const double sustainSeconds = timing.sustainSeconds;
+                    const float pitchShift = std::clamp(
+                        evaluateTimeVar(pattern.noteEffectControls[11],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.pshift)),
+                        -24.0f, 24.0f);
                     const double noteCut = std::clamp(
                         static_cast<double>(evaluateTimeVar(
                             pattern.noteEffectControls[8], absoluteStartBeat,
@@ -2562,9 +2611,14 @@ private:
                             ? evaluateTimeVar(pattern.sampleRateControl, absoluteStartBeat,
                                               static_cast<float>(event.sampleRate))
                             : event.sampleRate;
+                        const double shiftedRate = selectedSampleRate *
+                            std::exp2(static_cast<double>(pitchShift) / 12.0);
+                        selectedSampleRate = std::copysign(
+                            std::clamp(std::abs(shiftedRate), 0.015625, 32.0),
+                            shiftedRate);
                         if (selectedSampleBuffer < 1 ||
-                            std::abs(selectedSampleRate) < 0.0625 ||
-                            std::abs(selectedSampleRate) > 8.0)
+                            std::abs(selectedSampleRate) < 0.015625 ||
+                            std::abs(selectedSampleRate) > 32.0)
                             continue;
                         selectedSampleSeconds = event.sampleLoop
                             ? sustainSeconds
@@ -2652,7 +2706,8 @@ private:
                                         static_cast<float>(event.coarse)),
                         evaluateTimeVar(pattern.noteEffectControls[10],
                                         absoluteStartBeat,
-                                        static_cast<float>(event.formant))};
+                                        static_cast<float>(event.formant)),
+                        pitchShift};
                     ++playerVoices;
                 }
             }
@@ -2738,8 +2793,10 @@ private:
                     clampedCutoff >= maxCutoff
                     ? 1.0f
                     : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
+                found->pshift = note.pshift;
                 found->frequencyHz = safeSynthFrequency(note.synthIndex,
-                                                        note.midiNote);
+                                                        note.midiNote,
+                                                        note.pshift);
                 found->startSample = note.startSample;
                 found->sustainEndSample = note.sustainEndSample;
                 found->endSample = note.endSample;
@@ -3610,6 +3667,9 @@ private:
         playerEffectTransitions_ = {};
         shapeEffectSmoothed_.fill(0.0f);
         driveEffectSmoothed_.fill(0.0f);
+        bitsEffectSmoothed_.fill(0.0f);
+        crushEffectSmoothed_.fill(1.0f);
+        bitcrusherStates_.fill({});
         for (auto& effectSlots : playerEffectDefinitionIndices_)
             effectSlots.fill(-1);
         for (auto& indices : playerEffectControlEffectIndices_)
@@ -3905,6 +3965,11 @@ private:
             const auto& pattern = activePatterns_[player];
             auto& shape = shapeEffectSmoothed_[player];
             auto& drive = driveEffectSmoothed_[player];
+            auto& bits = bitsEffectSmoothed_[player];
+            auto& crush = crushEffectSmoothed_[player];
+            auto& bitcrusher = bitcrusherStates_[player];
+            const float bitcrusherSmoothing = static_cast<float>(
+                1.0 - std::exp(-1.0 / (0.01 * sampleRate_)));
             for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
                 const double beat = controlBeatStart[player] +
                     controlBeatStep[player] * sampleIndex;
@@ -3912,10 +3977,18 @@ private:
                     pattern.shapeControl, beat, pattern.shape);
                 const float targetDrive = evaluateTimeVar(
                     pattern.driveControl, beat, pattern.drive);
+                const float targetBits = evaluateTimeVar(
+                    pattern.bitsControl, beat, pattern.bits);
+                const float targetCrush = evaluateTimeVar(
+                    pattern.crushControl, beat, pattern.crush);
                 shape = dexter::smoothPlayerEffectControl(
                     shape, targetShape, mouseSmoothing);
                 drive = dexter::smoothPlayerEffectControl(
                     drive, targetDrive, mouseSmoothing);
+                bits = dexter::smoothPlayerEffectControl(
+                    bits, targetBits, bitcrusherSmoothing);
+                crush = dexter::smoothPlayerEffectControl(
+                    crush, targetCrush, bitcrusherSmoothing);
                 auto& left = playerLeftBlock[player][
                     static_cast<std::size_t>(sampleIndex)];
                 auto& right = playerRightBlock[player][
@@ -3924,6 +3997,11 @@ private:
                     dexter::processFoxDotShape(left, shape), drive);
                 right = dexter::processFoxDotDrive(
                     dexter::processFoxDotShape(right, shape), drive);
+                const auto crushed = dexter::processFoxDotBitcrusher(
+                    bitcrusher, left, right, bits, crush, sampleRate_,
+                    bitcrusherSmoothing);
+                left = crushed[0];
+                right = crushed[1];
             }
         }
 
@@ -4211,6 +4289,9 @@ private:
         playerEffectTransitions_ = {};
         shapeEffectSmoothed_.fill(0.0f);
         driveEffectSmoothed_.fill(0.0f);
+        bitsEffectSmoothed_.fill(0.0f);
+        crushEffectSmoothed_.fill(1.0f);
+        bitcrusherStates_.fill({});
         for (auto& indices : playerEffectDefinitionIndices_)
             indices.fill(-1);
         for (auto& indices : playerEffectControlEffectIndices_)
@@ -4270,6 +4351,9 @@ private:
     std::array<PlayerEffectChainTransition, kPlayerCount> playerEffectTransitions_{};
     std::array<float, kPlayerCount> shapeEffectSmoothed_{};
     std::array<float, kPlayerCount> driveEffectSmoothed_{};
+    std::array<float, kPlayerCount> bitsEffectSmoothed_{};
+    std::array<float, kPlayerCount> crushEffectSmoothed_{};
+    std::array<dexter::FoxDotBitcrusherState, kPlayerCount> bitcrusherStates_{};
     std::array<std::array<std::array<float, 7>, kMaxPlayerEffectChain>,
                kPlayerCount> playerEffectControlSmoothed_{};
     std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount>
