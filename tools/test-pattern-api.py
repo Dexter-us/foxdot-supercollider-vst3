@@ -36,7 +36,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.138' not in cmake_source or
+if ('VERSION 0.4.139' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -50,6 +50,10 @@ for live_panel_fragment in (
         'FoxDot drive (native player effect)',
         'FoxDot chop (per-note gate)',
         'FoxDot spin (stereo pan motion)',
+        'FoxDot coarse (per-note pulse gate)',
+        'FoxDot formant (Formlet-style note filter)',
+        'if (state.coarseEnabled)', 'if (state.formantEnabled)',
+        'L" Coarse"', 'L" Formant"',
         'Chorus  [player effect]', 'Flanger  [player effect]',
         'Phaser  [player effect]', 'Tremolo  [player effect]'):
     if live_panel_fragment not in editor_source + editor_host_source:
@@ -59,7 +63,9 @@ for snapshot_fragment in (
         'editorPlayerState_[player].load',
         'publishEditorPlayerState(player)',
         '1u << 24',
-        '1u << 25'):
+        '1u << 25',
+        '1u << 26',
+        '1u << 27'):
     if snapshot_fragment not in processor_source:
         raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (
@@ -2102,6 +2108,35 @@ def run_compatibility_check(script_text, user_synth_names=()):
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> saw([0, 2], cut=P[1, 0.5])\n'
     'p2 >> play("xo", cut=var([0.2, 0.8], 2))\n')
+
+coarse_formant_rows, coarse_formant_events = run_script(
+    'p1 >> saw([0, 2, 4, 5], dur=1, coarse=P[0, 8, 4, 2])\n'
+    'p2 >> pluck([0, 2, 4, 6], dur=1, formant=linvar([0, 7], [2, 2]))\n'
+    'p3 >> play("x-o-", dur=1, coarse=var([2, 6], 1), formant=3)\n',
+    include_events=True)
+assert [float(row[17]) for row in coarse_formant_events[:4]] == [0, 8, 4, 2]
+assert [float(row[18]) for row in coarse_formant_events[:4]] == [-1, -1, -1, -1]
+assert [float(row[18]) for row in coarse_formant_events[4:8]] == [0, 3.5, 7, 3.5]
+assert [float(row[17]) for row in coarse_formant_events[8:]] == [2, 6, 2, 6]
+assert [float(row[18]) for row in coarse_formant_events[8:]] == [3, 3, 3, 3]
+group_coarse_formant_rows, group_coarse_formant_events = run_script(
+    'p1 >> saw([0, 2], dur=1)\n'
+    'p2 >> pluck([3, 5], dur=1)\n'
+    'g = Group(p1, p2)\n'
+    'g.coarse = var([0, 4], 1)\n'
+    'g.formant = var([0, 7], 1)\n',
+    include_events=True)
+assert [float(row[17]) for row in group_coarse_formant_events] == [0, 4, 0, 4]
+assert [float(row[18]) for row in group_coarse_formant_events] == [0, 7, 0, 7]
+for bad_coarse in ('-0.1', '32.1', 'True'):
+    assert 'coarse' in run_error_script(
+        'p1 >> saw([0], coarse=' + bad_coarse + ')').lower()
+for bad_formant in ('-1.1', '7.1', 'True'):
+    assert 'formant' in run_error_script(
+        'p1 >> saw([0], formant=' + bad_formant + ')').lower()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw([0, 2], coarse=var([0, 4], 1), formant=linvar([0, 7], [2, 2]))\n'
+    'p2 >> play("x-o-", coarse=2, formant=4)\n')
 
 def read_synthdef_manifest(data, validate_builtin_controls=True, return_controls=False):
     offset = 0

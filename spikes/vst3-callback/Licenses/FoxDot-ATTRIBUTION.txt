@@ -9,6 +9,13 @@ Version 0.4.133 adapts the `chop` and `spinPan` behaviors from
 The per-sample VST implementation preserves their control meanings and bounded
 note timing without starting a SuperCollider server.
 
+Version 0.4.139 adapts the `coarse` pulse gate and the control mapping for
+FoxDot's Formlet-based `formant` effect from
+`FoxDot/osc/sceffects/coarse.scd` and
+`FoxDot/osc/sceffects/formantFilter.scd`. The plugin uses native bounded DSP;
+the resonant formant implementation is an approximation, not a bit-exact copy
+of SuperCollider's Formlet UGen.
+
 FoxDot-derived adaptation in this plugin is distributed under the Creative Commons Attribution-ShareAlike 4.0 International license (CC BY-SA 4.0). The complete license text is included as FoxDot-CC-BY-SA-4.0.txt.
 
 This plugin does not bundle FoxDot's OSC server, external clock thread, or sample library. The compatibility layer translates supported player/tempo expressions to the plugin's embedded SuperCollider engine.

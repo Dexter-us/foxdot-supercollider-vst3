@@ -1,3 +1,9 @@
+0.4.139 adds native FoxDot-style `coarse` pulse gating (0–32) and `formant`
+(0–7; use -1 to bypass) controls for synth and WAV players. Both accept scalar,
+finite Pattern, `var()`, and `linvar()` values and appear in the live Effects
+panel. The built-in Formlet-style resonator approximation needs no external
+SynthDef. See Example 176.
+
 0.4.138 adds FoxDot-style note cut:
 
 - `cut` accepts a value from 0 to 1 and ends each note at that fraction of its

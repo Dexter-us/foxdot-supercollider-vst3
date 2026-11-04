@@ -23,6 +23,7 @@ cpp = r"""
 #include "python_runtime.h"
 #include "clock_swing.h"
 #include "airwindows_control_smoothing.h"
+#include "foxdot_note_effects.h"
 #include "player_effect_chain.h"
 #include <algorithm>
 #include <array>
@@ -99,6 +100,31 @@ int main(int argc, char** argv) {
         return 8;
     if (smoothAirwindowsFxControl(0.5f, 0.2f, 0.0) != 0.2f)
         return 9;
+    if (dexter::foxDotCoarseGain(0.1, 2.0f) != 1.0f ||
+        dexter::foxDotCoarseGain(0.3, 2.0f) != 0.0f ||
+        dexter::foxDotCoarseGain(0.1, 0.0f) != 1.0f)
+        return 19;
+    for (float formant : {0.0f, 3.5f, 7.0f}) {
+        dexter::FoxDotFormantState state;
+        double energy = 0.0;
+        for (int sample = 0; sample < 4096; ++sample) {
+            const float input = 0.25f *
+                static_cast<float>(std::sin(sample * 0.13));
+            const float output = dexter::foxDotFormantSample(
+                state, input, formant, 48000.0);
+            if (!std::isfinite(output) || std::abs(output) > 1.0f)
+                return 20;
+            energy += std::abs(output);
+        }
+        if (energy < 1.0)
+            return 21;
+    }
+    dexter::FoxDotFormantState bypassState;
+    if (dexter::foxDotFormantSample(bypassState, 0.25f, -1.0f, 48000.0) !=
+            0.25f ||
+        dexter::foxDotFormantSample(bypassState, 0.25f, 0.0f, 4000.0) !=
+            0.25f)
+        return 22;
     if (std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.0)) > 1e-9 ||
         std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.25)) > 1e-9 ||
         std::abs(foxDotClockSwingOffsetBeats(0.1, 120.0, 0.5) - 0.2) > 1e-9 ||
@@ -157,7 +183,8 @@ int main(int argc, char** argv) {
                       << event.slideFrom << ':' << event.slideDelay << ':'
                       << event.bend << ':' << event.bendDelay << ':'
                       << event.chop << ':' << event.spin << ':'
-                      << event.cut << ' ';
+                      << event.cut << ':' << event.coarse << ':'
+                      << event.formant << ' ';
         std::cout << "Y:";
         for (const auto& token : player.noteEffectControlTokens)
             std::cout << token << ',';
@@ -305,7 +332,8 @@ with tempfile.TemporaryDirectory() as directory:
     exec(cut_wrapper, {"__name__": "__main__"})
     valid_cut = result.read_text()
     invalid_cut_event = re.sub(
-        r"^(N\t[^\n]*\t)0\.75$", r"\g<1>1.2", valid_cut,
+        r"^(N\t(?:[^\t]*\t){15})0\.75\t",
+        r"\g<1>1.2\t", valid_cut,
         count=1, flags=re.M)
     assert invalid_cut_event != valid_cut
     result.write_text(invalid_cut_event)

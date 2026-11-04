@@ -166,7 +166,7 @@ _COMPAT_WAVE_KEYWORDS = {
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum',
     'vib', 'depth', 'vibdepth', 'slide', 'slidefrom', 'slidedelay',
     'bend', 'benddelay', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
-    'shape', 'drive', 'chop', 'spin', 'cut', 'effect', 'fx_vib', 'fx_depth',
+    'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth',
     'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60',
     'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq',
     'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
@@ -179,7 +179,7 @@ _USER_SYNTH_KEYWORDS = {
     'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell',
     'strum', 'vib', 'depth', 'vibdepth', 'slide', 'slidefrom', 'slidedelay',
     'bend', 'benddelay', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
-    'shape', 'drive', 'chop', 'spin', 'cut', 'effect', 'fx_vib', 'fx_depth',
+    'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth',
     'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60',
     'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq',
     'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
@@ -189,14 +189,14 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
     'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate',
     'shape', 'drive', 'vib', 'depth', 'vibdepth', 'slide', 'slidefrom',
-    'slidedelay', 'bend', 'benddelay', 'chop', 'spin', 'cut', 'effect',
+    'slidedelay', 'bend', 'benddelay', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect',
     'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq',
     'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size',
     'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff',
     'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center',
     'fx_shape', 'fx_phase'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'shape', 'drive', 'chop', 'spin', 'cut', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase'}
 for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
                          _COMPAT_SEQUENCE_KEYWORDS, _COMPAT_NOTE_PLAY_KEYWORDS):
     _effect_keywords.add('effects')
@@ -224,7 +224,7 @@ _COMPAT_GROUP_CONTROLS = {
     'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf',
     'hpr', 'bpf', 'bpr', 'decay', 'echomix', 'feedback', 'bpnoise', 'swell',
     'degree', 'dur', 'sus', 'oct', 'scale', 'root', 'shape', 'drive',
-    'chop', 'spin', 'cut'
+    'chop', 'spin', 'cut', 'coarse', 'formant'
 }
 _COMPAT_GROUP_METHODS = {
     'add', 'stop', 'mute', 'unmute', 'solo', 'only',
@@ -3942,7 +3942,7 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
          _allow_repeated_notes=False, _degree_control=None, _root_control=None,
          vibdepth=0.5, slide=0.0, slidefrom=0.0, slidedelay=0.0,
           bend=0.0, benddelay=0.0, chop=0.0, spin=0.0,
-          cut=1.0):
+          cut=1.0, coarse=0.0, formant=-1.0):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     _dexter_default_touched = True
     if isinstance(notes, _DexterPVar):
@@ -4000,6 +4000,10 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
     spinDefault, spinControl = _note_effect_control(
         spin, 'spin', 0.0, 40.0)
     cutDefault, cutControl = _note_effect_control(cut, 'cut', 0.0, 1.0)
+    coarseDefault, coarseControl = _note_effect_control(
+        coarse, 'coarse', 0.0, 32.0)
+    formantDefault, formantControl = _note_effect_control(
+        formant, 'formant', -1.0, 7.0)
     strumIsVar = isinstance(strum, _DexterTimeVar)
     if strumIsVar:
         if any(value < 0.0 or value > 1.0 for value in strum.values):
@@ -4116,6 +4120,10 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                 bendDelayDefault, bendDelayControl, start, i)
             chopValue = _note_effect_value(chopDefault, chopControl, start, i)
             spinValue = _note_effect_value(spinDefault, spinControl, start, i)
+            coarseValue = _note_effect_value(
+                coarseDefault, coarseControl, start, i)
+            formantValue = _note_effect_value(
+                formantDefault, formantControl, start, i)
             additions.append((start, sustainValue, note, noteVelocity,
                               attackValue, releaseValue,
                               strumValue * chordIndex + groupOffset,
@@ -4126,7 +4134,8 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                               slideFromValue, slideDelayValue, bendValue,
                                 bendDelayValue, chopValue, spinValue,
                                 _note_effect_value(cutDefault, cutControl,
-                                                   start, i)))
+                                                   start, i),
+                                coarseValue, formantValue))
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
@@ -4432,6 +4441,7 @@ class PlayerPattern:
                    lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, synthRate=None, bpnoise=0.0, swell=0.0,
                     timeMultipliers=None, allowRepeatedNotes=False,
                       shape=0.0, drive=0.0, chop=0.0, spin=0.0,
+                      coarse=0.0, formant=-1.0,
                       vib=0.0, depth=None,
                       vibdepth=None, slide=0.0, slidefrom=0.0,
                       slidedelay=0.0, bend=0.0, benddelay=0.0,
@@ -4452,6 +4462,10 @@ class PlayerPattern:
         self.synth = synth
         self.cut, self.cutControl = _note_effect_control(
             effectControls.pop('cut', 1.0), 'cut', 0.0, 1.0)
+        self.coarse, self.coarseControl = _note_effect_control(
+            coarse, 'coarse', 0.0, 32.0)
+        self.formant, self.formantControl = _note_effect_control(
+            formant, 'formant', -1.0, 7.0)
         effectChain = effectControls.pop('effects', None)
         self.playerEffects = _player_effect_chain(effect, effectChain, effectControls)
         self.playerEffectUserIndex = (
@@ -4504,6 +4518,9 @@ class PlayerPattern:
             self.cutControl.wire()
             if isinstance(self.cutControl, _DexterTimeVar) else '-',
         )
+        self.noteEffectControlVariables += tuple(
+            control.wire() if isinstance(control, _DexterTimeVar) else '-'
+            for control in (self.coarseControl, self.formantControl))
         self.synthControls = (self.vibRate, self.vibDepth, 1.0, 0.5,
                               0.5, 0.0, 1.0)
         if synthRate is None:
@@ -5344,7 +5361,7 @@ _GROUP_PATTERN_FIELDS = {
     'bpr': 'bpr', 'decay': 'echoDecayBeats', 'echomix': 'echoMix',
     'feedback': 'feedback', 'bpnoise': 'bpnoise', 'swell': 'swell',
     'shape': 'shape', 'drive': 'drive', 'chop': 'chop', 'spin': 'spin',
-    'cut': 'cut',
+    'cut': 'cut', 'coarse': 'coarse', 'formant': 'formant',
     'degree': 'degreeControl', 'dur': 'step', 'sus': 'duration',
     'oct': 'octaveControl', 'scale': 'scaleName', 'root': 'rootMidi'
 }
@@ -5448,9 +5465,12 @@ def _normalize_group_control(name, value):
     if name in ('shape', 'drive'):
         _player_effect_control(value, name)
         return value
-    if name in ('chop', 'spin'):
-        _note_effect_control(value, name, 0.0,
-                             32.0 if name == 'chop' else 40.0)
+    if name in ('chop', 'spin', 'coarse', 'formant'):
+        lower, upper = {
+            'chop': (0.0, 32.0), 'spin': (0.0, 40.0),
+            'coarse': (0.0, 32.0), 'formant': (-1.0, 7.0)
+        }[name]
+        _note_effect_control(value, name, lower, upper)
         return value
     return value
 
@@ -5480,6 +5500,20 @@ def _set_group_pattern_control(pattern, name, value):
         pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:8] + (
             pattern.cutControl.wire()
             if isinstance(pattern.cutControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[9:]
+    elif name == 'coarse':
+        pattern.coarse, pattern.coarseControl = _note_effect_control(
+            value, 'coarse', 0.0, 32.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:9] + (
+            pattern.coarseControl.wire()
+            if isinstance(pattern.coarseControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[10:]
+    elif name == 'formant':
+        pattern.formant, pattern.formantControl = _note_effect_control(
+            value, 'formant', -1.0, 7.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:10] + (
+            pattern.formantControl.wire()
+            if isinstance(pattern.formantControl, _DexterTimeVar) else '-',
         )
     elif name == 'oct':
         if pattern.synth == 'sample' or not pattern.degrees:
@@ -5597,7 +5631,8 @@ def _set_group_pattern_control(pattern, name, value):
             pattern.chopControl.wire()
             if isinstance(pattern.chopControl, _DexterTimeVar) else '-',
             pattern.spinControl.wire()
-            if isinstance(pattern.spinControl, _DexterTimeVar) else '-')
+            if isinstance(pattern.spinControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[8:]
     elif name == 'spin':
         pattern.spin, pattern.spinControl = _note_effect_control(
             value, 'spin', 0.0, 40.0)
@@ -5605,14 +5640,15 @@ def _set_group_pattern_control(pattern, name, value):
             pattern.chopControl.wire()
             if isinstance(pattern.chopControl, _DexterTimeVar) else '-',
             pattern.spinControl.wire()
-            if isinstance(pattern.spinControl, _DexterTimeVar) else '-')
+            if isinstance(pattern.spinControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[8:]
     elif name == 'cut':
         pattern.cut, pattern.cutControl = _note_effect_control(
             value, 'cut', 0.0, 1.0)
         pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:8] + (
             pattern.cutControl.wire()
             if isinstance(pattern.cutControl, _DexterTimeVar) else '-',
-        )
+        ) + pattern.noteEffectControlVariables[9:]
     else:
         raise AttributeError('unsupported shared player control ' + name)
 
@@ -5692,7 +5728,9 @@ class Player:
                    benddelay=pattern.bendDelayControl if pattern.bendDelayControl is not None else pattern.bendDelay,
                    chop=pattern.chopControl if pattern.chopControl is not None else pattern.chop,
                     spin=pattern.spinControl if pattern.spinControl is not None else pattern.spin,
-                    cut=pattern.cutControl if pattern.cutControl is not None else pattern.cut)
+                    cut=pattern.cutControl if pattern.cutControl is not None else pattern.cut,
+                    coarse=pattern.coarseControl if pattern.coarseControl is not None else pattern.coarse,
+                    formant=pattern.formantControl if pattern.formantControl is not None else pattern.formant)
             compiledLength = _dexter_length
             delayPattern = isinstance(pattern.delayControl, _FoxDotFinitePattern)
             if delayPattern:
@@ -6684,7 +6722,7 @@ class Player:
         _dexter_effect_control_values[self.number - 1] = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
         _dexter_effect_control_variables[self.number - 1] = ('-', '-', '-', '-', '-', '-', '-')
         _dexter_note_effect_control_variables[self.number - 1] = \
-            ('-', '-', '-', '-', '-', '-', '-', '-', '-')
+            ('-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-')
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
                                              0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None, _dexter_swing_seconds)
         self._active = False
@@ -6972,7 +7010,7 @@ DiskOut = _DiskRecorder()
               << "            _f.write('X' + chr(9) + str(_player) + chr(9) + chr(9).join(_effect_control_variables) + chr(10))\n"
               << "            _extra_effects = [value for index, values, variables in zip(_effect_user_indices[1:], _chain_values[1:], _chain_variables[1:]) for value in (index,) + tuple(values) + tuple(variables)]\n"
               << "            _f.write('J' + chr(9) + str(_player) + chr(9) + str(max(0, len(_effect_user_indices) - 1)) + ''.join(chr(9) + str(value) for value in _extra_effects) + chr(10))\n"
-              << "            _note_effect_control_variables = _dexter_scope['_dexter_note_effect_control_variables'].get(_player, ('-', '-', '-', '-', '-', '-', '-', '-', '-'))\n"
+              << "            _note_effect_control_variables = _dexter_scope['_dexter_note_effect_control_variables'].get(_player, ('-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-'))\n"
              << "            _f.write('Y' + chr(9) + str(_player) + chr(9) + chr(9).join(_note_effect_control_variables) + chr(10))\n"
              << "            if _synth == 57:\n"
              << "                _sample_control, _rate_control = _dexter_scope['_dexter_sample_controls'].get(_player, ('-', '-'))\n"
@@ -6980,7 +7018,8 @@ DiskOut = _DiskRecorder()
             << "            for _event_index, _e in enumerate(_events):\n"
                << "                _fx = _e[10:18] if len(_e) >= 18 else (0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)\n"
                << "                _cut = _e[18:19] if len(_e) >= 19 else (1.0,)\n"
-               << "                _f.write('N' + chr(9) + chr(9).join(map(str, _e[:7] + _fx + _cut)) + chr(10))\n"
+               << "                _extra_note_fx = _e[19:21] if len(_e) >= 21 else (0.0, -1.0)\n"
+               << "                _f.write('N' + chr(9) + chr(9).join(map(str, _e[:7] + _fx + _cut + _extra_note_fx)) + chr(10))\n"
             << "                if _synth == 57:\n"
             << "                    _f.write('B\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(*_dexter_scope['_dexter_sample_events'][_player][_event_index]))\n"
             << "        for _player, _muted in sorted(_mutes.items()):\n"
@@ -7402,10 +7441,10 @@ bool parseResult(const std::filesystem::path& resultPath,
             error = "Python returned malformed note-effect time-var controls.";
             return false;
         }
-        constexpr std::array<double, 9> noteEffectMinimum{
-            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0};
-        constexpr std::array<double, 9> noteEffectMaximum{
-            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0, 1.0};
+        constexpr std::array<double, 11> noteEffectMinimum{
+            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0};
+        constexpr std::array<double, 11> noteEffectMaximum{
+            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0, 1.0, 32.0, 7.0};
         for (std::size_t index = 0;
              index < update.noteEffectControlTokens.size(); ++index) {
             auto& token = update.noteEffectControlTokens[index];
@@ -7455,7 +7494,7 @@ bool parseResult(const std::filesystem::path& resultPath,
                   event.releaseSeconds >> event.delayBeats >> event.vibDepth >>
                   event.slide >> event.slideFrom >> event.slideDelay >>
                   event.bend >> event.bendDelay >> event.chop >> event.spin >>
-                  event.cut) ||
+                  event.cut >> event.coarse >> event.formant) ||
                 noteRecord != 'N' ||
                 !std::isfinite(event.beat) || !std::isfinite(event.durationBeats) ||
                 !std::isfinite(event.delayBeats) || event.delayBeats < 0.0 || event.delayBeats > 15.0 ||
@@ -7477,6 +7516,10 @@ bool parseResult(const std::filesystem::path& resultPath,
                 event.spin > 40.0 ||
                 !std::isfinite(event.cut) || event.cut < 0.0 ||
                 event.cut > 1.0 ||
+                !std::isfinite(event.coarse) || event.coarse < 0.0 ||
+                event.coarse > 32.0 ||
+                !std::isfinite(event.formant) || event.formant < -1.0 ||
+                event.formant > 7.0 ||
                 event.beat < 0.0 || event.beat > update.lengthBeats ||
                 event.durationBeats < 0.02 ||
                 event.durationBeats > std::min(4096.0, update.lengthBeats * 8.0) + 1e-9 ||

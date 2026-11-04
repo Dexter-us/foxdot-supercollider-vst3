@@ -20,6 +20,8 @@ struct EditorPlayerState {
     bool driveEnabled = false;
     bool chopEnabled = false;
     bool spinEnabled = false;
+    bool coarseEnabled = false;
+    bool formantEnabled = false;
 };
 
 class ICodeEditorHost {

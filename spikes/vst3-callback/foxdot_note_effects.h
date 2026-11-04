@@ -53,6 +53,83 @@ inline float foxDotChopGain(double progress, float chop) {
     return phase < 0.5 ? 1.01f : 0.01f;
 }
 
+// FoxDot's coarse.scd gates a note with LFPulse.ar(coarse / sus).
+// `progress` is normalized to the note sustain, so coarse is the number of
+// pulse cycles across that sustain. Zero leaves the note untouched.
+inline float foxDotCoarseGain(double progress, float coarse) {
+    if (!std::isfinite(progress) || !std::isfinite(coarse) || coarse <= 0.0f)
+        return 1.0f;
+    const double phase = std::fmod(std::max(0.0, progress) * coarse, 1.0);
+    return phase < 0.5 ? 1.0f : 0.0f;
+}
+
+struct FoxDotFormantState {
+    double decayY1 = 0.0;
+    double decayY2 = 0.0;
+    double attackY1 = 0.0;
+    double attackY2 = 0.0;
+    double preparedFormant = -2.0;
+    double preparedSampleRate = 0.0;
+    double decayInput = 1.0;
+    double decayCoefficient1 = 0.0;
+    double decayCoefficient2 = 0.0;
+    double attackInput = 1.0;
+    double attackCoefficient1 = 0.0;
+    double attackCoefficient2 = 0.0;
+};
+
+// FoxDot's formantFilter.scd maps the control to a Formlet UGen and applies
+// tanh. SuperCollider defines Formlet as Ringz(decay) - Ringz(attack); this
+// bounded state-variable implementation follows that resonator form.
+inline float foxDotFormantSample(FoxDotFormantState& state, float input,
+                                 float formant, double sampleRate) {
+    if (!std::isfinite(input) || !std::isfinite(formant) ||
+        !std::isfinite(sampleRate) || formant < 0.0f || formant > 7.0f ||
+        sampleRate < 8000.0 || sampleRate > 384000.0)
+        return std::isfinite(input) ? input : 0.0f;
+    if (state.preparedFormant != formant ||
+        state.preparedSampleRate != sampleRate) {
+        const double index = static_cast<double>(formant) + 1.0;
+        const double frequency = std::clamp(index * 200.0, 20.0,
+                                            sampleRate * 0.45);
+        const double attackSeconds = (std::fmod(index, 5.0) + 1.0) / 1000.0;
+        const double decaySeconds = index * 1.5 / 600.0;
+        const double omega = 2.0 * 3.14159265358979323846 *
+                             frequency / sampleRate;
+        const double cosine = 2.0 * std::cos(omega);
+        const auto prepare = [&](double decay, double& inputCoefficient,
+                                 double& coefficient1, double& coefficient2) {
+            const double radius = std::exp(-std::log(1000.0) /
+                                           (decay * sampleRate));
+            inputCoefficient = 1.0 - radius;
+            coefficient1 = radius * cosine;
+            coefficient2 = radius * radius;
+        };
+        prepare(decaySeconds, state.decayInput,
+                state.decayCoefficient1, state.decayCoefficient2);
+        prepare(attackSeconds, state.attackInput,
+                state.attackCoefficient1, state.attackCoefficient2);
+        state.preparedFormant = formant;
+        state.preparedSampleRate = sampleRate;
+    }
+    const double boundedInput =
+        std::clamp(static_cast<double>(input), -64.0, 64.0);
+    const double decayOutput = state.decayInput * boundedInput +
+        state.decayCoefficient1 * state.decayY1 -
+        state.decayCoefficient2 * state.decayY2;
+    state.decayY2 = state.decayY1;
+    state.decayY1 = std::isfinite(decayOutput)
+        ? std::clamp(decayOutput, -10000.0, 10000.0) : 0.0;
+    const double attackOutput = state.attackInput * boundedInput +
+        state.attackCoefficient1 * state.attackY1 -
+        state.attackCoefficient2 * state.attackY2;
+    state.attackY2 = state.attackY1;
+    state.attackY1 = std::isfinite(attackOutput)
+        ? std::clamp(attackOutput, -10000.0, 10000.0) : 0.0;
+    const double output = state.decayY1 - state.attackY1;
+    return static_cast<float>(std::tanh(std::clamp(output, -64.0, 64.0)));
+}
+
 struct FoxDotSpinGains {
     float left = 1.0f;
     float right = 1.0f;

@@ -1,5 +1,13 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.139 adds native FoxDot-style `coarse` pulse gating and a bounded
+`formant` control for synth and WAV players. `coarse` ranges from 0–32;
+`formant` ranges from -1 (bypass) to 7. Both accept scalar, finite Pattern,
+`var()`, and `linvar()` values and appear in the live Effects panel. The
+formant DSP is a stable Formlet-style resonator approximation; it does not load
+an external SynthDef or rebuild SuperCollider. Portable Example 176 demonstrates
+both controls.
+
 Version 0.4.136 adds self-contained Phaser and Tremolo per-player inserts using
 stock SuperCollider UGens only. Their controls are smoothed and accept scalar,
 `var()`, and `linvar()` values. Portable Examples 171–172 demonstrate the

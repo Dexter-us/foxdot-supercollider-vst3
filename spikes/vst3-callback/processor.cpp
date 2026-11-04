@@ -703,10 +703,10 @@ public:
                         next.effectControlVariables = next.playerEffectCount > 0
                             ? next.playerEffects[0].controlVariables
                             : std::array<TimeVarControl, 7>{};
-                        constexpr std::array<double, 9> noteEffectMinimum{
-                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0};
-                        constexpr std::array<double, 9> noteEffectMaximum{
-                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0, 1.0};
+                        constexpr std::array<double, 11> noteEffectMinimum{
+                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0};
+                        constexpr std::array<double, 11> noteEffectMaximum{
+                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0, 1.0, 32.0, 7.0};
                         for (std::size_t control = 0;
                              control < next.noteEffectControls.size(); ++control) {
                             if (!parseTimeVarControl(
@@ -715,7 +715,7 @@ public:
                                     noteEffectMaximum[control],
                                     next.noteEffectControls[control]))
                                 throw std::runtime_error(
-                                    "Invalid vibdepth/slide/bend/chop/spin var control from Python.");
+                                    "Invalid FoxDot note-effect var control from Python.");
                         }
                         if (next.synthIndex == 57) {
                             if (!parseTimeVarControl(player.sampleControlToken, -1000000.0, 1000000.0,
@@ -760,6 +760,16 @@ public:
                             std::any_of(player.events.begin(), player.events.end(),
                                 [](const PythonNoteEvent& event) {
                                     return event.spin > 0.0;
+                                });
+                        next.coarseEnabled = next.noteEffectControls[9].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.coarse > 0.0;
+                                });
+                        next.formantEnabled = next.noteEffectControls[10].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.formant >= 0.0;
                                 });
                         totalNotes += player.events.size();
                         updateMask |= static_cast<std::uint8_t>(1u << player.playerIndex);
@@ -918,6 +928,8 @@ public:
             state.driveEnabled = (packed & (1u << 23)) != 0;
             state.chopEnabled = (packed & (1u << 24)) != 0;
             state.spinEnabled = (packed & (1u << 25)) != 0;
+            state.coarseEnabled = (packed & (1u << 26)) != 0;
+            state.formantEnabled = (packed & (1u << 27)) != 0;
         }
     }
 
@@ -1118,9 +1130,11 @@ private:
         std::array<TimeVarControl, 7> effectControlVariables{};
         std::array<PlayerEffectState, kMaxPlayerEffectChain> playerEffects{};
         std::size_t playerEffectCount = 0;
-        std::array<TimeVarControl, 9> noteEffectControls{};
+        std::array<TimeVarControl, 11> noteEffectControls{};
         bool chopEnabled = false;
         bool spinEnabled = false;
+        bool coarseEnabled = false;
+        bool formantEnabled = false;
         float amplitude = 1.0f;
         float pan = 0.0f;
         float cutoffHz = 20000.0f;
@@ -1194,6 +1208,8 @@ private:
                                   pattern.driveControl.active;
         const bool chopEnabled = pattern.chopEnabled;
         const bool spinEnabled = pattern.spinEnabled;
+        const bool coarseEnabled = pattern.coarseEnabled;
+        const bool formantEnabled = pattern.formantEnabled;
         const auto packed =
             (pattern.active ? 1u : 0u) |
             (mutedPlayers_[player] ? 2u : 0u) |
@@ -1205,7 +1221,9 @@ private:
             (shapeEnabled ? (1u << 22) : 0u) |
             (driveEnabled ? (1u << 23) : 0u) |
             (chopEnabled ? (1u << 24) : 0u) |
-            (spinEnabled ? (1u << 25) : 0u);
+            (spinEnabled ? (1u << 25) : 0u) |
+            (coarseEnabled ? (1u << 26) : 0u) |
+            (formantEnabled ? (1u << 27) : 0u);
         editorPlayerState_[player].store(packed, std::memory_order_release);
         std::uint64_t chain = 0;
         for (std::size_t slot = 0; slot < pattern.playerEffectCount; ++slot)
@@ -1288,6 +1306,9 @@ private:
         float bendDelay = 0.0f;
         float chop = 0.0f;
         float spin = 0.0f;
+        float coarse = 0.0f;
+        float formant = -1.0f;
+        dexter::FoxDotFormantState formantState{};
         float leftGain = 0.70710678f;
         float rightGain = 0.70710678f;
         float cutoffHz = 20000.0f;
@@ -1364,6 +1385,8 @@ private:
         float bendDelay = 0.0f;
         float chop = 0.0f;
         float spin = 0.0f;
+        float coarse = 0.0f;
+        float formant = -1.0f;
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -2623,7 +2646,13 @@ private:
                                         static_cast<float>(event.chop)),
                         evaluateTimeVar(pattern.noteEffectControls[7],
                                         absoluteStartBeat,
-                                        static_cast<float>(event.spin))};
+                                        static_cast<float>(event.spin)),
+                        evaluateTimeVar(pattern.noteEffectControls[9],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.coarse)),
+                        evaluateTimeVar(pattern.noteEffectControls[10],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.formant))};
                     ++playerVoices;
                 }
             }
@@ -2722,6 +2751,9 @@ private:
                 found->bendDelay = note.bendDelay;
                 found->chop = note.chop;
                 found->spin = note.spin;
+                found->coarse = note.coarse;
+                found->formant = note.formant;
+                found->formantState = {};
                 found->foxDotNativeEnvelope = note.foxDotNativeEnvelope;
                 found->userSynthGateReleased = false;
                 found->releasing = false;
@@ -3820,6 +3852,9 @@ private:
                 shaped = processBiquad(voice.hpfState, shaped);
                 shaped = processBiquad(voice.bpfState, shaped);
                 shaped = processBiquad(voice.swellState, shaped);
+                if (voice.formant >= 0.0f)
+                    shaped = dexter::foxDotFormantSample(
+                        voice.formantState, shaped, voice.formant, sampleRate_);
                 const double effectDuration =
                     voice.sustainEndSample > voice.startSample
                     ? static_cast<double>(voice.sustainEndSample -
@@ -3834,13 +3869,15 @@ private:
                     voice.slideDelay, voice.bend, voice.bendDelay);
                 const float chopGain = dexter::foxDotChopGain(
                     effectProgress, voice.chop);
+                const float coarseGain = dexter::foxDotCoarseGain(
+                    effectProgress, voice.coarse);
                 const double elapsedSeconds =
                     static_cast<double>(absoluteSample - voice.startSample) /
                     sampleRate_;
                 const auto spinGains = dexter::foxDotSpinGains(
                     elapsedSeconds, voice.spin);
                 const float amplitude = shaped * envelope * velocity *
-                    voice.amplitude * noteEffectGain * chopGain;
+                    voice.amplitude * noteEffectGain * chopGain * coarseGain;
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
                 playerLeft[player] += amplitude * voice.leftGain * spinGains.left;
                 playerRight[player] += amplitude * voice.rightGain * spinGains.right;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test the per-note FoxDot amplitude, chop, and spin effect curves."""
+"""Test FoxDot per-note amplitude, gating, spin, and formant effect curves."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -17,6 +17,8 @@ static bool near(float actual, float expected) {
 int main() {
     using dexter::foxDotNoteEffectGain;
     using dexter::foxDotChopGain;
+    using dexter::foxDotCoarseGain;
+    using dexter::foxDotFormantSample;
     using dexter::foxDotSpinGains;
     if (!near(foxDotNoteEffectGain(0.0, 0.5f, 0.0f, 0.25f, 0.0f, 0.0f), 1.0f) ||
         !near(foxDotNoteEffectGain(0.25, 0.5f, 0.0f, 0.25f, 0.0f, 0.0f), 1.0f) ||
@@ -51,6 +53,32 @@ int main() {
         !near(foxDotChopGain(0.5, 0.0f), 1.0f) ||
         foxDotChopGain(NAN, 4.0f) != 1.0f)
         return 6;
+    if (!near(foxDotCoarseGain(0.0, 4.0f), 1.0f) ||
+        !near(foxDotCoarseGain(0.124, 4.0f), 1.0f) ||
+        !near(foxDotCoarseGain(0.125, 4.0f), 0.0f) ||
+        !near(foxDotCoarseGain(0.25, 4.0f), 1.0f) ||
+        !near(foxDotCoarseGain(0.5, 0.0f), 1.0f) ||
+        foxDotCoarseGain(NAN, 4.0f) != 1.0f)
+        return 8;
+    for (float formant : {0.0f, 3.5f, 7.0f}) {
+        dexter::FoxDotFormantState state;
+        double energy = 0.0;
+        for (int sample = 0; sample < 4096; ++sample) {
+            const float input = 0.25f *
+                static_cast<float>(std::sin(sample * 0.13));
+            const float output = foxDotFormantSample(
+                state, input, formant, 48000.0);
+            if (!std::isfinite(output) || std::abs(output) > 1.0f)
+                return 9;
+            energy += std::abs(output);
+        }
+        if (energy < 1.0)
+            return 10;
+    }
+    dexter::FoxDotFormantState bypass;
+    if (foxDotFormantSample(bypass, 0.25f, -1.0f, 48000.0) != 0.25f ||
+        foxDotFormantSample(bypass, 0.25f, 2.0f, 4000.0) != 0.25f)
+        return 11;
     const auto spinStart = foxDotSpinGains(0.0, 4.0f);
     const auto spinQuarter = foxDotSpinGains(0.25, 4.0f);
     if (!near(spinStart.left,
@@ -79,4 +107,4 @@ with tempfile.TemporaryDirectory() as directory:
     ], check=True)
     subprocess.run([str(binary)], check=True)
 
-print("PASS: FoxDot slide/bend envelopes, chop gating, and spin panning curves")
+print("PASS: FoxDot slide/bend envelopes, chop/coarse gates, spin, and Formlet-style formant curves")

@@ -873,7 +873,9 @@ private:
                 left[index].shapeEnabled != right[index].shapeEnabled ||
                 left[index].driveEnabled != right[index].driveEnabled ||
                 left[index].chopEnabled != right[index].chopEnabled ||
-                left[index].spinEnabled != right[index].spinEnabled)
+                left[index].spinEnabled != right[index].spinEnabled ||
+                left[index].coarseEnabled != right[index].coarseEnabled ||
+                left[index].formantEnabled != right[index].formantEnabled)
                 return false;
         }
         return true;
@@ -940,6 +942,8 @@ private:
             addPanelRow(L"FoxDot drive (native player effect)");
             addPanelRow(L"FoxDot chop (per-note gate)");
             addPanelRow(L"FoxDot spin (stereo pan motion)");
+            addPanelRow(L"FoxDot coarse (per-note pulse gate)");
+            addPanelRow(L"FoxDot formant (Formlet-style note filter)");
             addPanelRow(L"Airwindows TapeDelay2");
             addPanelRow(L"Airwindows Echojam");
             if (host_) {
@@ -990,7 +994,8 @@ private:
             if (state.effectIndex < 0 && !state.echoEnabled &&
                 !state.reverbEnabled && !state.shapeEnabled &&
                 !state.driveEnabled && !state.chopEnabled &&
-                !state.spinEnabled)
+                !state.spinEnabled && !state.coarseEnabled &&
+                !state.formantEnabled)
                 continue;
             foundAssignment = true;
             std::wstring row = L"p" + std::to_wstring(index + 1) + L":";
@@ -1014,6 +1019,10 @@ private:
                 row += L" Chop";
             if (state.spinEnabled)
                 row += L" Spin";
+            if (state.coarseEnabled)
+                row += L" Coarse";
+            if (state.formantEnabled)
+                row += L" Formant";
             if (state.reverbEnabled && state.reverbIndex >= 0 &&
                 state.reverbIndex < static_cast<int>(reverbs.size()))
                 row += L" " + std::wstring(
@@ -1154,6 +1163,10 @@ private:
                 row += L"  Chop";
             if (state.spinEnabled)
                 row += L"  Spin";
+            if (state.coarseEnabled)
+                row += L"  Coarse";
+            if (state.formantEnabled)
+                row += L"  Formant";
             const auto item = static_cast<int>(
                 SendMessageW(panelList_, LB_ADDSTRING, 0,
                              reinterpret_cast<LPARAM>(row.c_str())));
