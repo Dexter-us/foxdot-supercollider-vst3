@@ -65,6 +65,8 @@ constexpr int kPanelVersionId = 120;
 constexpr int kPlayerSliderBaseId = 121;
 constexpr int kPlayerControlLabelBaseId = 128;
 constexpr int kPlayerControlValueBaseId = 135;
+constexpr int kEffectChainItemDataBase = 100;
+constexpr int kEffectChainHeaderDataBase = 200;
 constexpr int kContextCatalogSynthBaseId = 2400;
 constexpr int kContextCatalogEffectBaseId = 2500;
 constexpr int kContextPanelInsertId = 2600;
@@ -691,24 +693,28 @@ private:
             playerControlLabels_[index] = CreateWindowExW(
                 0, L"STATIC", controlLabels[index],
                 WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
-                0, 0, 48, 24, window_,
+                0, 0, 64, 24, window_,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(
                     kPlayerControlLabelBaseId + index)),
                 moduleInstance(), nullptr);
             playerControlSliders_[index] = CreateWindowExW(
                 0, TRACKBAR_CLASSW, L"",
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_NOTICKS,
-                0, 0, 150, 24, window_,
+                0, 0, 126, 24, window_,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(
                     kPlayerSliderBaseId + index)),
                 moduleInstance(), nullptr);
             playerControlValues_[index] = CreateWindowExW(
                 0, L"STATIC", L"",
                 WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
-                0, 0, 52, 24, window_,
+                0, 0, 68, 24, window_,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(
                     kPlayerControlValueBaseId + index)),
                 moduleInstance(), nullptr);
+            playerControlRanges_[index] = CreateWindowExW(
+                0, L"STATIC", L"",
+                WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+                0, 0, 96, 16, window_, nullptr, moduleInstance(), nullptr);
         }
         for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
             if (playerControlSliders_[index]) {
@@ -997,8 +1003,42 @@ private:
                 left[index].crush != right[index].crush ||
                 left[index].pshift != right[index].pshift)
                 return false;
+            for (std::size_t slot = 0;
+                 slot < left[index].effectControlValues.size(); ++slot)
+                if (left[index].effectControlValues[slot] !=
+                    right[index].effectControlValues[slot])
+                    return false;
         }
         return true;
+    }
+
+    static int panelItemPlayer(int itemData) {
+        if (itemData >= 0 && itemData < 8)
+            return itemData;
+        if (itemData >= kEffectChainItemDataBase &&
+            itemData < kEffectChainItemDataBase + 8 * 4)
+            return (itemData - kEffectChainItemDataBase) / 4;
+        if (itemData >= kEffectChainHeaderDataBase &&
+            itemData < kEffectChainHeaderDataBase + 8)
+            return itemData - kEffectChainHeaderDataBase;
+        return -1;
+    }
+
+    static int panelItemEffectSlot(int itemData) {
+        if (itemData < kEffectChainItemDataBase ||
+            itemData >= kEffectChainItemDataBase + 8 * 4)
+            return -1;
+        return (itemData - kEffectChainItemDataBase) % 4;
+    }
+
+    static int panelItemForEffect(int player, int slot) {
+        return player >= 0 && player < 8 && slot >= 0 && slot < 4
+            ? kEffectChainItemDataBase + player * 4 + slot : -1;
+    }
+
+    static int panelItemForChainHeader(int player) {
+        return player >= 0 && player < 8
+            ? kEffectChainHeaderDataBase + player : -1;
     }
 
     void addPanelRow(const std::wstring& row, int itemData = -1) {
@@ -1030,6 +1070,22 @@ private:
         }
         const int selected = static_cast<int>(
             SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
+        if (selected != LB_ERR) {
+            const auto itemData = static_cast<int>(
+                SendMessageW(panelList_, LB_GETITEMDATA, selected, 0));
+            const int headerPlayer =
+                itemData >= kEffectChainHeaderDataBase &&
+                        itemData < kEffectChainHeaderDataBase + 8
+                    ? itemData - kEffectChainHeaderDataBase : -1;
+            if (headerPlayer >= 0) {
+                expandedEffectChains_[static_cast<std::size_t>(headerPlayer)] =
+                    !expandedEffectChains_[static_cast<std::size_t>(
+                        headerPlayer)];
+                panelPlayersInitialized_ = false;
+                renderPanelTab();
+                return;
+            }
+        }
         const auto header = catalogCategoryHeaderRows_.find(selected);
         if (selected != LB_ERR && header != catalogCategoryHeaderRows_.end()) {
             const auto category = header->second;
@@ -1251,6 +1307,7 @@ private:
             ShowWindow(playerControlLabels_[index], visibility);
             ShowWindow(playerControlSliders_[index], visibility);
             ShowWindow(playerControlValues_[index], visibility);
+            ShowWindow(playerControlRanges_[index], SW_HIDE);
         }
         if (tab == 0) {
             panelPlayersInitialized_ = false;
@@ -1462,11 +1519,11 @@ private:
             updatePlayerControlSliders(states);
             return;
         }
-        int selectedPlayer = -1;
+        int selectedItemData = -1;
         const int selectedItem = static_cast<int>(
             SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
         if (selectedItem != LB_ERR)
-            selectedPlayer = static_cast<int>(
+            selectedItemData = static_cast<int>(
                 SendMessageW(panelList_, LB_GETITEMDATA, selectedItem, 0));
         SendMessageW(panelList_, LB_RESETCONTENT, 0, 0);
         const auto externalNames = host_->editorExternalSynthNames();
@@ -1506,19 +1563,53 @@ private:
                 row += L"  PShift";
             if (state.bitcrusherEnabled)
                 row += L"  Bits/Crush";
-            const auto item = static_cast<int>(
-                SendMessageW(panelList_, LB_ADDSTRING, 0,
-                             reinterpret_cast<LPARAM>(row.c_str())));
-            if (item != LB_ERR)
-                SendMessageW(panelList_, LB_SETITEMDATA, item,
-                             static_cast<LPARAM>(index));
+            addPanelRow(row, static_cast<int>(index));
+            std::size_t effectCount = 0;
+            for (const auto effectIndex : state.effectIndices)
+                effectCount += effectIndex >= 0 ? 1u : 0u;
+            if (effectCount == 0)
+                continue;
+            const bool expanded = expandedEffectChains_[index];
+            addPanelRow(
+                std::wstring(L"    ") + (expanded ? L"[-] " : L"[+] ") +
+                    L"Effect chain (" + std::to_wstring(effectCount) + L")",
+                panelItemForChainHeader(static_cast<int>(index)));
+            if (!expanded)
+                continue;
+            for (std::size_t effectSlot = 0;
+                 effectSlot < state.effectIndices.size(); ++effectSlot) {
+                const auto effectIndex = state.effectIndices[effectSlot];
+                if (effectIndex < 0 ||
+                    effectIndex >= static_cast<int>(externalNames.size()))
+                    continue;
+                std::wstring effectRow = L"        ";
+                effectRow += selectedItemData == panelItemForEffect(
+                    static_cast<int>(index),
+                    static_cast<int>(effectSlot)) ? L"[-] " : L"[+] ";
+                effectRow += L"#" + std::to_wstring(effectSlot + 1) + L" ";
+                effectRow += fromUtf8(externalNames[
+                    static_cast<std::size_t>(effectIndex)]);
+                addPanelRow(effectRow, panelItemForEffect(
+                    static_cast<int>(index), static_cast<int>(effectSlot)));
+            }
         }
         lastPanelPlayers_ = states;
         panelPlayersInitialized_ = true;
-        if (selectedPlayer >= 0 &&
-            selectedPlayer < static_cast<int>(states.size()))
-            SendMessageW(panelList_, LB_SETCURSEL, selectedPlayer, 0);
-        else {
+        bool restoredSelection = false;
+        if (selectedItemData >= 0) {
+            const int count = static_cast<int>(
+                SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+            for (int row = 0; row < count; ++row) {
+                if (static_cast<int>(SendMessageW(
+                        panelList_, LB_GETITEMDATA, row, 0)) !=
+                    selectedItemData)
+                    continue;
+                SendMessageW(panelList_, LB_SETCURSEL, row, 0);
+                restoredSelection = true;
+                break;
+            }
+        }
+        if (!restoredSelection) {
             for (std::size_t index = 0; index < states.size(); ++index) {
                 if (!states[index].active)
                     continue;
@@ -1537,9 +1628,21 @@ private:
             SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
         if (selectedItem == LB_ERR)
             return -1;
-        const int player = static_cast<int>(
+        const int itemData = static_cast<int>(
             SendMessageW(panelList_, LB_GETITEMDATA, selectedItem, 0));
-        return player >= 0 && player < 8 ? player : -1;
+        return panelItemPlayer(itemData);
+    }
+
+    int selectedEffectSlotIndex() const {
+        if (!panelList_ || selectedPanelTab() != 0)
+            return -1;
+        const int selectedItem = static_cast<int>(
+            SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
+        if (selectedItem == LB_ERR)
+            return -1;
+        const int itemData = static_cast<int>(
+            SendMessageW(panelList_, LB_GETITEMDATA, selectedItem, 0));
+        return panelItemEffectSlot(itemData);
     }
 
     void selectPlayerAtEditorCaret() {
@@ -1570,12 +1673,17 @@ private:
     void updatePlayerActionButtons() {
         const int player = selectedPlayerIndex();
         if (player < 0 || !host_) {
+            static constexpr std::array<const wchar_t*, 7> labels{
+                L"Level", L"Pan", L"Cutoff", L"FX mix", L"Bits", L"Crush",
+                L"PShift"};
             if (panelMuteButton_)
                 EnableWindow(panelMuteButton_, FALSE);
             if (panelStopButton_)
                 EnableWindow(panelStopButton_, FALSE);
             for (std::size_t index = 0;
                  index < playerControlSliders_.size(); ++index) {
+                if (playerControlLabels_[index])
+                    SetWindowTextW(playerControlLabels_[index], labels[index]);
                 if (playerControlSliders_[index])
                     EnableWindow(playerControlSliders_[index], FALSE);
                 const auto control = index == 0 ? EditorPlayerControl::Amplitude
@@ -1591,6 +1699,7 @@ private:
                 ShowWindow(playerControlLabels_[index], visibility);
                 ShowWindow(playerControlSliders_[index], visibility);
                 ShowWindow(playerControlValues_[index], visibility);
+                ShowWindow(playerControlRanges_[index], SW_HIDE);
             }
             return;
         }
@@ -1615,6 +1724,65 @@ private:
         if (player < 0 || !host_)
             return;
         const auto& state = states[static_cast<std::size_t>(player)];
+        const int effectSlot = selectedEffectSlotIndex();
+        if (effectSlot >= 0 &&
+            effectSlot < static_cast<int>(state.effectIndices.size())) {
+            const auto externalNames = host_->editorExternalSynthNames();
+            const int effectIndex =
+                state.effectIndices[static_cast<std::size_t>(effectSlot)];
+            if (effectIndex >= 0 &&
+                effectIndex < static_cast<int>(externalNames.size())) {
+                const auto effectName = externalNames[
+                    static_cast<std::size_t>(effectIndex)];
+                const auto specs =
+                    dexter::editor::playerEffectControlSpecs(effectName);
+                for (std::size_t index = 0;
+                     index < playerControlSliders_.size(); ++index) {
+                    const bool available = index < specs.size();
+                    const int visibility = available ? SW_SHOW : SW_HIDE;
+                    ShowWindow(playerControlLabels_[index], visibility);
+                    ShowWindow(playerControlSliders_[index], visibility);
+                    ShowWindow(playerControlValues_[index], visibility);
+                    ShowWindow(playerControlRanges_[index], visibility);
+                    if (!available)
+                        continue;
+                    std::string label = specs[index].name;
+                    if (label.rfind("fx_", 0) == 0)
+                        label.erase(0, 3);
+                    const auto labelText = fromUtf8(label);
+                    SetWindowTextW(playerControlLabels_[index],
+                                   labelText.c_str());
+                    const auto rangeText =
+                        fromUtf8(effectControlRangeText(specs[index]));
+                    SetWindowTextW(playerControlRanges_[index],
+                                   rangeText.c_str());
+                    if (playerControlSliders_[index]) {
+                        SendMessageW(playerControlSliders_[index],
+                                     TBM_SETRANGE, TRUE, MAKELONG(0, 1000));
+                        if (activePlayerSlider_ !=
+                            static_cast<int>(index)) {
+                            const float normalized = std::clamp(
+                                state.effectControlValues[
+                                    static_cast<std::size_t>(effectSlot)][index],
+                                0.0f, 1.0f);
+                            const int position = static_cast<int>(
+                                std::lround(normalized * 1000.0f));
+                            SendMessageW(playerControlSliders_[index],
+                                         TBM_SETPOS, TRUE, position);
+                            const auto valueText = fromUtf8(
+                                effectControlValueText(specs[index],
+                                                      normalized));
+                            if (playerControlValues_[index])
+                                SetWindowTextW(playerControlValues_[index],
+                                               valueText.c_str());
+                        }
+                        EnableWindow(playerControlSliders_[index],
+                                     state.active ? TRUE : FALSE);
+                    }
+                }
+                return;
+            }
+        }
         const auto cutoffPosition = static_cast<int>(std::lround(
             std::clamp(std::log(std::clamp(state.cutoffHz, 20.0f, 20000.0f) /
                                     20.0f) /
@@ -1644,7 +1812,11 @@ private:
             fromUtf8(sliderValueText(4, positions[4])),
             fromUtf8(sliderValueText(5, positions[5])),
             fromUtf8(sliderValueText(6, positions[6]))};
+        static constexpr std::array<const wchar_t*, 7> labels{
+            L"Level", L"Pan", L"Cutoff", L"FX mix", L"Bits", L"Crush",
+            L"PShift"};
         for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
+            ShowWindow(playerControlRanges_[index], SW_HIDE);
             if (activePlayerSlider_ == static_cast<int>(index))
                 continue;
             const auto control = index == 0 ? EditorPlayerControl::Amplitude
@@ -1663,10 +1835,20 @@ private:
                 control, selectedPanelTab() == 0, true,
                 state.bitcrusherEnabled)
                 ? SW_SHOW : SW_HIDE;
+            if (playerControlLabels_[index])
+                SetWindowTextW(playerControlLabels_[index], labels[index]);
             ShowWindow(playerControlLabels_[index], visibility);
             ShowWindow(playerControlSliders_[index], visibility);
             ShowWindow(playerControlValues_[index], visibility);
             if (playerControlSliders_[index]) {
+                const int minimum = index == 5 ? 1 : 0;
+                const int maximum = index == 6 ? 480
+                    : index == 2 ? 1000
+                    : index == 1 ? 200
+                    : index == 4 ? 24
+                    : index == 5 ? 128 : 100;
+                SendMessageW(playerControlSliders_[index], TBM_SETRANGE,
+                             TRUE, MAKELONG(minimum, maximum));
                 SendMessageW(playerControlSliders_[index], TBM_SETPOS, TRUE,
                              positions[index]);
                 EnableWindow(playerControlSliders_[index],
@@ -1701,6 +1883,34 @@ private:
         return text.str();
     }
 
+    static const char* effectControlUnit(std::string_view name) {
+        if (name == "fx_tone" || name == "fx_center" ||
+            name == "fx_rate" || name == "fx_modfreq")
+            return " Hz";
+        if (name == "fx_delay" || name == "fx_t60")
+            return " s";
+        return "";
+    }
+
+    static std::string effectControlRangeText(
+        const dexter::editor::PlayerEffectControlSpec& spec) {
+        std::ostringstream text;
+        text << std::setprecision(3) << spec.minimum << " - "
+             << std::setprecision(3) << spec.maximum
+             << effectControlUnit(spec.name);
+        return text.str();
+    }
+
+    static std::string effectControlValueText(
+        const dexter::editor::PlayerEffectControlSpec& spec,
+        float normalized) {
+        const float value = spec.minimum + std::clamp(normalized, 0.0f, 1.0f) *
+            (spec.maximum - spec.minimum);
+        std::ostringstream text;
+        text << std::setprecision(4) << value << effectControlUnit(spec.name);
+        return text.str();
+    }
+
     static float playerControlValue(std::size_t index, int position) {
         if (index == 0 || index == 3)
             return std::clamp(position / 100.0f, 0.0f, 1.0f);
@@ -1724,6 +1934,36 @@ private:
             ? -1 : static_cast<int>(index);
         const int position = static_cast<int>(
             SendMessageW(playerControlSliders_[index], TBM_GETPOS, 0, 0));
+        const int effectSlot = selectedEffectSlotIndex();
+        if (effectSlot >= 0) {
+            std::array<EditorPlayerState, 8> states{};
+            host_->editorPlayerStates(states);
+            const auto& state = states[static_cast<std::size_t>(player)];
+            const auto externalNames = host_->editorExternalSynthNames();
+            if (effectSlot >= static_cast<int>(state.effectIndices.size()))
+                return;
+            const int effectIndex =
+                state.effectIndices[static_cast<std::size_t>(effectSlot)];
+            if (effectIndex < 0 ||
+                effectIndex >= static_cast<int>(externalNames.size()))
+                return;
+            const auto specs = dexter::editor::playerEffectControlSpecs(
+                externalNames[static_cast<std::size_t>(effectIndex)]);
+            if (index >= specs.size())
+                return;
+            const float normalized = std::clamp(position / 1000.0f, 0.0f, 1.0f);
+            host_->setEditorPlayerEffectControl(
+                player, effectSlot, static_cast<int>(index), normalized);
+            if (playerControlValues_[index]) {
+                const auto label = fromUtf8(
+                    effectControlValueText(specs[index], normalized));
+                SetWindowTextW(playerControlValues_[index], label.c_str());
+            }
+            if (scrollCode == TB_ENDTRACK)
+                commitPlayerEffectControlToSource(
+                    player, effectSlot, specs[index], normalized);
+            return;
+        }
         const float value = playerControlValue(index, position);
         const auto control = index == 0 ? EditorPlayerControl::Amplitude
             : index == 1 ? EditorPlayerControl::Pan
@@ -1768,6 +2008,27 @@ private:
             : dexter::editor::setPlayerArgument(
                   source, assignment, keyword, number.str());
         if (changed)
+            applyEditorTextEdit(source);
+    }
+
+    void commitPlayerEffectControlToSource(
+        int player, int effectSlot,
+        const dexter::editor::PlayerEffectControlSpec& spec,
+        float normalized) {
+        if (!editor_ || player < 0 || effectSlot < 0)
+            return;
+        auto source = editorUtf8Source();
+        dexter::editor::PlayerAssignment assignment;
+        if (!dexter::editor::findPlayerAssignmentForIndex(
+                source, player, assignment))
+            return;
+        const float value = spec.minimum + std::clamp(
+            normalized, 0.0f, 1.0f) * (spec.maximum - spec.minimum);
+        std::ostringstream number;
+        number << std::setprecision(7) << value;
+        if (dexter::editor::setPlayerEffectControl(
+                source, assignment, static_cast<std::size_t>(effectSlot),
+                spec.name, number.str()))
             applyEditorTextEdit(source);
     }
 
@@ -1839,18 +2100,20 @@ private:
         MoveWindow(panelTabs_, panelX, editorTop, kPanelWidth, 28, TRUE);
         const int panelBottom = editorTop + editorHeight - 27;
         const int controlsHeight =
-            static_cast<int>(playerControlSliders_.size()) * 24;
+            static_cast<int>(playerControlSliders_.size()) * 34;
         const int controlsTop = panelBottom - controlsHeight - 4;
         MoveWindow(panelList_, panelX + 2, editorTop + 30, kPanelWidth - 4,
                    std::max(80, controlsTop - (editorTop + 35)), TRUE);
         for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
-            const int rowY = controlsTop + static_cast<int>(index) * 24;
+            const int rowY = controlsTop + static_cast<int>(index) * 34;
             MoveWindow(playerControlLabels_[index], panelX + 4, rowY,
-                       48, 24, TRUE);
-            MoveWindow(playerControlSliders_[index], panelX + 52, rowY,
-                       150, 24, TRUE);
-            MoveWindow(playerControlValues_[index], panelX + 204, rowY,
-                       60, 24, TRUE);
+                       112, 16, TRUE);
+            MoveWindow(playerControlRanges_[index], panelX + 118, rowY,
+                       76, 16, TRUE);
+            MoveWindow(playerControlValues_[index], panelX + 196, rowY,
+                       66, 16, TRUE);
+            MoveWindow(playerControlSliders_[index], panelX + 4, rowY + 15,
+                       258, 18, TRUE);
         }
         MoveWindow(panelMuteButton_, panelX + 2, editorTop + editorHeight - 27,
                    88, 24, TRUE);
@@ -2433,12 +2696,14 @@ private:
     HWND panelVersion_ = nullptr;
     std::array<HWND, 7> playerControlLabels_{};
     std::array<HWND, 7> playerControlSliders_{};
+    std::array<HWND, 7> playerControlRanges_{};
     int activePlayerSlider_ = -1;
     std::array<HWND, 7> playerControlValues_{};
     std::array<EditorPlayerState, 8> lastPanelPlayers_{};
     std::vector<dexter::editor::CatalogEntry> panelCatalog_;
     std::unordered_map<std::string, bool> collapsedCatalogCategories_;
     std::unordered_map<int, std::string> catalogCategoryHeaderRows_;
+    std::array<bool, 8> expandedEffectChains_{};
     bool panelPlayersInitialized_ = false;
     bool panelEffectsInitialized_ = false;
     bool panelSynthsInitialized_ = false;

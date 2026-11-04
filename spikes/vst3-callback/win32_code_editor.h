@@ -15,6 +15,7 @@ struct EditorPlayerState {
     int synthIndex = 0;
     int effectIndex = -1;
     std::array<int, 4> effectIndices{{-1, -1, -1, -1}};
+    std::array<std::array<float, 7>, 4> effectControlValues{};
     int reverbIndex = 0;
     bool echoEnabled = false;
     bool reverbEnabled = false;
@@ -54,6 +55,9 @@ public:
     virtual void setEditorPlayerControl(int playerIndex,
                                         EditorPlayerControl control,
                                         float value) = 0;
+    virtual void setEditorPlayerEffectControl(int playerIndex, int effectSlot,
+                                              int controlIndex,
+                                              float normalizedValue) = 0;
 };
 
 Steinberg::IPlugView* createCodeEditorView(ICodeEditorHost* host,

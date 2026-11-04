@@ -469,6 +469,196 @@ inline bool setPlayerEffectMix(std::string& source,
     return true;
 }
 
+inline bool findTopLevelItemBounds(std::string_view source,
+                                   std::size_t open, std::size_t close,
+                                   std::size_t wanted,
+                                   std::size_t& itemStart,
+                                   std::size_t& itemEnd) {
+    if (open >= close || source[open] != '[' || source[close] != ']')
+        return false;
+    std::size_t start = open + 1;
+    std::size_t item = 0;
+    int parens = 0;
+    int brackets = 0;
+    int braces = 0;
+    char quote = 0;
+    bool escaped = false;
+    for (std::size_t index = start; index <= close; ++index) {
+        if (index < close) {
+            const char current = source[index];
+            if (quote != 0) {
+                if (escaped) escaped = false;
+                else if (current == '\\') escaped = true;
+                else if (current == quote) quote = 0;
+                continue;
+            }
+            if (current == '\'' || current == '"') {
+                quote = current;
+                continue;
+            }
+            if (current == '#') {
+                while (index < close && source[index] != '\n')
+                    ++index;
+                if (index >= close)
+                    break;
+            }
+            if (current == '(') ++parens;
+            else if (current == ')' && parens > 0) --parens;
+            else if (current == '[') ++brackets;
+            else if (current == ']' && brackets > 0) --brackets;
+            else if (current == '{') ++braces;
+            else if (current == '}' && braces > 0) --braces;
+            else if (current == ',' && parens == 0 && brackets == 0 &&
+                     braces == 0) {
+                if (item == wanted) {
+                    itemStart = skipSpace(source, start, index);
+                    itemEnd = index;
+                    while (itemEnd > itemStart &&
+                           std::isspace(static_cast<unsigned char>(
+                               source[itemEnd - 1])) != 0)
+                        --itemEnd;
+                    return itemStart < itemEnd;
+                }
+                ++item;
+                start = index + 1;
+            }
+            continue;
+        }
+        if (item == wanted) {
+            itemStart = skipSpace(source, start, close);
+            itemEnd = close;
+            while (itemEnd > itemStart &&
+                   std::isspace(static_cast<unsigned char>(
+                       source[itemEnd - 1])) != 0)
+                --itemEnd;
+            return itemStart < itemEnd;
+        }
+    }
+    return false;
+}
+
+inline bool setPlayerEffectControl(std::string& source,
+                                   const PlayerAssignment& assignment,
+                                   std::size_t effectIndex,
+                                   std::string_view controlName,
+                                   std::string_view value) {
+    if (!isSimpleIdentifier(controlName) || controlName.size() < 3 ||
+        controlName.substr(0, 3) != "fx_")
+        return false;
+    std::size_t listStart = 0;
+    std::size_t listEnd = 0;
+    if (!findArgumentValue(source, assignment, "effects", true,
+                           listStart, listEnd) ||
+        listStart >= listEnd || source[listStart] != '[') {
+        if (effectIndex != 0)
+            return false;
+        return setPlayerArgument(source, assignment, controlName, value);
+    }
+    std::size_t listClose = 0;
+    if (!findMatchingDelimiter(source, listStart, listEnd, '[', ']',
+                               listClose))
+        return false;
+    std::size_t tupleStart = 0;
+    std::size_t tupleEnd = 0;
+    if (!findTopLevelItemBounds(source, listStart, listClose, effectIndex,
+                                tupleStart, tupleEnd) ||
+        source[tupleStart] != '(')
+        return false;
+    std::size_t tupleClose = 0;
+    if (!findMatchingDelimiter(source, tupleStart, tupleEnd, '(', ')',
+                               tupleClose))
+        return false;
+    auto dictStart = source.find('{', tupleStart + 1);
+    if (dictStart == std::string::npos || dictStart >= tupleClose)
+        return false;
+    std::size_t dictClose = 0;
+    if (!findMatchingDelimiter(source, dictStart, tupleClose + 1, '{', '}',
+                               dictClose))
+        return false;
+
+    const auto dictionary = std::string_view(source);
+    std::size_t entryStart = dictStart + 1;
+    for (std::size_t index = entryStart; index <= dictClose; ++index) {
+        if (index < dictClose) {
+            const char current = dictionary[index];
+            if (current == '\'' || current == '"') {
+                const char quote = current;
+                std::size_t keyEnd = index + 1;
+                bool escaped = false;
+                for (; keyEnd < dictClose; ++keyEnd) {
+                    if (escaped) escaped = false;
+                    else if (dictionary[keyEnd] == '\\') escaped = true;
+                    else if (dictionary[keyEnd] == quote) break;
+                }
+                if (keyEnd >= dictClose)
+                    return false;
+                const auto colon = skipSpace(dictionary, keyEnd + 1, dictClose);
+                if (colon < dictClose && dictionary[colon] == ':') {
+                    const auto key = dictionary.substr(
+                        index + 1, keyEnd - index - 1);
+                    if (key == controlName) {
+                        auto valueStart = skipSpace(
+                            dictionary, colon + 1, dictClose);
+                        auto valueEnd = valueStart;
+                        int parens = 0;
+                        int brackets = 0;
+                        int braces = 0;
+                        char valueQuote = 0;
+                        bool valueEscaped = false;
+                        for (; valueEnd < dictClose; ++valueEnd) {
+                            const char item = dictionary[valueEnd];
+                            if (valueQuote != 0) {
+                                if (valueEscaped) valueEscaped = false;
+                                else if (item == '\\') valueEscaped = true;
+                                else if (item == valueQuote) valueQuote = 0;
+                                continue;
+                            }
+                            if (item == '\'' || item == '"') valueQuote = item;
+                            else if (item == '(') ++parens;
+                            else if (item == ')' && parens > 0) --parens;
+                            else if (item == '[') ++brackets;
+                            else if (item == ']' && brackets > 0) --brackets;
+                            else if (item == '{') ++braces;
+                            else if (item == '}' && braces > 0) --braces;
+                            else if (item == ',' && parens == 0 &&
+                                     brackets == 0 && braces == 0)
+                                break;
+                        }
+                        while (valueEnd > valueStart &&
+                               std::isspace(static_cast<unsigned char>(
+                                   dictionary[valueEnd - 1])) != 0)
+                            --valueEnd;
+                        if (valueStart >= valueEnd)
+                            return false;
+                        source.replace(valueStart, valueEnd - valueStart,
+                                       value);
+                        return true;
+                    }
+                    index = colon;
+                } else {
+                    index = keyEnd;
+                }
+            } else if (current == '#') {
+                while (index < dictClose && dictionary[index] != '\n')
+                    ++index;
+                entryStart = index + 1;
+            }
+            continue;
+        }
+        const auto entry = dictionary.substr(entryStart, dictClose-entryStart);
+        const auto first = entry.find_first_not_of(" \t\r\n");
+        const bool empty = first == std::string_view::npos;
+        const auto last = entry.find_last_not_of(" \t\r\n");
+        const bool trailingComma = !empty && entry[last] == ',';
+        const std::string prefix = empty ? "\"" + std::string(controlName) +
+            "\": " : trailingComma ? " \"" + std::string(controlName) +
+            "\": " : ", \"" + std::string(controlName) + "\": ";
+        source.insert(dictClose, prefix + std::string(value));
+        return true;
+    }
+    return false;
+}
+
 inline bool setPlayerListItem(std::string& source,
                               const PlayerAssignment& assignment,
                               std::string_view listName,

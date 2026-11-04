@@ -456,6 +456,7 @@ public:
                     editorCutoffCurrent_[player] =
                         activePatterns_[player].cutoffHz;
                     pendingEditorControls_[player] = {};
+                    pendingEditorEffectControls_[player] = {};
                     activePatterns_[player].editorPanOverride = false;
                     activePatterns_[player].editorCutoffOverride = false;
                     if (!activePatterns_[player].active) {
@@ -542,6 +543,28 @@ public:
                 }
                 if (live.mask != 0) {
                     live.mask = 0;
+                    publishEditorPlayerState(player);
+                }
+                auto& effectPending = pendingEditorEffectControls_[player];
+                if (effectPending.any()) {
+                    for (std::size_t slot = 0;
+                         slot < pattern.playerEffectCount; ++slot) {
+                        for (std::size_t control = 0; control < 7; ++control) {
+                            if ((effectPending.masks[slot] &
+                                 static_cast<std::uint8_t>(1u << control)) == 0)
+                                continue;
+                            auto& effect = pattern.playerEffects[slot];
+                            effect.controlValues[control] =
+                                effectPending.values[slot][control];
+                            effect.controlVariables[control] = {};
+                            if (slot == 0) {
+                                pattern.playerEffectControlValues[control] =
+                                    effectPending.values[slot][control];
+                                pattern.effectControlVariables[control] = {};
+                            }
+                        }
+                    }
+                    effectPending = {};
                     publishEditorPlayerState(player);
                 }
             }
@@ -1022,6 +1045,16 @@ public:
                 editorPlayerValues_[player][5].load(std::memory_order_acquire);
             state.pshift =
                 editorPlayerValues_[player][6].load(std::memory_order_acquire);
+            for (std::size_t slot = 0;
+                 slot < state.effectControlValues.size(); ++slot) {
+                for (std::size_t control = 0;
+                     control < state.effectControlValues[slot].size();
+                     ++control) {
+                    state.effectControlValues[slot][control] =
+                        editorPlayerEffectValues_[player][slot][control].load(
+                            std::memory_order_acquire);
+                }
+            }
         }
     }
 
@@ -1114,6 +1147,42 @@ public:
             pending.mask |= bit;
         }
         setEditorStatus("Live control queued for p" +
+                        std::to_string(playerIndex + 1) + ".");
+    }
+
+    void setEditorPlayerEffectControl(int playerIndex, int effectSlot,
+                                      int controlIndex,
+                                      float normalizedValue) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount) ||
+            effectSlot < 0 ||
+            effectSlot >= static_cast<int>(kMaxPlayerEffectChain) ||
+            controlIndex < 0 || controlIndex >= 7 ||
+            !std::isfinite(normalizedValue))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        const auto slot = static_cast<std::size_t>(effectSlot);
+        const auto control = static_cast<std::size_t>(controlIndex);
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            const auto& pattern = activePatterns_[player];
+            if (!pattern.active || slot >= pattern.playerEffectCount)
+                return;
+            const auto definitionIndex =
+                pattern.playerEffects[slot].userSynthIndex;
+            if (definitionIndex < 0 ||
+                static_cast<std::size_t>(definitionIndex) >=
+                    userSynthDefinitions_.size() ||
+                userSynthDefinitions_[static_cast<std::size_t>(
+                    definitionIndex)].effectControlIndices[control] < 0)
+                return;
+            auto& pending = pendingEditorEffectControls_[player];
+            pending.values[slot][control] =
+                std::clamp(normalizedValue, 0.0f, 1.0f);
+            pending.masks[slot] |=
+                static_cast<std::uint8_t>(1u << control);
+        }
+        setEditorStatus("Live effect control queued for p" +
                         std::to_string(playerIndex + 1) + ".");
     }
 
@@ -1267,6 +1336,16 @@ private:
         float bits = 0.0f;
         float crush = 1.0f;
         float pshift = 0.0f;
+    };
+
+    struct PendingEditorEffectControls {
+        std::array<std::array<float, 7>, kMaxPlayerEffectChain> values{};
+        std::array<std::uint8_t, kMaxPlayerEffectChain> masks{};
+
+        bool any() const {
+            return std::any_of(masks.begin(), masks.end(),
+                               [](std::uint8_t mask) { return mask != 0; });
+        }
     };
 
     struct PatternState {
@@ -1449,6 +1528,17 @@ private:
         editorPlayerValues_[player][6].store(
             std::clamp(pshift, -24.0f, 24.0f),
             std::memory_order_release);
+        for (std::size_t slot = 0;
+             slot < pattern.playerEffects.size(); ++slot) {
+            for (std::size_t control = 0; control < 7; ++control) {
+                const double value = slot < pattern.playerEffectCount
+                    ? pattern.playerEffects[slot].controlValues[control]
+                    : 0.0;
+                editorPlayerEffectValues_[player][slot][control].store(
+                    static_cast<float>(std::clamp(value, 0.0, 1.0)),
+                    std::memory_order_release);
+            }
+        }
         std::uint64_t chain = 0;
         for (std::size_t slot = 0; slot < pattern.playerEffectCount; ++slot)
             chain |= static_cast<std::uint64_t>(std::clamp(
@@ -4650,9 +4740,14 @@ private:
     std::array<PatternState, kPlayerCount> activePatterns_{};
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
     std::array<PendingEditorControl, kPlayerCount> pendingEditorControls_{};
+    std::array<PendingEditorEffectControls, kPlayerCount>
+        pendingEditorEffectControls_{};
     std::array<std::atomic<std::uint32_t>, kPlayerCount> editorPlayerState_{};
     std::array<std::array<std::atomic<float>, 7>, kPlayerCount>
         editorPlayerValues_{};
+    std::array<std::array<std::array<std::atomic<float>, 7>,
+                          kMaxPlayerEffectChain>, kPlayerCount>
+        editorPlayerEffectValues_{};
     std::array<std::atomic<std::uint64_t>, kPlayerCount> editorPlayerEffectChain_{};
     std::uint8_t pendingPlayerMask_ = 0;
     std::array<bool, kPlayerCount> pendingMuteStates_{};

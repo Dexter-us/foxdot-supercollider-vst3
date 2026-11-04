@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -94,6 +95,54 @@ inline std::string effectCategory(const CatalogEntry& entry) {
     if (name == "Cut" || name == "Blur" || name == "FMod")
         return "Player controls";
     return "Other effects";
+}
+
+struct PlayerEffectControlSpec {
+    std::string name;
+    float minimum = 0.0f;
+    float maximum = 1.0f;
+};
+
+inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
+    std::string_view effectName) {
+    if (effectName == "AirwindowsTapeDelay2")
+        return {{"fx_vib", 0, 1}, {"fx_depth", 0, 1},
+                {"fx_lforate", 0, 1}, {"fx_lfowidth", 0, 1},
+                {"fx_rq", 0, 1}, {"fx_blur", 0, 1}};
+    if (effectName == "AirwindowsEchojam")
+        return {{"fx_vib", 0, 1}, {"fx_depth", 0, 1},
+                {"fx_lforate", 0, 1}, {"fx_blur", 0, 1}};
+    if (effectName == "JPverb")
+        return {{"fx_mix", 0, 1}, {"fx_t60", 0.1f, 60},
+                {"fx_damp", 0, 0.999f}, {"fx_size", 0.5f, 3},
+                {"fx_earlydiff", 0, 0.99f}, {"fx_moddepth", 0, 1},
+                {"fx_modfreq", 0, 10}};
+    if (effectName == "Greyhole")
+        return {{"fx_mix", 0, 1}, {"fx_delay", 0.001f, 1.45f},
+                {"fx_damp", 0, 0.99f}, {"fx_size", 0.5f, 3},
+                {"fx_diff", 0, 0.99f}, {"fx_feedback", 0, 0.98f},
+                {"fx_moddepth", 0, 1}};
+    if (effectName == "Chorus")
+        return {{"fx_mix", 0, 1}, {"fx_rate", 0.05f, 5},
+                {"fx_depth", 0, 1}, {"fx_delay", 0.005f, 0.04f},
+                {"fx_spread", 0, 1}, {"fx_feedback", 0, 0.75f},
+                {"fx_tone", 200, 16000}};
+    if (effectName == "Flanger")
+        return {{"fx_mix", 0, 1}, {"fx_rate", 0.05f, 4},
+                {"fx_depth", 0, 1}, {"fx_delay", 0.0005f, 0.015f},
+                {"fx_spread", 0, 1}, {"fx_feedback", 0, 0.95f},
+                {"fx_tone", 200, 16000}};
+    if (effectName == "Phaser")
+        return {{"fx_mix", 0, 1}, {"fx_rate", 0.05f, 8},
+                {"fx_depth", 0, 1}, {"fx_center", 150, 1800},
+                {"fx_spread", 0, 1}, {"fx_feedback", 0, 0.85f},
+                {"fx_tone", 200, 16000}};
+    if (effectName == "Tremolo")
+        return {{"fx_mix", 0, 1}, {"fx_rate", 0.05f, 20},
+                {"fx_depth", 0, 1}, {"fx_shape", 0, 1},
+                {"fx_spread", 0, 1}, {"fx_phase", 0, 1},
+                {"fx_tone", 200, 16000}};
+    return {};
 }
 
 inline std::string catalogInsertCall(const CatalogEntry& entry) {

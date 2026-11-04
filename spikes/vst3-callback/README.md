@@ -1,5 +1,15 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.150 adds a collapsible per-player effect-chain list. Selecting an
+insert displays only that effect's supported controls, current values, and
+numeric min/max ranges with units; dragging a slider changes the sound live,
+and releasing it writes the value to the matching effect entry in the script.
+The compatibility checker now validates `fx_*` names against each effect,
+including inserts inside `effects=[...]`. It also supports Renardo's
+`Clock.clear()` as a stop-all command for the eight local players and
+`Seed.default` for repeatable random-pattern generation (with explicit
+per-generator seeds taking priority). See Portable Examples 187-189.
+
 Version 0.4.148 fixes sidebar insertion for Airwindows delays: Echojam and
 TapeDelay2 are generated without the unsupported generic `fx_mix` control,
 and the live FX Mix slider is hidden for those effects. Their required

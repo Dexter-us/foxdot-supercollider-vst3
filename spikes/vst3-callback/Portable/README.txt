@@ -1,3 +1,12 @@
+0.4.150 adds collapsible effect-chain rows in the Players panel. Select an
+insert to show only its own controls, current value, and min/max range with
+units; dragging a slider changes audio live, and releasing it writes that value
+into the selected effects=[...] entry. The compatibility checker now validates
+each fx_* control against that specific effect. It also accepts Renardo's
+Clock.clear() as a stop-all command for the eight local players and
+Seed.default for deterministic random generators (explicit per-generator
+seeds take priority). See Examples 187-189.
+
 0.4.142 alphabetizes the instrument list, expands the Effects catalog with the
 embedded native controls and optional loaded inserts, and supports right-click
 or drag-and-drop from either sidebar onto a player line. A bare `p3 >>` receives

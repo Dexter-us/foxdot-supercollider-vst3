@@ -182,6 +182,41 @@ int main() {
     }
     {
         std::string source =
+            "p2 >> sine(0, effects=[(\"Chorus\", {\"fx_mix\": 0.25}), "
+            "(\"Flanger\", {})])\n";
+        PlayerAssignment assignment;
+        assert(findPlayerAssignmentAt(source, 1, assignment));
+        assert(setPlayerEffectControl(source, assignment, 1, "fx_rate", "0.8"));
+        assert(source.find("(\"Flanger\", {\"fx_rate\": 0.8})") !=
+               std::string::npos);
+        assert(source.find("\"fx_mix\": 0.25") != std::string::npos);
+        assert(findPlayerAssignmentAt(source, 1, assignment));
+        assert(setPlayerEffectControl(source, assignment, 0, "fx_mix", "0.6"));
+        assert(source.find("\"fx_mix\": 0.6") != std::string::npos);
+        const auto unchanged = source;
+        assert(!setPlayerEffectControl(source, assignment, 1, "amp", "0.4"));
+        assert(!setPlayerEffectControl(source, assignment, 4, "fx_mix", "0.4"));
+        assert(source == unchanged);
+        const auto chorusControls = playerEffectControlSpecs("Chorus");
+        const auto echoControls = playerEffectControlSpecs("AirwindowsEchojam");
+        assert(chorusControls.size() == 7);
+        assert(echoControls.size() == 4);
+        assert(chorusControls[1].name == "fx_rate" &&
+               chorusControls[1].minimum == 0.05f &&
+               chorusControls[1].maximum == 5.0f);
+        assert(playerEffectControlSpecs("MissingEffect").empty());
+    }
+    {
+        std::string source =
+            "p1 >> pluck(P[0, 4], effect=\"Chorus\", fx_mix=0.2)\n";
+        PlayerAssignment assignment;
+        assert(findPlayerAssignmentAt(source, 1, assignment));
+        assert(setPlayerEffectControl(source, assignment, 0, "fx_rate", "0.6"));
+        assert(source.find("effect=\"Chorus\", fx_mix=0.2, fx_rate=0.6") !=
+               std::string::npos);
+    }
+    {
+        std::string source =
             "p1 >> sine(0, effects=[(\"Chorus\", {}), (\"Flanger\", {}), "
             "(\"Phaser\", {}), (\"Tremolo\", {})])\n";
         const auto original = source;

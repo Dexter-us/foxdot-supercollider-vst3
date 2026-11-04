@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.148' not in cmake_source or
+if ('VERSION 0.4.150' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -52,6 +52,11 @@ for live_panel_fragment in (
         'setEditorPlayerMuted(', 'stopEditorPlayer(',
         'WM_CONTEXTMENU', 'TrackPopupMenu', 'kContextCatalogSynthBaseId',
         'kContextCatalogEffectBaseId', 'setEditorPlayerControl(',
+        'setEditorPlayerEffectControl(', 'effectControlValues',
+        'playerEffectControlSpecs(', 'expandedEffectChains_',
+        'selectedEffectSlotIndex()', 'setPlayerEffectControl(',
+        'commitPlayerEffectControlToSource(', 'playerControlRanges_',
+        'effectControlRangeText(', 'effectControlUnit(',
         'TB_ENDTRACK', 'commitPlayerControlToSource(',
         'kSciPositionFromPointClose',
         'beginCatalogDrag(', 'finishCatalogDrag(', 'showCatalogAbout(',
@@ -91,7 +96,10 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                      '183-seeded-random-pattern-helpers.py',
                      '184-live-player-control-discovery.py',
                      '185-pattern-flatten-chords.py',
-                     '186-airwindows-echojam-on-chords.py'):
+                     '186-airwindows-echojam-on-chords.py',
+                      '187-effect-chain-control-sliders.py',
+                       '188-renardo-clock-clear.py',
+                       '189-renardo-seed-default.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -227,6 +235,20 @@ namespace = {
     '__builtins__': {name: getattr(builtins, name) for name in safe_names},
 }
 exec(api, namespace, namespace)
+runtime_effect_controls = {
+    name: {spec[0] for spec in specs}
+    for name, specs in namespace['_PLAYER_EFFECT_SPECS'].items()
+}
+compatibility_tree = ast.parse(compatibility_checker)
+compatibility_effect_controls = next(
+    ast.literal_eval(statement.value)
+    for statement in compatibility_tree.body
+    if isinstance(statement, ast.Assign) and any(
+        isinstance(target, ast.Name) and
+        target.id == '_COMPAT_PLAYER_EFFECT_CONTROLS'
+        for target in statement.targets))
+assert runtime_effect_controls == compatibility_effect_controls, (
+    'Static compatibility-check effect controls must match runtime controls.')
 assert namespace['reverse']([1, 2, 3]) == [3, 2, 1]
 assert namespace['rotate']([1, 2, 3], 1) == [3, 1, 2]
 assert namespace['rotate']([1, 2, 3], -1) == [2, 3, 1]
@@ -265,6 +287,33 @@ assert all(-9 <= value <= 9 for value in walk)
 boundedWalk = namespace['PWalk'](max=3, step=1, start=0, length=256, seed=9)
 assert all(-3 <= value <= 3 for value in boundedWalk)
 assert namespace['PWalk'](max=-2, step=-1, start=1, length=4, seed=3)[0] == 1
+namespace['Seed'].default = 5
+seededDefaultRandA = namespace['PRand'](0, 100, length=32)
+seededDefaultRandB = namespace['PRand'](0, 100, length=32)
+assert seededDefaultRandA == seededDefaultRandB
+assert seededDefaultRandA == namespace['PRand'](
+    0, 100, length=32, seed=5)
+seededDefaultWhiteA = namespace['PWhite'](-1, 1, length=32)
+seededDefaultWhiteB = namespace['PWhite'](-1, 1, length=32)
+assert seededDefaultWhiteA == seededDefaultWhiteB
+assert seededDefaultWhiteA == namespace['PWhite'](
+    -1, 1, length=32, seed=5)
+assert seededDefaultRandA != namespace['PRand'](
+    0, 100, length=32, seed=99)
+namespace['Seed'].default = None
+assert namespace['Seed'].default is None
+unseededDefaultA = namespace['PRand'](0, 100, length=32)
+unseededDefaultB = namespace['PRand'](0, 100, length=32)
+assert unseededDefaultA != unseededDefaultB
+for invalid_seed in (True, 1.5, '5', -1, 0x100000000):
+    try:
+        namespace['Seed'].default = invalid_seed
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('Seed.default accepted invalid value: ' +
+                             repr(invalid_seed))
+namespace['Seed'].default = None
 chainMap = {0: [1, 2], 1: [0], 2: [2, 9]}
 chain = namespace['PChain'](chainMap, length=128, seed=123)
 assert len(chain) == 128 and chain[0] == 0
@@ -2726,11 +2775,34 @@ assert 'No unsupported constructs detected' in run_compatibility_check('Scale.de
 assert 'not available in the embedded scale set' in run_compatibility_check('Scale.notARealScale\n')
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'Clock.bpm = 120\nClock.swing()\np1 >> triangle([0, 2], dur=0.5)\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'Clock.clear()\nClock.bpm = 120\np1 >> pluck([0, 4], dur=0.5)\n')
+assert 'Clock.clear accepts no arguments' in run_compatibility_check(
+    'Clock.clear(1)\n')
+assert 'Clock.clear is a method; call it, not assign to it' in run_compatibility_check(
+    'Clock.clear = 1\n')
+seed_source = (
+    'Seed.default = 5\n'
+    'p1 >> pluck(PRand([0, 2, 4, 7], length=16), dur=0.25, oct=4)\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    seed_source)
+seed_rows_a, seed_events_a = run_script(seed_source, include_events=True)
+seed_rows_b, seed_events_b = run_script(seed_source, include_events=True)
+assert len(seed_rows_a) == len(seed_rows_b) == 1
+assert [event[3] for event in seed_events_a] == [
+    event[3] for event in seed_events_b]
+assert seed_events_a
+assert 'Seed.default must be a whole number or None' in run_error_script(
+    'Seed.default = True\np1 >> sine([0])\n')
+assert 'Seed.default must be from 0 to 4294967295 or None' in run_error_script(
+    'Seed.default = 4294967296\np1 >> sine([0])\n')
+assert 'Seed only supports Seed.default' in run_compatibility_check(
+    'Seed.unsupported\n')
 assert 'Clock.swing accepts one optional amount' in run_compatibility_check(
     'Clock.swing(0.1, 0.2)\n')
 assert 'Clock.swing accepts only the amount keyword' in run_compatibility_check(
     'Clock.swing(foo=0.1)\n')
-assert 'Clock.swing is a method; call Clock.swing(amount)' in run_compatibility_check(
+assert 'Clock.swing is a method; call it, not assign to it' in run_compatibility_check(
     'Clock.swing = 0.1\n')
 for tempo_function, token in (('var', 'v'), ('linvar', 'l')):
     tempo_source = ('Clock.bpm = ' + tempo_function + '([80, 120], [8, 4])\n'
@@ -2772,6 +2844,11 @@ assert '0.49 beats or more' in run_error_script(
     'Clock.swing(0.1)\nClock.bpm = 400\np1 >> triangle([0], dur=1)\n')
 assert 'must be finite' in run_error_script(
     "Clock.swing(float('nan'))\np1 >> triangle([0], dur=1)\n")
+renardoClearRows = run_script(
+    'p1 >> sine([0, 2], dur=0.5)\np2 >> play("x-o-", dur=0.5)\n'
+    'Clock.clear()\n')
+assert len(renardoClearRows) == 8 and all(
+    row[2] == '1' for row in renardoClearRows), renardoClearRows
 rootRows, rootEvents = run_script(open(os.path.join(sys.argv[2], '27-root-and-scale-controls.py'), encoding='utf-8').read(), include_events=True)
 assert len(rootRows) == 3 and [row[1] for row in rootRows] == ['0', '1', '2']
 assert [int(event[3]) for event in rootEvents] == [62, 65, 69, 72, 55, 58, 62, 57, 60, 63, 63, 67, 70, 74]
@@ -3185,6 +3262,8 @@ for filename in os.listdir(sys.argv[2]):
             if filename == '105-airwindows-timevar-controls.py' else
             ('AirwindowsEchojam',)
             if filename == '186-airwindows-echojam-on-chords.py' else
+            ('Chorus', 'Phaser', 'Tremolo')
+            if filename == '187-effect-chain-control-sliders.py' else
             ('Chorus',) if filename == '168-chorus-stereo-width.py' else
             ('Flanger',) if filename == '169-flanger-sweep.py' else
             ('Chorus', 'Flanger')
@@ -3422,6 +3501,10 @@ example101 = run_example('101-patterned-sample-slices.py')
 assert [int(row[6]) for row in example101 if row[2] == '0'] == [57, 57]
 example102 = run_example('102-random-pattern-generators.py')
 assert [int(row[5]) for row in example102 if row[0] == 'P'] == [16, 16]
+renardoSeedExample = run_example('189-renardo-seed-default.py')
+assert len(renardoSeedExample) == 8
+assert all(row[0] == 'P' for row in renardoSeedExample)
+assert sum(row[2] == '0' for row in renardoSeedExample) == 3
 example103, example103EffectRows = run_example(
     '103-sample-player-airwindows-delay.py', ('AirwindowsTapeDelay2',),
     include_player_effects=True)
@@ -3496,6 +3579,16 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     ('AirwindowsTapeDelay2',))
 assert 'requires the matching player-effect SynthDef' in run_compatibility_check(
     'p1 >> play("x-o-", effect="AirwindowsTapeDelay2")\n')
+assert 'fx_mix is not a control on AirwindowsEchojam' in run_compatibility_check(
+    'p1 >> play("x-o-", effect="AirwindowsEchojam", fx_mix=0.25)\n',
+    ('AirwindowsEchojam',))
+assert 'fx_mix is not a control on AirwindowsEchojam' in run_compatibility_check(
+    'p1 >> play("x-o-", effects=[("AirwindowsEchojam", {"fx_mix": 0.25})])\n',
+    ('AirwindowsEchojam',))
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> play("x-o-", effects=[("AirwindowsEchojam", {"fx_depth": 0.25}), '
+    '("Chorus", {"fx_mix": 0.3, "fx_rate": 0.6})])\n',
+    ('AirwindowsEchojam', 'Chorus'))
 assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser or Tremolo' in run_compatibility_check(
     'p1 >> play("x-o-", effect="NotAnEffect")\n',
     ('NotAnEffect',))

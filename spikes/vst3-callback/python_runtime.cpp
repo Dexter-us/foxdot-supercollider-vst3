@@ -127,7 +127,7 @@ _COMPAT_CALLS = {
     'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys', 'klank',
     'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
     'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
-    'var', 'linvar', 'Clock', 'Scale', 'Root', 'PGroup',
+    'var', 'linvar', 'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'Group', 'Master', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
     '__build_class__'
 }
@@ -199,6 +199,30 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_shape', 'fx_phase'
 }
 _COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase'}
+_COMPAT_PLAYER_EFFECT_CONTROLS = {
+    'AirwindowsTapeDelay2': {
+        'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'},
+    'AirwindowsEchojam': {
+        'fx_vib', 'fx_depth', 'fx_lforate', 'fx_blur'},
+    'JPverb': {
+        'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff',
+        'fx_moddepth', 'fx_modfreq'},
+    'Greyhole': {
+        'fx_mix', 'fx_delay', 'fx_damp', 'fx_size', 'fx_diff',
+        'fx_feedback', 'fx_moddepth'},
+    'Chorus': {
+        'fx_mix', 'fx_rate', 'fx_depth', 'fx_delay', 'fx_spread',
+        'fx_feedback', 'fx_tone'},
+    'Flanger': {
+        'fx_mix', 'fx_rate', 'fx_depth', 'fx_delay', 'fx_spread',
+        'fx_feedback', 'fx_tone'},
+    'Phaser': {
+        'fx_mix', 'fx_rate', 'fx_depth', 'fx_center', 'fx_spread',
+        'fx_feedback', 'fx_tone'},
+    'Tremolo': {
+        'fx_mix', 'fx_rate', 'fx_depth', 'fx_shape', 'fx_spread',
+        'fx_phase', 'fx_tone'}
+}
 for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
                          _COMPAT_SEQUENCE_KEYWORDS, _COMPAT_NOTE_PLAY_KEYWORDS):
     _effect_keywords.add('effects')
@@ -521,7 +545,17 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     self.add(keyword.lineno or node.lineno, 'Dynamic keyword expansion cannot be checked; use Clock.swing(amount).')
                 elif keyword.arg != 'amount':
                     self.add(keyword.lineno or node.lineno, 'Clock.swing accepts only the amount keyword.')
-        if name and name not in _COMPAT_CALLS and name not in self.defined:
+        if (isinstance(node.func, ast.Attribute) and
+                isinstance(node.func.value, ast.Name) and
+                node.func.value.id == 'Clock' and node.func.attr == 'clear'):
+            if node.args or node.keywords:
+                self.add(node.lineno, 'Clock.clear accepts no arguments.')
+        clock_clear_call = (
+            isinstance(node.func, ast.Attribute) and
+            isinstance(node.func.value, ast.Name) and
+            node.func.value.id == 'Clock' and node.func.attr == 'clear')
+        if (name and name not in _COMPAT_CALLS and name not in self.defined and
+                not clock_clear_call):
             self.add(node.lineno, "Call '" + name + "()' is not in the embedded API (often an unsupported FoxDot synth or pattern helper).")
         if name == 'PRange':
             self._check_fixed_signature(node, name, ('start', 'stop', 'step'), 1)
@@ -807,6 +841,12 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 elif keyword.arg not in keyword_names:
                     self.add(keyword.lineno or node.lineno, "Control '" + keyword.arg + "' is not supported by " + name + '() in this build.')
         if name in _COMPAT_WAVES or name in {'play', 'sequence', 'userSynth'}:
+            effect_name = next(
+                (keyword.value.value for keyword in node.keywords
+                 if keyword.arg == 'effect' and
+                 isinstance(keyword.value, ast.Constant) and
+                 isinstance(keyword.value.value, str)),
+                None)
             for keyword in node.keywords:
                 if keyword.arg != 'effect':
                     continue
@@ -819,6 +859,16 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 elif keyword.value.value not in _USER_SYNTH_NAMES:
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires the matching player-effect SynthDef in Portable/SynthDefs.')
+            if effect_name in _COMPAT_PLAYER_EFFECT_CONTROLS:
+                supported_controls = _COMPAT_PLAYER_EFFECT_CONTROLS[effect_name]
+                for keyword in node.keywords:
+                    if (keyword.arg and keyword.arg.startswith('fx_') and
+                            keyword.arg not in supported_controls):
+                        self.add(
+                            keyword.lineno or node.lineno,
+                            keyword.arg + ' is not a control on ' +
+                            effect_name + '; supported controls: ' +
+                            ', '.join(sorted(supported_controls)) + '.')
             chain = next((kw for kw in node.keywords
                           if kw.arg == 'effects'), None)
             if chain is not None:
@@ -854,13 +904,33 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         if not isinstance(controls, ast.Dict):
                             self.add(entry.lineno,
                                      'Effect-chain controls must be a literal dictionary.')
-                        elif any(not isinstance(key, ast.Constant) or
-                                 not isinstance(key.value, str) or
-                                 key.value not in _COMPAT_WAVE_KEYWORDS or
-                                 not key.value.startswith('fx_')
-                                 for key in controls.keys):
-                            self.add(entry.lineno,
-                                     'Effect-chain dictionaries accept supported fx_* control names only.')
+                        else:
+                            invalid_control = any(
+                                not isinstance(key, ast.Constant) or
+                                not isinstance(key.value, str) or
+                                key.value not in _COMPAT_WAVE_KEYWORDS or
+                                not key.value.startswith('fx_')
+                                for key in controls.keys)
+                            if invalid_control:
+                                self.add(
+                                    entry.lineno,
+                                    'Effect-chain dictionaries accept supported fx_* control names only.')
+                            elif (isinstance(effectName, ast.Constant) and
+                                  isinstance(effectName.value, str) and
+                                  effectName.value in
+                                  _COMPAT_PLAYER_EFFECT_CONTROLS):
+                                supported_controls = (
+                                    _COMPAT_PLAYER_EFFECT_CONTROLS[
+                                        effectName.value])
+                                for key in controls.keys:
+                                    if key.value not in supported_controls:
+                                        self.add(
+                                            key.lineno or entry.lineno,
+                                            key.value + ' is not a control on ' +
+                                            effectName.value +
+                                            '; supported controls: ' +
+                                            ', '.join(sorted(supported_controls)) +
+                                            '.')
         if name in _COMPAT_WAVES and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
             self.add(node.lineno, 'Use play(\"...\") for sample strings, not a pitched synth call.')
         if name == 'play' and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
@@ -880,11 +950,14 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             allowed = {'record', 'stop'} if node.value.id == 'DiskOut' else {'play', 'stop'}
             if node.attr not in allowed:
                 self.add(node.lineno, node.value.id + ' supports only ' + ', '.join(sorted(allowed)) + ' in this VST extension; sclang .ar graph building is not embedded.')
-        if isinstance(node.value, ast.Name) and node.value.id == 'Clock' and node.attr not in {'bpm', 'meter', 'swing'}:
-            self.add(node.lineno, "Clock." + node.attr + ' is not supported; use Clock.bpm, fixed 4/4 Clock.meter, or Clock.swing(...).')
+        if isinstance(node.value, ast.Name) and node.value.id == 'Clock' and node.attr not in {'bpm', 'meter', 'swing', 'clear'}:
+            self.add(node.lineno, "Clock." + node.attr + ' is not supported; use Clock.bpm, fixed 4/4 Clock.meter, Clock.swing(...), or Clock.clear().')
+        if isinstance(node.value, ast.Name) and node.value.id == 'Seed' and node.attr != 'default':
+            self.add(node.lineno, 'Seed only supports Seed.default in the embedded random-pattern API.')
         if (isinstance(node.value, ast.Name) and node.value.id == 'Clock' and
-                node.attr == 'swing' and isinstance(node.ctx, ast.Store)):
-            self.add(node.lineno, 'Clock.swing is a method; call Clock.swing(amount), not assign to it.')
+                node.attr in {'swing', 'clear'} and isinstance(node.ctx, ast.Store)):
+            self.add(node.lineno, 'Clock.' + node.attr +
+                     ' is a method; call it, not assign to it.')
         if isinstance(node.value, ast.Name) and node.value.id == 'Scale' and node.attr not in _COMPAT_SCALE_NAMES.union({'default'}):
             self.add(node.lineno, 'Scale.' + node.attr + ' is not available in the embedded scale set.')
         if isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == 'Scale' and node.value.attr == 'default' and node.attr != 'set':
@@ -1063,6 +1136,7 @@ _dexter_note_effect_control_variables = {}
 _dexter_bitcrusher_controls = {}
 _dexter_shuffle_counter = 0
 _dexter_random_counter = 0
+_dexter_default_seed = None
 _dexter_swing_seconds = 0.0
 _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
@@ -1111,6 +1185,9 @@ class _FoxDotClock:
         for _player in _dexter_updates:
             _update = _dexter_updates[_player]
             _dexter_updates[_player] = _update[:-1] + (_dexter_swing_seconds,)
+    def clear(self):
+        for _player in (p1, p2, p3, p4, p5, p6, p7, p8):
+            _player.stop()
     def __setattr__(self, name, value):
         if name == 'bpm':
             tempo(value)
@@ -1120,6 +1197,25 @@ class _FoxDotClock:
         raise AttributeError('Clock.' + str(name) + ' is not supported in the embedded clock')
 
 Clock = _FoxDotClock()
+
+class _FoxDotSeed:
+    def __getattr__(self, name):
+        if name == 'default':
+            return _dexter_default_seed
+        raise AttributeError('Seed.' + str(name) + ' is not supported')
+    def __setattr__(self, name, value):
+        global _dexter_default_seed
+        if name != 'default':
+            raise AttributeError('Seed.' + str(name) + ' is not supported')
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError('Seed.default must be a whole number or None')
+            if not 0 <= value <= 0xffffffff:
+                raise ValueError('Seed.default must be from 0 to 4294967295 or None')
+            value = int(value)
+        _dexter_default_seed = value
+
+Seed = _FoxDotSeed()
 
 _SCALES = {
     'chromatic': tuple(range(12)),
@@ -3126,9 +3222,12 @@ def _random_pattern_length(length, name):
 def _random_pattern_seed(seed, name):
     global _dexter_random_counter
     if seed is None:
-        _dexter_random_counter += 1
-        seed = (int(_dexter_shuffle_seed) +
-                _dexter_random_counter * 1013904223) & 0xffffffff
+        if _dexter_default_seed is not None:
+            seed = _dexter_default_seed
+        else:
+            _dexter_random_counter += 1
+            seed = (int(_dexter_shuffle_seed) +
+                    _dexter_random_counter * 1013904223) & 0xffffffff
     elif isinstance(seed, bool) or not isinstance(seed, int):
         raise TypeError(name + ' seed must be a whole number')
     elif not 0 <= seed <= 0xffffffff:
