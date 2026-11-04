@@ -1,5 +1,6 @@
 # Example 184: click either pN assignment to select its player in the side panel.
 # PShift stays discoverable; select p1 for pitch and p2 for Bits/Crush.
+# Tip: move the editor caret into a pN line, adjust its sliders, then release to commit values.
 Clock.bpm = 92
 
 p1 >> pluck(P[0, 4, 7, 12], dur=0.5, sus=0.42,
