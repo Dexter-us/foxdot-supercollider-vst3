@@ -1140,7 +1140,7 @@ private:
     }
 
     bool finishCatalogDrag(LPARAM) {
-        if (!catalogDragPending_ && !catalogDragActive_)
+        if (!dragCatalogPending_ && !catalogDragActive_)
             return false;
         const bool wasActive = catalogDragActive_;
         const auto entry = dragCatalogEntry_;
