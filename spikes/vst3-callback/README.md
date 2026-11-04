@@ -1,5 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.146 keeps the full player-control row visible and disabled until a
+player is selected, so PShift remains discoverable. Clicking a `pN >>`
+assignment in the editor selects that player in the Players panel. Example 184
+demonstrates PShift and bitcrusher controls together.
+
 Version 0.4.145 adds bounded `PIndex`, seeded `PxRand` without adjacent
 repeats, and seeded weighted `PwRand`; see Portable Example 183. Synth and
 Effect family categories now start collapsed, with a click to expand.

@@ -2,6 +2,11 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.146 keeps the full player-control row visible and disabled until a
+player is selected, so PShift is discoverable. Clicking a `pN >>` assignment
+in the editor selects that player in the Players panel. Example 184 demonstrates
+the PShift and bitcrusher controls together.
+
 Version 0.4.145 adds bounded `PIndex`, seeded `PxRand` (no adjacent
 repeats), and seeded weighted `PwRand`, with Portable Example 183. Synth and
 Effect family categories now start collapsed, and their first click expands

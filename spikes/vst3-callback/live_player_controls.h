@@ -33,6 +33,19 @@ inline constexpr bool editorPlayerControlAvailable(
     return false;
 }
 
+inline constexpr bool editorPlayerControlVisible(
+    EditorPlayerControl control, bool playersTab, bool hasSelectedPlayer,
+    bool bitcrusherEnabled) noexcept {
+    if (!playersTab)
+        return false;
+    if (!hasSelectedPlayer)
+        return true;
+    if (control == EditorPlayerControl::BitDepth ||
+        control == EditorPlayerControl::CrushRate)
+        return bitcrusherEnabled;
+    return true;
+}
+
 inline float clampEditorPlayerControl(EditorPlayerControl control, float value) {
     switch (control) {
     case EditorPlayerControl::Amplitude:

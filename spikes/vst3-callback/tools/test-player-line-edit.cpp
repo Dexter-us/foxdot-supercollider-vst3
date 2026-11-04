@@ -38,6 +38,18 @@ int main() {
         EditorPlayerControl::CrushRate, false, true));
     assert(editorPlayerControlAvailable(
         EditorPlayerControl::PShift, false, false));
+    assert(editorPlayerControlVisible(
+        EditorPlayerControl::PShift, true, false, false));
+    assert(editorPlayerControlVisible(
+        EditorPlayerControl::PShift, true, true, false));
+    assert(!editorPlayerControlVisible(
+        EditorPlayerControl::PShift, false, true, false));
+    assert(editorPlayerControlVisible(
+        EditorPlayerControl::CrushRate, true, false, false));
+    assert(!editorPlayerControlVisible(
+        EditorPlayerControl::CrushRate, true, true, false));
+    assert(editorPlayerControlVisible(
+        EditorPlayerControl::CrushRate, true, true, true));
     assert(smoothEditorPlayerControl(0.0f, 12.0f, 0.25f) == 3.0f);
     assert(smoothEditorPlayerControl(12.0f, 0.0f, 1.0f) == 0.0f);
     assert(!editorPlayerControlAvailable(

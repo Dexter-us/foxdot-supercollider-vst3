@@ -446,6 +446,8 @@ private:
                     view->onEditorChanged();
                 else if (notification->nmhdr.code == SCN_CHARADDED)
                     view->onEditorCharacterAdded(notification->ch);
+                else if (notification->nmhdr.code == SCN_UPDATEUI)
+                    view->selectPlayerAtEditorCaret();
                 return 0;
             }
             break;
@@ -719,6 +721,16 @@ private:
                 SendMessageW(playerControlSliders_[index], TBM_SETRANGE,
                              TRUE, MAKELONG(minimum, maximum));
             }
+        }
+        static constexpr std::array<int, 7> initialPlayerControlPositions{
+            30, 100, 500, 50, 0, 1, 240};
+        for (std::size_t index = 0;
+             index < playerControlSliders_.size(); ++index) {
+            SendMessageW(playerControlSliders_[index], TBM_SETPOS, TRUE,
+                         initialPlayerControlPositions[index]);
+            const auto value = fromUtf8(
+                sliderValueText(index, initialPlayerControlPositions[index]));
+            SetWindowTextW(playerControlValues_[index], value.c_str());
         }
         if (!sourceInitialized_) {
             currentSource_ = host_ && host_->hasEditorSource()
@@ -1530,6 +1542,31 @@ private:
         return player >= 0 && player < 8 ? player : -1;
     }
 
+    void selectPlayerAtEditorCaret() {
+        if (!editor_ || !panelList_ || selectedPanelTab() != 0)
+            return;
+        const auto source = editorSource();
+        const auto position = static_cast<std::size_t>(
+            SendMessageW(editor_, SCI_GETCURRENTPOS, 0, 0));
+        dexter::editor::PlayerAssignment assignment;
+        if (!dexter::editor::findPlayerAssignmentAt(
+                source, position, assignment))
+            return;
+        const int count = static_cast<int>(
+            SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+        for (int row = 0; row < count; ++row) {
+            const auto player = static_cast<int>(
+                SendMessageW(panelList_, LB_GETITEMDATA, row, 0));
+            if (player != assignment.playerIndex)
+                continue;
+            if (SendMessageW(panelList_, LB_GETCURSEL, 0, 0) != row) {
+                SendMessageW(panelList_, LB_SETCURSEL, row, 0);
+                updatePlayerActionButtons();
+            }
+            return;
+        }
+    }
+
     void updatePlayerActionButtons() {
         const int player = selectedPlayerIndex();
         if (player < 0 || !host_) {
@@ -1541,11 +1578,19 @@ private:
                  index < playerControlSliders_.size(); ++index) {
                 if (playerControlSliders_[index])
                     EnableWindow(playerControlSliders_[index], FALSE);
-                if (index >= 4) {
-                    ShowWindow(playerControlLabels_[index], SW_HIDE);
-                    ShowWindow(playerControlSliders_[index], SW_HIDE);
-                    ShowWindow(playerControlValues_[index], SW_HIDE);
-                }
+                const auto control = index == 0 ? EditorPlayerControl::Amplitude
+                    : index == 1 ? EditorPlayerControl::Pan
+                    : index == 2 ? EditorPlayerControl::Cutoff
+                    : index == 3 ? EditorPlayerControl::EffectMix
+                    : index == 4 ? EditorPlayerControl::BitDepth
+                    : index == 5 ? EditorPlayerControl::CrushRate
+                                 : EditorPlayerControl::PShift;
+                const int visibility = editorPlayerControlVisible(
+                    control, selectedPanelTab() == 0, false, false)
+                    ? SW_SHOW : SW_HIDE;
+                ShowWindow(playerControlLabels_[index], visibility);
+                ShowWindow(playerControlSliders_[index], visibility);
+                ShowWindow(playerControlValues_[index], visibility);
             }
             return;
         }
@@ -1612,10 +1657,10 @@ private:
             const bool available = editorPlayerControlAvailable(
                 control, state.effectMixAvailable,
                 state.bitcrusherEnabled);
-            const bool conditionalControl = index >= 4;
-            const int visibility =
-                conditionalControl && !available
-                    ? SW_HIDE : SW_SHOW;
+            const int visibility = editorPlayerControlVisible(
+                control, selectedPanelTab() == 0, true,
+                state.bitcrusherEnabled)
+                ? SW_SHOW : SW_HIDE;
             ShowWindow(playerControlLabels_[index], visibility);
             ShowWindow(playerControlSliders_[index], visibility);
             ShowWindow(playerControlValues_[index], visibility);

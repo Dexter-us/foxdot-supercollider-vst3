@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.145' not in cmake_source or
+if ('VERSION 0.4.146' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -58,6 +58,7 @@ for live_panel_fragment in (
         'makeInstrumentCatalog(', 'makeEffectCatalog(', 'applyCatalogEntry(',
         'renderCatalogEntries()', 'entry.category',
         'collapsedCatalogCategories_', 'catalogCategoryHeaderRows_',
+        'selectPlayerAtEditorCaret()', 'SCN_UPDATEUI',
         'catalogCategoryCollapsed(', 'collapsedCatalogCategories_.emplace(key, true)',
         'onPanelListSelectionChanged()', 'L"[+] "', 'L"[-] "',
         'instrumentCategory(', 'effectCategory(',
