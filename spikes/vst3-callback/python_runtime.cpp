@@ -141,7 +141,7 @@ _COMPAT_PATTERN_METHODS = {
     'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
     'stutter', 'palindrome', 'count', 'index', 'submap', 'concat',
     'add', 'abs', 'all', 'startswith', 'limit', 'every', 'copy',
-    'asGroup', 'group', 'int', 'float', 'str', 'append', 'extend',
+    'asGroup', 'group', 'flatten', 'int', 'float', 'str', 'append', 'extend',
     'insert', 'pop', 'remove', 'set', 'alt', 'string', 'items', 'getitem',
     'getslice', 'setitem', 'eq', 'ne', 'i_rotate', 'i_reverse', 'i_sort',
     'i_shuf'
@@ -2319,6 +2319,33 @@ class _FoxDotFinitePattern(list):
     def group(self):
         """FoxDot-compatible alias for asGroup()."""
         return self.asGroup()
+
+    def flatten(self):
+        """Flatten nested finite groups into one simultaneous chord."""
+        if len(self) > 256:
+            raise ValueError('flatten input is limited to 256 items')
+        notes = []
+
+        def collect(item, depth):
+            if depth > 16:
+                raise ValueError('flatten nesting is limited to 16 levels')
+            if isinstance(item, (_FoxDotChord, _FoxDotFinitePattern)):
+                if len(item) > 256:
+                    raise ValueError('flatten groups are limited to 256 items')
+                for child in item:
+                    collect(child, depth + 1)
+                return
+            notes.append(item)
+            if len(notes) > 8:
+                raise ValueError('flatten chord is limited to 8 notes')
+
+        for item in self:
+            collect(item, 1)
+        if not notes:
+            raise ValueError('flatten requires at least one note')
+        if any(not _finite_note_number(note) for note in notes):
+            raise TypeError('flatten supports numeric notes and PGroup chords only')
+        return _FoxDotChord(*notes)
 
     def _convert_numeric(self, converter, method_name):
         """Recursively convert a bounded numeric pattern, preserving rests."""

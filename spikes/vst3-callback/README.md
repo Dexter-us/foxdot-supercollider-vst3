@@ -1,5 +1,13 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.147 adds bounded FoxDot-compatible `Pattern.flatten()`. It
+flattens one finite Pattern level into a simultaneous chord (`PGroup`), with a
+maximum of eight numeric notes. Example 185 demonstrates nested chord flattening.
+The compatibility audit also confirmed that `eq()`, `getslice()`, `i_rotate()`,
+`i_reverse()`, `i_sort()`, `i_shuf()`, and `setitem()` are implemented and
+allowlisted; a checker still rejecting those methods is likely from an older
+plugin build.
+
 Version 0.4.146 keeps the full player-control row visible and disabled until a
 player is selected, so PShift remains discoverable. Clicking a `pN >>`
 assignment in the editor selects that player in the Players panel. Example 184

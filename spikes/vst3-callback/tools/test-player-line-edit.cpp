@@ -184,6 +184,15 @@ int main() {
         assert(!findPlayerAssignmentAt(source, source.find("player"), assignment));
     }
     {
+        // Scintilla positions and the player parser both use UTF-8 byte offsets.
+        const std::string source =
+            "# \xE2\x99\xAB\np2 >> saw(P[0, 2], dur=0.5)\n";
+        PlayerAssignment assignment;
+        const auto caret = source.find("saw");
+        assert(findPlayerAssignmentAt(source, caret, assignment));
+        assert(assignment.playerIndex == 1);
+    }
+    {
         std::string source = "p2 >> saw(P[0, 2], dur=2, pan=0.25)  # keep\n";
         PlayerAssignment assignment;
         assert(findPlayerAssignmentAt(source, 5, assignment));

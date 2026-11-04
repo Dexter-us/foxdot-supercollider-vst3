@@ -1545,7 +1545,7 @@ private:
     void selectPlayerAtEditorCaret() {
         if (!editor_ || !panelList_ || selectedPanelTab() != 0)
             return;
-        const auto source = editorSource();
+        const auto source = editorUtf8Source();
         const auto position = static_cast<std::size_t>(
             SendMessageW(editor_, SCI_GETCURRENTPOS, 0, 0));
         dexter::editor::PlayerAssignment assignment;

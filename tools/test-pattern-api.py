@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.146' not in cmake_source or
+if ('VERSION 0.4.147' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -88,7 +88,9 @@ if not os.path.isfile(bitcrusher_example):
     raise AssertionError('Live Bits/Crush slider example is missing.')
 for example_name in ('181-finite-pattern-generator-pack.py',
                      '182-live-pshift-slider.py',
-                     '183-seeded-random-pattern-helpers.py'):
+                     '183-seeded-random-pattern-helpers.py',
+                     '184-live-player-control-discovery.py',
+                     '185-pattern-flatten-chords.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -932,6 +934,24 @@ assert as_group_result == (0, 2, 4, 7)
 assert isinstance(group_result, namespace['_FoxDotChord'])
 assert group_result == as_group_result
 assert group_source == [0, 2, 4, 7]
+flatten_source = namespace['P'][0, namespace['PGroup'](2, 4), 7]
+flattened_chord = flatten_source.flatten()
+assert isinstance(flattened_chord, namespace['_FoxDotChord'])
+assert flattened_chord == namespace['PGroup'](0, 2, 4, 7)
+assert namespace['P'][0, 2, 4].flatten() == namespace['PGroup'](0, 2, 4)
+assert namespace['P'][0, namespace['P'][2, 4], 7].flatten() == \
+       namespace['PGroup'](0, 2, 4, 7)
+assert flatten_source == [0, namespace['PGroup'](2, 4), 7]
+for invalid_flatten in (
+        lambda: namespace['_FoxDotFinitePattern']().flatten(),
+        lambda: namespace['P'][0, 1, 2, 3, 4, 5, 6, 7, 8].flatten(),
+        lambda: namespace['P']['x', 'o'].flatten()):
+    try:
+        invalid_flatten()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('flatten must enforce chord size and note types')
 int_source = namespace['_FoxDotFinitePattern']([
     1.9, -1.9, None,
     namespace['_FoxDotFinitePattern']([2.8, -3.8]),
@@ -2177,6 +2197,10 @@ def run_example(name, user_synth_names=(), include_player_effects=False,
                       include_synth_controls=include_synth_controls,
                       include_effect_control_vars=include_effect_control_vars)
 
+example185Rows = run_example('185-pattern-flatten-chords.py')
+assert len(example185Rows) == 2
+assert [int(row[6]) for row in example185Rows] == [18, 1]
+
 sampleSetupPath = os.path.join(sys.argv[2], 'SAMPLES-SETUP.html')
 sampleSetupHtml = open(sampleSetupPath, encoding='utf-8').read()
 assert 'Portable/Samples' in sampleSetupHtml and 'properly licensed WAV' in sampleSetupHtml
@@ -2242,6 +2266,10 @@ def run_compatibility_check(script_text, user_synth_names=()):
         exec(compile(compatibility_checker, '<embedded compatibility checker>', 'exec'), namespace, namespace)
         return open(report_path, encoding='utf-8').read()
 
+flatten_checker_report = run_compatibility_check(
+    'p1 >> pluck(P[0, PGroup(2, 4), 7].flatten(), dur=2, sus=1.8)\n')
+assert 'No unsupported constructs detected' in flatten_checker_report, (
+    flatten_checker_report)
 editor_added_native_effects = run_compatibility_check(
     'p1 >> triangle([0, 4], amp=0.4, pan=-0.2, cutoff=4200, '
     'echo=0.35, room=0.7, shape=0.2, drive=0.15)\n')
