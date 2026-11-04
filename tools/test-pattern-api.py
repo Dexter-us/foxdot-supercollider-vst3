@@ -39,7 +39,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.142' not in cmake_source or
+if ('VERSION 0.4.143' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -55,7 +55,12 @@ for live_panel_fragment in (
         'kSciPositionFromPointClose',
         'beginCatalogDrag(', 'finishCatalogDrag(', 'showCatalogAbout(',
         'makeInstrumentCatalog(', 'makeEffectCatalog(', 'applyCatalogEntry(',
+        'renderCatalogEntries()', 'entry.category',
+        'instrumentCategory(', 'effectCategory(',
         '179-editor-catalog-about.html',
+        'L"Bits"', 'L"Crush"', 'EditorPlayerControl::BitDepth',
+        'EditorPlayerControl::CrushRate', 'editorPlayerControlAvailable(',
+        'index == 4 ? "bits"', '"crush";',
         'if (state.coarseEnabled)', 'if (state.formantEnabled)',
         'L" Coarse"', 'L" Formant"',
         'if (state.pshiftEnabled)', 'if (state.bitcrusherEnabled)',
@@ -71,6 +76,10 @@ catalog_help = os.path.join(os.path.abspath(sys.argv[2]),
                             '179-editor-catalog-about.html')
 if not os.path.isfile(catalog_help):
     raise AssertionError('Bundled editor catalog About page is missing.')
+bitcrusher_example = os.path.join(
+    os.path.abspath(sys.argv[2]), '180-live-bitcrusher-sliders.py')
+if not os.path.isfile(bitcrusher_example):
+    raise AssertionError('Live Bits/Crush slider example is missing.')
 for snapshot_fragment in (
         'editorPlayerState_[player].store',
         'editorPlayerState_[player].load',
@@ -85,7 +94,11 @@ for snapshot_fragment in (
         'editorAmpOverride',
         'editorPanOverride',
         'editorCutoffOverride',
-        'editorPlayerValues_[player][3]'):
+        'editorPlayerValues_[player][3]',
+        'editorPlayerValues_[player][4]',
+        'editorPlayerValues_[player][5]',
+        'live.mask & 16u',
+        'live.mask & 32u'):
     if snapshot_fragment not in processor_source:
         raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (

@@ -706,3 +706,12 @@ The SCPlugins subfolder contains module-loader instructions for adding compatibl
 30-player-mute-controls.py shows p2.mute() and p2.unmute(); the comment markers are at column one so uncommenting a command does not introduce Python indentation.
 
 141-finite-pattern-generators.py demonstrates FoxDot-style PSq, PRange, PStep, PEuclid, and PEuclid2. The generated patterns are bounded to 256 items; PEuclid2 can create a sample-symbol drum pattern with space-rests.
+
+0.4.142 adds the sorted instrument catalog, expanded Effects tab, right-click
+Insert/About actions, and drag-and-drop onto player lines. Example 179 shows the
+live catalog workflow.
+
+0.4.143 groups Synths and Effects by family. It also adds player-specific Bits
+and Crush sliders: select an active player using `bits=` or `crush=` to show
+them; changes are smoothed into the running sound, and releasing a slider
+writes its value back into that player call. Example 180 demonstrates it.

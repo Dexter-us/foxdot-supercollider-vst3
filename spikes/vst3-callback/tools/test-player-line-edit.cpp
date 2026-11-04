@@ -18,14 +18,33 @@ int main() {
            20.0f);
     assert(clampEditorPlayerControl(EditorPlayerControl::EffectMix, 0.4f) ==
            0.4f);
+    assert(clampEditorPlayerControl(EditorPlayerControl::BitDepth, -1.0f) ==
+           0.0f);
+    assert(clampEditorPlayerControl(EditorPlayerControl::BitDepth, 32.0f) ==
+           24.0f);
+    assert(clampEditorPlayerControl(EditorPlayerControl::CrushRate, 0.0f) ==
+           1.0f);
+    assert(clampEditorPlayerControl(EditorPlayerControl::CrushRate, 256.0f) ==
+           128.0f);
+    assert(!editorPlayerControlAvailable(
+        EditorPlayerControl::BitDepth, false, false));
+    assert(editorPlayerControlAvailable(
+        EditorPlayerControl::BitDepth, false, true));
+    assert(editorPlayerControlAvailable(
+        EditorPlayerControl::CrushRate, false, true));
+    assert(!editorPlayerControlAvailable(
+        EditorPlayerControl::EffectMix, false, true));
     assert(std::abs(smoothEditorPlayerControl(0.0f, 1.0f, 0.25f) - 0.25f) <
            1e-6f);
     {
-        std::vector<std::string> embedded{"sine", "square", "pluck", "sample"};
+        std::vector<std::string> embedded{
+            "sine", "square", "pluck", "sample", "sawbass"};
         std::vector<std::string> external{"CustomPluck", "Chorus"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
+                if (left.category != right.category)
+                    return left.category < right.category;
                 auto a = left.label;
                 auto b = right.label;
                 std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) {
@@ -35,6 +54,10 @@ int main() {
                     return static_cast<char>(std::tolower(c));
                 });
                 return a < b;
+            }));
+        assert(std::any_of(instruments.begin(), instruments.end(),
+            [](const auto& entry) {
+                return entry.name == "sawbass" && entry.category == "Bass";
             }));
         assert(std::none_of(instruments.begin(), instruments.end(),
             [](const auto& entry) { return entry.name == "square"; }));
@@ -51,6 +74,8 @@ int main() {
         assert(effects.size() >= 28);
         assert(std::is_sorted(effects.begin(), effects.end(),
             [](const auto& left, const auto& right) {
+                if (left.category != right.category)
+                    return left.category < right.category;
                 auto a = left.label;
                 auto b = right.label;
                 std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) {
@@ -60,6 +85,11 @@ int main() {
                     return static_cast<char>(std::tolower(c));
                 });
                 return a < b;
+            }));
+        assert(std::any_of(effects.begin(), effects.end(),
+            [](const auto& entry) {
+                return entry.name == "AirwindowsEchojam" &&
+                       entry.category == "Delay";
             }));
         const auto loadedChorus = std::find_if(effects.begin(), effects.end(),
             [](const auto& entry) { return entry.name == "Chorus"; });
@@ -158,6 +188,21 @@ int main() {
         assert(findPlayerAssignmentAt(source, 0, assignment));
         assert(setPlayerArgument(source, assignment, "cutoff", "1800"));
         assert(source.find("dur=1, cutoff=1800") != std::string::npos);
+    }
+    {
+        std::string source =
+            "p2 >> saw(P[0, 3], bits=var([0, 10, 6], 4), "
+            "crush=var([1, 4, 12], 4))\n";
+        PlayerAssignment assignment;
+        assert(findPlayerAssignmentForIndex(source, 1, assignment));
+        assert(setPlayerArgument(source, assignment, "bits", "8"));
+        assert(source.find("bits=8") != std::string::npos);
+        assert(source.find("bits=var(") == std::string::npos);
+        assert(source.find("crush=var([1, 4, 12], 4)") != std::string::npos);
+        assert(findPlayerAssignmentForIndex(source, 1, assignment));
+        assert(setPlayerArgument(source, assignment, "crush", "6"));
+        assert(source.find("crush=6") != std::string::npos);
+        assert(source.find("bits=8") != std::string::npos);
     }
     {
         std::string source = "p1 >> saw(P[0, 2], effect=\"Phaser\", fx_mix=0.2)\n";

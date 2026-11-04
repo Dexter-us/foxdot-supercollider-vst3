@@ -1,5 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.143 groups the Synths and Effects catalogs by family and adds live
+Bits and Crush sliders for players using the native bitcrusher. Select such a
+player to expose the controls; edits are smoothed in real time and written back
+to the player call when released. See Example 180.
+
 Version 0.4.142 alphabetizes the instrument catalog, expands the Effects list
 with the embedded native controls and optional loaded inserts, and supports
 right-click or drag-and-drop from either sidebar onto a player line. A bare

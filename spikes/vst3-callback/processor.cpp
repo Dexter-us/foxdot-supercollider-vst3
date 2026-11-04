@@ -525,6 +525,15 @@ public:
                     pattern.playerEffectControlValues[0] = live.effectMix;
                     pattern.effectControlVariables[0] = {};
                 }
+                if ((live.mask & 16u) != 0) {
+                    pattern.bits = live.bits;
+                    pattern.bitsControl = {};
+                    pattern.bitsEnabled = live.bits > 0.0f;
+                }
+                if ((live.mask & 32u) != 0) {
+                    pattern.crush = live.crush;
+                    pattern.crushControl = {};
+                }
                 if (live.mask != 0) {
                     live.mask = 0;
                     publishEditorPlayerState(player);
@@ -993,6 +1002,10 @@ public:
                 editorPlayerValues_[player][2].load(std::memory_order_acquire);
             state.effectMix =
                 editorPlayerValues_[player][3].load(std::memory_order_acquire);
+            state.bits =
+                editorPlayerValues_[player][4].load(std::memory_order_acquire);
+            state.crush =
+                editorPlayerValues_[player][5].load(std::memory_order_acquire);
         }
     }
 
@@ -1044,9 +1057,11 @@ public:
         std::uint8_t bit = 0;
         {
             std::lock_guard<std::mutex> lock(patternMutex_);
-            if (!activePatterns_[player].active ||
-                (control == EditorPlayerControl::EffectMix &&
-                 activePatterns_[player].playerEffectCount == 0))
+            const auto& pattern = activePatterns_[player];
+            if (!pattern.active ||
+                !editorPlayerControlAvailable(
+                    control, pattern.playerEffectCount > 0,
+                    pattern.bitsEnabled))
                 return;
             auto& pending = pendingEditorControls_[player];
             switch (control) {
@@ -1066,6 +1081,14 @@ public:
             case EditorPlayerControl::EffectMix:
                 pending.effectMix = clampEditorPlayerControl(control, value);
                 bit = 8u;
+                break;
+            case EditorPlayerControl::BitDepth:
+                pending.bits = clampEditorPlayerControl(control, value);
+                bit = 16u;
+                break;
+            case EditorPlayerControl::CrushRate:
+                pending.crush = clampEditorPlayerControl(control, value);
+                bit = 32u;
                 break;
             }
             pending.mask |= bit;
@@ -1221,6 +1244,8 @@ private:
         float pan = 0.0f;
         float cutoff = 20000.0f;
         float effectMix = 0.0f;
+        float bits = 0.0f;
+        float crush = 1.0f;
     };
 
     struct PatternState {
@@ -1366,6 +1391,12 @@ private:
             : pattern.playerEffectControlValues[0];
         editorPlayerValues_[player][3].store(
             static_cast<float>(std::clamp(effectMix, 0.0, 1.0)),
+            std::memory_order_release);
+        editorPlayerValues_[player][4].store(
+            std::clamp(pattern.bits, 0.0f, 24.0f),
+            std::memory_order_release);
+        editorPlayerValues_[player][5].store(
+            std::clamp(pattern.crush, 1.0f, 128.0f),
             std::memory_order_release);
         std::uint64_t chain = 0;
         for (std::size_t slot = 0; slot < pattern.playerEffectCount; ++slot)
@@ -4547,7 +4578,7 @@ private:
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
     std::array<PendingEditorControl, kPlayerCount> pendingEditorControls_{};
     std::array<std::atomic<std::uint32_t>, kPlayerCount> editorPlayerState_{};
-    std::array<std::array<std::atomic<float>, 4>, kPlayerCount>
+    std::array<std::array<std::atomic<float>, 6>, kPlayerCount>
         editorPlayerValues_{};
     std::array<std::atomic<std::uint64_t>, kPlayerCount> editorPlayerEffectChain_{};
     std::uint8_t pendingPlayerMask_ = 0;

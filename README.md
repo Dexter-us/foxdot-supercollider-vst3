@@ -2,6 +2,11 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.143 groups the Synths and Effects catalogs by family and adds
+player-specific Bits and Crush sliders. Select an active bitcrusher player to
+expose the sliders; changes are smoothed into playback and written back to the
+player call on release. See Example 180.
+
 Version 0.4.142 expands the editor catalog: sorted instruments, a fuller native
 Effects list, right-click Insert/About actions, and drag-and-drop onto player
 lines—including a blank `p3 >>` starter. About opens a bundled HTML reference

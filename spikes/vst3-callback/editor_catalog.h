@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -30,7 +31,70 @@ struct CatalogEntry {
     std::string about;
     std::vector<CatalogArgument> arguments;
     bool available = true;
+    std::string category;
+
+    CatalogEntry() = default;
+    CatalogEntry(CatalogKind kindValue, std::string nameValue,
+                 std::string labelValue, std::string aboutValue,
+                 std::vector<CatalogArgument> argumentsValue = {},
+                 bool availableValue = true,
+                 std::string categoryValue = {})
+        : kind(kindValue), name(std::move(nameValue)),
+          label(std::move(labelValue)), about(std::move(aboutValue)),
+          arguments(std::move(argumentsValue)), available(availableValue),
+          category(std::move(categoryValue)) {}
 };
+
+inline std::string instrumentCategory(const CatalogEntry& entry) {
+    if (entry.kind == CatalogKind::SamplePlayer)
+        return "Sample player";
+    if (entry.kind == CatalogKind::UserSynth)
+        return "Portable SynthDefs";
+    static const std::vector<std::string> bass{
+        "bass", "dbass", "jbass", "sawbass"};
+    static const std::vector<std::string> keys{
+        "bell", "glass", "gong", "keys", "klank", "marimba", "pads",
+        "sinepad"};
+    static const std::vector<std::string> plucked{
+        "donk", "karp", "nylon", "pluck", "sitar", "squish", "twang",
+        "viola"};
+    static const std::vector<std::string> texture{
+        "ambi", "creep", "dirt", "fuzz", "noise", "orient", "scratch",
+        "scatter", "space", "spark", "swell"};
+    if (std::find(bass.begin(), bass.end(), entry.name) != bass.end())
+        return "Bass";
+    if (std::find(keys.begin(), keys.end(), entry.name) != keys.end())
+        return "Keys and mallets";
+    if (std::find(plucked.begin(), plucked.end(), entry.name) != plucked.end())
+        return "Plucked and strings";
+    if (std::find(texture.begin(), texture.end(), entry.name) != texture.end())
+        return "Texture and noise";
+    return "Synth voices";
+}
+
+inline std::string effectCategory(const CatalogEntry& entry) {
+    const auto& name = entry.name;
+    if (name == "Echo" || name == "AirwindowsEchojam" ||
+        name == "AirwindowsTapeDelay2")
+        return "Delay";
+    if (name == "Freeverb" || name == "Freeverb2" || name == "GVerb" ||
+        name == "Greyhole" || name == "JPverb")
+        return "Reverb";
+    if (name == "Chorus" || name == "Flanger" || name == "Phaser" ||
+        name == "Tremolo" || name == "Chop" || name == "Spin")
+        return "Modulation and rhythm";
+    if (name == "Low-pass" || name == "High-pass" ||
+        name == "Band-pass" || name == "LFO filter")
+        return "Filters";
+    if (name == "Vibrato" || name == "Slide" || name == "Bend" ||
+        name == "PShift" || name == "Coarse" || name == "Formant")
+        return "Pitch and formant";
+    if (name == "Bits / Crush" || name == "Shape" || name == "Drive")
+        return "Distortion and reduction";
+    if (name == "Cut" || name == "Blur" || name == "FMod")
+        return "Player controls";
+    return "Other effects";
+}
 
 inline std::string catalogInsertCall(const CatalogEntry& entry) {
     if (entry.kind == CatalogKind::Instrument)
@@ -208,6 +272,8 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
                 "an installed compatible SCPlugins module and host restart.",
             {}, true});
     }
+    for (auto& entry : result)
+        entry.category = instrumentCategory(entry);
     const auto less = [](const auto& left, const auto& right) {
         auto a = left.label;
         auto b = right.label;
@@ -217,7 +283,7 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) {
             return static_cast<char>(std::tolower(c));
         });
-        return a < b;
+        return std::tie(left.category, a) < std::tie(right.category, b);
     };
     std::sort(result.begin(), result.end(), less);
     return result;
@@ -332,6 +398,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           std::move(description),
                           {Arg{"fx_mix", "0.25"}}, loaded});
     }
+    for (auto& entry : result)
+        entry.category = effectCategory(entry);
     std::sort(result.begin(), result.end(), [](const auto& left,
                                                const auto& right) {
         auto a = left.label;
@@ -342,7 +410,7 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) {
             return static_cast<char>(std::tolower(c));
         });
-        return a < b;
+        return std::tie(left.category, a) < std::tie(right.category, b);
     });
     return result;
 }

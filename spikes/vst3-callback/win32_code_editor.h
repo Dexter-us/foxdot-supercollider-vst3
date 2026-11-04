@@ -30,6 +30,8 @@ struct EditorPlayerState {
     float pan = 0.0f;
     float cutoffHz = 20000.0f;
     float effectMix = 0.0f;
+    float bits = 0.0f;
+    float crush = 1.0f;
 };
 
 class ICodeEditorHost {
