@@ -624,6 +624,30 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - Python evaluation is isolated from the real-time callback; the callback reads a fixed-size pattern snapshot and generates audio/MIDI timing from the pattern's own tempo.
 - A MIDI output event bus is exposed to the host.
 
+## Ordered player-effect chains (0.4.137)
+
+`effects=[("Phaser", {"fx_mix": 0.5}), ("Tremolo", {"fx_rate": 5})]`
+routes one player's summed stereo signal through the listed inserts from left
+to right. Each insert has its own controls and independent smoothed
+`var`/`linvar` automation. Up to four inserts per player are accepted; this is
+a finite realtime resource bound, not a limit on the installed synth catalog.
+The Effects panel shows the chain in order. Examples 173 and 174 demonstrate
+pitched notes and drum samples.
+
+This explicit `effects` list is a **Dexter U.S. extension**, not a claim that
+FoxDot uses this syntax. It prepares ordered routing for later FoxDot-compatible
+effect controls. Existing `effect="Name", fx_*=...` scripts retain their meaning
+as one-insert chains. Do not combine `effect=` or standalone `fx_*` controls
+with `effects=`. Each chain entry is `(installed_name, controls_dictionary)`;
+control names and ranges are the same as the single-effect form. Missing
+SynthDefs, malformed entries and more than four inserts produce diagnostics.
+`effects=[]` removes the inserts. Stopping a player feeds silence into its
+existing chain so delay/reverb state can finish. Changing a chain may reset
+the replaced insert's state; a 10 ms de-click transition softens topology
+switches. Unchanged inserts retain their graph state. Optional Airwindows or space-reverb inserts still
+require their separately installed UGen packs; stock modulation inserts do not.
+No SuperCollider or UGen rebuild is needed for this routing change.
+
 ## Per-player modulation inserts (0.4.135–0.4.136)
 
 Chorus, Flanger, Phaser, and Tremolo are per-player inserts loaded from the

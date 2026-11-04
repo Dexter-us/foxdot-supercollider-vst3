@@ -170,6 +170,8 @@ for name in NAMES:
     for keyword, slot, minimum, maximum, default in specs[name]:
         minima[slot], maxima[slot] = minimum, maximum
     assert ranges == [minima, maxima], (name, ranges, minima, maxima)
-assert 'updates[player].playerEffectControlValues, error)' in processor
+assert 'inputBus, outputBus, effectControls,' in processor
+assert 'preparedEffects[slot], error)' in processor
+assert 'updates[player].playerEffects[slot].controlValues' in processor
 assert 'hasSpaceReverb ? 65536u * 4u : 65536u' in processor
 print("PASS all control endpoints, invalid controls, var/linvar normalization and stop reset")

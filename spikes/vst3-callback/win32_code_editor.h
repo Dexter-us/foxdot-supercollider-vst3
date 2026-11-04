@@ -12,6 +12,7 @@ struct EditorPlayerState {
     bool muted = false;
     int synthIndex = 0;
     int effectIndex = -1;
+    std::array<int, 4> effectIndices{{-1, -1, -1, -1}};
     int reverbIndex = 0;
     bool echoEnabled = false;
     bool reverbEnabled = false;

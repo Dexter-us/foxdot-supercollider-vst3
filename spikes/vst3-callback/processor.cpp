@@ -30,6 +30,7 @@
 #include "master_output_gain.h"
 #include "native_player_effects.h"
 #include "foxdot_note_effects.h"
+#include "player_effect_chain.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
@@ -652,6 +653,26 @@ public:
                         next.synthControls = player.synthControls;
                         next.playerEffectControlValues =
                             player.playerEffectControlValues;
+                        if (player.playerEffects.size() > kMaxPlayerEffectChain)
+                            throw std::runtime_error(
+                                "Python returned too many player effects.");
+                        next.playerEffectCount = player.playerEffects.size();
+                        for (std::size_t effectIndex = 0;
+                             effectIndex < next.playerEffectCount; ++effectIndex) {
+                            auto& effect = next.playerEffects[effectIndex];
+                            const auto& source = player.playerEffects[effectIndex];
+                            effect.userSynthIndex = source.userSynthIndex;
+                            effect.controlValues = source.controlValues;
+                            for (std::size_t control = 0;
+                                 control < effect.controlVariables.size(); ++control) {
+                                if (!parseTimeVarControl(
+                                        source.controlTokens[control], 0.0, 1.0,
+                                        effect.controlVariables[control])) {
+                                    throw std::runtime_error(
+                                        "Invalid chained-effect fx_* var/linvar control from Python.");
+                                }
+                            }
+                        }
                         next.amplitude = static_cast<float>(player.amplitude);
                         next.pan = static_cast<float>(player.pan);
                         next.cutoffHz = static_cast<float>(player.cutoffHz);
@@ -679,20 +700,9 @@ public:
                             !parseTimeVarControl(player.shapeControlToken, 0.0, 4.0, next.shapeControl) ||
                             !parseTimeVarControl(player.driveControlToken, 0.0, 4.0, next.driveControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
-                        for (std::size_t control = 0;
-                             control < next.effectControlVariables.size(); ++control) {
-                            if (!parseTimeVarControl(player.effectControlTokens[control],
-                                                     0.0, 1.0,
-                                                     next.effectControlVariables[control])) {
-                                throw std::runtime_error(
-                                    "Invalid persistent-effect fx_* var/linvar control from Python.");
-                            }
-                            if (next.effectControlVariables[control].active &&
-                                next.playerEffectUserIndex < 0) {
-                                throw std::runtime_error(
-                                    "fx_* modulation requires a selected persistent player effect.");
-                            }
-                        }
+                        next.effectControlVariables = next.playerEffectCount > 0
+                            ? next.playerEffects[0].controlVariables
+                            : std::array<TimeVarControl, 7>{};
                         constexpr std::array<double, 8> noteEffectMinimum{
                             0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0};
                         constexpr std::array<double, 8> noteEffectMaximum{
@@ -896,6 +906,11 @@ public:
             state.synthIndex = static_cast<int>((packed >> 2) & 0xffu);
             state.effectIndex =
                 static_cast<int>((packed >> 10) & 0xffu) - 1;
+            const auto chain = editorPlayerEffectChain_[player].load(
+                std::memory_order_acquire);
+            for (std::size_t slot = 0; slot < state.effectIndices.size(); ++slot)
+                state.effectIndices[slot] =
+                    static_cast<int>((chain >> (slot * 16)) & 0xffffu) - 1;
             state.reverbIndex = static_cast<int>((packed >> 18) & 0x03u);
             state.echoEnabled = (packed & (1u << 20)) != 0;
             state.reverbEnabled = (packed & (1u << 21)) != 0;
@@ -985,7 +1000,8 @@ private:
     static constexpr std::size_t kReverbGraphCount = 3;
     static constexpr std::size_t kCalculatedWorldNodeCapacity =
         kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice +
-        kPlayerCount * (kReverbGraphCount + 1) + 1;
+        kPlayerCount * (kReverbGraphCount + 1) +
+        kPlayerCount * kMaxPlayerEffectChain + 1;
     // Preserve the known-good headroom; graph definitions are registered
     // independently, while active voice graphs are created lazily and cached.
     static constexpr std::size_t kWorldNodeCapacity =
@@ -1004,7 +1020,7 @@ private:
         kReverbBaseBus + static_cast<int>(kPlayerCount) * kReverbBusStride;
     static constexpr int kAirwindowsOutputBusBase =
         kAirwindowsInputBusBase + static_cast<int>(kPlayerCount) * 2;
-    static constexpr int kNumAudioBusChannels = 512;
+    static constexpr int kNumAudioBusChannels = 1024;
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kReverbSendReleaseSeconds = 0.015;
@@ -1015,8 +1031,10 @@ private:
                   "The SuperCollider world needs three private buses per synth voice.");
     static_assert(kReverbBaseBus + kPlayerCount * kReverbBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per player reverb.");
-    static_assert(kAirwindowsOutputBusBase + kPlayerCount * 2 <= kNumAudioBusChannels,
-                  "The SuperCollider world needs stereo Airwindows input and return buses per player.");
+    static_assert(kAirwindowsOutputBusBase +
+                      kPlayerCount * kMaxPlayerEffectChain * 2 <=
+                      kNumAudioBusChannels,
+                  "The SuperCollider world needs private stereo buses for each player effect-chain stage.");
     static_assert(kWorldNodeCapacity <= 0xffffffffu,
                   "The SuperCollider world node capacity must fit WorldOptions.");
     static_assert(kWorldNodeCapacity >= 2048,
@@ -1075,6 +1093,12 @@ private:
         std::array<double, 8> durations{};
     };
 
+    struct PlayerEffectState {
+        int userSynthIndex = -1;
+        std::array<double, 7> controlValues{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
+        std::array<TimeVarControl, 7> controlVariables{};
+    };
+
     struct PatternState {
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
         std::size_t eventCount = 0;
@@ -1092,6 +1116,8 @@ private:
         std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
         std::array<double, 7> playerEffectControlValues{0, 0.5, 1, 0.5, 0.5, 0, 1};
         std::array<TimeVarControl, 7> effectControlVariables{};
+        std::array<PlayerEffectState, kMaxPlayerEffectChain> playerEffects{};
+        std::size_t playerEffectCount = 0;
         std::array<TimeVarControl, 8> noteEffectControls{};
         bool chopEnabled = false;
         bool spinEnabled = false;
@@ -1181,6 +1207,12 @@ private:
             (chopEnabled ? (1u << 24) : 0u) |
             (spinEnabled ? (1u << 25) : 0u);
         editorPlayerState_[player].store(packed, std::memory_order_release);
+        std::uint64_t chain = 0;
+        for (std::size_t slot = 0; slot < pattern.playerEffectCount; ++slot)
+            chain |= static_cast<std::uint64_t>(std::clamp(
+                pattern.playerEffects[slot].userSynthIndex + 1, 0, 65535))
+                << (slot * 16);
+        editorPlayerEffectChain_[player].store(chain, std::memory_order_release);
     }
 
     struct UserSynthDefinition {
@@ -1910,10 +1942,14 @@ private:
         return created;
     }
 
-    bool createPlayerEffectGraph(std::size_t player, std::size_t userIndex,
+    bool createPlayerEffectGraph(std::size_t player, std::size_t slot,
+                                 std::size_t userIndex, int inputBus,
+                                 int outputBus,
                                  const std::array<double, 7>& controls,
+                                 Graph*& preparedGraph,
                                  std::string& error) {
         if (!world_ || !rootGroup_ || player >= kPlayerCount ||
+            slot >= kMaxPlayerEffectChain ||
             userIndex >= userSynthDefinitions_.size()) {
             error = "The requested per-player effect is not registered.";
             return false;
@@ -1924,9 +1960,12 @@ private:
             error = definition.name + " is not a supported persistent player effect.";
             return false;
         }
-        if (playerEffectGraphs_[player] &&
-            playerEffectDefinitionIndices_[player] == static_cast<int>(userIndex))
+        if (playerEffectGraphs_[player][slot] &&
+            playerEffectDefinitionIndices_[player][slot] ==
+                static_cast<int>(userIndex)) {
+            preparedGraph = playerEffectGraphs_[player][slot];
             return true;
+        }
 
         sc_msg_iter noControls(0, "");
         Graph* created = nullptr;
@@ -1940,10 +1979,6 @@ private:
             return false;
         }
 
-        const auto inputBus = kAirwindowsInputBusBase +
-                              static_cast<int>(player) * 2;
-        const auto outputBus = kAirwindowsOutputBusBase +
-                               static_cast<int>(player) * 2;
         Graph_SetControl(created, definition.inputBusControl,
                          static_cast<float>(inputBus));
         Graph_SetControl(created, definition.outControl,
@@ -1981,12 +2016,7 @@ private:
         created->mNode.mCalcFunc(&created->mNode);
         Node_SetRun(&created->mNode, 0);
 
-        if (auto* previous = playerEffectGraphs_[player]) {
-            Node_SetRun(&previous->mNode, 0);
-            Node_End(&previous->mNode);
-        }
-        playerEffectGraphs_[player] = created;
-        playerEffectDefinitionIndices_[player] = static_cast<int>(userIndex);
+        preparedGraph = created;
         return true;
     }
 
@@ -2148,7 +2178,8 @@ private:
                 updates[player].active &&
                 (static_cast<std::size_t>(updates[player].synthIndex) >=
                      kSynthIndexToGraphIndex.size() ||
-                 updates[player].playerEffectUserIndex >= 0);
+                  updates[player].playerEffectCount > 0 ||
+                  updates[player].playerEffectUserIndex >= 0);
         if (usesUserSynth) {
             std::vector<std::string> loadedNames;
             loadedNames.reserve(userSynthDefinitions_.size());
@@ -2177,29 +2208,79 @@ private:
                 effectUserIndex = synthIndex -
                     static_cast<int>(kSynthIndexToGraphIndex.size());
             }
-            if (effectUserIndex >= 0) {
-                if (static_cast<std::size_t>(effectUserIndex) >=
+            auto effectCount = updates[player].playerEffectCount;
+            if (effectCount == 0 && effectUserIndex >= 0)
+                effectCount = 1;
+            std::array<Graph*, kMaxPlayerEffectChain> preparedEffects{};
+            std::array<int, kMaxPlayerEffectChain> preparedIndices{};
+            const auto discardPreparedEffects = [&] {
+                for (std::size_t slot = 0; slot < kMaxPlayerEffectChain; ++slot) {
+                    auto* created = preparedEffects[slot];
+                    if (created && created != playerEffectGraphs_[player][slot]) {
+                        Node_SetRun(&created->mNode, 0);
+                        Node_End(&created->mNode);
+                    }
+                }
+            };
+            for (std::size_t slot = 0; slot < effectCount; ++slot) {
+                const auto selectedIndex = updates[player].playerEffectCount > 0
+                    ? updates[player].playerEffects[slot].userSynthIndex
+                    : effectUserIndex;
+                if (selectedIndex < 0 ||
+                    static_cast<std::size_t>(selectedIndex) >=
                         userSynthDefinitions_.size() ||
                     !userSynthDefinitions_[static_cast<std::size_t>(
-                        effectUserIndex)].persistentPlayerEffect) {
+                        selectedIndex)].persistentPlayerEffect) {
                     error = "The selected player effect is not a registered persistent insert.";
+                    discardPreparedEffects();
                     return false;
                 }
+                preparedIndices[slot] = selectedIndex;
+                const auto inputBus = playerEffectChainInputBus(
+                    player, slot, kAirwindowsInputBusBase,
+                    kAirwindowsOutputBusBase);
+                const auto outputBus = playerEffectChainOutputBus(
+                    player, slot, kAirwindowsOutputBusBase);
+                const auto& effectControls =
+                    updates[player].playerEffectCount > 0
+                    ? updates[player].playerEffects[slot].controlValues
+                    : updates[player].playerEffectControlValues;
                 if (!createPlayerEffectGraph(
-                        player, static_cast<std::size_t>(effectUserIndex),
-                        updates[player].playerEffectControlValues, error))
+                        player, slot, static_cast<std::size_t>(selectedIndex),
+                        inputBus, outputBus, effectControls,
+                        preparedEffects[slot], error)) {
+                    discardPreparedEffects();
                     return false;
-            }
-            if (static_cast<std::size_t>(synthIndex) >=
-                kSynthIndexToGraphIndex.size()) {
-                const auto userIndex = static_cast<std::size_t>(synthIndex) -
-                                       kSynthIndexToGraphIndex.size();
-                if (userSynthDefinitions_[userIndex].persistentPlayerEffect &&
-                    effectUserIndex != static_cast<int>(userIndex)) {
-                    if (!createPlayerEffectGraph(player, userIndex,
-                                                 updates[player].playerEffectControlValues, error))
-                        return false;
                 }
+            }
+            // Commit only after every requested insert was constructed. A
+            // resource failure leaves the player's existing chain intact.
+            for (std::size_t slot = 0; slot < effectCount; ++slot) {
+                auto*& previous = playerEffectGraphs_[player][slot];
+                if (previous != preparedEffects[slot]) {
+                    if (previous) {
+                        Node_SetRun(&previous->mNode, 0);
+                        Node_End(&previous->mNode);
+                    }
+                    previous = preparedEffects[slot];
+                    playerEffectControlEffectIndices_[player][slot] = -1;
+                }
+                playerEffectDefinitionIndices_[player][slot] =
+                    preparedIndices[slot];
+            }
+            // Clearing a chain feeds it silence instead of deleting it: its
+            // remaining delay/reverb tail is mixed with the new dry signal.
+            for (std::size_t slot = effectCount == 0
+                     ? kMaxPlayerEffectChain : effectCount;
+                 slot < kMaxPlayerEffectChain; ++slot) {
+                if (auto* old = playerEffectGraphs_[player][slot]) {
+                    Node_SetRun(&old->mNode, 0);
+                    Node_End(&old->mNode);
+                    playerEffectGraphs_[player][slot] = nullptr;
+                }
+                playerEffectDefinitionIndices_[player][slot] = -1;
+                playerEffectControlEffectIndices_[player][slot] = -1;
+                playerEffectControlSmoothed_[player][slot].fill(0.0f);
             }
             // New-bank notes are born running, with controls configured before
             // World_Run. Do not create paused, never-rendered templates for them.
@@ -3481,13 +3562,18 @@ private:
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
-        playerEffectGraphs_.fill(nullptr);
+        for (auto& playerGraphs : playerEffectGraphs_)
+            playerGraphs.fill(nullptr);
+        playerEffectTransitions_ = {};
         shapeEffectSmoothed_.fill(0.0f);
         driveEffectSmoothed_.fill(0.0f);
-        playerEffectDefinitionIndices_.fill(-1);
-        playerEffectControlEffectIndices_.fill(-1);
-        for (auto& controls : playerEffectControlSmoothed_)
-            controls.fill(0.0f);
+        for (auto& effectSlots : playerEffectDefinitionIndices_)
+            effectSlots.fill(-1);
+        for (auto& indices : playerEffectControlEffectIndices_)
+            indices.fill(-1);
+        for (auto& player : playerEffectControlSmoothed_)
+            for (auto& controls : player)
+                controls.fill(0.0f);
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
         userSynthFiles_.clear();
@@ -3795,16 +3881,9 @@ private:
 
         const auto busLength = static_cast<std::size_t>(world_->mBufLength);
         for (std::size_t player = 0; player < kPlayerCount; ++player) {
-            auto* graph = playerEffectGraphs_[player];
-            if (!graph)
-                continue;
             const auto& pattern = activePatterns_[player];
             const bool effectSelected = pattern.active &&
-                pattern.playerEffectUserIndex >= 0 &&
-                pattern.playerEffectUserIndex ==
-                    playerEffectDefinitionIndices_[player];
-            if (!effectSelected)
-                playerEffectControlEffectIndices_[player] = -1;
+                pattern.playerEffectCount > 0;
             const auto inputBus = static_cast<std::size_t>(kAirwindowsInputBusBase) +
                                   player * 2;
             for (int channel = 0; channel < 2; ++channel) {
@@ -3817,48 +3896,83 @@ private:
                         ? source[static_cast<std::size_t>(sampleIndex)] : 0.0f;
                 world_->mAudioBusTouched[bus] = world_->mBufCounter;
             }
-            const auto userIndex = pattern.playerEffectUserIndex >= 0
-                ? static_cast<std::size_t>(pattern.playerEffectUserIndex)
-                : userSynthDefinitions_.size();
-            if (effectSelected && userIndex < userSynthDefinitions_.size()) {
-                const auto& definition = userSynthDefinitions_[userIndex];
-                const bool newEffect =
-                    playerEffectControlEffectIndices_[player] !=
-                    pattern.playerEffectUserIndex;
-                const double effectBeat = controlBeatStart[player] +
-                    controlBeatStep[player] * (kSCBlockSize * 0.5);
-                const float blockSeconds =
-                    static_cast<float>(kSCBlockSize / sampleRate_);
-                for (std::size_t control = 0;
-                     control < definition.effectControlIndices.size(); ++control) {
-                    const auto controlIndex = definition.effectControlIndices[control];
-                    if (controlIndex < 0)
+            for (std::size_t slot = 0; slot < kMaxPlayerEffectChain; ++slot) {
+                auto* graph = playerEffectGraphs_[player][slot];
+                if (!graph)
+                    continue;
+                const bool slotSelected = effectSelected &&
+                    slot < pattern.playerEffectCount &&
+                    pattern.playerEffects[slot].userSynthIndex ==
+                        playerEffectDefinitionIndices_[player][slot];
+                if (!slotSelected)
+                    playerEffectControlEffectIndices_[player][slot] = -1;
+                if (slotSelected) {
+                    const auto userIndex = static_cast<std::size_t>(
+                        pattern.playerEffects[slot].userSynthIndex);
+                    if (userIndex >= userSynthDefinitions_.size()) {
+                        playerEffectControlEffectIndices_[player][slot] = -1;
                         continue;
-                    const float normalizedTarget = evaluateTimeVar(
-                        pattern.effectControlVariables[control], effectBeat,
-                        static_cast<float>(
-                            pattern.playerEffectControlValues[control]));
-                    auto& current = playerEffectControlSmoothed_[player][control];
-                    if (newEffect) {
-                        current = normalizedTarget;
-                    } else {
-                        current = smoothAirwindowsFxControl(current,
-                                                            normalizedTarget,
-                                                            blockSeconds);
                     }
-                    const float mapped = definition.effectControlMinimum[control] +
-                        current * (definition.effectControlMaximum[control] -
-                                   definition.effectControlMinimum[control]);
-                    Graph_SetControl(graph, controlIndex, mapped);
+                    const auto& definition = userSynthDefinitions_[userIndex];
+                    const bool newEffect =
+                        playerEffectControlEffectIndices_[player][slot] !=
+                        pattern.playerEffects[slot].userSynthIndex;
+                    const double effectBeat = controlBeatStart[player] +
+                        controlBeatStep[player] * (kSCBlockSize * 0.5);
+                    const float blockSeconds =
+                        static_cast<float>(kSCBlockSize / sampleRate_);
+                    for (std::size_t control = 0;
+                         control < definition.effectControlIndices.size(); ++control) {
+                        const auto controlIndex =
+                            definition.effectControlIndices[control];
+                        if (controlIndex < 0)
+                            continue;
+                        const float normalizedTarget = evaluateTimeVar(
+                            pattern.playerEffects[slot].controlVariables[control],
+                            effectBeat,
+                            static_cast<float>(
+                                pattern.playerEffects[slot].controlValues[control]));
+                        auto& current =
+                            playerEffectControlSmoothed_[player][slot][control];
+                        current = newEffect ? normalizedTarget :
+                            smoothAirwindowsFxControl(current, normalizedTarget,
+                                                      blockSeconds);
+                        const float mapped =
+                            definition.effectControlMinimum[control] +
+                            current * (definition.effectControlMaximum[control] -
+                                       definition.effectControlMinimum[control]);
+                        Graph_SetControl(graph, controlIndex, mapped);
+                    }
+                    playerEffectControlEffectIndices_[player][slot] =
+                        pattern.playerEffects[slot].userSynthIndex;
                 }
-                playerEffectControlEffectIndices_[player] =
-                    pattern.playerEffectUserIndex;
+                // The paused insert graph is advanced once after its source or
+                // previous insert's return bus is ready.
+                Graph_Calc(graph);
             }
-            // The graph is paused in the root group and is advanced exactly
-            // once here, after its summed stereo input bus is ready.
-            Graph_Calc(graph);
         }
 
+        std::array<std::size_t, kPlayerCount> effectGraphCounts{};
+        std::array<bool, kPlayerCount> selectedEffectChains{};
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            auto& count = effectGraphCounts[player];
+            while (count < kMaxPlayerEffectChain &&
+                   playerEffectGraphs_[player][count])
+                ++count;
+            const auto& pattern = activePatterns_[player];
+            bool selected = pattern.active && pattern.playerEffectCount > 0 &&
+                pattern.playerEffectCount == count;
+            std::uint64_t signature = 0;
+            for (std::size_t slot = 0; slot < count; ++slot) {
+                selected &= playerEffectDefinitionIndices_[player][slot] ==
+                    pattern.playerEffects[slot].userSynthIndex;
+                signature |= static_cast<std::uint64_t>(
+                    playerEffectDefinitionIndices_[player][slot] + 1) << (slot * 16);
+            }
+            selectedEffectChains[player] = selected;
+            playerEffectTransitions_[player].select(
+                selected ? signature : 0, sampleRate_);
+        }
         for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
             const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
             std::array<float, kPlayerCount> playerLeft{};
@@ -3884,26 +3998,27 @@ private:
             std::size_t effectTailPlayers = 0;
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 const auto& pattern = activePatterns_[player];
-                const auto* effectGraph = playerEffectGraphs_[player];
-                const bool effectSelected = pattern.active && effectGraph &&
-                    pattern.playerEffectUserIndex >= 0 &&
-                    pattern.playerEffectUserIndex ==
-                        playerEffectDefinitionIndices_[player];
+                const auto effectCount = effectGraphCounts[player];
+                const bool hasEffectGraph = effectCount > 0;
+                const bool effectSelected = selectedEffectChains[player];
                 const auto effectOutputBus =
-                    static_cast<std::size_t>(kAirwindowsOutputBusBase) + player * 2;
-                const float effectLeft = effectGraph
+                    static_cast<std::size_t>(playerEffectChainOutputBus(
+                        player, hasEffectGraph ? effectCount - 1 : 0,
+                        kAirwindowsOutputBusBase));
+                const float effectLeft = hasEffectGraph
                     ? world_->mAudioBus[effectOutputBus * busLength +
                                         static_cast<std::size_t>(sampleIndex)]
                     : 0.0f;
-                const float effectRight = effectGraph
+                const float effectRight = hasEffectGraph
                     ? world_->mAudioBus[(effectOutputBus + 1) * busLength +
                                         static_cast<std::size_t>(sampleIndex)]
                     : 0.0f;
-                const float dryLeft = effectSelected
-                    ? effectLeft : playerLeft[player] + effectLeft;
-                const float dryRight = effectSelected
-                    ? effectRight : playerRight[player] + effectRight;
-                if (effectGraph && !playerHasVoice[player] &&
+                const auto routed = playerEffectTransitions_[player].process(
+                    effectSelected ? effectLeft : playerLeft[player] + effectLeft,
+                    effectSelected ? effectRight : playerRight[player] + effectRight);
+                const float dryLeft = routed[0];
+                const float dryRight = routed[1];
+                if (hasEffectGraph && !playerHasVoice[player] &&
                     playerMuteGain_[player] > 1e-4f &&
                     (std::abs(effectLeft) > 1e-6f ||
                      std::abs(effectRight) > 1e-6f))
@@ -4043,10 +4158,18 @@ private:
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
-        playerEffectGraphs_.fill(nullptr);
+        for (auto& graphs : playerEffectGraphs_)
+            graphs.fill(nullptr);
+        playerEffectTransitions_ = {};
         shapeEffectSmoothed_.fill(0.0f);
         driveEffectSmoothed_.fill(0.0f);
-        playerEffectDefinitionIndices_.fill(-1);
+        for (auto& indices : playerEffectDefinitionIndices_)
+            indices.fill(-1);
+        for (auto& indices : playerEffectControlEffectIndices_)
+            indices.fill(-1);
+        for (auto& player : playerEffectControlSmoothed_)
+            for (auto& controls : player)
+                controls.fill(0.0f);
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
         userSynthFiles_.clear();
@@ -4094,18 +4217,25 @@ private:
     int32 nextDynamicGraphNodeId_ = 100;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
-    std::array<Graph*, kPlayerCount> playerEffectGraphs_{};
+    std::array<std::array<Graph*, kMaxPlayerEffectChain>, kPlayerCount>
+        playerEffectGraphs_{};
+    std::array<PlayerEffectChainTransition, kPlayerCount> playerEffectTransitions_{};
     std::array<float, kPlayerCount> shapeEffectSmoothed_{};
     std::array<float, kPlayerCount> driveEffectSmoothed_{};
-    std::array<std::array<float, 7>, kPlayerCount> playerEffectControlSmoothed_{};
-    std::array<int, kPlayerCount> playerEffectControlEffectIndices_ = [] {
-        std::array<int, kPlayerCount> indices{};
-        indices.fill(-1);
+    std::array<std::array<std::array<float, 7>, kMaxPlayerEffectChain>,
+               kPlayerCount> playerEffectControlSmoothed_{};
+    std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount>
+        playerEffectControlEffectIndices_ = [] {
+        std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount> indices{};
+        for (auto& player : indices)
+            player.fill(-1);
         return indices;
     }();
-    std::array<int, kPlayerCount> playerEffectDefinitionIndices_ = [] {
-        std::array<int, kPlayerCount> indices{};
-        indices.fill(-1);
+    std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount>
+        playerEffectDefinitionIndices_ = [] {
+        std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount> indices{};
+        for (auto& player : indices)
+            player.fill(-1);
         return indices;
     }();
     std::string ugenPluginPath_;
@@ -4131,6 +4261,7 @@ private:
     std::array<PatternState, kPlayerCount> activePatterns_{};
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
     std::array<std::atomic<std::uint32_t>, kPlayerCount> editorPlayerState_{};
+    std::array<std::atomic<std::uint64_t>, kPlayerCount> editorPlayerEffectChain_{};
     std::uint8_t pendingPlayerMask_ = 0;
     std::array<bool, kPlayerCount> pendingMuteStates_{};
     std::uint8_t pendingMuteMask_ = 0;

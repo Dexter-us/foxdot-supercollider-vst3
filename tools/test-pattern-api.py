@@ -36,7 +36,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.136' not in cmake_source or
+if ('VERSION 0.4.137' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -1918,7 +1918,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, include_tempo=False, user_synth_names=(), include_player_effect_values=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, include_tempo=False, user_synth_names=(), include_player_effect_values=False, include_effect_chains=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -1941,6 +1941,8 @@ def run_script(script_text, include_events=False, include_effects=False, include
         player_effect_values = [line.split('\t') for line in lines if line.startswith('W\t')]
         synth_control_rows = [line.split('\t') for line in lines if line.startswith('S\t')]
         effect_control_var_rows = [line.split('\t') for line in lines if line.startswith('X\t')]
+        if include_effect_chains:
+            return player_rows, [line.split('\t') for line in lines if line.startswith('J\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
@@ -2237,7 +2239,8 @@ def test_embedded_synthdef():
     assert 'kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1' in processor_source
     assert 'kPlayerCount * kVoiceSlotsPerPlayer' in processor_source
     assert 'kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice' in processor_source
-    assert 'kPlayerCount * (kReverbGraphCount + 1) + 1' in processor_source
+    assert 'kPlayerCount * (kReverbGraphCount + 1) +' in processor_source
+    assert 'kPlayerCount * kMaxPlayerEffectChain + 1' in processor_source
     assert 'kAirwindowsInputBusBase' in processor_source
     assert 'playerEffectGraphs_[player]' in processor_source
     assert 'Graph_Calc(graph)' in processor_source
@@ -2926,7 +2929,9 @@ for filename in os.listdir(sys.argv[2]):
             ('Chorus', 'Flanger')
             if filename == '170-chorus-flanger-together.py' else
             ('Phaser',) if filename == '171-phaser-sweep.py' else
-            ('Tremolo',) if filename == '172-tremolo-motion.py' else ())
+            ('Tremolo',) if filename == '172-tremolo-motion.py' else
+            ('Phaser', 'Tremolo') if filename == '173-ordered-player-effect-chain.py' else
+            ('Flanger', 'Chorus') if filename == '174-drum-effect-chain.py' else ())
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
@@ -4562,6 +4567,64 @@ subprocess.run([
     os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), '..', '..',
                  'tools', 'test-modulation-synthdefs.py'),
     os.path.dirname(os.path.abspath(sys.argv[1]))], check=True)
+
+chainScript = (
+    'p1 >> sine([0,2,4], effects=[("Phaser", {"fx_mix": 0.4}),'
+    '("Tremolo", {"fx_rate": var([3,6], 4), "fx_depth": 0.7})])\n'
+    'p2 >> play("x-o-", effects=[("Tremolo", {"fx_depth": 0.2})])\n')
+chainNames = ('Phaser', 'Tremolo')
+_, chainRecords = run_script(chainScript, user_synth_names=chainNames,
+                             include_effect_chains=True)
+assert chainRecords[0][:4] == ['J', '0', '1', '1'], chainRecords
+assert len(chainRecords[0]) == 18, chainRecords
+assert chainRecords[0][12].startswith('v:'), chainRecords
+assert chainRecords[1] == ['J', '1', '0'], chainRecords
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    chainScript, chainNames)
+_, maxChain = run_script(
+    'p1 >> sine(0, effects=[("Tremolo", {"fx_rate":1}),'
+    '("Tremolo", {"fx_rate":2}),("Tremolo", {"fx_rate":3}),'
+    '("Tremolo", {"fx_rate":4})])\n',
+    user_synth_names=('Tremolo',), include_effect_chains=True)
+assert maxChain[0][:3] == ['J', '0', '3'] and len(maxChain[0]) == 48
+run_script('c = {"fx_rate": 2}\n'
+           'p1 >> sine(0, effects=[("Tremolo", c)])\n'
+           'assert c == {"fx_rate": 2}\n'
+           'p1 >> sine(0, effects=[])\n'
+           'p1.stop()\n', user_synth_names=('Tremolo',))
+for badScript, message in (
+    ('p1 >> sine(0, effect="Phaser", effects=[])', 'not both'),
+    ('p1 >> sine(0, effects=[], fx_mix=0.3)', 'standalone'),
+    ('p1 >> sine(0, effects="Phaser")', 'list'),
+    ('p1 >> sine(0, effects=[("Phaser", {}, {})])', 'each effects item'),
+    ('p1 >> sine(0, effects=[("Unknown", {})])', 'unsupported'),
+    ('p1 >> sine(0, effects=[("Phaser", [])])', 'dictionary'),
+    ('p1 >> sine(0, effects=[("Phaser", {1: 2})])', 'strings'),
+    ('p1 >> sine(0, effects=[("Phaser", {"bad": 1})])', 'Unsupported'),
+    ('p1 >> sine(0, effects=[("Phaser", {"fx_mix": 2})])', 'between'),
+    ('p1 >> sine(0, effects=[("Phaser", {"fx_rq": 0.2})])', 'not a control'),
+    ('p1 >> sine(0, effects=[("Phaser", {})]*5)', 'four inserts')):
+    chainError = run_error_script(badScript, chainNames)
+    assert message.lower() in chainError.lower(), (badScript, chainError)
+assert 'not loaded' in run_error_script(
+    'p1 >> sine(0, effects=[("Tremolo", {})])')
+for exampleName, names in (
+        ('173-ordered-player-effect-chain.py', ('Phaser', 'Tremolo')),
+        ('174-drum-effect-chain.py', ('Flanger', 'Chorus'))):
+    text = open(os.path.join(sys.argv[2], exampleName), encoding='utf-8').read()
+    assert 'No unsupported constructs detected' in run_compatibility_check(text, names)
+    run_script(text, user_synth_names=names)
+    assert 'Portable/SynthDefs' in run_compatibility_check(text)
+for malformed in (
+        'effects=[("Phaser", {})]*5', 'effects="Phaser"',
+        'effects=[("Phaser", {}, {})]',
+        'effects=[("Phaser", {"bad": 2})]',
+        'effects=[("Missing", {})]', 'effects=[], effect="Phaser"'):
+    assert 'No unsupported constructs detected' not in run_compatibility_check(
+        'p1 >> sine(0, ' + malformed + ')', chainNames)
+assert 'effectIndices !=' in editor_source
+assert 'L" -> "' in editor_source
+print('PASS ordered effects: legacy form, four-insert bound, independent modulation, checker, copies, examples and panel order')
 
 sample_directory = os.path.join(sys.argv[2], 'Samples')
 assert len([name for path, dirs, files in os.walk(sample_directory) for name in files if name.endswith('.wav')]) == 6

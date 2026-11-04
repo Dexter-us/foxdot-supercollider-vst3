@@ -86,7 +86,7 @@ constexpr char kFoxDotApiKeywords[] =
     "charm spark blip scatter orient zap fuzz bug ripple "
     "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
-    "effect fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
+    "effect effects fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
     "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
     "fx_center fx_shape fx_phase "
@@ -102,7 +102,7 @@ constexpr char kFoxDotCompletions[] =
     "bell gong marimba pluck twang donk squish charm spark blip scatter orient zap fuzz bug ripple rate "
     "viola nylon arpy dab sawbass dbass prophet pads pasha ambi sinepad keys "
     "klank feel glass soft quin space scratch creep snick swell razz sitar star karp "
-    "effect fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
+    "effect effects fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
     "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
     "fx_center fx_shape fx_phase "
@@ -866,6 +866,7 @@ private:
                 left[index].muted != right[index].muted ||
                 left[index].synthIndex != right[index].synthIndex ||
                 left[index].effectIndex != right[index].effectIndex ||
+                left[index].effectIndices != right[index].effectIndices ||
                 left[index].reverbIndex != right[index].reverbIndex ||
                 left[index].echoEnabled != right[index].echoEnabled ||
                 left[index].reverbEnabled != right[index].reverbEnabled ||
@@ -993,10 +994,16 @@ private:
                 continue;
             foundAssignment = true;
             std::wstring row = L"p" + std::to_wstring(index + 1) + L":";
-            if (state.effectIndex >= 0 &&
-                state.effectIndex < static_cast<int>(externalNames.size()))
-                row += L" " + fromUtf8(
-                    externalNames[static_cast<std::size_t>(state.effectIndex)]);
+            bool firstInsert = true;
+            for (const auto effectIndex : state.effectIndices) {
+                if (effectIndex >= 0 &&
+                    effectIndex < static_cast<int>(externalNames.size())) {
+                    row += firstInsert ? L" " : L" -> ";
+                    row += fromUtf8(
+                        externalNames[static_cast<std::size_t>(effectIndex)]);
+                    firstInsert = false;
+                }
+            }
             if (state.echoEnabled)
                 row += L" Echo";
             if (state.shapeEnabled)

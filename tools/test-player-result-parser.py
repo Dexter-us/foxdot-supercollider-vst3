@@ -23,6 +23,7 @@ cpp = r"""
 #include "python_runtime.h"
 #include "clock_swing.h"
 #include "airwindows_control_smoothing.h"
+#include "player_effect_chain.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -37,6 +38,48 @@ cpp += source[parse_start:parse_end]
 cpp += r"""
 int main(int argc, char** argv) {
     if (argc != 3) return 3;
+    std::array<bool, 1024> usedBuses{};
+    for (std::size_t player = 0; player < 8; ++player) {
+        for (std::size_t slot = 0; slot < kMaxPlayerEffectChain; ++slot) {
+            const auto output = playerEffectChainOutputBus(player, slot, 458);
+            const auto input = playerEffectChainInputBus(player, slot, 442, 458);
+            if (slot == 0 && input != 442 + static_cast<int>(player * 2))
+                return 10;
+            if (slot > 0 &&
+                input != playerEffectChainOutputBus(player, slot - 1, 458))
+                return 11;
+            if (output < 458 || output + 1 >= 1024 ||
+                usedBuses[output] || usedBuses[output + 1])
+                return 12;
+            usedBuses[output] = usedBuses[output + 1] = true;
+        }
+    }
+    for (const double rate : {44100.0, 48000.0, 96000.0}) {
+        PlayerEffectChainTransition transition;
+        transition.process(0.75f, -0.5f);
+        transition.select(1, rate);
+        auto previous = transition.process(-0.25f, 0.25f);
+        if (previous[0] != 0.75f || previous[1] != -0.5f)
+            return 13;
+        for (int sample = 0; sample < static_cast<int>(rate * 0.01); ++sample) {
+            const auto value = transition.process(-0.25f, 0.25f);
+            if (!std::isfinite(value[0]) ||
+                std::abs(value[0] - previous[0]) > 0.003f ||
+                value[0] < -0.25f || value[0] > previous[0])
+                return 14;
+            previous = value;
+        }
+        if (previous[0] != -0.25f || previous[1] != 0.25f)
+            return 15;
+        transition.select(1, rate); // unchanged routing must not restart a ramp
+        if (transition.process(0.1f, 0.2f)[0] != 0.1f)
+            return 16;
+        transition.select(2, rate);
+        transition.process(-0.5f, 0.5f);
+        transition.select(3, rate); // rapidly changed route remains continuous
+        if (std::abs(transition.process(1.0f, -1.0f)[0] - 0.1f) > 1e-6f)
+            return 17;
+    }
     const double fxBlockSeconds = 64.0 / 48000.0;
     float smoothedFx = 0.0f;
     const float firstFxStep = smoothAirwindowsFxControl(smoothedFx, 1.0f,
@@ -77,6 +120,14 @@ int main(int argc, char** argv) {
     for (const auto& player : pattern.players) {
         std::cout << player.synthIndex << ' ';
         std::cout << "A:" << player.playerEffectUserIndex << ' ';
+        std::cout << "J:" << player.playerEffects.size() << ':';
+        for (const auto& effect : player.playerEffects) {
+            std::cout << effect.userSynthIndex << '[';
+            for (const auto& token : effect.controlTokens)
+                std::cout << token << ',';
+            std::cout << ']';
+        }
+        std::cout << ' ';
         std::cout << "B:";
         for (const auto value : player.playerEffectControlValues)
             std::cout << value << ',';
@@ -125,6 +176,8 @@ with tempfile.TemporaryDirectory() as directory:
             if example.name == "170-chorus-flanger-together.py" else
             ("Phaser",) if example.name == "171-phaser-sweep.py" else
             ("Tremolo",) if example.name == "172-tremolo-motion.py" else
+            ("Phaser", "Tremolo") if example.name == "173-ordered-player-effect-chain.py" else
+            ("Flanger", "Chorus") if example.name == "174-drum-effect-chain.py" else
             ("JPverb", "Greyhole") if example.parent == space_portable else
             ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
             ("AirwindowsTapeDelay2",)
@@ -190,6 +243,12 @@ with tempfile.TemporaryDirectory() as directory:
         if example.name == "172-tremolo-motion.py":
             assert parsed.stdout.count("A:0") == 2
             assert "l:0.0,0.25:4.0,4.0" in parsed.stdout, parsed.stdout
+        if example.name == "173-ordered-player-effect-chain.py":
+            assert "J:2:0[" in parsed.stdout and "]1[" in parsed.stdout, parsed.stdout
+            assert "v:0.147869674185" in parsed.stdout, parsed.stdout
+        if example.name == "174-drum-effect-chain.py":
+            assert "J:2:0[" in parsed.stdout and "J:0:" in parsed.stdout, parsed.stdout
+            assert "l:0.2,0.65:4.0,4.0" in parsed.stdout, parsed.stdout
     for invalid in (
             "OK\t0\t0\t17\n",
             "OK\t0\t0\t1\nD\t9\t0\t1\t.5\t0\t0\t0\t78\n",
@@ -405,4 +464,28 @@ with tempfile.TemporaryDirectory() as directory:
     result.write_text("\n".join(overlap_lines) + "\n")
     parsed = subprocess.run([str(binary), str(result), "0"], capture_output=True, text=True)
     assert parsed.returncode == 1 and "exceeds 8-note polyphony" in parsed.stderr, parsed.stderr
-print(f"PASS: {len(examples)} example results accepted by compiled C++ parser; malformed synth/sample/effect-control records rejected")
+    chainSource = directory / "chain.py"
+    chainSource.write_text(api_tests["chainScript"])
+    exec(api_tests["make_wrapper"](str(chainSource), str(result),
+                                 api_tests["chainNames"]), {"__name__": "__main__"})
+    validChain = result.read_text()
+    chainLine = next(line for line in validChain.splitlines()
+                     if line.startswith("J\t0\t"))
+    fields = chainLine.split("\t")
+    corruptions = []
+    for index, value in ((1, "9"), (2, "4"), (3, "-1"), (3, "99"),
+                         (4, "1.1"), (4, "nan"), (11, "bad"),
+                         (11, "l:0,2:4,4")):
+        badFields = fields.copy()
+        badFields[index] = value
+        corruptions.append(validChain.replace(chainLine, "\t".join(badFields)))
+    corruptions += [
+        validChain.replace(chainLine + "\n", ""),
+        validChain.replace(chainLine, "\t".join(fields[:-1])),
+        validChain.replace("A\t0\t0", "A\t0\t-1")]
+    for corrupted in corruptions:
+        result.write_text(corrupted)
+        parsed = subprocess.run([str(binary), str(result), "2"],
+                                capture_output=True, text=True)
+        assert parsed.returncode == 1, (corrupted, parsed.stdout)
+print(f"PASS: {len(examples)} example results accepted by compiled C++ parser; malformed synth/sample/effect-chain records rejected")

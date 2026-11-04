@@ -1,3 +1,11 @@
+0.4.137 adds ordered player-effect chains:
+  effects=[("Phaser", {"fx_mix": 0.5}), ("Tremolo", {"fx_rate": 5})]
+Effects run left-to-right; each has independent scalar/var/linvar controls.
+Examples 173 (notes) and 174 (drums) use only bundled stock-UGen SynthDefs.
+The explicit effects list is a Dexter U.S. extension, not original FoxDot syntax.
+Maximum four inserts per player. Do not mix effects= with effect= or standalone
+fx_* controls. Existing effect="Name", fx_*=... scripts still work unchanged.
+
 Dexter U.S. FoxDot portable scripts
 
 Version 0.4.136 adds per-player Phaser and Tremolo inserts in SynthDefs/.

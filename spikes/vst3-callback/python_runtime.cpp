@@ -197,6 +197,9 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_shape', 'fx_phase'
 }
 _COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'shape', 'drive', 'chop', 'spin', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase'}
+for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
+                         _COMPAT_SEQUENCE_KEYWORDS, _COMPAT_NOTE_PLAY_KEYWORDS):
+    _effect_keywords.add('effects')
 _COMPAT_SAMPLE_PLAY_KEYWORDS = (_COMPAT_SEQUENCE_KEYWORDS - {'notes', 'step', 'duration', 'degrees', 'synth', 'root', 'strum'}) | {'dur', 'sus', 'sample', 'start', 'end', 'loop'}
 _COMPAT_PLAY_KEYWORDS = _COMPAT_NOTE_PLAY_KEYWORDS | _COMPAT_SAMPLE_PLAY_KEYWORDS
 _COMPAT_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
@@ -776,6 +779,48 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 elif keyword.value.value not in _USER_SYNTH_NAMES:
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires the matching player-effect SynthDef in Portable/SynthDefs.')
+            chain = next((kw for kw in node.keywords
+                          if kw.arg == 'effects'), None)
+            if chain is not None:
+                if any(kw.arg == 'effect' or
+                       (kw.arg and kw.arg.startswith('fx_'))
+                       for kw in node.keywords):
+                    self.add(node.lineno,
+                             'Use effects=[(name, controls), ...] without effect= or standalone fx_* controls.')
+                if not isinstance(chain.value, (ast.List, ast.Tuple)):
+                    self.add(chain.lineno,
+                             'effects= requires a literal list of (installed name, controls dictionary) pairs.')
+                else:
+                    if len(chain.value.elts) > 4:
+                        self.add(chain.lineno,
+                                 'A player effect chain is limited to four inserts.')
+                    for entry in chain.value.elts:
+                        if (not isinstance(entry, (ast.List, ast.Tuple)) or
+                                len(entry.elts) != 2):
+                            self.add(entry.lineno,
+                                     'Each effect-chain entry must be (name, controls dictionary).')
+                            continue
+                        effectName, controls = entry.elts
+                        if (not isinstance(effectName, ast.Constant) or
+                                effectName.value not in {
+                                    'AirwindowsTapeDelay2', 'AirwindowsEchojam',
+                                    'JPverb', 'Greyhole', 'Chorus', 'Flanger',
+                                    'Phaser', 'Tremolo'}):
+                            self.add(entry.lineno, 'Unsupported effect-chain name.')
+                        elif effectName.value not in _USER_SYNTH_NAMES:
+                            self.add(entry.lineno,
+                                     'effects= requires ' + effectName.value +
+                                     ' in Portable/SynthDefs.')
+                        if not isinstance(controls, ast.Dict):
+                            self.add(entry.lineno,
+                                     'Effect-chain controls must be a literal dictionary.')
+                        elif any(not isinstance(key, ast.Constant) or
+                                 not isinstance(key.value, str) or
+                                 key.value not in _COMPAT_WAVE_KEYWORDS or
+                                 not key.value.startswith('fx_')
+                                 for key in controls.keys):
+                            self.add(entry.lineno,
+                                     'Effect-chain dictionaries accept supported fx_* control names only.')
         if name in _COMPAT_WAVES and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
             self.add(node.lineno, 'Use play(\"...\") for sample strings, not a pitched synth call.')
         if name == 'play' and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
@@ -968,6 +1013,7 @@ _dexter_sample_controls = {}
 _dexter_player_effect_indices = {}
 _dexter_effect_control_values = {}
 _dexter_effect_control_variables = {}
+_dexter_player_effect_chains = {}
 _dexter_note_effect_control_variables = {}
 _dexter_shuffle_counter = 0
 _dexter_random_counter = 0
@@ -4400,26 +4446,20 @@ class PlayerPattern:
                 synth not in _dexter_user_synth_names:
             raise ValueError('Unknown embedded synth: ' + str(synth))
         self.synth = synth
-        if effect is not None:
-            if effect not in _PLAYER_EFFECT_SPECS:
-                raise ValueError('unsupported persistent player effect: ' + str(effect))
-            if effect not in _dexter_user_synth_names:
-                raise ValueError(
-                    'player effect ' + effect +
-                    ' is not loaded; install its UGen pack and SynthDef, then restart the DAW')
-            self.playerEffectUserIndex = _dexter_user_synth_names.index(effect)
-        else:
-            self.playerEffectUserIndex = -1
+        effectChain = effectControls.pop('effects', None)
+        self.playerEffects = _player_effect_chain(effect, effectChain, effectControls)
+        self.playerEffectUserIndex = (
+            self.playerEffects[0][0] if self.playerEffects else -1)
         self.synthControls = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
-        effectValues, effectVariables = _player_effect_control_values(
-            effect, effectControls)
         if effectControls:
             raise TypeError('Unsupported player control: ' +
-                            str(next(iter(effectControls))))
+                            str(list(effectControls)[0]))
         self.playerEffectControlValues = (
-            effectValues if effectValues is not None else
+            self.playerEffects[0][1] if self.playerEffects else
             (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))
-        self.effectControlVariables = effectVariables
+        self.effectControlVariables = (
+            self.playerEffects[0][2] if self.playerEffects else
+            ('-', '-', '-', '-', '-', '-', '-'))
         if isinstance(vib, bool) or isinstance(vib, _DexterTimeVar):
             raise TypeError('vib requires a scalar rate from 0 to 100')
         self.vibRate = float(vib)
@@ -4624,8 +4664,9 @@ def userSynth(name, notes=0, **kwargs):
     if name in ('JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo'):
         raise ValueError(name + ' is an insert, not a note source; use effect="' +
                          name + '" on a synth or play() player')
-    if name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam') and kwargs.get('effect') is not None:
-        raise ValueError('Only one persistent insert per player is supported; use separate players')
+    if (name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam') and
+            (kwargs.get('effect') is not None or 'effects' in kwargs)):
+        raise ValueError('Use a note or sample source with effects=[...] when chaining inserts')
     vib = kwargs.pop('vib', 0.0)
     depth = kwargs.pop('depth', None)
     vibdepth = kwargs.pop('vibdepth', None)
@@ -4646,6 +4687,9 @@ def userSynth(name, notes=0, **kwargs):
         pattern.playerEffectUserIndex = _dexter_user_synth_names.index(name)
         pattern.playerEffectControlValues = tuple(
             max(0.0, min(1.0, float(value))) for value in pattern.synthControls)
+        pattern.playerEffects = [(
+            pattern.playerEffectUserIndex, pattern.playerEffectControlValues,
+            pattern.effectControlVariables)]
     return pattern
 
 bass = _make_named_synth('bass', 8.0)
@@ -5136,20 +5180,64 @@ def _player_effect_control_values(effect, controls):
             values[index] = normalized(raw)
     return tuple(values), tuple(variables)
 
+def _player_effect_chain(effect, effects, controls):
+    if effects is None:
+        if effect is None:
+            _player_effect_control_values(None, controls)
+            return []
+        if effect not in _PLAYER_EFFECT_SPECS:
+            raise ValueError('unsupported persistent player effect: ' + str(effect))
+        if effect not in _dexter_user_synth_names:
+            raise ValueError(
+                'player effect ' + effect +
+                ' is not loaded; install its UGen pack and SynthDef, then restart the DAW')
+        values, variables = _player_effect_control_values(effect, controls)
+        return [(_dexter_user_synth_names.index(effect), values, variables)]
+    if effect is not None:
+        raise ValueError('use effect= or effects=, not both')
+    if not isinstance(effects, (list, tuple)):
+        raise TypeError('effects must be a list of (name, controls) pairs')
+    if len(effects) > 4:
+        raise ValueError('a player effect chain is limited to four inserts')
+    if any(key.startswith('fx_') for key in controls):
+        raise TypeError('do not mix effects=[...] with standalone fx_* controls')
+    result = []
+    for item in effects:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise TypeError('each effects item must be (name, controls)')
+        name, effectValues = item
+        if not isinstance(name, str) or name not in _PLAYER_EFFECT_SPECS:
+            raise ValueError('unsupported persistent player effect: ' + str(name))
+        if name not in _dexter_user_synth_names:
+            raise ValueError(
+                'player effect ' + name +
+                ' is not loaded; install its UGen pack and SynthDef, then restart the DAW')
+        if not isinstance(effectValues, dict):
+            raise TypeError('effect controls must be a dictionary')
+        if any(not isinstance(key, str) for key in effectValues):
+            raise TypeError('effect control names must be fx_* strings')
+        effectValues = dict(effectValues)
+        values, variables = _player_effect_control_values(name, effectValues)
+        if effectValues:
+            raise TypeError('Unsupported effect-chain control: ' +
+                            str(list(effectValues)[0]))
+        result.append((_dexter_user_synth_names.index(name), values, variables))
+    return result
+
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                     start=0.0, end=1.0, loop=False, effect=None, **controls):
     playerEffectUserIndex = -1
     if isinstance(text, _DexterPVar):
         text = text.expand(dur)
-    if effect is not None:
-        if effect not in _PLAYER_EFFECT_SPECS:
-            raise ValueError('unsupported persistent player effect: ' + str(effect))
-        if effect not in _dexter_user_synth_names:
-            raise ValueError(
-                'sample effect ' + effect +
-                ' is not loaded; install its SynthDef in Portable/SynthDefs and restart the DAW')
-        playerEffectUserIndex = _dexter_user_synth_names.index(effect)
-    effectControlValues, effectControlVariables = _player_effect_control_values(effect, controls)
+    effectChain = controls.pop('effects', None)
+    playerEffects = _player_effect_chain(effect, effectChain, controls)
+    playerEffectUserIndex = playerEffects[0][0] if playerEffects else -1
+    effectControlValues = (
+        playerEffects[0][1] if playerEffects else
+        (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))
+    effectControlVariables = (
+        playerEffects[0][2] if playerEffects else
+        ('-', '-', '-', '-', '-', '-', '-'))
     start, startPatternLength = _sample_fraction_pattern(start, 'start')
     end, endPatternLength = _sample_fraction_pattern(end, 'end')
     if not isinstance(loop, bool):
@@ -5224,6 +5312,7 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                           sampleControl, rateControl, symbolEvents,
                           start, end, loop)
     pattern.playerEffectUserIndex = playerEffectUserIndex
+    pattern.playerEffects = playerEffects
     if effectControlValues is not None:
         pattern.playerEffectControlValues = effectControlValues
         pattern.effectControlVariables = effectControlVariables
@@ -5665,10 +5754,10 @@ class Player:
                 sampleControl.wire() if sampleControl is not None else '-',
                 rateControl.wire() if rateControl is not None else '-')
         _dexter_synth_controls[playerIndex] = pattern.synthControls
-        _dexter_effect_control_variables[playerIndex] = pattern.effectControlVariables
+        _dexter_player_effect_chains[playerIndex] = tuple(pattern.playerEffects)
+        _dexter_player_effect_indices[playerIndex] = pattern.playerEffectUserIndex
         _dexter_effect_control_values[playerIndex] = pattern.playerEffectControlValues
-        effectUserIndex = pattern.playerEffectUserIndex
-        _dexter_player_effect_indices[playerIndex] = effectUserIndex
+        _dexter_effect_control_variables[playerIndex] = pattern.effectControlVariables
         _dexter_note_effect_control_variables[playerIndex] = \
             pattern.noteEffectControlVariables
         _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
@@ -6564,6 +6653,7 @@ class Player:
         return self
 
     def stop(self):
+        _dexter_player_effect_chains[self.number - 1] = ()
         _dexter_player_effect_indices[self.number - 1] = -1
         _dexter_effect_control_values[self.number - 1] = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
         _dexter_effect_control_variables[self.number - 1] = ('-', '-', '-', '-', '-', '-', '-')
@@ -6844,12 +6934,18 @@ DiskOut = _DiskRecorder()
             << "            _f.write('G' + chr(9) + chr(9).join(map(str, _modulation_values)) + chr(10))\n"
             << "            _synth_controls = _dexter_scope['_dexter_synth_controls'].get(_player, (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))\n"
             << "            _f.write('S' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _synth_controls)) + chr(10))\n"
-             << "            _effect_user_index = _dexter_scope['_dexter_player_effect_indices'].get(_player, -1)\n"
-              << "            _effect_control_values = _dexter_scope['_dexter_effect_control_values'].get(_player, (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))\n"
+              << "            _effect_chain = _dexter_scope['_dexter_player_effect_chains'].get(_player, ())\n"
+              << "            _effect_user_indices = tuple(item[0] for item in _effect_chain)\n"
+              << "            _chain_values = tuple(item[1] for item in _effect_chain)\n"
+              << "            _chain_variables = tuple(item[2] for item in _effect_chain)\n"
+              << "            _effect_user_index = _effect_user_indices[0] if _effect_user_indices else -1\n"
+              << "            _effect_control_values = _chain_values[0] if _chain_values else (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)\n"
+              << "            _effect_control_variables = _chain_variables[0] if _chain_variables else ('-', '-', '-', '-', '-', '-', '-')\n"
               << "            _f.write('A' + chr(9) + str(_player) + chr(9) + str(_effect_user_index) + chr(10))\n"
               << "            _f.write('W' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _effect_control_values)) + chr(10))\n"
-             << "            _effect_control_variables = _dexter_scope['_dexter_effect_control_variables'].get(_player, ('-', '-', '-', '-', '-', '-', '-'))\n"
-             << "            _f.write('X' + chr(9) + str(_player) + chr(9) + chr(9).join(_effect_control_variables) + chr(10))\n"
+              << "            _f.write('X' + chr(9) + str(_player) + chr(9) + chr(9).join(_effect_control_variables) + chr(10))\n"
+              << "            _extra_effects = [value for index, values, variables in zip(_effect_user_indices[1:], _chain_values[1:], _chain_variables[1:]) for value in (index,) + tuple(values) + tuple(variables)]\n"
+              << "            _f.write('J' + chr(9) + str(_player) + chr(9) + str(max(0, len(_effect_user_indices) - 1)) + ''.join(chr(9) + str(value) for value in _extra_effects) + chr(10))\n"
               << "            _note_effect_control_variables = _dexter_scope['_dexter_note_effect_control_variables'].get(_player, ('-', '-', '-', '-', '-', '-', '-', '-'))\n"
              << "            _f.write('Y' + chr(9) + str(_player) + chr(9) + chr(9).join(_note_effect_control_variables) + chr(10))\n"
              << "            if _synth == 57:\n"
@@ -7186,6 +7282,44 @@ bool parseResult(const std::filesystem::path& resultPath,
                 error = "Python returned persistent-effect modulation without an effect selection.";
                 return false;
             }
+        }
+        update.playerEffects.clear();
+        if (update.playerEffectUserIndex >= 0)
+            update.playerEffects.push_back({
+                update.playerEffectUserIndex, update.playerEffectControlValues,
+                update.effectControlTokens});
+        char chainRecord = 0;
+        int chainPlayer = -1;
+        std::size_t extraEffectCount = 0;
+        if (!(input >> chainRecord >> chainPlayer >> extraEffectCount) ||
+            chainRecord != 'J' || chainPlayer != update.playerIndex ||
+            extraEffectCount >= kMaxPlayerEffectChain ||
+            (extraEffectCount > 0 && update.playerEffectUserIndex < 0)) {
+            error = "Python returned an invalid persistent effect-chain header.";
+            return false;
+        }
+        for (std::size_t slot = 0; slot < extraEffectCount; ++slot) {
+            PythonPlayerEffect effect;
+            if (!(input >> effect.userSynthIndex) ||
+                effect.userSynthIndex < 0 ||
+                static_cast<std::size_t>(effect.userSynthIndex) >= userSynthCount) {
+                error = "Python returned an invalid chained effect selection.";
+                return false;
+            }
+            for (auto& value : effect.controlValues) {
+                if (!(input >> value) || !std::isfinite(value) ||
+                    value < 0.0 || value > 1.0) {
+                    error = "Python returned invalid chained effect controls.";
+                    return false;
+                }
+            }
+            for (auto& token : effect.controlTokens) {
+                if (!(input >> token) || !validEffectControlToken(token)) {
+                    error = "Python returned malformed chained effect modulation.";
+                    return false;
+                }
+            }
+            update.playerEffects.push_back(std::move(effect));
         }
         const auto validNoteEffectControlToken =
             [](const std::string& token, double minimum, double maximum) {

@@ -1,6 +1,9 @@
 #pragma once
 
+#include "player_effect_chain.h"
+
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <type_traits>
@@ -40,6 +43,14 @@ struct PythonNoteEvent {
 static_assert(std::is_trivially_copyable<PythonNoteEvent>::value,
               "Audio event handoff must not allocate or copy strings on the audio thread");
 
+struct PythonPlayerEffect {
+    int userSynthIndex = -1;
+    std::array<double, 7> controlValues{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
+    std::array<std::string, 7> controlTokens{
+        "-", "-", "-", "-", "-", "-", "-"
+    };
+};
+
 struct PythonPlayerUpdate {
     std::string ampControlToken = "-";
     std::string panControlToken = "-";
@@ -69,6 +80,7 @@ struct PythonPlayerUpdate {
     std::array<std::string, 8> noteEffectControlTokens{
         "-", "-", "-", "-", "-", "-", "-", "-"
     };
+    std::vector<PythonPlayerEffect> playerEffects;
     int playerIndex = 0;
     bool stopped = false;
     double bpm = 120.0;
