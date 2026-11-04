@@ -208,7 +208,11 @@ inline bool applyCatalogEntryInPlace(std::string& source, std::size_t position,
                 return false;
             if (!findPlayerAssignmentAt(source, position, assignment))
                 return false;
-            if (!setPlayerEffectMix(source, assignment, "0.25")) {
+            const bool hasMixControl =
+                entry.name != "AirwindowsEchojam" &&
+                entry.name != "AirwindowsTapeDelay2";
+            if (hasMixControl &&
+                !setPlayerEffectMix(source, assignment, "0.25")) {
                 failure = "Effect added, but its initial mix could not be set.";
                 return false;
             }
@@ -384,7 +388,15 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
         std::string description;
-        if (name == "JPverb" || name == "Greyhole")
+        const bool hasMixControl =
+            name != "AirwindowsEchojam" &&
+            name != "AirwindowsTapeDelay2";
+        if (name == "AirwindowsEchojam" || name == "AirwindowsTapeDelay2")
+            description = "Airwindows player-effect SynthDef. It has no "
+                          "fx_mix control; use the documented effect-specific "
+                          "fx_* parameters. Install its SynthDef/UGen pack "
+                          "under Portable/SynthDefs and restart the DAW.";
+        else if (name == "JPverb" || name == "Greyhole")
             description = "Optional stereo room/reverb SynthDef pack. Install "
                           "its Portable/SynthDefs file and required SCPlugins "
                           "module, then restart the DAW. FX Mix controls the "
@@ -394,9 +406,11 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "Its effect-specific fx_* controls are documented "
                           "in Portable/179-editor-catalog-about.html where "
                           "applicable. FX Mix controls the first chain insert.";
+        std::vector<Arg> defaults;
+        if (hasMixControl)
+            defaults.push_back(Arg{"fx_mix", "0.25"});
         result.push_back({CatalogKind::ExternalEffect, name, name,
-                          std::move(description),
-                          {Arg{"fx_mix", "0.25"}}, loaded});
+                          std::move(description), std::move(defaults), loaded});
     }
     for (auto& entry : result)
         entry.category = effectCategory(entry);

@@ -1,5 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.148 fixes sidebar insertion for Airwindows delays: Echojam and
+TapeDelay2 are generated without the unsupported generic `fx_mix` control,
+and the live FX Mix slider is hidden for those effects. Their required
+compiled SynthDefs still need to be installed under `Portable/SynthDefs`.
+
 Version 0.4.147 adds bounded FoxDot-compatible `Pattern.flatten()`. It
 flattens one finite Pattern level into a simultaneous chord (`PGroup`), with a
 maximum of eight numeric notes. Example 185 demonstrates nested chord flattening.

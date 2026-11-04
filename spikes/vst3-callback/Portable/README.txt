@@ -44,6 +44,13 @@ fx_* controls. Existing effect="Name", fx_*=... scripts still work unchanged.
 
 Dexter U.S. FoxDot portable scripts
 
+Version 0.4.148 fixes sidebar insertion for Airwindows Echojam and TapeDelay2:
+these effects do not expose fx_mix, so the editor now inserts them without
+that control and hides the live FX Mix slider for them. Use their supported
+fx_vib/fx_depth/fx_lforate/fx_blur controls (plus TapeDelay2 fx_lfowidth,
+fx_rq). The matching compiled SynthDef/UGen pack must still be installed in
+Portable/SynthDefs before either insert can be used.
+
 Version 0.4.136 adds per-player Phaser and Tremolo inserts in SynthDefs/.
 Examples 171-172 show independent, time-varying settings. Both use stock
 SuperCollider UGens; no extra module or SuperCollider rebuild is needed.

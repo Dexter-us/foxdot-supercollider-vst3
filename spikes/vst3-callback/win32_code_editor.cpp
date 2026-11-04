@@ -1657,7 +1657,9 @@ private:
             const bool available = editorPlayerControlAvailable(
                 control, state.effectMixAvailable,
                 state.bitcrusherEnabled);
-            const int visibility = editorPlayerControlVisible(
+            const int visibility = (control == EditorPlayerControl::EffectMix &&
+                                    !available)
+                ? SW_HIDE : editorPlayerControlVisible(
                 control, selectedPanelTab() == 0, true,
                 state.bitcrusherEnabled)
                 ? SW_SHOW : SW_HIDE;

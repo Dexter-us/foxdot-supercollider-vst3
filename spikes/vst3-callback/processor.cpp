@@ -1382,7 +1382,21 @@ private:
         const bool spinEnabled = pattern.spinEnabled;
         const bool coarseEnabled = pattern.coarseEnabled;
         const bool formantEnabled = pattern.formantEnabled;
-        const bool effectMixAvailable = pattern.playerEffectCount > 0;
+        bool effectMixAvailable = false;
+        if (pattern.playerEffectCount > 0) {
+            const auto userSynthIndex =
+                pattern.playerEffects[0].userSynthIndex;
+            if (userSynthIndex >= 0 &&
+                static_cast<std::size_t>(userSynthIndex) <
+                    userSynthDefinitions_.size()) {
+                const auto& effectName =
+                    userSynthDefinitions_[static_cast<std::size_t>(
+                        userSynthIndex)].name;
+                effectMixAvailable =
+                    effectName != "AirwindowsEchojam" &&
+                    effectName != "AirwindowsTapeDelay2";
+            }
+        }
         const auto packed =
             (pattern.active ? 1u : 0u) |
             (mutedPlayers_[player] ? 2u : 0u) |

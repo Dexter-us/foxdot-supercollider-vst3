@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.147' not in cmake_source or
+if ('VERSION 0.4.148' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -90,7 +90,8 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                      '182-live-pshift-slider.py',
                      '183-seeded-random-pattern-helpers.py',
                      '184-live-player-control-discovery.py',
-                     '185-pattern-flatten-chords.py'):
+                     '185-pattern-flatten-chords.py',
+                     '186-airwindows-echojam-on-chords.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -3182,6 +3183,8 @@ for filename in os.listdir(sys.argv[2]):
             if filename == '104-sample-player-airwindows-echojam.py' else
             ('AirwindowsTapeDelay2', 'AirwindowsEchojam')
             if filename == '105-airwindows-timevar-controls.py' else
+            ('AirwindowsEchojam',)
+            if filename == '186-airwindows-echojam-on-chords.py' else
             ('Chorus',) if filename == '168-chorus-stereo-width.py' else
             ('Flanger',) if filename == '169-flanger-sweep.py' else
             ('Chorus', 'Flanger')
@@ -4839,6 +4842,14 @@ assert chainRecords[0][12].startswith('v:'), chainRecords
 assert chainRecords[1] == ['J', '1', '0'], chainRecords
 assert 'No unsupported constructs detected' in run_compatibility_check(
     chainScript, chainNames)
+echojamExampleName = '186-airwindows-echojam-on-chords.py'
+echojamExampleText = open(
+    os.path.join(sys.argv[2], echojamExampleName), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    echojamExampleText, ('AirwindowsEchojam',))
+echojamExampleRows = run_example(
+    echojamExampleName, ('AirwindowsEchojam',))
+assert len(echojamExampleRows) == 2
 _, maxChain = run_script(
     'p1 >> sine(0, effects=[("Tremolo", {"fx_rate":1}),'
     '("Tremolo", {"fx_rate":2}),("Tremolo", {"fx_rate":3}),'

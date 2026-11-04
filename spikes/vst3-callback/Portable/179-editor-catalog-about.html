@@ -125,7 +125,9 @@ the matching SynthDef/UGen pack is installed and the host restarted. Loaded
 player effects include Airwindows TapeDelay2 and Echojam, Chorus, Flanger,
 Phaser, Tremolo, JPverb and Greyhole. A chain may contain up to four inserts.
 Use <code>effects=[("Chorus", {"fx_mix": 0.4}), ...]</code> for a chain or the
-legacy <code>effect="Chorus", fx_mix=0.4</code> form for one insert.</p>
+legacy <code>effect="Chorus", fx_mix=0.4</code> form for one insert when that
+effect exposes <code>fx_mix</code>. Airwindows Echojam and TapeDelay2 do not:
+use their effect-specific controls instead.</p>
 <table><thead><tr><th>Insert</th><th>Controls (inclusive bounds)</th></tr></thead><tbody>
 <tr id="AirwindowsTapeDelay2"><td>TapeDelay2</td><td><code>fx_vib</code>,
 <code>fx_depth</code>, <code>fx_lforate</code>, <code>fx_lfowidth</code>,
@@ -149,8 +151,9 @@ center 150–1800 Hz, spread 0–1, feedback 0–0.85, tone 200–16000 Hz.</td>
 <tr id="Tremolo"><td>Tremolo</td><td>mix, depth, shape, spread and phase 0–1;
 rate 0.05–20 Hz, tone 200–16000 Hz.</td></tr>
 </tbody></table>
-<p>The live FX Mix slider addresses the first chain insert. For modulation, edit
-the player's <code>fx_*</code> values in code; releasing a slider replaces the
+<p>The live FX Mix slider is shown only when the first chain insert exposes
+<code>fx_mix</code>. For Airwindows delays, edit the listed
+<code>fx_*</code> values in code; releasing a supported slider replaces the
 edited parameter with a scalar.</p>
 </section>
 <section id="drag"><h2>Insert, drag, and edit</h2>

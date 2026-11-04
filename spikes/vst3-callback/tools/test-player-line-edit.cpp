@@ -119,6 +119,34 @@ int main() {
         assert(unloadedJPverb != effects.end() && !unloadedJPverb->available);
     }
     {
+        const auto effects = makeEffectCatalog(
+            {"AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus"});
+        for (const auto* name : {"AirwindowsEchojam", "AirwindowsTapeDelay2"}) {
+            const auto entry = std::find_if(
+                effects.begin(), effects.end(), [name](const auto& item) {
+                    return item.name == name;
+                });
+            assert(entry != effects.end() && entry->available);
+            assert(entry->arguments.empty());
+            std::string source = "p1 >> pluck(P[0, 4])\n";
+            std::string failure;
+            assert(applyCatalogEntry(source, 0, *entry, failure));
+            assert(source.find("effect=\"" + std::string(name) + "\"") !=
+                   std::string::npos);
+            assert(source.find("fx_mix") == std::string::npos);
+        }
+        const auto chorus = std::find_if(
+            effects.begin(), effects.end(), [](const auto& item) {
+                return item.name == "Chorus";
+            });
+        assert(chorus != effects.end());
+        std::string source = "p1 >> pluck(P[0, 4])\n";
+        std::string failure;
+        assert(applyCatalogEntry(source, 0, *chorus, failure));
+        assert(source.find("effect=\"Chorus\"") != std::string::npos);
+        assert(source.find("fx_mix=0.25") != std::string::npos);
+    }
+    {
         std::string source = "# blank player\np3 >>\n";
         PlayerAssignment assignment;
         assert(findPlayerLineAt(source, source.find(">>") + 2,
