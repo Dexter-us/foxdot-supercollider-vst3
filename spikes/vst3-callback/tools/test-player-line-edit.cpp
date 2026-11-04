@@ -26,12 +26,20 @@ int main() {
            1.0f);
     assert(clampEditorPlayerControl(EditorPlayerControl::CrushRate, 256.0f) ==
            128.0f);
+    assert(clampEditorPlayerControl(EditorPlayerControl::PShift, -30.0f) ==
+           -24.0f);
+    assert(clampEditorPlayerControl(EditorPlayerControl::PShift, 30.0f) ==
+           24.0f);
     assert(!editorPlayerControlAvailable(
         EditorPlayerControl::BitDepth, false, false));
     assert(editorPlayerControlAvailable(
         EditorPlayerControl::BitDepth, false, true));
     assert(editorPlayerControlAvailable(
         EditorPlayerControl::CrushRate, false, true));
+    assert(editorPlayerControlAvailable(
+        EditorPlayerControl::PShift, false, false));
+    assert(smoothEditorPlayerControl(0.0f, 12.0f, 0.25f) == 3.0f);
+    assert(smoothEditorPlayerControl(12.0f, 0.0f, 1.0f) == 0.0f);
     assert(!editorPlayerControlAvailable(
         EditorPlayerControl::EffectMix, false, true));
     assert(std::abs(smoothEditorPlayerControl(0.0f, 1.0f, 0.25f) - 0.25f) <

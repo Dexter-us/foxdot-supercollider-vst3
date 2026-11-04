@@ -117,6 +117,7 @@ _COMPAT_CALLS = {
     'interleave', 'transpose', 'euclid', 'PAlt', 'PStretch', 'PStutter',
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
     'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar',
+    'P10', 'PBern', 'PSine', 'PTri', 'PSum',
     'PSquare', 'PSq', 'PRange', 'PStep', 'PEuclid', 'PEuclid2',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
@@ -138,7 +139,7 @@ _COMPAT_PATTERN_METHODS = {
     'sort', 'unduplicate', 'undup', 'replace', 'trim', 'ltrim', 'compress',
     'select', 'normalise',
     'norm', 'choose', 'zip', 'zipx', 'deepzip', 'deeprzip', 'map', 'pivot', 'layer',
-    'stutter', 'palindrome', 'expand', 'count', 'index', 'submap', 'concat',
+    'stutter', 'palindrome', 'count', 'index', 'submap', 'concat',
     'add', 'abs', 'all', 'startswith', 'limit', 'every', 'copy',
     'asGroup', 'group', 'int', 'float', 'str', 'append', 'extend',
     'insert', 'pop', 'remove', 'set', 'alt', 'string', 'items', 'getitem',
@@ -149,7 +150,8 @@ _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
     'PDelay', 'PStrum', 'PQuicken', 'PRhythm', 'PZip', 'PZip2', 'PRand',
     'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar', 'PSquare', 'PSq',
-    'PRange', 'PStep', 'PEuclid', 'PEuclid2', 'reverse', 'rotate', 'repeat',
+    'PRange', 'PStep', 'PEuclid', 'PEuclid2', 'P10', 'PBern', 'PSine',
+    'PTri', 'PSum', 'reverse', 'rotate', 'repeat',
     'palindrome', 'stutter', 'interleave', 'transpose', 'euclid'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
@@ -271,6 +273,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.defined = set()
         self.group_names = {'p_all'}
         self.pattern_names = set()
+        self.pvar_names = set()
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 self.defined.add(node.name)
@@ -294,6 +297,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             return node.func.id in {'Group', 'Master'}
         return isinstance(node, ast.Name) and node.id in self.group_names
+
+    def _is_pvar_expression(self, node):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            return node.func.id == 'Pvar'
+        return isinstance(node, ast.Name) and node.id in self.pvar_names
 
     def add(self, line, message):
         item = (int(line or 1), message)
@@ -355,7 +363,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 return 'mixed'
             return next(iter(kinds)) if kinds else None
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in {'PRange', 'PSq', 'PEuclid'}:
+            if node.func.id in {'PRange', 'PSq', 'PEuclid', 'P10', 'PBern',
+                                'PSine', 'PTri', 'PSum'}:
                 return 'numeric'
             if node.func.id in {'PStep', 'PEuclid2'}:
                 if node.func.id == 'PStep':
@@ -443,7 +452,9 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         name = node.func.id if isinstance(node.func, ast.Name) else None
         if (isinstance(node.func, ast.Attribute) and
                 self._finite_pattern_expression(node.func.value) and
-                node.func.attr not in _COMPAT_PATTERN_METHODS):
+                node.func.attr not in _COMPAT_PATTERN_METHODS and
+                not (node.func.attr == 'expand' and
+                     self._is_pvar_expression(node.func.value))):
             self.add(node.lineno, "P pattern method '" + node.func.attr +
                      "()' is not in the embedded API; use a supported P method or built-in helper.")
         if name == 'Group':
@@ -513,6 +524,19 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self._check_fixed_signature(node, name, ('n', 'k'), 2)
         if name == 'PEuclid2':
             self._check_fixed_signature(node, name, ('n', 'k', 'lo', 'hi'), 4)
+        if name == 'P10':
+            self._check_fixed_signature(node, name, ('n', 'seed'), 1)
+        if name == 'PBern':
+            self._check_fixed_signature(
+                node, name, ('size', 'ratio', 'seed'), 0)
+        if name == 'PSine':
+            self._check_fixed_signature(node, name, ('n',), 0)
+        if name == 'PTri':
+            self._check_fixed_signature(
+                node, name, ('start', 'stop', 'step'), 1)
+        if name == 'PSum':
+            self._check_fixed_signature(
+                node, name, ('n', 'total', 'lim'), 2)
         if name == 'PAlt':
             if len(node.args) < 2:
                 self.add(node.lineno, 'PAlt requires at least two finite patterns.')
@@ -862,12 +886,17 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Assign(self, node):
         is_pattern_value = self._finite_pattern_expression(node.value)
+        is_pvar_value = self._is_pvar_expression(node.value)
         for target in node.targets:
             if isinstance(target, ast.Name):
                 if is_pattern_value:
                     self.pattern_names.add(target.id)
                 else:
                     self.pattern_names.discard(target.id)
+                if is_pvar_value:
+                    self.pvar_names.add(target.id)
+                else:
+                    self.pvar_names.discard(target.id)
             if (isinstance(target, ast.Attribute) and
                     self._is_group_expression(target.value) and
                     target.attr not in _COMPAT_GROUP_CONTROLS):
@@ -3252,6 +3281,101 @@ def PDelta(deltas, start=0, length=256):
             raise ValueError('PDelta accumulated notes must stay within -1000000..1000000')
         result.append(value)
     return _FoxDotFinitePattern(result)
+
+def P10(n, seed=None):
+    """FoxDot P10: a bounded random binary pattern."""
+    length = _random_pattern_length(n, 'P10')
+    state = _random_pattern_seed(seed, 'P10')
+    result = []
+    for _ in range(length):
+        state, value = _random_pattern_step(state)
+        result.append(1 if value < 0.5 else 0)
+    return _FoxDotFinitePattern(result)
+
+def PBern(size=16, ratio=0.5, seed=None):
+    """FoxDot Bernoulli pattern of zeroes and ones, with deterministic seeding."""
+    length = _random_pattern_length(size, 'PBern')
+    if (not _finite_note_number(ratio) or
+            not 0.0 <= float(ratio) <= 1.0):
+        raise ValueError('PBern ratio must be finite and within 0..1')
+    ratio = float(ratio)
+    state = _random_pattern_seed(seed, 'PBern')
+    result = []
+    for _ in range(length):
+        state, value = _random_pattern_step(state)
+        result.append(1 if value < ratio else 0)
+    return _FoxDotFinitePattern(result)
+
+def PSine(n=16):
+    """One cycle of FoxDot's sine pattern, sampled at n evenly spaced points."""
+    length = _random_pattern_length(n, 'PSine')
+    step = (2.0 * 3.141592653589793) / length
+    return _FoxDotFinitePattern(
+        _dexter_math.sin(step * index) for index in range(length))
+
+def PTri(start, stop=None, step=1):
+    """FoxDot triangle sequence: bounded PRange followed by its inner reverse."""
+    base = list(PRange(start, stop, step))
+    if not base:
+        raise ValueError('PTri range cannot be empty')
+    result = base + base[::-1][1:-1]
+    if len(result) > 256:
+        raise ValueError('PTri output is limited to 256 items')
+    return _FoxDotFinitePattern(result)
+
+def PSum(n, total, lim=0.125):
+    """FoxDot-style bounded duration values whose sum approaches total."""
+    length = _random_pattern_length(n, 'PSum')
+    if (not _finite_note_number(total) or
+            not 0.0 <= float(total) <= 256.0):
+        raise ValueError('PSum total must be finite and within 0..256')
+    if (not _finite_note_number(lim) or
+            not 0.000001 <= float(lim) <= 1.0):
+        raise ValueError('PSum lim must be finite and within 0.000001..1')
+    total = float(total)
+    lim = float(lim)
+
+    # Match FoxDot's dyadic fill strategy while doing whole cyclic rounds in
+    # bounded work, rather than iterating once for every fractional increment.
+    if total == 0.0:
+        return _FoxDotFinitePattern([0.0] * length)
+    data = [total + 1.0]
+    step = 1.0
+    while sum(data) > total:
+        data = [step] * length
+        step *= 0.5
+        if step == 0.0:
+            raise ValueError('PSum could not represent the requested total')
+
+    current = sum(data)
+    cursor = 0
+    for _ in range(64):
+        if current >= total or step < lim:
+            break
+        remaining = total - current
+        if step > remaining:
+            step *= 0.5
+            continue
+        increments = int(remaining / step)
+        while increments > 0 and increments * step > remaining:
+            increments -= 1
+        if increments == 0:
+            step *= 0.5
+            continue
+        full_rounds, extra = divmod(increments, length)
+        if full_rounds:
+            for index in range(length):
+                data[index] += full_rounds * step
+        for offset in range(extra):
+            data[(cursor + offset) % length] += step
+        cursor = (cursor + extra) % length
+        current = sum(data)
+
+    if (len(data) != length or
+            any(not _finite_note_number(value) or value < 0.0 or value > 256.0
+                for value in data)):
+        raise ValueError('PSum generated values outside the finite pattern bounds')
+    return _FoxDotFinitePattern(data)
 
 def PSquare(length=256):
     length = _random_pattern_length(length, 'PSquare')
@@ -7006,7 +7130,7 @@ DiskOut = _DiskRecorder()
 )PY";
 
     std::ostringstream script;
-    script << "import builtins, traceback, sys, time, dis, types\n"
+    script << "import builtins, traceback, sys, time, dis, types, math\n"
            << "_dexter_scope = globals().setdefault(" << pythonLiteral(namespaceName) << ", {})\n"
            << "_dexter_scope['__name__'] = 'dexter'\n"
            << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_bpm_control': None, "
@@ -7022,7 +7146,8 @@ DiskOut = _DiskRecorder()
            << "'zip', 'ValueError', 'TypeError', 'ZeroDivisionError', "
               << "'AttributeError', 'Exception', 'IndexError', 'OverflowError', "
               << "'__build_class__')}\n"
-            << "_dexter_scope['_dexter_dis'] = dis\n"
+             << "_dexter_scope['_dexter_dis'] = dis\n"
+             << "_dexter_scope['_dexter_math'] = math\n"
             << "_dexter_scope['_dexter_function_type'] = types.FunctionType\n"
             << "_dexter_scope['_dexter_builtin_module'] = builtins\n"
             << "_dexter_scope['_dexter_pure_map_builtins'] = {name: getattr(builtins, name) for name in "

@@ -534,6 +534,12 @@ public:
                     pattern.crush = live.crush;
                     pattern.crushControl = {};
                 }
+                if ((live.mask & 64u) != 0) {
+                    pattern.editorPshift = live.pshift;
+                    pattern.editorPshiftOverride = true;
+                    pattern.noteEffectControls[11] = {};
+                    pattern.pshiftEnabled = true;
+                }
                 if (live.mask != 0) {
                     live.mask = 0;
                     publishEditorPlayerState(player);
@@ -828,6 +834,14 @@ public:
                                 [](const PythonNoteEvent& event) {
                                     return event.pshift != 0.0;
                                 });
+                        next.editorPshiftCurrent =
+                            next.noteEffectControls[11].active &&
+                                    next.noteEffectControls[11].count > 0
+                                ? static_cast<float>(
+                                      next.noteEffectControls[11].values[0])
+                                : next.eventCount > 0
+                                      ? static_cast<float>(next.events[0].pshift)
+                                      : 0.0f;
                         next.bits = static_cast<float>(player.bits);
                         next.crush = static_cast<float>(player.crush);
                         next.bitsEnabled = next.bits > 0.0f ||
@@ -1006,6 +1020,8 @@ public:
                 editorPlayerValues_[player][4].load(std::memory_order_acquire);
             state.crush =
                 editorPlayerValues_[player][5].load(std::memory_order_acquire);
+            state.pshift =
+                editorPlayerValues_[player][6].load(std::memory_order_acquire);
         }
     }
 
@@ -1089,6 +1105,10 @@ public:
             case EditorPlayerControl::CrushRate:
                 pending.crush = clampEditorPlayerControl(control, value);
                 bit = 32u;
+                break;
+            case EditorPlayerControl::PShift:
+                pending.pshift = clampEditorPlayerControl(control, value);
+                bit = 64u;
                 break;
             }
             pending.mask |= bit;
@@ -1246,6 +1266,7 @@ private:
         float effectMix = 0.0f;
         float bits = 0.0f;
         float crush = 1.0f;
+        float pshift = 0.0f;
     };
 
     struct PatternState {
@@ -1273,6 +1294,9 @@ private:
         bool coarseEnabled = false;
         bool formantEnabled = false;
         bool pshiftEnabled = false;
+        bool editorPshiftOverride = false;
+        float editorPshift = 0.0f;
+        float editorPshiftCurrent = 0.0f;
         bool bitsEnabled = false;
         float amplitude = 1.0f;
         bool editorAmpOverride = false;
@@ -1398,6 +1422,19 @@ private:
         editorPlayerValues_[player][5].store(
             std::clamp(pattern.crush, 1.0f, 128.0f),
             std::memory_order_release);
+        float pshift = pattern.editorPshiftOverride
+            ? pattern.editorPshift
+            : pattern.eventCount > 0
+                ? static_cast<float>(pattern.events[0].pshift)
+                : 0.0f;
+        if (!pattern.editorPshiftOverride &&
+            pattern.noteEffectControls[11].active &&
+            pattern.noteEffectControls[11].count > 0)
+            pshift = static_cast<float>(
+                pattern.noteEffectControls[11].values[0]);
+        editorPlayerValues_[player][6].store(
+            std::clamp(pshift, -24.0f, 24.0f),
+            std::memory_order_release);
         std::uint64_t chain = 0;
         for (std::size_t slot = 0; slot < pattern.playerEffectCount; ++slot)
             chain |= static_cast<std::uint64_t>(std::clamp(
@@ -1466,6 +1503,7 @@ private:
         std::vector<Graph*> userSynthGraphs;
         Graph* activeSynth = nullptr;
         int playerIndex = -1;
+        int32 noteId = -1;
         int midiNote = -1;
         int velocity = 0;
         int synthIndex = 0;
@@ -1525,6 +1563,7 @@ private:
 
     struct ScheduledAudioNote {
         int playerIndex = 0;
+        int32 noteId = -1;
         int midiNote = -1;
         int velocity = 0;
         int synthIndex = 0;
@@ -2585,9 +2624,11 @@ private:
                         pattern, baseEventBeat, note.delayBeats + dynamicDelay,
                         note.durationBeats);
                     const double pitchShift = std::clamp(
-                        static_cast<double>(evaluateTimeVar(
-                            pattern.noteEffectControls[11], baseEventBeat,
-                            static_cast<float>(note.pshift))),
+                        static_cast<double>(pattern.editorPshiftOverride
+                            ? pattern.editorPshiftCurrent
+                            : evaluateTimeVar(
+                                  pattern.noteEffectControls[11], baseEventBeat,
+                                  static_cast<float>(note.pshift))),
                         -24.0, 24.0);
                     const auto onSample = patternStart + static_cast<std::uint64_t>(
                         std::llround(timing.startSeconds * sampleRate_));
@@ -2644,15 +2685,14 @@ private:
                 auto& gates = activeMidiGates_[player];
                 auto gate = std::find_if(gates.begin(), gates.end(),
                                          [&](const ActiveMidiGate& item) {
-                                             return item.noteId == event.noteId &&
-                                                    item.midiNote == event.midiNote;
+                                             return item.noteId == event.noteId;
                                          });
                 if (gate == gates.end())
                     continue;
                 if (gate->emitted)
                     addMidiNoteEvent(data.outputEvents,
                                      static_cast<int32>(event.sample - sampleClock_),
-                                     event.midiNote, 0, false,
+                                      gate->midiNote, 0, false,
                                      event.playerIndex, event.noteId);
                 *gate = {};
             }
@@ -2660,6 +2700,12 @@ private:
     }
 
     void updateSynthForBlock(std::uint64_t blockStart) {
+        for (auto& pattern : activePatterns_) {
+            if (pattern.active && pattern.editorPshiftOverride) {
+                pattern.editorPshiftCurrent = smoothEditorPlayerControl(
+                    pattern.editorPshiftCurrent, pattern.editorPshift, 0.25f);
+            }
+        }
         std::array<ScheduledAudioNote, kAudioVoiceCount> desired{};
         std::size_t desiredCount = 0;
         const auto midpoint = blockStart + kSCBlockSize / 2;
@@ -2690,7 +2736,8 @@ private:
                             minimumSampleRate = std::min(
                                 minimumSampleRate,
                                 std::abs(pattern.sampleRateControl.values[value]));
-                    double minimumPitchShift = event.pshift;
+                    double minimumPitchShift = pattern.editorPshiftOverride
+                        ? pattern.editorPshiftCurrent : event.pshift;
                     if (pattern.noteEffectControls[11].active)
                         for (std::size_t value = 0;
                              value < pattern.noteEffectControls[11].count; ++value)
@@ -2729,9 +2776,11 @@ private:
                     const double absoluteStartBeat = timing.startBeat;
                     const double sustainSeconds = timing.sustainSeconds;
                     const float pitchShift = std::clamp(
-                        evaluateTimeVar(pattern.noteEffectControls[11],
-                                        absoluteStartBeat,
-                                        static_cast<float>(event.pshift)),
+                        pattern.editorPshiftOverride
+                            ? pattern.editorPshiftCurrent
+                            : evaluateTimeVar(pattern.noteEffectControls[11],
+                                              absoluteStartBeat,
+                                              static_cast<float>(event.pshift)),
                         -24.0f, 24.0f);
                     const double noteCut = std::clamp(
                         static_cast<double>(evaluateTimeVar(
@@ -2816,7 +2865,10 @@ private:
                     if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
                         break;
                     desired[desiredCount++] = ScheduledAudioNote{
-                        static_cast<int>(player), event.midiNote, event.velocity,
+                        static_cast<int>(player),
+                        static_cast<int32>((player * kMaxPatternEvents + i) << 16 |
+                            (static_cast<std::uint64_t>(cycle) & 0xffffu)),
+                        event.midiNote, event.velocity,
                         pattern.synthIndex, isSample ? static_cast<float>(selectedSampleRate) : pattern.synthRate,
                         pattern.amplitude, pattern.pan, pattern.cutoffHz,
                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
@@ -2885,8 +2937,10 @@ private:
                             static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer);
             auto found = std::find_if(voiceBegin, voiceEnd,
                                       [&](const AudioVoice& voice) {
-                                          return voice.playerIndex == note.playerIndex &&
-                                                 voice.midiNote == note.midiNote &&
+                                          return voice.midiNote >= 0 &&
+                                                 !voice.releasing &&
+                                                 voice.playerIndex == note.playerIndex &&
+                                                 voice.noteId == note.noteId &&
                                                  voice.startSample == note.startSample;
                                       });
             if (found == voiceEnd) {
@@ -2897,6 +2951,7 @@ private:
                 if (found == voiceEnd)
                     continue;
                 found->playerIndex = note.playerIndex;
+                found->noteId = note.noteId;
                 found->midiNote = note.midiNote;
                 found->velocity = note.velocity;
                 found->synthIndex = note.synthIndex;
@@ -3033,6 +3088,10 @@ private:
                         continue;
                     }
                 }
+            found->midiNote = note.midiNote;
+            found->pshift = note.pshift;
+            found->frequencyHz = safeSynthFrequency(
+                note.synthIndex, note.midiNote, note.pshift);
                 if (found->activeSynth && found->activeSynth != selectedSynth)
                     Node_SetRun(&found->activeSynth->mNode, 0);
                 found->activeSynth = selectedSynth;
@@ -4578,7 +4637,7 @@ private:
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
     std::array<PendingEditorControl, kPlayerCount> pendingEditorControls_{};
     std::array<std::atomic<std::uint32_t>, kPlayerCount> editorPlayerState_{};
-    std::array<std::array<std::atomic<float>, 6>, kPlayerCount>
+    std::array<std::array<std::atomic<float>, 7>, kPlayerCount>
         editorPlayerValues_{};
     std::array<std::atomic<std::uint64_t>, kPlayerCount> editorPlayerEffectChain_{};
     std::uint8_t pendingPlayerMask_ = 0;

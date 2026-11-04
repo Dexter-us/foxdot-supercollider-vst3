@@ -10,7 +10,8 @@ enum class EditorPlayerControl : std::uint8_t {
     Cutoff,
     EffectMix,
     BitDepth,
-    CrushRate
+    CrushRate,
+    PShift
 };
 
 inline constexpr bool editorPlayerControlAvailable(
@@ -22,6 +23,8 @@ inline constexpr bool editorPlayerControlAvailable(
     case EditorPlayerControl::BitDepth:
     case EditorPlayerControl::CrushRate:
         return bitcrusherEnabled;
+    case EditorPlayerControl::PShift:
+        return true;
     case EditorPlayerControl::Amplitude:
     case EditorPlayerControl::Pan:
     case EditorPlayerControl::Cutoff:
@@ -43,6 +46,8 @@ inline float clampEditorPlayerControl(EditorPlayerControl control, float value) 
         return std::clamp(value, -1.0f, 1.0f);
     case EditorPlayerControl::Cutoff:
         return std::clamp(value, 20.0f, 20000.0f);
+    case EditorPlayerControl::PShift:
+        return std::clamp(value, -24.0f, 24.0f);
     }
     return 0.0f;
 }

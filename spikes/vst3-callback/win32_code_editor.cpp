@@ -27,6 +27,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -62,8 +63,8 @@ constexpr int kPanelStopId = 118;
 constexpr int kPanelSamplesId = 119;
 constexpr int kPanelVersionId = 120;
 constexpr int kPlayerSliderBaseId = 121;
-constexpr int kPlayerControlLabelBaseId = 127;
-constexpr int kPlayerControlValueBaseId = 133;
+constexpr int kPlayerControlLabelBaseId = 128;
+constexpr int kPlayerControlValueBaseId = 135;
 constexpr int kContextCatalogSynthBaseId = 2400;
 constexpr int kContextCatalogEffectBaseId = 2500;
 constexpr int kContextPanelInsertId = 2600;
@@ -509,7 +510,7 @@ private:
                 return 0;
             }
             if (HIWORD(wParam) == LBN_SELCHANGE && LOWORD(wParam) == kPanelListId) {
-                view->updatePlayerActionButtons();
+                view->onPanelListSelectionChanged();
                 return 0;
             }
             break;
@@ -681,8 +682,9 @@ private:
             0, 0, 80, 24, window_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelVersionId)),
             moduleInstance(), nullptr);
-        static constexpr std::array<const wchar_t*, 6> controlLabels{
-            L"Level", L"Pan", L"Cutoff", L"FX mix", L"Bits", L"Crush"};
+        static constexpr std::array<const wchar_t*, 7> controlLabels{
+            L"Level", L"Pan", L"Cutoff", L"FX mix", L"Bits", L"Crush",
+            L"PShift"};
         for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
             playerControlLabels_[index] = CreateWindowExW(
                 0, L"STATIC", controlLabels[index],
@@ -709,7 +711,8 @@ private:
         for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
             if (playerControlSliders_[index]) {
                 const int minimum = index == 5 ? 1 : 0;
-                const int maximum = index == 2 ? 1000
+                const int maximum = index == 6 ? 480
+                    : index == 2 ? 1000
                     : index == 1 ? 200
                     : index == 4 ? 24
                     : index == 5 ? 128 : 100;
@@ -979,7 +982,8 @@ private:
                 left[index].pshiftEnabled != right[index].pshiftEnabled ||
                 left[index].bitcrusherEnabled != right[index].bitcrusherEnabled ||
                 left[index].bits != right[index].bits ||
-                left[index].crush != right[index].crush)
+                left[index].crush != right[index].crush ||
+                left[index].pshift != right[index].pshift)
                 return false;
         }
         return true;
@@ -993,6 +997,34 @@ private:
                          reinterpret_cast<LPARAM>(row.c_str())));
         if (index != LB_ERR)
             SendMessageW(panelList_, LB_SETITEMDATA, index, itemData);
+    }
+
+    std::string catalogCategoryKey(const std::string& category) const {
+        return std::to_string(selectedPanelTab()) + ":" + category;
+    }
+
+    void onPanelListSelectionChanged() {
+        if (!panelList_) {
+            updatePlayerActionButtons();
+            return;
+        }
+        const int selected = static_cast<int>(
+            SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
+        const auto header = catalogCategoryHeaderRows_.find(selected);
+        if (selected != LB_ERR && header != catalogCategoryHeaderRows_.end()) {
+            const auto category = header->second;
+            const auto key = catalogCategoryKey(category);
+            collapsedCatalogCategories_[key] =
+                !collapsedCatalogCategories_[key];
+            renderPanelTab();
+            for (const auto& row : catalogCategoryHeaderRows_) {
+                if (row.second == category) {
+                    SendMessageW(panelList_, LB_SETCURSEL, row.first, 0);
+                    break;
+                }
+            }
+        }
+        updatePlayerActionButtons();
     }
 
     void showCatalogAbout(const dexter::editor::CatalogEntry& entry) {
@@ -1189,6 +1221,7 @@ private:
         if (!panelList_)
             return;
         SendMessageW(panelList_, LB_RESETCONTENT, 0, 0);
+        catalogCategoryHeaderRows_.clear();
         const int tab = selectedPanelTab();
         ShowWindow(panelMuteButton_, tab == 0 ? SW_SHOW : SW_HIDE);
         ShowWindow(panelStopButton_, tab == 0 ? SW_SHOW : SW_HIDE);
@@ -1237,8 +1270,16 @@ private:
             const auto& entry = panelCatalog_[index];
             if (entry.category != currentCategory) {
                 currentCategory = entry.category;
-                addPanelRow(L"— " + fromUtf8(currentCategory) + L" —");
+                const auto key = catalogCategoryKey(currentCategory);
+                const bool collapsed = collapsedCatalogCategories_[key];
+                const int row = static_cast<int>(
+                    SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+                addPanelRow((collapsed ? L"[+] " : L"[-] ") +
+                            fromUtf8(currentCategory));
+                catalogCategoryHeaderRows_[row] = currentCategory;
             }
+            if (collapsedCatalogCategories_[catalogCategoryKey(currentCategory)])
+                continue;
             const auto label = entry.available
                 ? entry.label : entry.label + " [not loaded]";
             addPanelRow(fromUtf8(label), static_cast<int>(index));
@@ -1527,7 +1568,7 @@ private:
                            std::log(1000.0f),
                        0.0f, 1.0f) *
             1000.0f));
-        const std::array<int, 6> positions{
+        const std::array<int, 7> positions{
             static_cast<int>(std::lround(
                 std::clamp(state.amplitude, 0.0f, 1.0f) * 100.0f)),
             static_cast<int>(std::lround(
@@ -1538,14 +1579,18 @@ private:
             static_cast<int>(std::lround(
                 std::clamp(state.bits, 0.0f, 24.0f))),
             static_cast<int>(std::lround(
-                std::clamp(state.crush, 1.0f, 128.0f)))};
-        const std::array<std::wstring, 6> valueTexts{
+                std::clamp(state.crush, 1.0f, 128.0f))),
+            static_cast<int>(std::lround(
+                (std::clamp(state.pshift, -24.0f, 24.0f) + 24.0f) *
+                10.0f))};
+        const std::array<std::wstring, 7> valueTexts{
             fromUtf8(sliderValueText(0, positions[0])),
             fromUtf8(sliderValueText(1, positions[1])),
             fromUtf8(sliderValueText(2, positions[2])),
             fromUtf8(sliderValueText(3, positions[3])),
             fromUtf8(sliderValueText(4, positions[4])),
-            fromUtf8(sliderValueText(5, positions[5]))};
+            fromUtf8(sliderValueText(5, positions[5])),
+            fromUtf8(sliderValueText(6, positions[6]))};
         for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
             if (activePlayerSlider_ == static_cast<int>(index))
                 continue;
@@ -1554,13 +1599,14 @@ private:
                 : index == 2 ? EditorPlayerControl::Cutoff
                 : index == 3 ? EditorPlayerControl::EffectMix
                 : index == 4 ? EditorPlayerControl::BitDepth
-                             : EditorPlayerControl::CrushRate;
+                : index == 5 ? EditorPlayerControl::CrushRate
+                             : EditorPlayerControl::PShift;
             const bool available = editorPlayerControlAvailable(
                 control, state.effectMixAvailable,
                 state.bitcrusherEnabled);
-            const bool bitcrusherControl = index >= 4;
+            const bool conditionalControl = index >= 4;
             const int visibility =
-                bitcrusherControl && !available
+                conditionalControl && !available
                     ? SW_HIDE : SW_SHOW;
             ShowWindow(playerControlLabels_[index], visibility);
             ShowWindow(playerControlSliders_[index], visibility);
@@ -1590,6 +1636,9 @@ private:
             text << position << " bits";
         } else if (index == 5) {
             text << position << "x";
+        } else if (index == 6) {
+            text << std::fixed << std::setprecision(1)
+                 << (position / 10.0 - 24.0) << " st";
         } else {
             const double cutoff = 20.0 * std::pow(1000.0, position / 1000.0);
             text << static_cast<int>(std::lround(cutoff)) << " Hz";
@@ -1606,6 +1655,8 @@ private:
             return std::clamp(static_cast<float>(position), 0.0f, 24.0f);
         if (index == 5)
             return std::clamp(static_cast<float>(position), 1.0f, 128.0f);
+        if (index == 6)
+            return std::clamp(position / 10.0f - 24.0f, -24.0f, 24.0f);
         const double cutoff = 20.0 * std::pow(1000.0, position / 1000.0);
         return static_cast<float>(std::clamp(cutoff, 20.0, 20000.0));
     }
@@ -1624,7 +1675,8 @@ private:
             : index == 2 ? EditorPlayerControl::Cutoff
             : index == 3 ? EditorPlayerControl::EffectMix
             : index == 4 ? EditorPlayerControl::BitDepth
-                         : EditorPlayerControl::CrushRate;
+            : index == 5 ? EditorPlayerControl::CrushRate
+                         : EditorPlayerControl::PShift;
         host_->setEditorPlayerControl(player, control, value);
         if (playerControlValues_[index]) {
             const auto label = fromUtf8(sliderValueText(index, position));
@@ -1648,10 +1700,12 @@ private:
             : index == 2 ? "cutoff"
             : index == 3 ? "fx_mix"
             : index == 4 ? "bits"
-                         : "crush";
+            : index == 5 ? "crush"
+                         : "pshift";
         std::ostringstream number;
         number << std::fixed
-               << std::setprecision(index == 2 ? 1 : index >= 4 ? 0 : 3)
+               << std::setprecision(index == 2 ? 1 : index == 6 ? 1
+                                            : index >= 4 ? 0 : 3)
                << value;
         const bool changed = index == 3
             ? dexter::editor::setPlayerEffectMix(
@@ -2322,12 +2376,14 @@ private:
     HWND panelStopButton_ = nullptr;
     HWND panelSamplesButton_ = nullptr;
     HWND panelVersion_ = nullptr;
-    std::array<HWND, 6> playerControlLabels_{};
-    std::array<HWND, 6> playerControlSliders_{};
+    std::array<HWND, 7> playerControlLabels_{};
+    std::array<HWND, 7> playerControlSliders_{};
     int activePlayerSlider_ = -1;
-    std::array<HWND, 6> playerControlValues_{};
+    std::array<HWND, 7> playerControlValues_{};
     std::array<EditorPlayerState, 8> lastPanelPlayers_{};
     std::vector<dexter::editor::CatalogEntry> panelCatalog_;
+    std::unordered_map<std::string, bool> collapsedCatalogCategories_;
+    std::unordered_map<int, std::string> catalogCategoryHeaderRows_;
     bool panelPlayersInitialized_ = false;
     bool panelEffectsInitialized_ = false;
     bool panelSynthsInitialized_ = false;

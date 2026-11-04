@@ -1,6 +1,7 @@
 import ast
 import builtins
 import dis
+import math
 import os
 import types
 import re
@@ -39,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.143' not in cmake_source or
+if ('VERSION 0.4.144' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -56,11 +57,14 @@ for live_panel_fragment in (
         'beginCatalogDrag(', 'finishCatalogDrag(', 'showCatalogAbout(',
         'makeInstrumentCatalog(', 'makeEffectCatalog(', 'applyCatalogEntry(',
         'renderCatalogEntries()', 'entry.category',
+        'collapsedCatalogCategories_', 'catalogCategoryHeaderRows_',
+        'onPanelListSelectionChanged()', 'L"[+] "', 'L"[-] "',
         'instrumentCategory(', 'effectCategory(',
         '179-editor-catalog-about.html',
         'L"Bits"', 'L"Crush"', 'EditorPlayerControl::BitDepth',
         'EditorPlayerControl::CrushRate', 'editorPlayerControlAvailable(',
-        'index == 4 ? "bits"', '"crush";',
+        'L"PShift"', 'EditorPlayerControl::PShift', '"pshift";',
+        'index == 4 ? "bits"', 'index == 5 ? "crush"',
         'if (state.coarseEnabled)', 'if (state.formantEnabled)',
         'L" Coarse"', 'L" Formant"',
         'if (state.pshiftEnabled)', 'if (state.bitcrusherEnabled)',
@@ -80,6 +84,11 @@ bitcrusher_example = os.path.join(
     os.path.abspath(sys.argv[2]), '180-live-bitcrusher-sliders.py')
 if not os.path.isfile(bitcrusher_example):
     raise AssertionError('Live Bits/Crush slider example is missing.')
+for example_name in ('181-finite-pattern-generator-pack.py',
+                     '182-live-pshift-slider.py'):
+    if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
+                                       example_name)):
+        raise AssertionError('Portable example is missing: ' + example_name)
 for snapshot_fragment in (
         'editorPlayerState_[player].store',
         'editorPlayerState_[player].load',
@@ -97,6 +106,9 @@ for snapshot_fragment in (
         'editorPlayerValues_[player][3]',
         'editorPlayerValues_[player][4]',
         'editorPlayerValues_[player][5]',
+        'editorPlayerValues_[player][6]',
+        'editorPshiftCurrent = smoothEditorPlayerControl(',
+        'pattern.noteEffectControls[11] = {};',
         'live.mask & 16u',
         'live.mask & 32u'):
     if snapshot_fragment not in processor_source:
@@ -198,6 +210,7 @@ namespace = {
     '_dexter_updates': {}, '_dexter_mutes': {},
     '_dexter_shuffle_seed': 123456789,
     '_dexter_dis': dis,
+    '_dexter_math': math,
     '_dexter_function_type': types.FunctionType,
     '_dexter_builtin_module': builtins,
     '_dexter_pure_map_builtins': {
@@ -283,6 +296,30 @@ assert namespace['PStep'](4, 'x', '-') == ['-', '-', '-', 'x']
 assert namespace['PEuclid'](3, 8) == [1, 0, 0, 1, 0, 0, 1, 0]
 assert namespace['PEuclid2'](3, 8, ' ', 'x') == [
     'x', ' ', ' ', 'x', ' ', ' ', 'x', ' ']
+binary10 = namespace['P10'](32, seed=123)
+assert len(binary10) == 32 and set(binary10) <= {0, 1}
+assert binary10 == namespace['P10'](32, seed=123)
+assert len(namespace['P10'](256, seed=1)) == 256
+assert namespace['PBern'](32, 0.0, seed=5) == [0] * 32
+assert namespace['PBern'](32, 1.0, seed=5) == [1] * 32
+assert namespace['PBern'](64, 0.4, seed=99) == namespace['PBern'](
+    64, 0.4, seed=99)
+sinePattern = namespace['PSine']()
+assert len(sinePattern) == 16 and abs(sinePattern[0]) < 1e-12
+assert abs(sinePattern[4] - 1.0) < 1e-12
+assert abs(sinePattern[8]) < 1e-12
+assert abs(sinePattern[12] + 1.0) < 1e-12
+assert namespace['PSine'](256)[0] == 0.0
+assert namespace['PTri'](4) == [0, 1, 2, 3, 2, 1]
+assert namespace['PTri'](5, 0, 2) == [5, 3, 1, 3]
+assert namespace['PTri'](0, 1) == [0]
+psummed = namespace['PSum'](5, 4)
+assert psummed == [1.0, 0.75, 0.75, 0.75, 0.75]
+assert abs(sum(namespace['PSum'](3, 8)) - 8.0) < 1e-9
+assert len(namespace['PSum'](256, 32)) == 256
+assert namespace['PSum'](4, 0) == [0.0, 0.0, 0.0, 0.0]
+assert abs(sum(namespace['PSum'](17, 13.25, lim=0.015625)) -
+           13.25) < 0.02
 assert namespace['P'][0, 2, 2, 4].undup() == [0, 2, 4]
 assert namespace['P'][0, 2, 4].norm() == [0.0, 0.5, 1.0]
 pvarPitched = namespace['Pvar'](
@@ -406,7 +443,23 @@ for generator in (
         lambda: namespace['PEuclid'](9, 8),
         lambda: namespace['PEuclid'](1, 257),
         lambda: namespace['PEuclid'](1, 8.0),
-        lambda: namespace['PEuclid2'](2, 5, 0, 'x')):
+        lambda: namespace['PEuclid2'](2, 5, 0, 'x'),
+        lambda: namespace['P10'](0),
+        lambda: namespace['P10'](257),
+        lambda: namespace['P10'](True),
+        lambda: namespace['P10'](4, seed=True),
+        lambda: namespace['PBern'](257),
+        lambda: namespace['PBern'](4, 1.1),
+        lambda: namespace['PBern'](4, float('nan')),
+        lambda: namespace['PSine'](0),
+        lambda: namespace['PSine'](257),
+        lambda: namespace['PTri'](0, 130),
+        lambda: namespace['PTri'](0, 4, 0),
+        lambda: namespace['PSum'](0, 1),
+        lambda: namespace['PSum'](4, -1),
+        lambda: namespace['PSum'](4, float('inf')),
+        lambda: namespace['PSum'](4, 1, lim=0),
+        lambda: namespace['PSum'](4, 1, lim=1.1)):
     try:
         generator()
     except (TypeError, ValueError):
@@ -2963,6 +3016,11 @@ assert 'No unsupported constructs detected' in compat_pattern_internal_methods, 
     compat_pattern_internal_methods)
 generatorCompatibilityReport = run_compatibility_check(
     'p1 >> saw(PSq(0, 2, 5).norm(), dur=0.25)\n'
+    'p1 >> saw(P10(16, seed=7), dur=0.25)\n'
+    'p2 >> saw(PBern(size=16, ratio=0.4, seed=8), dur=0.25)\n'
+    'p3 >> saw(PSine(16), dur=0.25)\n'
+    'p4 >> saw(PTri(0, 8, 2), dur=0.25)\n'
+    'p5 >> saw(PSum(8, 4, lim=0.125), dur=0.25)\n'
     'p2 >> play(PEuclid2(3, 8, "-", "x"), dur=0.25, sample=0)\n'
     'p3 >> saw(PRange(0, 8, 2).undup(), dur=0.5)\n'
     'notes = P[0, 2, 4, 5].compress(P[1, 0])\n'
@@ -2971,6 +3029,15 @@ generatorCompatibilityReport = run_compatibility_check(
     'p6 >> saw(notes.deep_shuffle(2, seed=17), dur=0.25)\n')
 assert 'No unsupported constructs detected' in generatorCompatibilityReport, (
     generatorCompatibilityReport)
+compat_pvar_expand = run_compatibility_check(
+    'phrases = Pvar([P[0, 2], P[4, 5]], [1, 1])\n'
+    'phrases.expand(0.5)\n')
+assert 'No unsupported constructs detected' in compat_pvar_expand, (
+    compat_pvar_expand)
+compat_pattern_expand = run_compatibility_check(
+    'P[0, 2, 4].expand(0.5)\n')
+assert 'P pattern method' in compat_pattern_expand and 'expand' in (
+    compat_pattern_expand), compat_pattern_expand
 for unsupported_pattern_method in ('transpose',):
     for pattern_expression in (
             'P[0, 2, 4]',
@@ -2984,7 +3051,12 @@ for malformed_generator_call, expected_diagnostic in (
         ('PRange()', 'requires start'),
         ('PStep(4)', 'requires value'),
         ('PEuclid(3)', 'requires k'),
-        ('PEuclid2(3, 8, "-", "x", 1)', 'at most 4 positional')):
+        ('PEuclid2(3, 8, "-", "x", 1)', 'at most 4 positional'),
+        ('P10()', 'requires n'),
+        ('PBern(16, 0.5, 1, 2)', 'at most 3 positional'),
+        ('PSine(16, 2)', 'at most 1 positional'),
+        ('PTri()', 'requires start'),
+        ('PSum(8)', 'requires total')):
     malformedGeneratorReport = run_compatibility_check(
         'p1 >> saw(' + malformed_generator_call + ')\n')
     assert expected_diagnostic in malformedGeneratorReport, (

@@ -715,3 +715,12 @@ live catalog workflow.
 and Crush sliders: select an active player using `bits=` or `crush=` to show
 them; changes are smoothed into the running sound, and releasing a slider
 writes its value back into that player call. Example 180 demonstrates it.
+
+0.4.144 adds bounded P10, PBern, PSine, PTri, and PSum generators. Random
+generators accept an optional seed for repeatable results. The compatibility
+checker now allows `.expand()` on Pvar phrases, not on ordinary finite P
+patterns. Selecting any active player exposes a PShift semitone slider; audio
+voices retune smoothly, while MIDI output applies the changed shift to later
+note-ons. Releasing writes a scalar value back into the player call. Synths and
+Effects category headings can be clicked to collapse or expand their entries.
+Examples 181 and 182 demonstrate these changes.

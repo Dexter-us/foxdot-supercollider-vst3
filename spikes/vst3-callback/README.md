@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.144 adds the finite FoxDot generators `P10`, `PBern`, `PSine`,
+`PTri`, and `PSum`, fixes `.expand()` compatibility checking for `Pvar`,
+exposes PShift as a live semitone slider on any selected player, and makes
+Synths/Effects category headings collapsible. Examples 181–182 cover the new
+controls and generators.
+
 Version 0.4.143 groups the Synths and Effects catalogs by family and adds live
 Bits and Crush sliders for players using the native bitcrusher. Select such a
 player to expose the controls; edits are smoothed in real time and written back

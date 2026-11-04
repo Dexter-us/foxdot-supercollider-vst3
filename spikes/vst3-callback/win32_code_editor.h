@@ -32,6 +32,7 @@ struct EditorPlayerState {
     float effectMix = 0.0f;
     float bits = 0.0f;
     float crush = 1.0f;
+    float pshift = 0.0f;
 };
 
 class ICodeEditorHost {

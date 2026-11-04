@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.143)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.144)
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(

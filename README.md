@@ -2,10 +2,15 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.144 adds the FoxDot finite generators `P10`, `PBern`, `PSine`,
+`PTri`, and `PSum`; corrects the compatibility checker so `.expand()` is
+accepted on `Pvar` but not ordinary finite `P` patterns; adds a live PShift
+semitone slider for any selected player; and makes the Synths/Effects category
+headings collapsible. Examples 181 and 182 demonstrate the generators and
+PShift slider.
+
 Version 0.4.143 groups the Synths and Effects catalogs by family and adds
-player-specific Bits and Crush sliders. Select an active bitcrusher player to
-expose the sliders; changes are smoothed into playback and written back to the
-player call on release. See Example 180.
+player-specific Bits and Crush sliders. See Example 180.
 
 Version 0.4.142 expands the editor catalog: sorted instruments, a fuller native
 Effects list, right-click Insert/About actions, and drag-and-drop onto player
