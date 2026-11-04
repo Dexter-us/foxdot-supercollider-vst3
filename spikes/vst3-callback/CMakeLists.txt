@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.141)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.142)
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
@@ -179,7 +179,7 @@ if(WIN32)
   target_include_directories(dexter_sc_tone PRIVATE
     "${scintilla_SOURCE_DIR}/include" "${lexilla_SOURCE_DIR}/include")
   target_link_libraries(dexter_sc_tone PRIVATE dexter_scintilla dexter_sc_lexilla
-    shell32 comdlg32 comctl32 winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
+    shell32 shlwapi comdlg32 comctl32 winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
 elseif(UNIX AND NOT APPLE)
   target_link_libraries(dexter_sc_tone PRIVATE m rt pthread)
 endif()

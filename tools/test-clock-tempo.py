@@ -23,6 +23,7 @@ def extract(marker, semicolon=False):
 cpp = r"""
 #include "clock_tempo_map.h"
 #include "clock_swing.h"
+#include "player_effect_chain.h"
 #include "python_runtime.h"
 #include <algorithm>
 #include <array>
@@ -42,6 +43,7 @@ constexpr std::size_t kAudioVoiceCount = kPlayerCount * (kMaxPolyphony * 2 + 1);
 constexpr int kSCBlockSize = 64;
 constexpr double kAttackSeconds = .01, kReleaseSeconds = .04;
 constexpr std::array<int, 58> kSynthIndexToGraphIndex{};
+struct PlayerEffectState {};
 struct TestProcessor {
 """
 cpp += extract("    struct TimeVarControl {", True)

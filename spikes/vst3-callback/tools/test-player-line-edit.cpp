@@ -1,5 +1,6 @@
 #include "../player_line_edit.h"
 #include "../live_player_controls.h"
+#include "../editor_catalog.h"
 
 #include <cassert>
 #include <cmath>
@@ -19,6 +20,100 @@ int main() {
            0.4f);
     assert(std::abs(smoothEditorPlayerControl(0.0f, 1.0f, 0.25f) - 0.25f) <
            1e-6f);
+    {
+        std::vector<std::string> embedded{"sine", "square", "pluck", "sample"};
+        std::vector<std::string> external{"CustomPluck", "Chorus"};
+        const auto instruments = makeInstrumentCatalog(embedded, external);
+        assert(std::is_sorted(instruments.begin(), instruments.end(),
+            [](const auto& left, const auto& right) {
+                auto a = left.label;
+                auto b = right.label;
+                std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                return a < b;
+            }));
+        assert(std::none_of(instruments.begin(), instruments.end(),
+            [](const auto& entry) { return entry.name == "square"; }));
+        assert(std::any_of(instruments.begin(), instruments.end(),
+            [](const auto& entry) { return entry.name == "pulse"; }));
+        const auto chorus = std::find_if(instruments.begin(), instruments.end(),
+            [](const auto& entry) { return entry.name == "Chorus"; });
+        assert(chorus == instruments.end());
+        const auto custom = std::find_if(instruments.begin(), instruments.end(),
+            [](const auto& entry) { return entry.name == "CustomPluck"; });
+        assert(custom != instruments.end() &&
+               custom->kind == CatalogKind::UserSynth);
+        const auto effects = makeEffectCatalog(external);
+        assert(effects.size() >= 28);
+        assert(std::is_sorted(effects.begin(), effects.end(),
+            [](const auto& left, const auto& right) {
+                auto a = left.label;
+                auto b = right.label;
+                std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                return a < b;
+            }));
+        const auto loadedChorus = std::find_if(effects.begin(), effects.end(),
+            [](const auto& entry) { return entry.name == "Chorus"; });
+        const auto unloadedJPverb = std::find_if(effects.begin(), effects.end(),
+            [](const auto& entry) { return entry.name == "JPverb"; });
+        assert(loadedChorus != effects.end() && loadedChorus->available);
+        assert(unloadedJPverb != effects.end() && !unloadedJPverb->available);
+    }
+    {
+        std::string source = "# blank player\np3 >>\n";
+        PlayerAssignment assignment;
+        assert(findPlayerLineAt(source, source.find(">>") + 2,
+                                assignment, true));
+        CatalogEntry instrument{CatalogKind::Instrument, "pluck", "pluck",
+                                "built-in", {}, true};
+        std::string error;
+        assert(applyCatalogEntry(source, source.find("p3"), instrument, error));
+        assert(source.find("p3 >> pluck(P[0, 2, 4, 7], dur=0.5, amp=0.25)") !=
+               std::string::npos);
+    }
+    {
+        std::string source = "p3 >>\n";
+        CatalogEntry chorus{CatalogKind::ExternalEffect, "Chorus", "Chorus",
+                            "loaded", {{"fx_mix", "0.25"}}, true};
+        std::string error;
+        assert(applyCatalogEntry(source, 1, chorus, error));
+        assert(source.find("sine(P[0, 2, 4, 7], dur=0.5, amp=0.25, "
+                           "effect=\"Chorus\", fx_mix=0.25)") !=
+               std::string::npos);
+    }
+    {
+        std::string source =
+            "p3 >> sine(P[0, 2, 4], effects=[(\"Chorus\", {})])\n";
+        PlayerAssignment assignment;
+        assert(findPlayerAssignmentAt(source, 1, assignment));
+        CatalogEntry flanger{CatalogKind::ExternalEffect, "Flanger", "Flanger",
+                             "loaded", {{"fx_mix", "0.25"}}, true};
+        std::string error;
+        assert(applyCatalogEntry(source, 1, flanger, error));
+        assert(source.find("P[0, 2, 4], effects=[(\"Chorus\", {}), "
+                           "(\"Flanger\", {})]") != std::string::npos);
+    }
+    {
+        std::string source =
+            "p1 >> sine(0, effects=[(\"Chorus\", {}), (\"Flanger\", {}), "
+            "(\"Phaser\", {}), (\"Tremolo\", {})])\n";
+        const auto original = source;
+        CatalogEntry chorus{CatalogKind::ExternalEffect, "JPverb", "JPverb",
+                            "loaded", {{"fx_mix", "0.25"}}, true};
+        std::string error;
+        assert(!applyCatalogEntry(source, 1, chorus, error));
+        assert(source == original);
+        assert(error.find("four effect") != std::string::npos);
+    }
     float level = 0.0f;
     const float smoothing = 1.0f - std::exp(-1.0f / (44100.0f * 0.01f));
     for (int index = 0; index < 4410; ++index) {

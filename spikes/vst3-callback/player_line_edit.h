@@ -18,6 +18,68 @@ struct PlayerAssignment {
     int playerIndex = -1;
 };
 
+inline bool findPlayerAssignmentAt(std::string_view source,
+                                   std::size_t position,
+                                   PlayerAssignment& result);
+inline std::size_t skipSpace(std::string_view text, std::size_t position,
+                             std::size_t end);
+
+inline bool findPlayerLineAt(std::string_view source, std::size_t position,
+                             PlayerAssignment& result,
+                             bool allowBareLine = false) {
+    if (findPlayerAssignmentAt(source, position, result))
+        return true;
+    if (!allowBareLine || position > source.size())
+        return false;
+    const auto lineStart = position == 0 ? 0 :
+        source.rfind('\n', position - 1) == std::string_view::npos ? 0 :
+        source.rfind('\n', position - 1) + 1;
+    auto lineEnd = source.find('\n', position);
+    if (lineEnd == std::string_view::npos)
+        lineEnd = source.size();
+    auto cursor = skipSpace(source, lineStart, lineEnd);
+    if (cursor >= lineEnd || source[cursor++] != 'p')
+        return false;
+    const auto digitsStart = cursor;
+    while (cursor < lineEnd &&
+           std::isdigit(static_cast<unsigned char>(source[cursor])) != 0)
+        ++cursor;
+    if (digitsStart == cursor)
+        return false;
+    int player = 0;
+    for (auto index = digitsStart; index < cursor; ++index) {
+        player = player * 10 + source[index] - '0';
+        if (player > 8)
+            return false;
+    }
+    if (player < 1)
+        return false;
+    cursor = skipSpace(source, cursor, lineEnd);
+    if (cursor + 1 >= lineEnd || source[cursor] != '>' ||
+        source[cursor + 1] != '>')
+        return false;
+    cursor = skipSpace(source, cursor + 2, lineEnd);
+    if (cursor < lineEnd && source[cursor] != '#')
+        return false;
+    result = {};
+    result.lineStart = lineStart;
+    result.lineEnd = lineEnd;
+    result.synthStart = result.synthEnd = cursor;
+    result.callOpen = result.callClose = cursor;
+    result.playerIndex = player - 1;
+    return true;
+}
+
+inline bool insertPlayerCall(std::string& source,
+                             const PlayerAssignment& assignment,
+                             std::string_view call) {
+    if (assignment.callOpen != assignment.callClose ||
+        assignment.callOpen > source.size() || call.empty())
+        return false;
+    source.insert(assignment.callOpen, call);
+    return true;
+}
+
 inline bool isIdentifierStart(char value) {
     return std::isalpha(static_cast<unsigned char>(value)) != 0 || value == '_';
 }
@@ -404,6 +466,36 @@ inline bool setPlayerEffectMix(std::string& source,
         (last != std::string::npos && source[last] == ',')
             ? " \"fx_mix\": " : ", \"fx_mix\": ";
     source.insert(dictClose, prefix + std::string(value));
+    return true;
+}
+
+inline bool setPlayerListItem(std::string& source,
+                              const PlayerAssignment& assignment,
+                              std::string_view listName,
+                              std::string_view value) {
+    if (listName != "effects" || !isSimpleIdentifier(value))
+        return false;
+    std::size_t valueStart = 0;
+    std::size_t valueEnd = 0;
+    if (!findArgumentValue(source, assignment, listName, true,
+                           valueStart, valueEnd))
+        return false;
+    const auto listOpen = source.find('[', valueStart);
+    if (listOpen == std::string::npos || listOpen >= valueEnd)
+        return false;
+    std::size_t listClose = 0;
+    if (!findMatchingDelimiter(source, listOpen, valueEnd,
+                               '[', ']', listClose))
+        return false;
+    if (countTopLevelItems(source, listOpen, listClose) >= 4)
+        return false;
+    const auto last = source.find_last_not_of(" \t\r\n", listClose - 1);
+    const bool hasItems = last != std::string::npos && last != listOpen &&
+                          source[listOpen + 1] != ']';
+    const auto separator = !hasItems ? "" :
+        source[last] == ',' ? " " : ", ";
+    source.insert(listClose, std::string(separator) + "(\"" +
+                 std::string(value) + "\", {})");
     return true;
 }
 

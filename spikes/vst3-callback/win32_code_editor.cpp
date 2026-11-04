@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <shlwapi.h>
 #include <shobjidl.h>
 
 #include "base/source/fobject.h"
@@ -35,6 +36,7 @@
 #include "SciLexer.h"
 #include "master_output_gain.h"
 #include "plugin_version.h"
+#include "editor_catalog.h"
 #include "player_line_edit.h"
 
 
@@ -62,9 +64,10 @@ constexpr int kPanelVersionId = 120;
 constexpr int kPlayerSliderBaseId = 121;
 constexpr int kPlayerControlLabelBaseId = 125;
 constexpr int kPlayerControlValueBaseId = 129;
-constexpr int kContextSynthBaseId = 2000;
-constexpr int kContextEffectBaseId = 2100;
-constexpr int kContextNativeEffectBaseId = 2200;
+constexpr int kContextCatalogSynthBaseId = 2400;
+constexpr int kContextCatalogEffectBaseId = 2500;
+constexpr int kContextPanelInsertId = 2600;
+constexpr int kContextPanelAboutId = 2601;
 constexpr UINT kSciPositionFromPointClose = 2023;
 constexpr int kViewWidth = 1000;
 constexpr int kViewHeight = 600;
@@ -370,9 +373,29 @@ private:
         UINT_PTR subclassId, DWORD_PTR referenceData) {
         (void)subclassId;
         auto* view = reinterpret_cast<CodeEditorView*>(referenceData);
-        if (view && message == WM_CONTEXTMENU &&
-            view->showPlayerContextMenu(editor, lParam))
-            return 0;
+        if (view && message == WM_CONTEXTMENU) {
+            if (editor == view->editor_ &&
+                view->showPlayerContextMenu(editor, lParam))
+                return 0;
+            if (editor == view->panelList_ &&
+                view->showPanelCatalogMenu(lParam))
+                return 0;
+        }
+        if (view && editor == view->panelList_) {
+            if (message == WM_LBUTTONDOWN)
+                view->beginCatalogDrag(lParam);
+            else if (message == WM_MOUSEMOVE &&
+                     view->updateCatalogDrag(wParam, lParam))
+                return 0;
+            else if (message == WM_LBUTTONUP &&
+                     view->finishCatalogDrag(lParam))
+                return 0;
+            else if (message == WM_CANCELMODE)
+                view->resetCatalogDrag();
+            else if (message == WM_CAPTURECHANGED &&
+                     reinterpret_cast<HWND>(lParam) != view->panelList_)
+                view->resetCatalogDrag();
+        }
         return DefSubclassProc(editor, message, wParam, lParam);
     }
 
@@ -629,6 +652,9 @@ private:
             0, 0, 260, 360, window_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelListId)),
             moduleInstance(), nullptr);
+        if (panelList_)
+            SetWindowSubclass(panelList_, editorSubclassProcedure, 2,
+                              reinterpret_cast<DWORD_PTR>(this));
         panelMuteButton_ = CreateWindowExW(
             0, L"BUTTON", L"Mute player",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
@@ -959,8 +985,185 @@ private:
         const auto index = static_cast<int>(
             SendMessageW(panelList_, LB_ADDSTRING, 0,
                          reinterpret_cast<LPARAM>(row.c_str())));
-        if (index != LB_ERR && itemData >= 0)
+        if (index != LB_ERR)
             SendMessageW(panelList_, LB_SETITEMDATA, index, itemData);
+    }
+
+    void showCatalogAbout(const dexter::editor::CatalogEntry& entry) {
+        const auto directory = portableScriptDirectory();
+        if (directory.empty()) {
+            const auto message = fromUtf8(entry.label + "\n\n" + entry.about);
+            MessageBoxW(window_, message.c_str(),
+                        L"Instrument / effect information",
+                        MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        const auto help = directory / L"179-editor-catalog-about.html";
+        std::array<wchar_t, 32768> pageUrl{};
+        DWORD pageUrlLength = static_cast<DWORD>(pageUrl.size());
+        const auto pathResult = UrlCreateFromPathW(
+            help.c_str(), pageUrl.data(), &pageUrlLength, 0);
+        std::array<wchar_t, 1024> escapedAnchor{};
+        DWORD escapedLength = static_cast<DWORD>(escapedAnchor.size());
+        const auto anchor = fromUtf8(entry.name);
+        const auto anchorResult = UrlEscapeW(
+            anchor.c_str(), escapedAnchor.data(), &escapedLength,
+            URL_ESCAPE_SEGMENT_ONLY);
+        std::wstring target;
+        if (SUCCEEDED(pathResult) && SUCCEEDED(anchorResult)) {
+            target.assign(pageUrl.data());
+            target += L"#";
+            target += escapedAnchor.data();
+        }
+        const auto opened = target.empty() ? 0 : reinterpret_cast<INT_PTR>(
+            ShellExecuteW(window_, L"open", target.c_str(), nullptr, nullptr,
+                          SW_SHOWNORMAL));
+        if (opened > 32)
+            return;
+        const auto message = fromUtf8(entry.label + "\n\n" + entry.about);
+        MessageBoxW(window_, message.c_str(), L"Instrument / effect information",
+                    MB_OK | MB_ICONINFORMATION);
+    }
+
+    void insertCatalogEntryAtCaret(
+        const dexter::editor::CatalogEntry& entry,
+        std::size_t position) {
+        auto source = editorUtf8Source();
+        std::string failure;
+        if (!dexter::editor::applyCatalogEntry(source, position, entry,
+                                                failure)) {
+            SetWindowTextW(status_, fromUtf8(failure).c_str());
+            return;
+        }
+        applyEditorTextEdit(source);
+        SetWindowTextW(status_, L"Added to script. Click Run to apply it.");
+    }
+
+    bool showPanelCatalogMenu(LPARAM coordinates) {
+        if (!panelList_)
+            return false;
+        int row = LB_ERR;
+        const POINTS packed = MAKEPOINTS(coordinates);
+        if (packed.x == -1 && packed.y == -1) {
+            row = static_cast<int>(SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
+        } else {
+            POINT local{packed.x, packed.y};
+            if (!ScreenToClient(panelList_, &local))
+                return false;
+            const auto hit = static_cast<DWORD>(SendMessageW(
+                panelList_, LB_ITEMFROMPOINT, 0,
+                MAKELPARAM(local.x, local.y)));
+            if (HIWORD(hit) == 0)
+                row = LOWORD(hit);
+        }
+        if (row < 0)
+            return false;
+        const auto itemData = static_cast<LRESULT>(
+            SendMessageW(panelList_, LB_GETITEMDATA, row, 0));
+        if (itemData < 0 ||
+            static_cast<std::size_t>(itemData) >= panelCatalog_.size())
+            return false;
+        const auto& entry = panelCatalog_[static_cast<std::size_t>(itemData)];
+        HMENU menu = CreatePopupMenu();
+        if (!menu)
+            return true;
+        AppendMenuW(menu, MF_STRING |
+                    (entry.available ? 0 : MF_GRAYED),
+                    kContextPanelInsertId, L"Insert at editor caret");
+        AppendMenuW(menu, MF_STRING, kContextPanelAboutId,
+                    L"About this item");
+        POINT point{packed.x, packed.y};
+        if (packed.x == -1 && packed.y == -1) {
+            RECT itemRect{};
+            SendMessageW(panelList_, LB_GETITEMRECT, row,
+                         reinterpret_cast<LPARAM>(&itemRect));
+            point.x = itemRect.left;
+            point.y = itemRect.bottom;
+            ClientToScreen(panelList_, &point);
+        }
+        const auto command = TrackPopupMenu(
+            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0,
+            window_, nullptr);
+        DestroyMenu(menu);
+        if (command == kContextPanelAboutId) {
+            showCatalogAbout(entry);
+        } else if (command == kContextPanelInsertId && editor_) {
+            const auto caret = static_cast<std::size_t>(
+                SendMessageW(editor_, SCI_GETCURRENTPOS, 0, 0));
+            insertCatalogEntryAtCaret(entry, caret);
+        }
+        return true;
+    }
+
+    void beginCatalogDrag(LPARAM coordinates) {
+        resetCatalogDrag();
+        const auto hit = static_cast<DWORD>(SendMessageW(
+            panelList_, LB_ITEMFROMPOINT, 0, coordinates));
+        if (HIWORD(hit) != 0)
+            return;
+        const auto row = static_cast<int>(LOWORD(hit));
+        SendMessageW(panelList_, LB_SETCURSEL, row, 0);
+        const auto itemData = static_cast<LRESULT>(
+            SendMessageW(panelList_, LB_GETITEMDATA, row, 0));
+        if (itemData < 0 ||
+            static_cast<std::size_t>(itemData) >= panelCatalog_.size())
+            return;
+        const auto& entry = panelCatalog_[static_cast<std::size_t>(itemData)];
+        if (!entry.available)
+            return;
+        dragCatalogEntry_ = entry;
+        dragCatalogPending_ = true;
+        GetCursorPos(&catalogDragOrigin_);
+    }
+
+    bool updateCatalogDrag(WPARAM buttons, LPARAM) {
+        if (!dragCatalogPending_ || !(buttons & MK_LBUTTON))
+            return false;
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        if (!catalogDragActive_ &&
+            std::abs(cursor.x - catalogDragOrigin_.x) < GetSystemMetrics(SM_CXDRAG) &&
+            std::abs(cursor.y - catalogDragOrigin_.y) < GetSystemMetrics(SM_CYDRAG))
+            return false;
+        if (!catalogDragActive_) {
+            catalogDragActive_ = true;
+            SetCapture(panelList_);
+            SetWindowTextW(status_, L"Drop on a pN >> player line to insert.");
+        }
+        SetCursor(LoadCursorW(nullptr, IDC_HAND));
+        return true;
+    }
+
+    void resetCatalogDrag() {
+        dragCatalogPending_ = false;
+        catalogDragActive_ = false;
+    }
+
+    bool finishCatalogDrag(LPARAM) {
+        if (!catalogDragPending_ && !catalogDragActive_)
+            return false;
+        const bool wasActive = catalogDragActive_;
+        const auto entry = dragCatalogEntry_;
+        resetCatalogDrag();
+        if (GetCapture() == panelList_)
+            ReleaseCapture();
+        if (!wasActive || !editor_)
+            return wasActive;
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        POINT client = cursor;
+        if (!ScreenToClient(editor_, &client))
+            return true;
+        RECT bounds{};
+        GetClientRect(editor_, &bounds);
+        if (!PtInRect(&bounds, client)) {
+            SetWindowTextW(status_, L"Drop canceled. Drag onto a player line.");
+            return true;
+        }
+        const auto position = static_cast<std::size_t>(SendMessageW(
+            editor_, kSciPositionFromPointClose, client.x, client.y));
+        insertCatalogEntryAtCaret(entry, position);
+        return true;
     }
 
     std::wstring synthNameForIndex(
@@ -992,65 +1195,41 @@ private:
         }
         if (tab == 0) {
             panelPlayersInitialized_ = false;
+            panelCatalog_.clear();
             refreshPlayersPanel();
         } else if (tab == 1) {
-            for (const auto* name : kEmbeddedSynthNames)
-                addPanelRow(fromUtf8(name));
+            const auto externalNames =
+                host_ ? host_->editorExternalSynthNames()
+                      : std::vector<std::string>{};
+            panelCatalog_ = dexter::editor::makeInstrumentCatalog(
+                std::vector<std::string>(kEmbeddedSynthNames.begin(),
+                                         kEmbeddedSynthNames.end()),
+                externalNames);
+            for (std::size_t index = 0; index < panelCatalog_.size(); ++index) {
+                const auto& entry = panelCatalog_[index];
+                addPanelRow(fromUtf8(entry.label),
+                            static_cast<int>(index));
+            }
             if (host_) {
-                const auto externalNames = host_->editorExternalSynthNames();
-                for (const auto& name : externalNames) {
-                    if (name == "AirwindowsTapeDelay2" ||
-                        name == "AirwindowsEchojam" ||
-                        name == "JPverb" || name == "Greyhole" ||
-                        name == "Chorus" || name == "Flanger" ||
-                        name == "Phaser" || name == "Tremolo")
-                        continue;
-                    addPanelRow(fromUtf8(name) + L"  [Portable SynthDef]");
-                }
                 lastPanelSynthNames_ = externalNames;
                 panelSynthsInitialized_ = true;
             }
         } else if (tab == 2) {
-            addPanelRow(L"Reverb: Freeverb");
-            addPanelRow(L"Reverb: Freeverb2");
-            addPanelRow(L"Reverb: GVerb");
-            addPanelRow(L"Echo / Delay");
-            addPanelRow(L"Low-pass / High-pass / Band-pass");
-            addPanelRow(L"FoxDot shape (native player effect)");
-            addPanelRow(L"FoxDot drive (native player effect)");
-            addPanelRow(L"FoxDot chop (per-note gate)");
-            addPanelRow(L"FoxDot spin (stereo pan motion)");
-            addPanelRow(L"FoxDot coarse (per-note pulse gate)");
-            addPanelRow(L"FoxDot formant (Formlet-style note filter)");
-            addPanelRow(L"Airwindows TapeDelay2");
-            addPanelRow(L"Airwindows Echojam");
-            if (host_) {
-                const auto externalNames = host_->editorExternalSynthNames();
-                const auto loaded = [&](const char* name) {
-                    return std::find(externalNames.begin(), externalNames.end(),
-                                     name) != externalNames.end();
-                };
-                addPanelRow(loaded("JPverb")
-                                ? L"JPverb  [loaded optional UGen]"
-                                : L"JPverb  [install optional UGen pack]");
-                addPanelRow(loaded("Greyhole")
-                                ? L"Greyhole  [loaded optional UGen]"
-                                : L"Greyhole  [install optional UGen pack]");
-                addPanelRow(loaded("Chorus")
-                                ? L"Chorus  [player effect]"
-                                : L"Chorus  [SynthDef unavailable]");
-                addPanelRow(loaded("Flanger")
-                                ? L"Flanger  [player effect]"
-                                : L"Flanger  [SynthDef unavailable]");
-                addPanelRow(loaded("Phaser")
-                                ? L"Phaser  [player effect]"
-                                : L"Phaser  [SynthDef unavailable]");
-                addPanelRow(loaded("Tremolo")
-                                ? L"Tremolo  [player effect]"
-                                : L"Tremolo  [SynthDef unavailable]");
-            }
+            const auto externalNames =
+                host_ ? host_->editorExternalSynthNames()
+                      : std::vector<std::string>{};
             renderLiveEffectsPanel();
+            panelCatalog_ =
+                dexter::editor::makeEffectCatalog(externalNames);
+            for (std::size_t index = 0; index < panelCatalog_.size(); ++index) {
+                const auto& entry = panelCatalog_[index];
+                const auto label = entry.available
+                    ? entry.label : entry.label + " [not loaded]";
+                addPanelRow(fromUtf8(label),
+                            static_cast<int>(index));
+            }
         } else if (tab == 3) {
+            panelCatalog_.clear();
             renderSamplePanel();
         }
         updatePlayerActionButtons();
@@ -1647,17 +1826,13 @@ private:
             return false;
         const auto position = static_cast<std::size_t>(SendMessageW(
             editor_, kSciPositionFromPointClose, clientPoint.x, clientPoint.y));
-        if (position >= editorUtf8Source().size())
+        if (position > editorUtf8Source().size())
             return false;
         auto source = editorUtf8Source();
         dexter::editor::PlayerAssignment assignment;
-        if (!dexter::editor::findPlayerAssignmentAt(source, position,
-                                                     assignment))
+        if (!dexter::editor::findPlayerLineAt(source, position, assignment,
+                                               true))
             return false;
-        const auto currentSynth = source.substr(
-            assignment.synthStart, assignment.synthEnd - assignment.synthStart);
-        const bool canChangeInstrument =
-            currentSynth != "play" && currentSynth != "userSynth";
 
         HMENU menu = CreatePopupMenu();
         HMENU instruments = CreatePopupMenu();
@@ -1668,93 +1843,63 @@ private:
             if (effects) DestroyMenu(effects);
             return true;
         }
-        for (std::size_t index = 0; index < kEmbeddedSynthNames.size(); ++index) {
-            if (std::string_view(kEmbeddedSynthNames[index]) == "sample")
-                continue;
-            AppendMenuW(instruments, MF_STRING,
-                        static_cast<UINT_PTR>(kContextSynthBaseId + index),
-                        fromUtf8(index == 3 ? "pulse" :
-                                   kEmbeddedSynthNames[index]).c_str());
-        }
-        std::vector<std::string> loadedEffects;
         const auto externalNames = host_->editorExternalSynthNames();
-        static constexpr std::array<const char*, 8> knownEffects{
-            "AirwindowsTapeDelay2", "AirwindowsEchojam", "JPverb",
-            "Greyhole", "Chorus", "Flanger", "Phaser", "Tremolo"};
-        for (const auto* name : knownEffects) {
-            if (std::find(externalNames.begin(), externalNames.end(), name) ==
-                externalNames.end())
-                continue;
-            const auto command =
-                kContextEffectBaseId + static_cast<int>(loadedEffects.size());
-            loadedEffects.emplace_back(name);
-            AppendMenuW(effects, MF_STRING, static_cast<UINT_PTR>(command),
-                        fromUtf8(name).c_str());
-        }
-        static constexpr std::array<const wchar_t*, 4> nativeEffectLabels{
-            L"Enable echo", L"Enable reverb", L"Enable shape", L"Enable drive"};
-        if (!loadedEffects.empty())
-            AppendMenuW(effects, MF_SEPARATOR, 0, nullptr);
-        for (std::size_t index = 0; index < nativeEffectLabels.size(); ++index)
-            AppendMenuW(effects, MF_STRING,
-                        static_cast<UINT_PTR>(
-                            kContextNativeEffectBaseId + index),
-                        nativeEffectLabels[index]);
-        AppendMenuW(menu, MF_POPUP | (canChangeInstrument ? 0 : MF_GRAYED),
+        std::vector<std::string> embedded(kEmbeddedSynthNames.begin(),
+                                          kEmbeddedSynthNames.end());
+        const auto instrumentsCatalog =
+            dexter::editor::makeInstrumentCatalog(embedded, externalNames);
+        const auto effectsCatalog =
+            dexter::editor::makeEffectCatalog(externalNames);
+        for (std::size_t index = 0; index < instrumentsCatalog.size(); ++index)
+            AppendMenuW(
+                instruments, MF_STRING |
+                    (instrumentsCatalog[index].available ? 0 : MF_GRAYED),
+                static_cast<UINT_PTR>(kContextCatalogSynthBaseId + index),
+                fromUtf8(instrumentsCatalog[index].label).c_str());
+        for (std::size_t index = 0; index < effectsCatalog.size(); ++index)
+            AppendMenuW(
+                effects, MF_STRING |
+                    (effectsCatalog[index].available ? 0 : MF_GRAYED),
+                static_cast<UINT_PTR>(kContextCatalogEffectBaseId + index),
+                fromUtf8(effectsCatalog[index].label).c_str());
+        AppendMenuW(menu, MF_POPUP,
                     reinterpret_cast<UINT_PTR>(instruments),
                     L"Change instrument");
-        std::size_t chainStart = 0;
-        std::size_t chainEnd = 0;
-        const bool hasEffectChain = dexter::editor::findArgumentValue(
-            source, assignment, "effects", true, chainStart, chainEnd);
         AppendMenuW(menu, MF_POPUP,
                     reinterpret_cast<UINT_PTR>(effects),
-                    hasEffectChain ? L"Append effect to chain"
-                                   : L"Set / replace effect");
+                    L"Add effect or control");
         const auto command = TrackPopupMenu(
             menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPoint.x,
             screenPoint.y, 0, window_, nullptr);
         DestroyMenu(menu);
-        if (canChangeInstrument && command >= kContextSynthBaseId &&
-            command < kContextSynthBaseId +
-                          static_cast<int>(kEmbeddedSynthNames.size())) {
+        if (command >= kContextCatalogSynthBaseId &&
+            command < kContextCatalogSynthBaseId +
+                          static_cast<int>(instrumentsCatalog.size())) {
             source = editorUtf8Source();
-            if (dexter::editor::findPlayerAssignmentAt(
-                    source, position, assignment) &&
-                dexter::editor::replacePlayerSynth(
-                    source, assignment,
-                    command - kContextSynthBaseId == 3
-                        ? "pulse" :
-                          kEmbeddedSynthNames[command - kContextSynthBaseId]))
+            std::string failure;
+            if (dexter::editor::applyCatalogEntry(
+                    source, position,
+                    instrumentsCatalog[command - kContextCatalogSynthBaseId],
+                    failure)) {
                 applyEditorTextEdit(source);
-        } else if (command >= kContextEffectBaseId &&
-                   command < kContextEffectBaseId +
-                                 static_cast<int>(loadedEffects.size())) {
+                SetWindowTextW(status_, L"Instrument inserted. Click Run to apply it.");
+            } else {
+                SetWindowTextW(status_, fromUtf8(failure).c_str());
+            }
+        } else if (command >= kContextCatalogEffectBaseId &&
+                   command < kContextCatalogEffectBaseId +
+                                 static_cast<int>(effectsCatalog.size())) {
             source = editorUtf8Source();
-            if (dexter::editor::findPlayerAssignmentAt(
-                    source, position, assignment) &&
-                dexter::editor::setPlayerEffect(
-                    source, assignment,
-                    loadedEffects[command - kContextEffectBaseId]))
+            std::string failure;
+            if (dexter::editor::applyCatalogEntry(
+                    source, position,
+                    effectsCatalog[command - kContextCatalogEffectBaseId],
+                    failure)) {
                 applyEditorTextEdit(source);
-            else
-                SetWindowTextW(status_,
-                    L"Could not add effect: check the player call and four-insert chain limit.");
-        } else if (command >= kContextNativeEffectBaseId &&
-                   command < kContextNativeEffectBaseId + 4) {
-            static constexpr std::array<const char*, 4> nativeKeywords{
-                "echo", "room", "shape", "drive"};
-            static constexpr std::array<const char*, 4> nativeValues{
-                "0.35", "0.7", "0.2", "0.15"};
-            const auto index = static_cast<std::size_t>(
-                command - kContextNativeEffectBaseId);
-            source = editorUtf8Source();
-            if (dexter::editor::findPlayerAssignmentAt(
-                    source, position, assignment) &&
-                dexter::editor::setPlayerArgument(
-                    source, assignment, nativeKeywords[index],
-                    nativeValues[index]))
-                applyEditorTextEdit(source);
+                SetWindowTextW(status_, L"Added to script. Click Run to apply it.");
+            } else {
+                SetWindowTextW(status_, fromUtf8(failure).c_str());
+            }
         }
         return true;
     }
@@ -2130,10 +2275,15 @@ private:
     int activePlayerSlider_ = -1;
     std::array<HWND, 4> playerControlValues_{};
     std::array<EditorPlayerState, 8> lastPanelPlayers_{};
+    std::vector<dexter::editor::CatalogEntry> panelCatalog_;
     bool panelPlayersInitialized_ = false;
     bool panelEffectsInitialized_ = false;
     bool panelSynthsInitialized_ = false;
     std::vector<std::string> lastPanelSynthNames_;
+    dexter::editor::CatalogEntry dragCatalogEntry_{};
+    POINT catalogDragOrigin_{};
+    bool dragCatalogPending_ = false;
+    bool catalogDragActive_ = false;
     std::wstring lastDiagnostic_;
     bool copyDiagnosticPinned_ = false;
     std::wstring currentFilePath_;

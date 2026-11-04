@@ -1,15 +1,18 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.141 adds a right-click editor menu for changing the instrument on a
-`pN >> ...` line and adding a native echo/reverb/shape/drive control or a loaded
-player-effect SynthDef. It also adds live per-player Level, Pan, Cutoff, and
-FX-mix sliders; audio-thread updates are queued and smoothed without rerunning
-the script. Releasing a slider writes its scalar value into the selected
-player's source line so the setting can be saved. Portable Example 178 shows the
-panel workflow. FX Mix controls the first insert in a chain. Releasing a slider
-replaces that parameter's pattern/time-variable expression with a scalar;
-ordinary code edits can restore modulation. Instrument changes are offered for
-pitched-player calls, not sample strings or `userSynth()` calls.
+Version 0.4.142 alphabetizes the instrument catalog, expands the Effects list
+with the embedded native controls and optional loaded inserts, and supports
+right-click or drag-and-drop from either sidebar onto a player line. A bare
+`p3 >>` gets a starter voice; choosing an effect there first creates a default
+sine player. Right-click sidebar rows for About details and effect ranges in
+`Portable/179-editor-catalog-about.html`. Example 179 demonstrates the workflow.
+Catalog actions edit source; click Run to apply. No SuperCollider server or OSC
+connection is introduced.
+
+Version 0.4.141 added live per-player Level, Pan, Cutoff, and FX-mix sliders;
+audio-thread updates are queued and smoothed without rerunning the script.
+Releasing a slider writes its scalar value into the selected player's source
+line. FX Mix controls the first insert in a chain. See Portable Example 178.
 
 Version 0.4.140 adds bounded FoxDot-style `pshift` (semitones, -24 to +24)
 and native per-player `bits`/`crush` controls. `bits=0` bypasses bit-depth

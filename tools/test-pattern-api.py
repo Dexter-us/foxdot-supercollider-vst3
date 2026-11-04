@@ -30,13 +30,16 @@ editor_source = read_cpp_source(editor_path)
 editor_host_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
                                 'win32_code_editor.h')
 editor_host_source = read_cpp_source(editor_host_path)
+catalog_source_path = os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[1])), 'editor_catalog.h')
+catalog_source = read_cpp_source(catalog_source_path)
 cmake_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
                           'CMakeLists.txt')
 cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.141' not in cmake_source or
+if ('VERSION 0.4.142' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -46,24 +49,28 @@ for live_panel_fragment in (
         'refreshPlayersPanel()', 'renderLiveEffectsPanel()',
         'renderSamplePanel()', 'Open Samples Folder', 'panelVersion_',
         'setEditorPlayerMuted(', 'stopEditorPlayer(',
-        'WM_CONTEXTMENU', 'TrackPopupMenu', 'kContextSynthBaseId',
-        'kContextNativeEffectBaseId', 'setEditorPlayerControl(',
+        'WM_CONTEXTMENU', 'TrackPopupMenu', 'kContextCatalogSynthBaseId',
+        'kContextCatalogEffectBaseId', 'setEditorPlayerControl(',
         'TB_ENDTRACK', 'commitPlayerControlToSource(',
         'kSciPositionFromPointClose',
-        'FoxDot shape (native player effect)',
-        'FoxDot drive (native player effect)',
-        'FoxDot chop (per-note gate)',
-        'FoxDot spin (stereo pan motion)',
-        'FoxDot coarse (per-note pulse gate)',
-        'FoxDot formant (Formlet-style note filter)',
+        'beginCatalogDrag(', 'finishCatalogDrag(', 'showCatalogAbout(',
+        'makeInstrumentCatalog(', 'makeEffectCatalog(', 'applyCatalogEntry(',
+        '179-editor-catalog-about.html',
         'if (state.coarseEnabled)', 'if (state.formantEnabled)',
         'L" Coarse"', 'L" Formant"',
         'if (state.pshiftEnabled)', 'if (state.bitcrusherEnabled)',
-        'L" PShift"', 'L" Bits/Crush"',
-        'Chorus  [player effect]', 'Flanger  [player effect]',
-        'Phaser  [player effect]', 'Tremolo  [player effect]'):
-    if live_panel_fragment not in editor_source + editor_host_source:
+        'L" PShift"', 'L" Bits/Crush"'):
+    if live_panel_fragment not in (
+            editor_source + editor_host_source + catalog_source):
         raise AssertionError('Live engine panel is missing: ' + live_panel_fragment)
+if ('beginCatalogDrag' not in editor_source or
+        'finishCatalogDrag' not in editor_source or
+        'About this item' not in editor_source):
+    raise AssertionError('Catalog drag/right-click About actions are missing.')
+catalog_help = os.path.join(os.path.abspath(sys.argv[2]),
+                            '179-editor-catalog-about.html')
+if not os.path.isfile(catalog_help):
+    raise AssertionError('Bundled editor catalog About page is missing.')
 for snapshot_fragment in (
         'editorPlayerState_[player].store',
         'editorPlayerState_[player].load',

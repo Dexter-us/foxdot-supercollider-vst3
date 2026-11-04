@@ -1,9 +1,16 @@
-0.4.141 adds a right-click menu on a `pN >> ...` line to change its instrument
-or add/choose a loaded player effect. The menu also inserts native echo, reverb,
-shape, and drive controls. The Players panel has live Level, Pan, Cutoff, and
-FX-mix sliders. Changes are queued to the local audio engine and smoothed without
-rerunning the script; releasing a slider writes its scalar value into the script
-line for saving. See Example 178.
+0.4.142 alphabetizes the instrument list, expands the Effects catalog with the
+embedded native controls and optional loaded inserts, and supports right-click
+or drag-and-drop from either sidebar onto a player line. A bare `p3 >>` receives
+a starter voice; choosing an effect there first creates a default sine player.
+Right-click sidebar items for About details and ranges in
+179-editor-catalog-about.html. Example 179 demonstrates editing from the panel.
+Catalog actions modify source only; click Run to apply. The insert is bounded
+to four effects per player.
+
+0.4.141 adds live Players-panel Level, Pan, Cutoff, and FX-mix sliders. Changes
+are queued to the local audio engine and smoothed without rerunning the script;
+releasing a slider writes its scalar value into the script line for saving.
+See Example 178.
 
 0.4.140 adds bounded FoxDot-style `pshift` semitone transposition (-24 to +24)
 and native per-player `bits`/`crush` controls. `bits=0` bypasses quantization;
