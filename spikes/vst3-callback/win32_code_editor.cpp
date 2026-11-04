@@ -21,7 +21,9 @@
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -33,6 +35,7 @@
 #include "SciLexer.h"
 #include "master_output_gain.h"
 #include "plugin_version.h"
+#include "player_line_edit.h"
 
 
 namespace {
@@ -56,6 +59,13 @@ constexpr int kPanelMuteId = 117;
 constexpr int kPanelStopId = 118;
 constexpr int kPanelSamplesId = 119;
 constexpr int kPanelVersionId = 120;
+constexpr int kPlayerSliderBaseId = 121;
+constexpr int kPlayerControlLabelBaseId = 125;
+constexpr int kPlayerControlValueBaseId = 129;
+constexpr int kContextSynthBaseId = 2000;
+constexpr int kContextEffectBaseId = 2100;
+constexpr int kContextNativeEffectBaseId = 2200;
+constexpr UINT kSciPositionFromPointClose = 2023;
 constexpr int kViewWidth = 1000;
 constexpr int kViewHeight = 600;
 constexpr int kMargin = 10;
@@ -355,6 +365,17 @@ private:
         return true;
     }
 
+    static LRESULT CALLBACK editorSubclassProcedure(
+        HWND editor, UINT message, WPARAM wParam, LPARAM lParam,
+        UINT_PTR subclassId, DWORD_PTR referenceData) {
+        (void)subclassId;
+        auto* view = reinterpret_cast<CodeEditorView*>(referenceData);
+        if (view && message == WM_CONTEXTMENU &&
+            view->showPlayerContextMenu(editor, lParam))
+            return 0;
+        return DefSubclassProc(editor, message, wParam, lParam);
+    }
+
     static LRESULT CALLBACK windowProcedure(HWND window, UINT message,
                                              WPARAM wParam, LPARAM lParam) {
         auto* view = reinterpret_cast<CodeEditorView*>(
@@ -414,6 +435,15 @@ private:
                         dexterMasterGainFromPercent(position));
                 view->updateMasterGainText(position);
                 return 0;
+            }
+            for (std::size_t index = 0;
+                 index < view->playerControlSliders_.size(); ++index) {
+                if (reinterpret_cast<HWND>(lParam) ==
+                    view->playerControlSliders_[index]) {
+                    view->onPlayerControlSlider(index,
+                                                LOWORD(wParam));
+                    return 0;
+                }
             }
             break;
         case WM_COMMAND:
@@ -487,6 +517,10 @@ private:
                         view->panelTabs_ = view->panelList_ =
                         view->panelMuteButton_ = view->panelStopButton_ =
                         view->panelSamplesButton_ = view->panelVersion_ = nullptr;
+            view->playerControlLabels_.fill(nullptr);
+            view->playerControlSliders_.fill(nullptr);
+            view->playerControlValues_.fill(nullptr);
+            view->activePlayerSlider_ = -1;
             return 0;
         }
         return DefWindowProcW(window, message, wParam, lParam);
@@ -621,6 +655,38 @@ private:
             0, 0, 80, 24, window_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPanelVersionId)),
             moduleInstance(), nullptr);
+        static constexpr std::array<const wchar_t*, 4> controlLabels{
+            L"Level", L"Pan", L"Cutoff", L"FX mix"};
+        for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
+            playerControlLabels_[index] = CreateWindowExW(
+                0, L"STATIC", controlLabels[index],
+                WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+                0, 0, 48, 24, window_,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(
+                    kPlayerControlLabelBaseId + index)),
+                moduleInstance(), nullptr);
+            playerControlSliders_[index] = CreateWindowExW(
+                0, TRACKBAR_CLASSW, L"",
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_NOTICKS,
+                0, 0, 150, 24, window_,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(
+                    kPlayerSliderBaseId + index)),
+                moduleInstance(), nullptr);
+            playerControlValues_[index] = CreateWindowExW(
+                0, L"STATIC", L"",
+                WS_CHILD | WS_VISIBLE | SS_RIGHT | SS_CENTERIMAGE,
+                0, 0, 52, 24, window_,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(
+                    kPlayerControlValueBaseId + index)),
+                moduleInstance(), nullptr);
+        }
+        for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
+            if (playerControlSliders_[index]) {
+                const int maximum = index == 2 ? 1000 : index == 1 ? 200 : 100;
+                SendMessageW(playerControlSliders_[index], TBM_SETRANGE,
+                             TRUE, MAKELONG(0, maximum));
+            }
+        }
         if (!sourceInitialized_) {
             currentSource_ = host_ && host_->hasEditorSource()
                                  ? fromUtf8(host_->editorSource())
@@ -638,6 +704,8 @@ private:
         if (editor_) {
             configureEditor();
             setEditorSource(currentSource_);
+            SetWindowSubclass(editor_, editorSubclassProcedure, 1,
+                              reinterpret_cast<DWORD_PTR>(this));
         }
         updatingEditor_ = false;
         SetTimer(window_, 1, 250, nullptr);
@@ -864,6 +932,8 @@ private:
         for (std::size_t index = 0; index < left.size(); ++index) {
             if (left[index].active != right[index].active ||
                 left[index].muted != right[index].muted ||
+                left[index].effectMixAvailable !=
+                    right[index].effectMixAvailable ||
                 left[index].synthIndex != right[index].synthIndex ||
                 left[index].effectIndex != right[index].effectIndex ||
                 left[index].effectIndices != right[index].effectIndices ||
@@ -914,6 +984,12 @@ private:
         ShowWindow(panelMuteButton_, tab == 0 ? SW_SHOW : SW_HIDE);
         ShowWindow(panelStopButton_, tab == 0 ? SW_SHOW : SW_HIDE);
         ShowWindow(panelSamplesButton_, tab == 3 ? SW_SHOW : SW_HIDE);
+        for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
+            const int visibility = tab == 0 ? SW_SHOW : SW_HIDE;
+            ShowWindow(playerControlLabels_[index], visibility);
+            ShowWindow(playerControlSliders_[index], visibility);
+            ShowWindow(playerControlValues_[index], visibility);
+        }
         if (tab == 0) {
             panelPlayersInitialized_ = false;
             refreshPlayersPanel();
@@ -1132,8 +1208,10 @@ private:
         std::array<EditorPlayerState, 8> states{};
         host_->editorPlayerStates(states);
         if (panelPlayersInitialized_ &&
-            samePlayerStates(states, lastPanelPlayers_))
+            samePlayerStates(states, lastPanelPlayers_)) {
+            updatePlayerControlSliders(states);
             return;
+        }
         int selectedPlayer = -1;
         const int selectedItem = static_cast<int>(
             SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
@@ -1190,6 +1268,15 @@ private:
         if (selectedPlayer >= 0 &&
             selectedPlayer < static_cast<int>(states.size()))
             SendMessageW(panelList_, LB_SETCURSEL, selectedPlayer, 0);
+        else {
+            for (std::size_t index = 0; index < states.size(); ++index) {
+                if (!states[index].active)
+                    continue;
+                SendMessageW(panelList_, LB_SETCURSEL,
+                             static_cast<WPARAM>(index), 0);
+                break;
+            }
+        }
         updatePlayerActionButtons();
     }
 
@@ -1212,6 +1299,9 @@ private:
                 EnableWindow(panelMuteButton_, FALSE);
             if (panelStopButton_)
                 EnableWindow(panelStopButton_, FALSE);
+            for (auto* slider : playerControlSliders_)
+                if (slider)
+                    EnableWindow(slider, FALSE);
             return;
         }
         std::array<EditorPlayerState, 8> states{};
@@ -1226,6 +1316,119 @@ private:
         }
         if (panelStopButton_)
             EnableWindow(panelStopButton_, state.active ? TRUE : FALSE);
+        updatePlayerControlSliders(states);
+    }
+
+    void updatePlayerControlSliders(
+        const std::array<EditorPlayerState, 8>& states) {
+        const int player = selectedPlayerIndex();
+        if (player < 0 || !host_)
+            return;
+        const auto& state = states[static_cast<std::size_t>(player)];
+        const auto cutoffPosition = static_cast<int>(std::lround(
+            std::clamp(std::log(std::clamp(state.cutoffHz, 20.0f, 20000.0f) /
+                                    20.0f) /
+                           std::log(1000.0f),
+                       0.0f, 1.0f) *
+            1000.0f));
+        const std::array<int, 4> positions{
+            static_cast<int>(std::lround(
+                std::clamp(state.amplitude, 0.0f, 1.0f) * 100.0f)),
+            static_cast<int>(std::lround(
+                (std::clamp(state.pan, -1.0f, 1.0f) + 1.0f) * 100.0f)),
+            cutoffPosition,
+            static_cast<int>(std::lround(
+                std::clamp(state.effectMix, 0.0f, 1.0f) * 100.0f))};
+        const std::array<std::wstring, 4> valueTexts{
+            fromUtf8(sliderValueText(0, positions[0])),
+            fromUtf8(sliderValueText(1, positions[1])),
+            fromUtf8(sliderValueText(2, positions[2])),
+            fromUtf8(sliderValueText(3, positions[3]))};
+        for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
+            if (activePlayerSlider_ == static_cast<int>(index))
+                continue;
+            if (playerControlSliders_[index]) {
+                SendMessageW(playerControlSliders_[index], TBM_SETPOS, TRUE,
+                             positions[index]);
+                EnableWindow(playerControlSliders_[index],
+                             state.active &&
+                                     (index != 3 || state.effectMixAvailable)
+                                 ? TRUE
+                                 : FALSE);
+            }
+            if (playerControlValues_[index])
+                SetWindowTextW(playerControlValues_[index],
+                               valueTexts[index].c_str());
+        }
+    }
+
+    static std::string sliderValueText(std::size_t index, int position) {
+        std::ostringstream text;
+        if (index == 0 || index == 3) {
+            text << std::fixed << std::setprecision(2) << position / 100.0;
+        } else if (index == 1) {
+            text << std::fixed << std::setprecision(2)
+                 << (position / 100.0 - 1.0);
+        } else {
+            const double cutoff = 20.0 * std::pow(1000.0, position / 1000.0);
+            text << static_cast<int>(std::lround(cutoff)) << " Hz";
+        }
+        return text.str();
+    }
+
+    static float playerControlValue(std::size_t index, int position) {
+        if (index == 0 || index == 3)
+            return std::clamp(position / 100.0f, 0.0f, 1.0f);
+        if (index == 1)
+            return std::clamp(position / 100.0f - 1.0f, -1.0f, 1.0f);
+        const double cutoff = 20.0 * std::pow(1000.0, position / 1000.0);
+        return static_cast<float>(std::clamp(cutoff, 20.0, 20000.0));
+    }
+
+    void onPlayerControlSlider(std::size_t index, int scrollCode) {
+        const int player = selectedPlayerIndex();
+        if (!host_ || player < 0 || index >= playerControlSliders_.size())
+            return;
+        activePlayerSlider_ = scrollCode == TB_ENDTRACK
+            ? -1 : static_cast<int>(index);
+        const int position = static_cast<int>(
+            SendMessageW(playerControlSliders_[index], TBM_GETPOS, 0, 0));
+        const float value = playerControlValue(index, position);
+        const auto control = index == 0 ? EditorPlayerControl::Amplitude
+            : index == 1 ? EditorPlayerControl::Pan
+            : index == 2 ? EditorPlayerControl::Cutoff
+                         : EditorPlayerControl::EffectMix;
+        host_->setEditorPlayerControl(player, control, value);
+        if (playerControlValues_[index]) {
+            const auto label = fromUtf8(sliderValueText(index, position));
+            SetWindowTextW(playerControlValues_[index], label.c_str());
+        }
+        if (scrollCode == TB_ENDTRACK)
+            commitPlayerControlToSource(player, index, value);
+    }
+
+    void commitPlayerControlToSource(int player, std::size_t index,
+                                     float value) {
+        if (!editor_ || player < 0 || index >= playerControlSliders_.size())
+            return;
+        auto source = editorUtf8Source();
+        dexter::editor::PlayerAssignment assignment;
+        if (!dexter::editor::findPlayerAssignmentForIndex(
+                source, player, assignment))
+            return;
+        const char* keyword = index == 0 ? "amp"
+            : index == 1 ? "pan"
+            : index == 2 ? "cutoff"
+                         : "fx_mix";
+        std::ostringstream number;
+        number << std::fixed << std::setprecision(index == 2 ? 1 : 3) << value;
+        const bool changed = index == 3
+            ? dexter::editor::setPlayerEffectMix(
+                  source, assignment, number.str())
+            : dexter::editor::setPlayerArgument(
+                  source, assignment, keyword, number.str());
+        if (changed)
+            applyEditorTextEdit(source);
     }
 
     void toggleSelectedPlayerMute() {
@@ -1294,8 +1497,21 @@ private:
         const int editorWidth = std::max(280, panelX - kMargin - 12);
         MoveWindow(editor_, kMargin, editorTop, editorWidth, editorHeight, TRUE);
         MoveWindow(panelTabs_, panelX, editorTop, kPanelWidth, 28, TRUE);
+        const int panelBottom = editorTop + editorHeight - 27;
+        const int controlsHeight =
+            static_cast<int>(playerControlSliders_.size()) * 24;
+        const int controlsTop = panelBottom - controlsHeight - 4;
         MoveWindow(panelList_, panelX + 2, editorTop + 30, kPanelWidth - 4,
-                   std::max(80, editorHeight - 62), TRUE);
+                   std::max(80, controlsTop - (editorTop + 35)), TRUE);
+        for (std::size_t index = 0; index < playerControlSliders_.size(); ++index) {
+            const int rowY = controlsTop + static_cast<int>(index) * 24;
+            MoveWindow(playerControlLabels_[index], panelX + 4, rowY,
+                       48, 24, TRUE);
+            MoveWindow(playerControlSliders_[index], panelX + 52, rowY,
+                       150, 24, TRUE);
+            MoveWindow(playerControlValues_[index], panelX + 204, rowY,
+                       60, 24, TRUE);
+        }
         MoveWindow(panelMuteButton_, panelX + 2, editorTop + editorHeight - 27,
                    88, 24, TRUE);
         MoveWindow(panelStopButton_, panelX + 96, editorTop + editorHeight - 27,
@@ -1349,6 +1565,198 @@ private:
 
     std::wstring editorSource() const {
         return fromUtf8(editorUtf8Source());
+    }
+
+    void applyEditorTextEdit(const std::string& source) {
+        if (!editor_)
+            return;
+        if (source.size() > kMaxScriptBytes) {
+            SetWindowTextW(status_, L"Edit would exceed the 256 KiB script limit.");
+            return;
+        }
+        const auto previous = editorUtf8Source();
+        if (source == previous)
+            return;
+        std::size_t prefix = 0;
+        while (prefix < source.size() && prefix < previous.size() &&
+               source[prefix] == previous[prefix])
+            ++prefix;
+        std::size_t suffix = 0;
+        while (suffix < source.size() - prefix &&
+               suffix < previous.size() - prefix &&
+               source[source.size() - suffix - 1] ==
+                   previous[previous.size() - suffix - 1])
+            ++suffix;
+        const auto oldEnd = previous.size() - suffix;
+        const auto newEnd = source.size() - suffix;
+        const auto oldCaret = static_cast<std::size_t>(
+            SendMessageW(editor_, SCI_GETCURRENTPOS, 0, 0));
+        const auto oldAnchor = static_cast<std::size_t>(
+            SendMessageW(editor_, SCI_GETANCHOR, 0, 0));
+        updatingEditor_ = true;
+        SendMessageW(editor_, SCI_BEGINUNDOACTION, 0, 0);
+        SendMessageW(editor_, SCI_SETTARGETSTART, prefix, 0);
+        SendMessageW(editor_, SCI_SETTARGETEND, oldEnd, 0);
+        SendMessageW(editor_, SCI_REPLACETARGET, newEnd - prefix,
+                     reinterpret_cast<LPARAM>(source.data() + prefix));
+        SendMessageW(editor_, SCI_ENDUNDOACTION, 0, 0);
+        const auto remap = [prefix, oldEnd, newEnd](std::size_t position) {
+            if (position <= prefix)
+                return position;
+            if (position < oldEnd)
+                return newEnd;
+            return newEnd + position - oldEnd;
+        };
+        const auto caret = std::min(remap(oldCaret), source.size());
+        const auto anchor = std::min(remap(oldAnchor), source.size());
+        SendMessageW(editor_, SCI_SETSEL, anchor, caret);
+        updatingEditor_ = false;
+        currentSource_ = fromUtf8(source);
+        sourceInitialized_ = true;
+        documentDirty_ = true;
+        copyDiagnosticPinned_ = false;
+        lastDiagnostic_.clear();
+        if (copyErrorButton_)
+            EnableWindow(copyErrorButton_, FALSE);
+        updateSaveButton();
+        if (host_)
+            host_->setEditorSource(source);
+    }
+
+    bool showPlayerContextMenu(HWND editor, LPARAM coordinates) {
+        if (!host_ || !editor || editor != editor_)
+            return false;
+        POINT screenPoint{};
+        const POINTS packed = MAKEPOINTS(coordinates);
+        if (packed.x == -1 && packed.y == -1) {
+            const auto caret = static_cast<int>(
+                SendMessageW(editor_, SCI_GETCURRENTPOS, 0, 0));
+            const auto caretPoint = static_cast<LPARAM>(
+                SendMessageW(editor_, SCI_POINTXFROMPOSITION, 0, caret));
+            const auto caretY = static_cast<LPARAM>(
+                SendMessageW(editor_, SCI_POINTYFROMPOSITION, 0, caret));
+            screenPoint.x = static_cast<LONG>(caretPoint);
+            screenPoint.y = static_cast<LONG>(caretY);
+            ClientToScreen(editor_, &screenPoint);
+        } else {
+            screenPoint.x = packed.x;
+            screenPoint.y = packed.y;
+        }
+        POINT clientPoint = screenPoint;
+        if (!ScreenToClient(editor_, &clientPoint))
+            return false;
+        const auto position = static_cast<std::size_t>(SendMessageW(
+            editor_, kSciPositionFromPointClose, clientPoint.x, clientPoint.y));
+        if (position >= editorUtf8Source().size())
+            return false;
+        auto source = editorUtf8Source();
+        dexter::editor::PlayerAssignment assignment;
+        if (!dexter::editor::findPlayerAssignmentAt(source, position,
+                                                     assignment))
+            return false;
+        const auto currentSynth = source.substr(
+            assignment.synthStart, assignment.synthEnd - assignment.synthStart);
+        const bool canChangeInstrument =
+            currentSynth != "play" && currentSynth != "userSynth";
+
+        HMENU menu = CreatePopupMenu();
+        HMENU instruments = CreatePopupMenu();
+        HMENU effects = CreatePopupMenu();
+        if (!menu || !instruments || !effects) {
+            if (menu) DestroyMenu(menu);
+            if (instruments) DestroyMenu(instruments);
+            if (effects) DestroyMenu(effects);
+            return true;
+        }
+        for (std::size_t index = 0; index < kEmbeddedSynthNames.size(); ++index) {
+            if (std::string_view(kEmbeddedSynthNames[index]) == "sample")
+                continue;
+            AppendMenuW(instruments, MF_STRING,
+                        static_cast<UINT_PTR>(kContextSynthBaseId + index),
+                        fromUtf8(index == 3 ? "pulse" :
+                                   kEmbeddedSynthNames[index]).c_str());
+        }
+        std::vector<std::string> loadedEffects;
+        const auto externalNames = host_->editorExternalSynthNames();
+        static constexpr std::array<const char*, 8> knownEffects{
+            "AirwindowsTapeDelay2", "AirwindowsEchojam", "JPverb",
+            "Greyhole", "Chorus", "Flanger", "Phaser", "Tremolo"};
+        for (const auto* name : knownEffects) {
+            if (std::find(externalNames.begin(), externalNames.end(), name) ==
+                externalNames.end())
+                continue;
+            const auto command =
+                kContextEffectBaseId + static_cast<int>(loadedEffects.size());
+            loadedEffects.emplace_back(name);
+            AppendMenuW(effects, MF_STRING, static_cast<UINT_PTR>(command),
+                        fromUtf8(name).c_str());
+        }
+        static constexpr std::array<const wchar_t*, 4> nativeEffectLabels{
+            L"Enable echo", L"Enable reverb", L"Enable shape", L"Enable drive"};
+        if (!loadedEffects.empty())
+            AppendMenuW(effects, MF_SEPARATOR, 0, nullptr);
+        for (std::size_t index = 0; index < nativeEffectLabels.size(); ++index)
+            AppendMenuW(effects, MF_STRING,
+                        static_cast<UINT_PTR>(
+                            kContextNativeEffectBaseId + index),
+                        nativeEffectLabels[index]);
+        AppendMenuW(menu, MF_POPUP | (canChangeInstrument ? 0 : MF_GRAYED),
+                    reinterpret_cast<UINT_PTR>(instruments),
+                    L"Change instrument");
+        std::size_t chainStart = 0;
+        std::size_t chainEnd = 0;
+        const bool hasEffectChain = dexter::editor::findArgumentValue(
+            source, assignment, "effects", true, chainStart, chainEnd);
+        AppendMenuW(menu, MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(effects),
+                    hasEffectChain ? L"Append effect to chain"
+                                   : L"Set / replace effect");
+        const auto command = TrackPopupMenu(
+            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPoint.x,
+            screenPoint.y, 0, window_, nullptr);
+        DestroyMenu(menu);
+        if (canChangeInstrument && command >= kContextSynthBaseId &&
+            command < kContextSynthBaseId +
+                          static_cast<int>(kEmbeddedSynthNames.size())) {
+            source = editorUtf8Source();
+            if (dexter::editor::findPlayerAssignmentAt(
+                    source, position, assignment) &&
+                dexter::editor::replacePlayerSynth(
+                    source, assignment,
+                    command - kContextSynthBaseId == 3
+                        ? "pulse" :
+                          kEmbeddedSynthNames[command - kContextSynthBaseId]))
+                applyEditorTextEdit(source);
+        } else if (command >= kContextEffectBaseId &&
+                   command < kContextEffectBaseId +
+                                 static_cast<int>(loadedEffects.size())) {
+            source = editorUtf8Source();
+            if (dexter::editor::findPlayerAssignmentAt(
+                    source, position, assignment) &&
+                dexter::editor::setPlayerEffect(
+                    source, assignment,
+                    loadedEffects[command - kContextEffectBaseId]))
+                applyEditorTextEdit(source);
+            else
+                SetWindowTextW(status_,
+                    L"Could not add effect: check the player call and four-insert chain limit.");
+        } else if (command >= kContextNativeEffectBaseId &&
+                   command < kContextNativeEffectBaseId + 4) {
+            static constexpr std::array<const char*, 4> nativeKeywords{
+                "echo", "room", "shape", "drive"};
+            static constexpr std::array<const char*, 4> nativeValues{
+                "0.35", "0.7", "0.2", "0.15"};
+            const auto index = static_cast<std::size_t>(
+                command - kContextNativeEffectBaseId);
+            source = editorUtf8Source();
+            if (dexter::editor::findPlayerAssignmentAt(
+                    source, position, assignment) &&
+                dexter::editor::setPlayerArgument(
+                    source, assignment, nativeKeywords[index],
+                    nativeValues[index]))
+                applyEditorTextEdit(source);
+        }
+        return true;
     }
 
     void setEditorSource(const std::wstring& source) {
@@ -1717,6 +2125,10 @@ private:
     HWND panelStopButton_ = nullptr;
     HWND panelSamplesButton_ = nullptr;
     HWND panelVersion_ = nullptr;
+    std::array<HWND, 4> playerControlLabels_{};
+    std::array<HWND, 4> playerControlSliders_{};
+    int activePlayerSlider_ = -1;
+    std::array<HWND, 4> playerControlValues_{};
     std::array<EditorPlayerState, 8> lastPanelPlayers_{};
     bool panelPlayersInitialized_ = false;
     bool panelEffectsInitialized_ = false;

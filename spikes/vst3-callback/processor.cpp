@@ -450,6 +450,14 @@ public:
                     stopAudioVoices(static_cast<int>(player));
                     const auto previous = activePatterns_[player];
                     activePatterns_[player] = pendingPatterns_[player];
+                    activePatterns_[player].editorAmpOverride = false;
+                    editorAmplitudeCurrent_[player] =
+                        activePatterns_[player].amplitude;
+                    editorCutoffCurrent_[player] =
+                        activePatterns_[player].cutoffHz;
+                    pendingEditorControls_[player] = {};
+                    activePatterns_[player].editorPanOverride = false;
+                    activePatterns_[player].editorCutoffOverride = false;
                     if (!activePatterns_[player].active) {
                         activePatterns_[player].echoMix = previous.echoMix;
                         activePatterns_[player].echoBeats = previous.echoBeats;
@@ -487,6 +495,38 @@ public:
                     }
                     patternStartSamples_[player] = newStart;
                     updatePlayerReverb(player);
+                    publishEditorPlayerState(player);
+                }
+            }
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                auto& live = pendingEditorControls_[player];
+                auto& pattern = activePatterns_[player];
+                if ((live.mask & 1u) != 0) {
+                    pattern.amplitude = live.amplitude;
+                    pattern.ampControl = {};
+                    pattern.editorAmpOverride = true;
+                }
+                if ((live.mask & 2u) != 0) {
+                    pattern.pan = live.pan;
+                    pattern.panControl = {};
+                    pattern.editorPanOverride = true;
+                    pattern.editorPan = live.pan;
+                }
+                if ((live.mask & 4u) != 0) {
+                    pattern.cutoffHz = live.cutoff;
+                    pattern.cutoffControl = {};
+                    pattern.editorCutoffOverride = true;
+                    pattern.editorCutoffHz = live.cutoff;
+                }
+                if ((live.mask & 8u) != 0 && pattern.playerEffectCount > 0) {
+                    auto& effect = pattern.playerEffects[0];
+                    effect.controlValues[0] = live.effectMix;
+                    effect.controlVariables[0] = {};
+                    pattern.playerEffectControlValues[0] = live.effectMix;
+                    pattern.effectControlVariables[0] = {};
+                }
+                if (live.mask != 0) {
+                    live.mask = 0;
                     publishEditorPlayerState(player);
                 }
             }
@@ -925,6 +965,7 @@ public:
             auto& state = states[player];
             state.active = (packed & 1u) != 0;
             state.muted = (packed & 2u) != 0;
+            state.effectMixAvailable = (packed & (1u << 30)) != 0;
             state.synthIndex = static_cast<int>((packed >> 2) & 0xffu);
             state.effectIndex =
                 static_cast<int>((packed >> 10) & 0xffu) - 1;
@@ -944,6 +985,14 @@ public:
             state.formantEnabled = (packed & (1u << 27)) != 0;
             state.pshiftEnabled = (packed & (1u << 28)) != 0;
             state.bitcrusherEnabled = (packed & (1u << 29)) != 0;
+            state.amplitude =
+                editorPlayerValues_[player][0].load(std::memory_order_acquire);
+            state.pan =
+                editorPlayerValues_[player][1].load(std::memory_order_acquire);
+            state.cutoffHz =
+                editorPlayerValues_[player][2].load(std::memory_order_acquire);
+            state.effectMix =
+                editorPlayerValues_[player][3].load(std::memory_order_acquire);
         }
     }
 
@@ -982,6 +1031,47 @@ public:
         }
         setEditorStatus("p" + std::to_string(playerIndex + 1) +
                         (muted ? " mute queued." : " unmute queued."));
+    }
+
+    void setEditorPlayerControl(int playerIndex,
+                                EditorPlayerControl control,
+                                float value) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount) ||
+            !std::isfinite(value))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        std::uint8_t bit = 0;
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            if (!activePatterns_[player].active ||
+                (control == EditorPlayerControl::EffectMix &&
+                 activePatterns_[player].playerEffectCount == 0))
+                return;
+            auto& pending = pendingEditorControls_[player];
+            switch (control) {
+            case EditorPlayerControl::Amplitude:
+                pending.amplitude =
+                    clampEditorPlayerControl(control, value);
+                bit = 1u;
+                break;
+            case EditorPlayerControl::Pan:
+                pending.pan = clampEditorPlayerControl(control, value);
+                bit = 2u;
+                break;
+            case EditorPlayerControl::Cutoff:
+                pending.cutoff = clampEditorPlayerControl(control, value);
+                bit = 4u;
+                break;
+            case EditorPlayerControl::EffectMix:
+                pending.effectMix = clampEditorPlayerControl(control, value);
+                bit = 8u;
+                break;
+            }
+            pending.mask |= bit;
+        }
+        setEditorStatus("Live control queued for p" +
+                        std::to_string(playerIndex + 1) + ".");
     }
 
     OBJ_METHODS(DexterSCTone, SingleComponentEffect)
@@ -1125,6 +1215,14 @@ private:
         std::array<TimeVarControl, 7> controlVariables{};
     };
 
+    struct PendingEditorControl {
+        std::uint8_t mask = 0;
+        float amplitude = 1.0f;
+        float pan = 0.0f;
+        float cutoff = 20000.0f;
+        float effectMix = 0.0f;
+    };
+
     struct PatternState {
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
         std::size_t eventCount = 0;
@@ -1152,8 +1250,13 @@ private:
         bool pshiftEnabled = false;
         bool bitsEnabled = false;
         float amplitude = 1.0f;
+        bool editorAmpOverride = false;
         float pan = 0.0f;
+        bool editorPanOverride = false;
+        float editorPan = 0.0f;
         float cutoffHz = 20000.0f;
+        bool editorCutoffOverride = false;
+        float editorCutoffHz = 20000.0f;
         bool mousePan = false;
         bool mouseCutoff = false;
         double attackSeconds = kAttackSeconds;
@@ -1230,6 +1333,7 @@ private:
         const bool spinEnabled = pattern.spinEnabled;
         const bool coarseEnabled = pattern.coarseEnabled;
         const bool formantEnabled = pattern.formantEnabled;
+        const bool effectMixAvailable = pattern.playerEffectCount > 0;
         const auto packed =
             (pattern.active ? 1u : 0u) |
             (mutedPlayers_[player] ? 2u : 0u) |
@@ -1245,8 +1349,24 @@ private:
             (coarseEnabled ? (1u << 26) : 0u) |
             (formantEnabled ? (1u << 27) : 0u) |
             (pattern.pshiftEnabled ? (1u << 28) : 0u) |
-            (pattern.bitsEnabled ? (1u << 29) : 0u);
+            (pattern.bitsEnabled ? (1u << 29) : 0u) |
+            (effectMixAvailable ? (1u << 30) : 0u);
         editorPlayerState_[player].store(packed, std::memory_order_release);
+        editorPlayerValues_[player][0].store(
+            std::clamp(pattern.amplitude, 0.0f, 1.0f),
+            std::memory_order_release);
+        editorPlayerValues_[player][1].store(
+            std::clamp(pattern.pan, -1.0f, 1.0f),
+            std::memory_order_release);
+        editorPlayerValues_[player][2].store(
+            std::clamp(pattern.cutoffHz, 20.0f, 20000.0f),
+            std::memory_order_release);
+        const double effectMix = pattern.playerEffectCount > 0
+            ? pattern.playerEffects[0].controlValues[0]
+            : pattern.playerEffectControlValues[0];
+        editorPlayerValues_[player][3].store(
+            static_cast<float>(std::clamp(effectMix, 0.0, 1.0)),
+            std::memory_order_release);
         std::uint64_t chain = 0;
         for (std::size_t slot = 0; slot < pattern.playerEffectCount; ++slot)
             chain |= static_cast<std::uint64_t>(std::clamp(
@@ -3738,9 +3858,15 @@ private:
             } else if (voice.synthIndex >= 31 && !isPlayerEffect) {
                 const double beat = controlBeatStart[player];
                 Graph_SetControl(voice.activeSynth, 10,
-                    evaluateTimeVar(pattern.ampControl, beat, pattern.amplitude));
+                    pattern.editorAmpOverride
+                        ? editorAmplitudeCurrent_[player]
+                        : evaluateTimeVar(pattern.ampControl, beat,
+                                          pattern.amplitude));
                 Graph_SetControl(voice.activeSynth, 18,
-                    evaluateTimeVar(pattern.cutoffControl, beat, pattern.cutoffHz));
+                    pattern.editorCutoffOverride
+                        ? editorCutoffCurrent_[player]
+                        : evaluateTimeVar(pattern.cutoffControl, beat,
+                                          pattern.cutoffHz));
             }
             if (!isUserSynth || isPlayerEffect) {
                 const float level = reverbEnabled(pattern)
@@ -3774,6 +3900,14 @@ private:
                 playerMuteGain_[player] += mouseSmoothing * (target - playerMuteGain_[player]);
                 playerMuteGainBlock[player][static_cast<std::size_t>(sampleIndex)] =
                     playerMuteGain_[player];
+                editorAmplitudeCurrent_[player] =
+                    smoothEditorPlayerControl(
+                        editorAmplitudeCurrent_[player],
+                        activePatterns_[player].amplitude,
+                        mouseSmoothing);
+                editorCutoffCurrent_[player] = smoothEditorPlayerControl(
+                    editorCutoffCurrent_[player],
+                    activePatterns_[player].cutoffHz, mouseSmoothing);
             }
             std::array<float, kPlayerCount> playerLeft{};
             std::array<float, kPlayerCount> playerRight{};
@@ -3794,7 +3928,11 @@ private:
                 const auto& livePattern = activePatterns_[controlPlayerIndex];
                 const double beat = controlBeatStart[controlPlayerIndex] +
                     controlBeatStep[controlPlayerIndex] * sampleIndex;
-                if (livePattern.ampControl.active &&
+                if (livePattern.editorAmpOverride) {
+                    voice.amplitude = foxDotAmplitude(
+                        voice.synthIndex,
+                        editorAmplitudeCurrent_[controlPlayerIndex]);
+                } else if (livePattern.ampControl.active &&
                     (voice.synthIndex < 31 ||
                      static_cast<std::size_t>(voice.synthIndex) >=
                          kSynthIndexToGraphIndex.size())) {
@@ -3806,7 +3944,7 @@ private:
                     else
                         voice.amplitude += mouseSmoothing * (targetAmp - voice.amplitude);
                 }
-                if (voice.mousePan) {
+                if (voice.mousePan && !livePattern.editorPanOverride) {
                     const float mouseX = std::clamp(
                         world_->mAudioBus[(bus + 1) * busLength + static_cast<std::size_t>(sampleIndex)],
                         0.0f, 1.0f);
@@ -3814,6 +3952,13 @@ private:
                     voice.pan += mouseSmoothing * (targetPan - voice.pan);
                     voice.leftGain = std::sqrt(std::max(0.0f, (1.0f - voice.pan) * 0.5f));
                     voice.rightGain = std::sqrt(std::max(0.0f, (1.0f + voice.pan) * 0.5f));
+                } else if (livePattern.editorPanOverride) {
+                    voice.pan += mouseSmoothing *
+                        (livePattern.editorPan - voice.pan);
+                    voice.leftGain = std::sqrt(
+                        std::max(0.0f, (1.0f - voice.pan) * 0.5f));
+                    voice.rightGain = std::sqrt(
+                        std::max(0.0f, (1.0f + voice.pan) * 0.5f));
                 } else if (livePattern.panControl.active) {
                     const float targetPan = evaluateTimeVar(livePattern.panControl, beat,
                                                             livePattern.pan);
@@ -3826,11 +3971,14 @@ private:
                 }
                 bool dynamicCutoff = voice.mouseCutoff;
                 float targetCutoff = voice.cutoffHz;
-                if (voice.mouseCutoff) {
+                if (voice.mouseCutoff && !livePattern.editorCutoffOverride) {
                     const float mouseY = std::clamp(
                         world_->mAudioBus[(bus + 2) * busLength + static_cast<std::size_t>(sampleIndex)],
                         0.0f, 1.0f);
                     targetCutoff = 200.0f + mouseY * 7800.0f;
+                } else if (livePattern.editorCutoffOverride) {
+                    targetCutoff = livePattern.editorCutoffHz;
+                    dynamicCutoff = true;
                 } else if (livePattern.cutoffControl.active) {
                     targetCutoff = evaluateTimeVar(livePattern.cutoffControl, beat,
                                                    livePattern.cutoffHz);
@@ -3936,9 +4084,10 @@ private:
                     sampleRate_;
                 const auto spinGains = dexter::foxDotSpinGains(
                     elapsedSeconds, voice.spin);
-                const float amplitude = shaped * envelope * velocity *
-                    voice.amplitude * noteEffectGain * chopGain * coarseGain;
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
+                const float amplitude = shaped * envelope * velocity *
+                    voice.amplitude *
+                    noteEffectGain * chopGain * coarseGain;
                 playerLeft[player] += amplitude * voice.leftGain * spinGains.left;
                 playerRight[player] += amplitude * voice.rightGain * spinGains.right;
                 playerHasVoice[player] = playerMuteGain_[player] > 1e-4f;
@@ -4319,6 +4468,8 @@ private:
                 pattern = {};
             for (auto& pattern : pendingPatterns_)
                 pattern = {};
+            for (auto& control : pendingEditorControls_)
+                control = {};
             for (auto& playerGates : activeMidiGates_)
                 playerGates.fill({});
             pendingPlayerMask_ = 0;
@@ -4326,6 +4477,8 @@ private:
             pendingMuteStates_.fill(false);
             mutedPlayers_.fill(false);
             playerMuteGain_.fill(1.0f);
+            editorAmplitudeCurrent_.fill(1.0f);
+            editorCutoffCurrent_.fill(20000.0f);
             for (std::size_t player = 0; player < kPlayerCount; ++player)
                 publishEditorPlayerState(player);
         }
@@ -4392,7 +4545,10 @@ private:
     std::uint64_t sampleWorldGeneration_ = 1;
     std::array<PatternState, kPlayerCount> activePatterns_{};
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
+    std::array<PendingEditorControl, kPlayerCount> pendingEditorControls_{};
     std::array<std::atomic<std::uint32_t>, kPlayerCount> editorPlayerState_{};
+    std::array<std::array<std::atomic<float>, 4>, kPlayerCount>
+        editorPlayerValues_{};
     std::array<std::atomic<std::uint64_t>, kPlayerCount> editorPlayerEffectChain_{};
     std::uint8_t pendingPlayerMask_ = 0;
     std::array<bool, kPlayerCount> pendingMuteStates_{};
@@ -4401,6 +4557,16 @@ private:
     std::array<float, kPlayerCount> playerMuteGain_ = [] {
         std::array<float, kPlayerCount> values{};
         values.fill(1.0f);
+        return values;
+    }();
+    std::array<float, kPlayerCount> editorAmplitudeCurrent_ = [] {
+        std::array<float, kPlayerCount> values{};
+        values.fill(1.0f);
+        return values;
+    }();
+    std::array<float, kPlayerCount> editorCutoffCurrent_ = [] {
+        std::array<float, kPlayerCount> values{};
+        values.fill(20000.0f);
         return values;
     }();
     std::array<std::uint64_t, kPlayerCount> patternStartSamples_{};

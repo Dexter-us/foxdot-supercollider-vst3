@@ -1,5 +1,16 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.141 adds a right-click editor menu for changing the instrument on a
+`pN >> ...` line and adding a native echo/reverb/shape/drive control or a loaded
+player-effect SynthDef. It also adds live per-player Level, Pan, Cutoff, and
+FX-mix sliders; audio-thread updates are queued and smoothed without rerunning
+the script. Releasing a slider writes its scalar value into the selected
+player's source line so the setting can be saved. Portable Example 178 shows the
+panel workflow. FX Mix controls the first insert in a chain. Releasing a slider
+replaces that parameter's pattern/time-variable expression with a scalar;
+ordinary code edits can restore modulation. Instrument changes are offered for
+pitched-player calls, not sample strings or `userSynth()` calls.
+
 Version 0.4.140 adds bounded FoxDot-style `pshift` (semitones, -24 to +24)
 and native per-player `bits`/`crush` controls. `bits=0` bypasses bit-depth
 reduction; 1–24 quantizes the player's summed signal, while `crush=1–128`

@@ -2,6 +2,7 @@
 
 #include "pluginterfaces/base/funknown.h"
 #include "pluginterfaces/gui/iplugview.h"
+#include "live_player_controls.h"
 
 #include <array>
 #include <string>
@@ -10,6 +11,7 @@
 struct EditorPlayerState {
     bool active = false;
     bool muted = false;
+    bool effectMixAvailable = false;
     int synthIndex = 0;
     int effectIndex = -1;
     std::array<int, 4> effectIndices{{-1, -1, -1, -1}};
@@ -24,6 +26,10 @@ struct EditorPlayerState {
     bool formantEnabled = false;
     bool pshiftEnabled = false;
     bool bitcrusherEnabled = false;
+    float amplitude = 1.0f;
+    float pan = 0.0f;
+    float cutoffHz = 20000.0f;
+    float effectMix = 0.0f;
 };
 
 class ICodeEditorHost {
@@ -42,6 +48,9 @@ public:
     virtual std::vector<std::string> editorExternalSynthNames() = 0;
     virtual void stopEditorPlayer(int playerIndex) = 0;
     virtual void setEditorPlayerMuted(int playerIndex, bool muted) = 0;
+    virtual void setEditorPlayerControl(int playerIndex,
+                                        EditorPlayerControl control,
+                                        float value) = 0;
 };
 
 Steinberg::IPlugView* createCodeEditorView(ICodeEditorHost* host,

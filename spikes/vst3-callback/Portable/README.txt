@@ -1,3 +1,10 @@
+0.4.141 adds a right-click menu on a `pN >> ...` line to change its instrument
+or add/choose a loaded player effect. The menu also inserts native echo, reverb,
+shape, and drive controls. The Players panel has live Level, Pan, Cutoff, and
+FX-mix sliders. Changes are queued to the local audio engine and smoothed without
+rerunning the script; releasing a slider writes its scalar value into the script
+line for saving. See Example 178.
+
 0.4.140 adds bounded FoxDot-style `pshift` semitone transposition (-24 to +24)
 and native per-player `bits`/`crush` controls. `bits=0` bypasses quantization;
 1–24 selects bit depth, and `crush=1–128` reduces the sample-hold rate.

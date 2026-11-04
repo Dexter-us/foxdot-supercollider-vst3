@@ -230,6 +230,13 @@ int main(int argc, char** argv) {
 """
 with tempfile.TemporaryDirectory() as directory:
     directory = Path(directory)
+    line_edit_binary = directory / "test-player-line-edit"
+    subprocess.run([
+        "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        str(plugin / "tools/test-player-line-edit.cpp"),
+        "-o", str(line_edit_binary)
+    ], check=True)
+    subprocess.run([str(line_edit_binary)], check=True)
     unit, binary = directory / "parse.cpp", directory / "parse"
     unit.write_text(cpp)
     subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",

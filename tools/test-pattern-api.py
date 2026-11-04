@@ -36,7 +36,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.140' not in cmake_source or
+if ('VERSION 0.4.141' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -46,6 +46,10 @@ for live_panel_fragment in (
         'refreshPlayersPanel()', 'renderLiveEffectsPanel()',
         'renderSamplePanel()', 'Open Samples Folder', 'panelVersion_',
         'setEditorPlayerMuted(', 'stopEditorPlayer(',
+        'WM_CONTEXTMENU', 'TrackPopupMenu', 'kContextSynthBaseId',
+        'kContextNativeEffectBaseId', 'setEditorPlayerControl(',
+        'TB_ENDTRACK', 'commitPlayerControlToSource(',
+        'kSciPositionFromPointClose',
         'FoxDot shape (native player effect)',
         'FoxDot drive (native player effect)',
         'FoxDot chop (per-note gate)',
@@ -67,7 +71,14 @@ for snapshot_fragment in (
         '1u << 24',
         '1u << 25',
         '1u << 26',
-        '1u << 27'):
+        '1u << 27',
+        'pendingEditorControls_',
+        'editorAmplitudeCurrent_',
+        'clampEditorPlayerControl',
+        'editorAmpOverride',
+        'editorPanOverride',
+        'editorCutoffOverride',
+        'editorPlayerValues_[player][3]'):
     if snapshot_fragment not in processor_source:
         raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (
@@ -2106,6 +2117,19 @@ def run_compatibility_check(script_text, user_synth_names=()):
                      '_USER_SYNTH_NAMES': tuple(user_synth_names)}
         exec(compile(compatibility_checker, '<embedded compatibility checker>', 'exec'), namespace, namespace)
         return open(report_path, encoding='utf-8').read()
+
+editor_added_native_effects = run_compatibility_check(
+    'p1 >> triangle([0, 4], amp=0.4, pan=-0.2, cutoff=4200, '
+    'echo=0.35, room=0.7, shape=0.2, drive=0.15)\n')
+assert 'No unsupported constructs detected' in editor_added_native_effects, (
+    'Right-click native effect menu output must pass the compatibility checker.')
+run_script('p1 >> triangle([0, 4], amp=0.4, pan=-0.2, cutoff=4200, '
+           'echo=0.35, room=0.7, shape=0.2, drive=0.15)\n')
+editor_added_loaded_effect = run_compatibility_check(
+    'p1 >> saw([0, 2], effects=[("Chorus", {"fx_mix": 0.4})])\n',
+    ('Chorus',))
+assert 'No unsupported constructs detected' in editor_added_loaded_effect, (
+    'Right-click loaded-effect menu output must pass the compatibility checker.')
 
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> saw([0, 2], cut=P[1, 0.5])\n'
