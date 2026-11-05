@@ -36,6 +36,7 @@
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
 #include "user_synth_routing.h"
+#include "user_synth_controls.h"
 
 #include <algorithm>
 #include <array>
@@ -47,6 +48,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -458,6 +460,7 @@ public:
                         activePatterns_[player].cutoffHz;
                     pendingEditorControls_[player] = {};
                     pendingEditorEffectControls_[player] = {};
+                    pendingEditorUserSynthControls_[player] = {};
                     activePatterns_[player].editorPanOverride = false;
                     activePatterns_[player].editorCutoffOverride = false;
                     if (!activePatterns_[player].active) {
@@ -567,6 +570,38 @@ public:
                     }
                     effectPending = {};
                     publishEditorPlayerState(player);
+                }
+                auto& userSynthPending =
+                    pendingEditorUserSynthControls_[player];
+                if (userSynthPending.mask != 0) {
+                    const int userIndex =
+                        pattern.synthIndex -
+                        static_cast<int>(kSynthIndexToGraphIndex.size());
+                    if (pattern.active && userIndex >= 0 &&
+                        static_cast<std::size_t>(userIndex) <
+                            userSynthDefinitions_.size()) {
+                        const auto& definition =
+                            userSynthDefinitions_[static_cast<std::size_t>(
+                                userIndex)];
+                        if (!definition.persistentPlayerEffect) {
+                            pattern.userSynthControlDefinitionIndex =
+                                userIndex;
+                            for (std::size_t control = 0;
+                                 control < definition.liveControlCount;
+                                 ++control) {
+                                if ((userSynthPending.mask &
+                                     static_cast<std::uint8_t>(
+                                         1u << control)) == 0)
+                                    continue;
+                                pattern.userSynthControlValues[control] =
+                                    userSynthPending.values[control];
+                                pattern.userSynthControlOverrideMask |=
+                                    static_cast<std::uint8_t>(1u << control);
+                            }
+                            publishEditorPlayerState(player);
+                        }
+                    }
+                    userSynthPending = {};
                 }
             }
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
@@ -1010,6 +1045,7 @@ public:
             const auto packed =
                 editorPlayerState_[player].load(std::memory_order_acquire);
             auto& state = states[player];
+            state.userSynthControlCount = 0;
             state.active = (packed & 1u) != 0;
             state.muted = (packed & 2u) != 0;
             state.effectMixAvailable = (packed & (1u << 30)) != 0;
@@ -1054,6 +1090,32 @@ public:
                     state.effectControlValues[slot][control] =
                         editorPlayerEffectValues_[player][slot][control].load(
                             std::memory_order_acquire);
+                }
+            }
+            const int userIndex =
+                state.synthIndex -
+                static_cast<int>(kSynthIndexToGraphIndex.size());
+            if (userIndex >= 0) {
+                std::lock_guard<std::mutex> catalogLock(editorCatalogMutex_);
+                if (static_cast<std::size_t>(userIndex) <
+                    editorUserSynthControlSpecs_.size()) {
+                    const auto& specs =
+                        editorUserSynthControlSpecs_[static_cast<std::size_t>(
+                            userIndex)];
+                    state.userSynthControlCount = std::min(
+                        specs.size(), state.userSynthControls.size());
+                    for (std::size_t control = 0;
+                         control < state.userSynthControlCount; ++control) {
+                        const auto& spec = specs[control];
+                        auto& visible = state.userSynthControls[control];
+                        visible.name = spec.name;
+                        visible.minimum = spec.minimum;
+                        visible.maximum = spec.maximum;
+                        visible.logarithmic = spec.logarithmic;
+                        visible.normalizedValue =
+                            editorPlayerUserSynthValues_[player][control].load(
+                                std::memory_order_acquire);
+                    }
                 }
             }
         }
@@ -1184,6 +1246,43 @@ public:
                 static_cast<std::uint8_t>(1u << control);
         }
         setEditorStatus("Live effect control queued for p" +
+                        std::to_string(playerIndex + 1) + ".");
+    }
+
+    void setEditorPlayerUserSynthControl(int playerIndex, int controlIndex,
+                                         float normalizedValue) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount) ||
+            controlIndex < 0 ||
+            controlIndex >= static_cast<int>(
+                dexter::kMaxPortableUserSynthControls) ||
+            !std::isfinite(normalizedValue))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            const auto& pattern = activePatterns_[player];
+            if (!pattern.active)
+                return;
+            const int userIndex =
+                pattern.synthIndex -
+                static_cast<int>(kSynthIndexToGraphIndex.size());
+            if (userIndex < 0 ||
+                static_cast<std::size_t>(userIndex) >=
+                    userSynthDefinitions_.size())
+                return;
+            const auto& definition =
+                userSynthDefinitions_[static_cast<std::size_t>(userIndex)];
+            const auto control = static_cast<std::size_t>(controlIndex);
+            if (definition.persistentPlayerEffect ||
+                control >= definition.liveControlCount)
+                return;
+            auto& pending = pendingEditorUserSynthControls_[player];
+            pending.values[control] =
+                std::clamp(normalizedValue, 0.0f, 1.0f);
+            pending.mask |= static_cast<std::uint8_t>(1u << control);
+        }
+        setEditorStatus("Live SynthDef control queued for p" +
                         std::to_string(playerIndex + 1) + ".");
     }
 
@@ -1369,6 +1468,11 @@ private:
         }
     };
 
+    struct PendingEditorUserSynthControls {
+        std::array<float, dexter::kMaxPortableUserSynthControls> values{};
+        std::uint8_t mask = 0;
+    };
+
     struct PatternState {
         std::array<PythonNoteEvent, kMaxPatternEvents> events{};
         std::size_t eventCount = 0;
@@ -1388,6 +1492,10 @@ private:
         std::array<TimeVarControl, 7> effectControlVariables{};
         std::array<PlayerEffectState, kMaxPlayerEffectChain> playerEffects{};
         std::size_t playerEffectCount = 0;
+        int userSynthControlDefinitionIndex = -1;
+        std::array<float, dexter::kMaxPortableUserSynthControls>
+            userSynthControlValues{};
+        std::uint8_t userSynthControlOverrideMask = 0;
         std::array<TimeVarControl, 12> noteEffectControls{};
         bool chopEnabled = false;
         bool spinEnabled = false;
@@ -1549,6 +1657,32 @@ private:
         editorPlayerValues_[player][6].store(
             std::clamp(pshift, -24.0f, 24.0f),
             std::memory_order_release);
+        const int userIndex =
+            pattern.synthIndex -
+            static_cast<int>(kSynthIndexToGraphIndex.size());
+        for (std::size_t control = 0;
+             control < dexter::kMaxPortableUserSynthControls; ++control) {
+            float normalized = 0.0f;
+            if (userIndex >= 0 &&
+                static_cast<std::size_t>(userIndex) <
+                    userSynthDefinitions_.size()) {
+                const auto& definition =
+                    userSynthDefinitions_[static_cast<std::size_t>(userIndex)];
+                if (!definition.persistentPlayerEffect &&
+                    control < definition.liveControlCount) {
+                    const bool hasOverride =
+                        pattern.userSynthControlDefinitionIndex == userIndex &&
+                        (pattern.userSynthControlOverrideMask &
+                         static_cast<std::uint8_t>(1u << control)) != 0;
+                    normalized = hasOverride
+                        ? pattern.userSynthControlValues[control]
+                        : definition.liveControls[control].defaultNormalized();
+                }
+            }
+            editorPlayerUserSynthValues_[player][control].store(
+                std::clamp(normalized, 0.0f, 1.0f),
+                std::memory_order_release);
+        }
         for (std::size_t slot = 0;
              slot < pattern.playerEffects.size(); ++slot) {
             for (std::size_t control = 0; control < 7; ++control) {
@@ -1585,6 +1719,9 @@ private:
         std::array<int, 7> effectControlIndices{};
         std::array<float, 7> effectControlMinimum{};
         std::array<float, 7> effectControlMaximum{{1, 1, 1, 1, 1, 1, 1}};
+        std::array<dexter::PortableUserSynthControlSpec,
+                   dexter::kMaxPortableUserSynthControls> liveControls{};
+        std::size_t liveControlCount = 0;
     };
 
     struct TimedMidiEvent {
@@ -1633,6 +1770,10 @@ private:
         int midiNote = -1;
         int velocity = 0;
         int synthIndex = 0;
+        int userSynthControlDefinitionIndex = -1;
+        std::array<float, dexter::kMaxPortableUserSynthControls>
+            userSynthControlSmoothed{};
+        bool userSynthControlSmoothingInitialized = false;
         float amplitude = 1.0f;
         float pan = 0.0f;
         float vibDepth = 0.5f;
@@ -2308,6 +2449,11 @@ private:
             Graph_SetControl(created, userDefinition.releaseControl, 0.04f);
         if (userDefinition.sustainControl >= 0)
             Graph_SetControl(created, userDefinition.sustainControl, 1.0f);
+        for (std::size_t control = 0;
+             control < userDefinition.liveControlCount; ++control)
+            Graph_SetControl(
+                created, userDefinition.liveControls[control].controlIndex,
+                userDefinition.liveControls[control].defaultValue);
         Group_AddTail(rootGroup_, &created->mNode);
         if (!startImmediately)
             Node_SetRun(&created->mNode, 0);
@@ -3598,6 +3744,11 @@ private:
 
     bool loadUserSynthDefinitions(std::string& error) {
         userSynthDefinitions_.clear();
+        {
+            std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+            editorExternalSynthNames_.clear();
+            editorUserSynthControlSpecs_.clear();
+        }
         for (const auto& synthFile : userSynthFiles_) {
             const bool conflictsWithBuiltin =
                 isEmbeddedFoxDotSynthName(synthFile.name) ||
@@ -3635,6 +3786,73 @@ private:
             userDefinition.definition = loaded;
             userDefinition.persistentPlayerEffect =
                 isPersistentPlayerEffectName(userDefinition.name);
+            if (!userDefinition.persistentPlayerEffect) {
+                auto controlPath = synthFile.path;
+                controlPath.replace_extension(".controls");
+                std::error_code sidecarError;
+                const bool hasControlSidecar =
+                    std::filesystem::exists(controlPath, sidecarError);
+                if (sidecarError) {
+                    error = "Could not inspect " +
+                            controlPath.filename().string() + ".";
+                    return false;
+                }
+                if (hasControlSidecar) {
+                    const auto sidecarBytes =
+                        std::filesystem::file_size(controlPath, sidecarError);
+                    if (sidecarError ||
+                        sidecarBytes >
+                            dexter::kMaxPortableUserSynthControlFileBytes) {
+                        error = controlPath.filename().string() +
+                                " is unreadable or exceeds the 8192-byte control-map limit.";
+                        return false;
+                    }
+                    std::ifstream stream(controlPath, std::ios::binary);
+                    if (!stream) {
+                        error = "Could not read " +
+                                controlPath.filename().string() + ".";
+                        return false;
+                    }
+                    const auto boundedSize =
+                        static_cast<std::size_t>(sidecarBytes);
+                    std::string controlText(boundedSize, '\0');
+                    if (boundedSize > 0)
+                        stream.read(controlText.data(),
+                                    static_cast<std::streamsize>(boundedSize));
+                    if (static_cast<std::size_t>(stream.gcount()) !=
+                        boundedSize) {
+                        error = controlPath.filename().string() +
+                                " changed or could not be read completely.";
+                        return false;
+                    }
+                    char unexpectedExtraByte = 0;
+                    if (stream.get(unexpectedExtraByte)) {
+                        error = controlPath.filename().string() +
+                                " changed while it was being read.";
+                        return false;
+                    }
+                    std::vector<dexter::PortableUserSynthControlSpec> parsed;
+                    if (!dexter::parsePortableUserSynthControls(
+                            controlText, parsed, error)) {
+                        error = controlPath.filename().string() + ": " + error;
+                        return false;
+                    }
+                    for (auto& control : parsed) {
+                        control.controlIndex =
+                            synthControlIndex(loaded, control.name);
+                        if (control.controlIndex < 0) {
+                            error = controlPath.filename().string() +
+                                    " names a control not found in " +
+                                    synthFile.path.filename().string() + ": " +
+                                    control.name;
+                            return false;
+                        }
+                        userDefinition.liveControls[
+                            userDefinition.liveControlCount++] =
+                            std::move(control);
+                    }
+                }
+            }
             userDefinition.outControl = synthControlIndex(loaded, "out");
             userDefinition.inputBusControl = synthControlIndex(loaded, "inbus");
             userDefinition.frequencyControl = synthControlIndex(loaded, "freq");
@@ -3934,8 +4152,18 @@ private:
             std::lock_guard<std::mutex> lock(editorCatalogMutex_);
             editorExternalSynthNames_.clear();
             editorExternalSynthNames_.reserve(userSynthDefinitions_.size());
-            for (const auto& definition : userSynthDefinitions_)
+            editorUserSynthControlSpecs_.clear();
+            editorUserSynthControlSpecs_.reserve(userSynthDefinitions_.size());
+            for (const auto& definition : userSynthDefinitions_) {
                 editorExternalSynthNames_.push_back(definition.name);
+                std::vector<dexter::PortableUserSynthControlSpec> controls;
+                controls.reserve(definition.liveControlCount);
+                for (std::size_t index = 0;
+                     index < definition.liveControlCount; ++index)
+                    controls.push_back(definition.liveControls[index]);
+                editorUserSynthControlSpecs_.push_back(
+                    std::move(controls));
+            }
         }
         return true;
     }
@@ -4200,6 +4428,11 @@ private:
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
         userSynthFiles_.clear();
+        {
+            std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+            editorExternalSynthNames_.clear();
+            editorUserSynthControlSpecs_.clear();
+        }
         rootGroup_ = nullptr;
         nextDynamicGraphNodeId_ = 100;
     }
@@ -4254,6 +4487,40 @@ private:
                     blockStart >= voice.sustainEndSample) {
                     Graph_SetControl(voice.activeSynth, definition.gateControl, 0.0f);
                     voice.userSynthGateReleased = true;
+                }
+                if (definition.liveControlCount > 0) {
+                    const double blockSeconds =
+                        static_cast<double>(kSCBlockSize) / sampleRate_;
+                    const bool resetSmoothing =
+                        !voice.userSynthControlSmoothingInitialized ||
+                        voice.userSynthControlDefinitionIndex != userIndex;
+                    for (std::size_t control = 0;
+                         control < definition.liveControlCount; ++control) {
+                        const bool hasOverride =
+                            pattern.userSynthControlDefinitionIndex ==
+                                static_cast<int>(userIndex) &&
+                            (pattern.userSynthControlOverrideMask &
+                             static_cast<std::uint8_t>(1u << control)) != 0;
+                        const float target = hasOverride
+                            ? pattern.userSynthControlValues[control]
+                            : definition.liveControls[control].defaultNormalized();
+                        auto& current =
+                            voice.userSynthControlSmoothed[control];
+                        current = resetSmoothing
+                            ? target
+                            : smoothAirwindowsFxControl(current, target,
+                                                        blockSeconds);
+                        const auto& spec = definition.liveControls[control];
+                        Graph_SetControl(
+                            voice.activeSynth, spec.controlIndex,
+                            spec.map(current));
+                    }
+                    voice.userSynthControlDefinitionIndex =
+                        static_cast<int>(userIndex);
+                    voice.userSynthControlSmoothingInitialized = true;
+                } else {
+                    voice.userSynthControlDefinitionIndex = -1;
+                    voice.userSynthControlSmoothingInitialized = false;
                 }
             } else if (voice.synthIndex >= 31 && !isPlayerEffect) {
                 const double beat = controlBeatStart[player];
@@ -4947,6 +5214,8 @@ private:
     std::array<GraphDef*, kSynthGraphCount> synthDefinitions_{};
     std::vector<UserSynthFile> userSynthFiles_;
     std::vector<UserSynthDefinition> userSynthDefinitions_;
+    std::vector<std::vector<dexter::PortableUserSynthControlSpec>>
+        editorUserSynthControlSpecs_;
     int32 nextDynamicGraphNodeId_ = 100;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
@@ -4999,12 +5268,17 @@ private:
     std::array<PendingEditorControl, kPlayerCount> pendingEditorControls_{};
     std::array<PendingEditorEffectControls, kPlayerCount>
         pendingEditorEffectControls_{};
+    std::array<PendingEditorUserSynthControls, kPlayerCount>
+        pendingEditorUserSynthControls_{};
     std::array<std::atomic<std::uint32_t>, kPlayerCount> editorPlayerState_{};
     std::array<std::array<std::atomic<float>, 7>, kPlayerCount>
         editorPlayerValues_{};
     std::array<std::array<std::array<std::atomic<float>, 7>,
                           kMaxPlayerEffectChain>, kPlayerCount>
         editorPlayerEffectValues_{};
+    std::array<std::array<std::atomic<float>,
+                          dexter::kMaxPortableUserSynthControls>,
+                kPlayerCount> editorPlayerUserSynthValues_{};
     std::array<std::atomic<std::uint64_t>, kPlayerCount> editorPlayerEffectChain_{};
     std::uint8_t pendingPlayerMask_ = 0;
     std::array<bool, kPlayerCount> pendingMuteStates_{};

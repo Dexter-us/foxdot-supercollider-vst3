@@ -81,6 +81,13 @@ constexpr int kStatusHeight = 24;
 constexpr int kPanelWidth = 270;
 constexpr std::size_t kMaxScriptBytes = 256 * 1024;
 constexpr std::size_t kMaxScriptCharacters = 65536;
+struct SampleBrowserEntry {
+    std::string category;
+    std::string subcategory;
+    std::string sortKey;
+    std::wstring label;
+};
+
 constexpr std::array<const char*, 58> kEmbeddedSynthNames{
     "sine", "triangle", "saw", "square", "bass", "varsaw", "dirt", "jbass",
     "noise", "dub", "growl", "soprano", "crunch", "lazer", "rave", "bell",
@@ -1069,6 +1076,20 @@ private:
         return state->second;
     }
 
+    std::string catalogSubcategoryKey(const std::string& category,
+                                      const std::string& subcategory) const {
+        return catalogCategoryKey(category) + ":" + subcategory;
+    }
+
+    bool catalogSubcategoryCollapsed(const std::string& category,
+                                     const std::string& subcategory) {
+        const auto key = catalogSubcategoryKey(category, subcategory);
+        auto state = collapsedCatalogSubcategories_.find(key);
+        if (state == collapsedCatalogSubcategories_.end())
+            state = collapsedCatalogSubcategories_.emplace(key, true).first;
+        return state->second;
+    }
+
     void onPanelListSelectionChanged() {
         if (!panelList_) {
             updatePlayerActionButtons();
@@ -1114,6 +1135,25 @@ private:
                 updatePlayerActionButtons();
                 return;
             }
+        }
+        const auto subcategoryHeader =
+            catalogSubcategoryHeaderRows_.find(selected);
+        if (selected != LB_ERR &&
+            subcategoryHeader != catalogSubcategoryHeaderRows_.end()) {
+            const auto group = subcategoryHeader->second;
+            const auto key = catalogSubcategoryKey(group.first, group.second);
+            const bool collapsed =
+                catalogSubcategoryCollapsed(group.first, group.second);
+            collapsedCatalogSubcategories_[key] = !collapsed;
+            renderPanelTab();
+            for (const auto& row : catalogSubcategoryHeaderRows_) {
+                if (row.second == group) {
+                    SendMessageW(panelList_, LB_SETCURSEL, row.first, 0);
+                    break;
+                }
+            }
+            updatePlayerActionButtons();
+            return;
         }
         const auto header = catalogCategoryHeaderRows_.find(selected);
         if (selected != LB_ERR && header != catalogCategoryHeaderRows_.end()) {
@@ -1327,6 +1367,7 @@ private:
             return;
         SendMessageW(panelList_, LB_RESETCONTENT, 0, 0);
         catalogCategoryHeaderRows_.clear();
+        catalogSubcategoryHeaderRows_.clear();
         const int tab = selectedPanelTab();
         ShowWindow(panelMuteButton_, tab == 0 ? SW_SHOW : SW_HIDE);
         ShowWindow(panelStopButton_, tab == 0 ? SW_SHOW : SW_HIDE);
@@ -1372,10 +1413,12 @@ private:
 
     void renderCatalogEntries() {
         std::string currentCategory;
+        std::string currentSubcategory;
         for (std::size_t index = 0; index < panelCatalog_.size(); ++index) {
             const auto& entry = panelCatalog_[index];
             if (entry.category != currentCategory) {
                 currentCategory = entry.category;
+                currentSubcategory.clear();
                 const bool collapsed =
                     catalogCategoryCollapsed(currentCategory);
                 const int row = static_cast<int>(
@@ -1386,9 +1429,25 @@ private:
             }
             if (catalogCategoryCollapsed(currentCategory))
                 continue;
+            if (entry.subcategory != currentSubcategory) {
+                currentSubcategory = entry.subcategory;
+                const bool collapsed = catalogSubcategoryCollapsed(
+                    currentCategory, currentSubcategory);
+                const int row = static_cast<int>(
+                    SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+                addPanelRow(std::wstring(L"    ") +
+                            (collapsed ? L"[+] " : L"[-] ") +
+                            fromUtf8(currentSubcategory));
+                catalogSubcategoryHeaderRows_[row] =
+                    {currentCategory, currentSubcategory};
+            }
+            if (catalogSubcategoryCollapsed(currentCategory,
+                                            currentSubcategory))
+                continue;
             const auto label = entry.available
                 ? entry.label : entry.label + " [not loaded]";
-            addPanelRow(fromUtf8(label), static_cast<int>(index));
+            addPanelRow(std::wstring(L"        ") + fromUtf8(label),
+                        static_cast<int>(index));
         }
     }
 
@@ -1483,6 +1542,7 @@ private:
 
     void appendSampleBank(const std::filesystem::path& folder,
                           const std::wstring& symbol,
+                          std::vector<SampleBrowserEntry>& entries,
                           std::size_t& displayedFiles) {
         std::error_code error;
         if (!std::filesystem::is_directory(folder, error) || error)
@@ -1500,8 +1560,14 @@ private:
         std::sort(waves.begin(), waves.end());
         for (std::size_t index = 0;
              index < waves.size() && displayedFiles < 256; ++index) {
-            addPanelRow(symbol + L"[" + std::to_wstring(index) + L"]  " +
-                        fromUtf8(waves[index].filename().u8string()));
+            const auto filename = waves[index].filename().u8string();
+            const auto categories =
+                dexter::editor::sampleCategoryForFilename(filename);
+            entries.push_back({
+                categories.first, categories.second,
+                dexter::editor::catalogLower(filename),
+                symbol + L"[" + std::to_wstring(index) + L"]  " +
+                    fromUtf8(filename)});
             ++displayedFiles;
         }
     }
@@ -1511,18 +1577,20 @@ private:
         addPanelRow(L"One row per sample: symbol[index] and WAV filename.");
         addPanelRow(L"x-o- uses x/o letter banks; spaces are rests.");
         addPanelRow(L"sample=1 picks bank item 1; |x1| changes one hit.");
+        addPanelRow(L"Virtual groups use filenames; files and sample indices stay put.");
         addPanelRow(L"Use new filenames, then Run; replacing same file needs host restart.");
         std::size_t displayedFiles = 0;
+        std::vector<SampleBrowserEntry> entries;
         std::error_code error;
         for (wchar_t letter = L'a'; letter <= L'z' && displayedFiles < 256;
              ++letter) {
             const std::wstring symbol(1, letter);
             const auto bank = root / symbol;
             appendSampleBank(bank / L"lower", symbol + L" (lower)",
-                             displayedFiles);
+                             entries, displayedFiles);
             appendSampleBank(bank / L"upper", symbol + L" (upper)",
-                             displayedFiles);
-            appendSampleBank(bank, symbol, displayedFiles);
+                             entries, displayedFiles);
+            appendSampleBank(bank, symbol, entries, displayedFiles);
         }
         const auto specialRoot = root / L"_";
         for (std::filesystem::directory_iterator it(specialRoot, error), end;
@@ -1530,12 +1598,52 @@ private:
             if (!it->is_directory(error) || it->is_symlink(error))
                 continue;
             appendSampleBank(it->path(), L"_" +
-                it->path().filename().wstring(), displayedFiles);
+                it->path().filename().wstring(), entries, displayedFiles);
         }
-        if (displayedFiles == 0)
+        if (entries.empty())
             addPanelRow(L"No WAV banks yet. Open the folder to add some.");
         else if (displayedFiles >= 256)
             addPanelRow(L"List capped at 256 WAVs; more may be installed.");
+        std::sort(entries.begin(), entries.end(),
+                  [](const auto& left, const auto& right) {
+            return std::make_tuple(left.category, left.subcategory,
+                                   left.sortKey, left.label) <
+                   std::make_tuple(right.category, right.subcategory,
+                                   right.sortKey, right.label);
+        });
+        std::string currentCategory;
+        std::string currentSubcategory;
+        for (const auto& entry : entries) {
+            if (entry.category != currentCategory) {
+                currentCategory = entry.category;
+                currentSubcategory.clear();
+                const bool collapsed =
+                    catalogCategoryCollapsed(currentCategory);
+                const int row = static_cast<int>(
+                    SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+                addPanelRow((collapsed ? L"[+] " : L"[-] ") +
+                            fromUtf8(currentCategory));
+                catalogCategoryHeaderRows_[row] = currentCategory;
+            }
+            if (catalogCategoryCollapsed(currentCategory))
+                continue;
+            if (entry.subcategory != currentSubcategory) {
+                currentSubcategory = entry.subcategory;
+                const bool collapsed = catalogSubcategoryCollapsed(
+                    currentCategory, currentSubcategory);
+                const int row = static_cast<int>(
+                    SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+                addPanelRow(std::wstring(L"    ") +
+                            (collapsed ? L"[+] " : L"[-] ") +
+                            fromUtf8(currentSubcategory));
+                catalogSubcategoryHeaderRows_[row] =
+                    {currentCategory, currentSubcategory};
+            }
+            if (catalogSubcategoryCollapsed(currentCategory,
+                                            currentSubcategory))
+                continue;
+            addPanelRow(std::wstring(L"        ") + entry.label);
+        }
     }
 
     void refreshPlayersPanel() {
@@ -1812,6 +1920,46 @@ private:
                 return;
             }
         }
+        if (effectSlot < 0 && selectedPanelTab() == 0 &&
+            state.userSynthControlCount > 0) {
+            for (std::size_t index = 0;
+                 index < playerControlSliders_.size(); ++index) {
+                const bool available =
+                    index < state.userSynthControlCount;
+                const int visibility = available ? SW_SHOW : SW_HIDE;
+                ShowWindow(playerControlLabels_[index], visibility);
+                ShowWindow(playerControlSliders_[index], visibility);
+                ShowWindow(playerControlValues_[index], visibility);
+                ShowWindow(playerControlRanges_[index], visibility);
+                if (!available)
+                    continue;
+                const auto& control = state.userSynthControls[index];
+                const auto label = fromUtf8(control.name);
+                SetWindowTextW(playerControlLabels_[index], label.c_str());
+                const auto range = fromUtf8(
+                    userSynthControlRangeText(control));
+                SetWindowTextW(playerControlRanges_[index], range.c_str());
+                if (!playerControlSliders_[index])
+                    continue;
+                SendMessageW(playerControlSliders_[index], TBM_SETRANGE, TRUE,
+                              MAKELONG(0, 1000));
+                if (activePlayerSlider_ != static_cast<int>(index)) {
+                    const float normalized = std::clamp(
+                        control.normalizedValue, 0.0f, 1.0f);
+                    SendMessageW(playerControlSliders_[index], TBM_SETPOS,
+                                 TRUE, static_cast<LPARAM>(
+                                     std::lround(normalized * 1000.0f)));
+                    const auto value = fromUtf8(
+                        userSynthControlValueText(control, normalized));
+                    if (playerControlValues_[index])
+                        SetWindowTextW(playerControlValues_[index],
+                                       value.c_str());
+                }
+                EnableWindow(playerControlSliders_[index],
+                             state.active ? TRUE : FALSE);
+            }
+            return;
+        }
         const auto cutoffPosition = static_cast<int>(std::lround(
             std::clamp(std::log(std::clamp(state.cutoffHz, 20.0f, 20000.0f) /
                                     20.0f) /
@@ -1945,6 +2093,36 @@ private:
         return text.str();
     }
 
+    static float userSynthControlValue(
+        const EditorPlayerState::UserSynthControl& control,
+        float normalized) {
+        normalized = std::clamp(normalized, 0.0f, 1.0f);
+        if (control.logarithmic)
+            return control.minimum * std::pow(
+                control.maximum / control.minimum, normalized);
+        return control.minimum +
+            normalized * (control.maximum - control.minimum);
+    }
+
+    static std::string userSynthControlRangeText(
+        const EditorPlayerState::UserSynthControl& control) {
+        std::ostringstream text;
+        text << std::setprecision(4) << control.minimum << " - "
+             << std::setprecision(4) << control.maximum;
+        if (control.logarithmic)
+            text << " log";
+        return text.str();
+    }
+
+    static std::string userSynthControlValueText(
+        const EditorPlayerState::UserSynthControl& control,
+        float normalized) {
+        std::ostringstream text;
+        text << std::setprecision(5)
+             << userSynthControlValue(control, normalized);
+        return text.str();
+    }
+
     static float playerControlValue(std::size_t index, int position) {
         if (index == 0 || index == 3)
             return std::clamp(position / 100.0f, 0.0f, 1.0f);
@@ -1996,6 +2174,22 @@ private:
             if (scrollCode == TB_ENDTRACK)
                 commitPlayerEffectControlToSource(
                     player, effectSlot, specs[index], normalized);
+            return;
+        }
+        std::array<EditorPlayerState, 8> states{};
+        host_->editorPlayerStates(states);
+        const auto& state = states[static_cast<std::size_t>(player)];
+        if (index < state.userSynthControlCount) {
+            const auto& control = state.userSynthControls[index];
+            const float normalized =
+                std::clamp(position / 1000.0f, 0.0f, 1.0f);
+            host_->setEditorPlayerUserSynthControl(
+                player, static_cast<int>(index), normalized);
+            if (playerControlValues_[index]) {
+                const auto label = fromUtf8(
+                    userSynthControlValueText(control, normalized));
+                SetWindowTextW(playerControlValues_[index], label.c_str());
+            }
             return;
         }
         const float value = playerControlValue(index, position);
@@ -2736,7 +2930,10 @@ private:
     std::array<EditorPlayerState, 8> lastPanelPlayers_{};
     std::vector<dexter::editor::CatalogEntry> panelCatalog_;
     std::unordered_map<std::string, bool> collapsedCatalogCategories_;
+    std::unordered_map<std::string, bool> collapsedCatalogSubcategories_;
     std::unordered_map<int, std::string> catalogCategoryHeaderRows_;
+    std::unordered_map<int, std::pair<std::string, std::string>>
+        catalogSubcategoryHeaderRows_;
     std::array<bool, 8> expandedEffectChains_{};
     bool panelPlayersInitialized_ = false;
     bool panelEffectsInitialized_ = false;

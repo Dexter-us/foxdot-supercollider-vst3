@@ -34,49 +34,180 @@ struct CatalogEntry {
     std::vector<CatalogArgument> arguments;
     bool available = true;
     std::string category;
+    std::string subcategory;
 
     CatalogEntry() = default;
     CatalogEntry(CatalogKind kindValue, std::string nameValue,
                  std::string labelValue, std::string aboutValue,
                  std::vector<CatalogArgument> argumentsValue = {},
                  bool availableValue = true,
-                 std::string categoryValue = {})
+                  std::string categoryValue = {},
+                  std::string subcategoryValue = {})
         : kind(kindValue), name(std::move(nameValue)),
           label(std::move(labelValue)), about(std::move(aboutValue)),
           arguments(std::move(argumentsValue)), available(availableValue),
-          category(std::move(categoryValue)) {}
+          category(std::move(categoryValue)),
+          subcategory(std::move(subcategoryValue)) {}
 };
+
+inline std::string catalogLower(std::string_view value) {
+    std::string result(value);
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return result;
+}
 
 inline std::string instrumentCategory(const CatalogEntry& entry) {
     if (entry.kind == CatalogKind::SamplePlayer)
-        return "Sample player";
-    if (entry.kind == CatalogKind::UserSynth)
-        return "Portable SynthDefs";
+        return "Drums & Percussion";
+    if (entry.kind == CatalogKind::UserSynth) {
+        const auto name = catalogLower(entry.name);
+        if (name.find("kick") != std::string::npos ||
+            name.find("snare") != std::string::npos ||
+            name.find("drum") != std::string::npos ||
+            name.find("perc") != std::string::npos)
+            return "Drums & Percussion";
+        if (name.find("bass") != std::string::npos)
+            return "Bass";
+        if (name.find("bell") != std::string::npos ||
+            name.find("gong") != std::string::npos ||
+            name.find("mallet") != std::string::npos ||
+            name.find("piano") != std::string::npos ||
+            name.find("keys") != std::string::npos)
+            return "Keys & Mallets";
+        if (name.find("pluck") != std::string::npos ||
+            name.find("harp") != std::string::npos ||
+            name.find("guitar") != std::string::npos ||
+            name.find("string") != std::string::npos ||
+            name.find("viola") != std::string::npos)
+            return "Plucked & Stringed";
+        if (name.find("pad") != std::string::npos ||
+            name.find("ambient") != std::string::npos)
+            return "Pads & Atmospheres";
+        if (name.find("noise") != std::string::npos ||
+            name.find("texture") != std::string::npos)
+            return "Textures & Noise";
+        if (name.find("sine") != std::string::npos ||
+            name.find("saw") != std::string::npos ||
+            name.find("pulse") != std::string::npos ||
+            name.find("wave") != std::string::npos ||
+            name.find("osc") != std::string::npos)
+            return "Waveforms";
+        return "User Synths";
+    }
     static const std::vector<std::string> waveforms{
-        "pulse", "saw", "sine", "triangle"};
+        "pulse", "saw", "sine", "triangle", "varsaw"};
     static const std::vector<std::string> bass{
         "bass", "dbass", "jbass", "sawbass"};
     static const std::vector<std::string> keys{
-        "bell", "glass", "gong", "keys", "klank", "marimba", "pads",
-        "sinepad"};
+        "bell", "glass", "gong", "keys", "klank", "marimba"};
     static const std::vector<std::string> plucked{
         "donk", "karp", "nylon", "pluck", "sitar", "squish", "twang",
         "viola"};
+    static const std::vector<std::string> pads{
+        "ambi", "pads", "sinepad", "space", "swell"};
     static const std::vector<std::string> texture{
         "ambi", "creep", "dirt", "fuzz", "noise", "orient", "scratch",
-        "scatter", "space", "spark", "swell"};
+        "scatter", "spark"};
     if (std::find(waveforms.begin(), waveforms.end(), entry.name) !=
         waveforms.end())
         return "Waveforms";
     if (std::find(bass.begin(), bass.end(), entry.name) != bass.end())
         return "Bass";
     if (std::find(keys.begin(), keys.end(), entry.name) != keys.end())
-        return "Keys and mallets";
+        return "Keys & Mallets";
     if (std::find(plucked.begin(), plucked.end(), entry.name) != plucked.end())
-        return "Plucked and strings";
+        return "Plucked & Stringed";
+    if (std::find(pads.begin(), pads.end(), entry.name) != pads.end())
+        return "Pads & Atmospheres";
     if (std::find(texture.begin(), texture.end(), entry.name) != texture.end())
-        return "Texture and noise";
-    return "Synth voices";
+        return "Textures & Noise";
+    return "Leads & Synth Voices";
+}
+
+inline std::string instrumentSubcategory(const CatalogEntry& entry) {
+    const auto& name = entry.name;
+    if (entry.kind == CatalogKind::SamplePlayer)
+        return "WAV sample player";
+    if (entry.kind == CatalogKind::UserSynth) {
+        const auto lowered = catalogLower(name);
+        if (lowered.find("kick") != std::string::npos ||
+            lowered.find("snare") != std::string::npos ||
+            lowered.find("drum") != std::string::npos ||
+            lowered.find("perc") != std::string::npos)
+            return "Precompiled percussion";
+        if (lowered.find("bass") != std::string::npos)
+            return "Precompiled bass";
+        if (lowered.find("bell") != std::string::npos ||
+            lowered.find("gong") != std::string::npos ||
+            lowered.find("mallet") != std::string::npos ||
+            lowered.find("piano") != std::string::npos ||
+            lowered.find("keys") != std::string::npos)
+            return "Precompiled keys and mallets";
+        if (lowered.find("pluck") != std::string::npos ||
+            lowered.find("harp") != std::string::npos ||
+            lowered.find("guitar") != std::string::npos ||
+            lowered.find("string") != std::string::npos ||
+            lowered.find("viola") != std::string::npos)
+            return "Precompiled plucked/stringed";
+        if (lowered.find("pad") != std::string::npos ||
+            lowered.find("ambient") != std::string::npos)
+            return "Precompiled pads";
+        if (lowered.find("noise") != std::string::npos ||
+            lowered.find("texture") != std::string::npos)
+            return "Precompiled textures";
+        if (lowered.find("sine") != std::string::npos ||
+            lowered.find("saw") != std::string::npos ||
+            lowered.find("pulse") != std::string::npos ||
+            lowered.find("wave") != std::string::npos ||
+            lowered.find("osc") != std::string::npos)
+            return "Precompiled oscillators";
+        return "Other precompiled SynthDefs";
+    }
+    if (entry.category == "Drums & Percussion")
+        return "Sample player";
+    if (entry.category == "Bass") {
+        if (name == "dbass")
+            return "Upright bass";
+        if (name == "jbass")
+            return "Electric bass";
+        if (name == "sawbass")
+            return "Saw bass";
+        return "Synth bass";
+    }
+    if (entry.category == "Keys & Mallets") {
+        if (name == "bell" || name == "gong" || name == "glass")
+            return "Bells and resonators";
+        if (name == "marimba")
+            return "Mallets";
+        return "Keyboard";
+    }
+    if (entry.category == "Plucked & Stringed") {
+        if (name == "nylon" || name == "viola" || name == "twang")
+            return "String voices";
+        return "Plucked voices";
+    }
+    if (entry.category == "Pads & Atmospheres")
+        return "Pads and sustained textures";
+    if (entry.category == "Textures & Noise") {
+        if (name == "noise")
+            return "Noise";
+        if (name == "scratch" || name == "scatter")
+            return "Rhythmic textures";
+        return "Sound-design textures";
+    }
+    if (entry.category == "Waveforms") {
+        if (name == "varsaw")
+            return "Variable-width oscillator";
+        return "Core oscillators";
+    }
+    if (name == "arpy")
+        return "Arpeggiated";
+    if (name == "lazer" || name == "rave" || name == "prophet")
+        return "Electronic leads";
+    return "Lead and character voices";
 }
 
 inline std::string effectCategory(const CatalogEntry& entry) {
@@ -116,6 +247,105 @@ inline std::string effectCategory(const CatalogEntry& entry) {
     if (name == "Cut" || name == "Blur" || name == "FMod")
         return "Player controls";
     return "Other effects";
+}
+
+inline std::string effectSubcategory(const CatalogEntry& entry) {
+    const auto& name = entry.name;
+    if (entry.category == "Delay") {
+        if (name == "AirwindowsTapeDelay2")
+            return "Tape";
+        if (name == "LimutPingPong")
+            return "Ping-pong";
+        if (name == "AirwindowsEchojam")
+            return "Multi-tap echo";
+        return "Echo";
+    }
+    if (entry.category == "Reverb") {
+        if (name == "LimutShimmer")
+            return "Pitch-shift shimmer";
+        if (name == "LimutGatedVerb")
+            return "Gated";
+        if (name == "Greyhole" || name == "JPverb")
+            return "Space";
+        return "Room";
+    }
+    if (entry.category == "Modulation and rhythm") {
+        if (name == "Chop" || name == "Spin")
+            return "Rhythmic";
+        return name;
+    }
+    if (entry.category == "Filters")
+        return name;
+    if (entry.category == "Pitch and formant") {
+        if (name == "Vibrato")
+            return "Vibrato";
+        if (name == "Slide" || name == "Bend")
+            return "Glide and bend";
+        if (name == "Formant")
+            return "Formant";
+        return "Pitch shift";
+    }
+    if (entry.category == "Distortion and reduction") {
+        if (name == "Bits / Crush" || name == "SCLOrkDecimatorFX")
+            return "Bit/sample reduction";
+        return "Waveshaping and drive";
+    }
+    if (entry.category == "Duck")
+        return "Envelope ducking";
+    if (entry.category == "Dynamics")
+        return "Compression";
+    if (entry.category == "Phase")
+        return "All-pass / dispersion";
+    if (entry.category == "Vocoder")
+        return "Vocoder";
+    if (entry.category == "Player controls")
+        return "Per-note controls";
+    return "Other";
+}
+
+inline std::pair<std::string, std::string> sampleCategoryForFilename(
+    std::string_view filename) {
+    const auto lowered = catalogLower(filename);
+    const auto contains = [&](std::string_view text) {
+        return lowered.find(text) != std::string::npos;
+    };
+    const auto has = [&](std::string_view token) {
+        const auto found = lowered.find(token);
+        if (found == std::string::npos)
+            return false;
+        const auto isWord = [](unsigned char character) {
+            return std::isalnum(character) != 0;
+        };
+        const bool leftBoundary =
+            found == 0 || !isWord(static_cast<unsigned char>(lowered[found - 1]));
+        const auto end = found + token.size();
+        const bool rightBoundary =
+            end == lowered.size() ||
+            !isWord(static_cast<unsigned char>(lowered[end]));
+        return leftBoundary && rightBoundary;
+    };
+    if (contains("kickdrum") || contains("bassdrum") ||
+        has("kick") || has("bd"))
+        return {"Drums & Percussion", "Kick"};
+    if (contains("snaredrum") || contains("sidestick") ||
+        has("snare") || has("sd"))
+        return {"Drums & Percussion", "Snare"};
+    if (contains("hihat") || contains("hi-hat") ||
+        has("hat") || has("hh"))
+        return {"Drums & Percussion", "Hi-hat"};
+    if (has("tom") || has("toms"))
+        return {"Drums & Percussion", "Toms"};
+    if (has("cymbal") || has("ride") || has("crash"))
+        return {"Drums & Percussion", "Cymbals"};
+    if (has("clap"))
+        return {"Drums & Percussion", "Claps"};
+    if (has("shaker") || has("maraca"))
+        return {"Drums & Percussion", "Shakers"};
+    if (has("cowbell") || has("bongo") || has("conga") ||
+        has("woodblock") || has("clave") || has("rim") ||
+        has("percussion") || has("perc"))
+        return {"Drums & Percussion", "Hand percussion"};
+    return {"Other Samples", "Tonal and FX"};
 }
 
 struct PlayerEffectControlSpec {
@@ -380,7 +610,7 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
         "Greyhole", "JPverb", "LimutDisperser", "LimutDuck",
         "LimutCompressor", "LimutFuzz", "LimutGatedVerb",
-        "LimutPingPong", "LimutShifter",
+        "LimutPingPong", "LimutShifter", "LimutVocoder",
         "LimutShimmer", "Phaser", "SCLOrkPhazerFX",
         "SCLOrkDecimatorFX", "SCLOrkCrossoverDistortionFX", "Tremolo"};
     for (const auto& name : external) {
@@ -399,18 +629,15 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
                 "an installed compatible SCPlugins module and host restart.",
             {}, true});
     }
-    for (auto& entry : result)
+    for (auto& entry : result) {
         entry.category = instrumentCategory(entry);
+        entry.subcategory = instrumentSubcategory(entry);
+    }
     const auto less = [](const auto& left, const auto& right) {
-        auto a = left.label;
-        auto b = right.label;
-        std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return std::tie(left.category, a) < std::tie(right.category, b);
+        return std::make_tuple(left.category, left.subcategory,
+                               catalogLower(left.label)) <
+               std::make_tuple(right.category, right.subcategory,
+                               catalogLower(right.label));
     };
     std::sort(result.begin(), result.end(), less);
     return result;
@@ -603,19 +830,16 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         result.push_back({CatalogKind::ExternalEffect, name, name,
                           std::move(description), std::move(defaults), loaded});
     }
-    for (auto& entry : result)
+    for (auto& entry : result) {
         entry.category = effectCategory(entry);
+        entry.subcategory = effectSubcategory(entry);
+    }
     std::sort(result.begin(), result.end(), [](const auto& left,
                                                const auto& right) {
-        auto a = left.label;
-        auto b = right.label;
-        std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        return std::tie(left.category, a) < std::tie(right.category, b);
+        return std::make_tuple(left.category, left.subcategory,
+                               catalogLower(left.label)) <
+               std::make_tuple(right.category, right.subcategory,
+                               catalogLower(right.label));
     });
     return result;
 }

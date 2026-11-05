@@ -272,6 +272,8 @@ with tempfile.TemporaryDirectory() as directory:
              ("SCLOrkPhazerFX", "SCLOrkDecimatorFX",
               "SCLOrkCrossoverDistortionFX")
              if example.name == "201-sclork-insert-effects.py" else
+             ("CustomTone",)
+             if example.name == "202-custom-synth-live-controls.py" else
             ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
             ("AirwindowsTapeDelay2",)
             if example.name == "103-sample-player-airwindows-delay.py" else

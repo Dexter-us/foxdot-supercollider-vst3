@@ -1,6 +1,8 @@
 #include "../player_line_edit.h"
 #include "../live_player_controls.h"
 #include "../editor_catalog.h"
+#include "../user_synth_controls.h"
+#include "../airwindows_control_smoothing.h"
 
 #include <algorithm>
 #include <cassert>
@@ -55,30 +57,92 @@ int main() {
     assert(smoothEditorPlayerControl(12.0f, 0.0f, 1.0f) == 0.0f);
     assert(!editorPlayerControlAvailable(
         EditorPlayerControl::EffectMix, false, true));
+    {
+        std::vector<dexter::PortableUserSynthControlSpec> controls;
+        std::string error;
+        assert(dexter::parsePortableUserSynthControls(
+            "# sliders are opt-in\nbrightness 0 1 0.6\n"
+            "resonance 100 12000 1800 log\n",
+            controls, error));
+        assert(controls.size() == 2);
+        assert(controls[0].name == "brightness");
+        assert(std::abs(controls[0].map(0.25f) - 0.25f) < 1e-6f);
+        assert(std::abs(controls[0].defaultNormalized() - 0.6f) < 1e-6f);
+        assert(controls[1].logarithmic);
+        assert(std::abs(controls[1].map(0.5f) -
+                        std::sqrt(100.0f * 12000.0f)) < 0.1f);
+        assert(std::abs(controls[1].normalize(1800.0f) -
+                        controls[1].defaultNormalized()) < 1e-6f);
+        const float smoothStep =
+            smoothAirwindowsFxControl(controls[0].defaultNormalized(), 1.0f,
+                                      0.005);
+        assert(smoothStep > controls[0].defaultNormalized());
+        assert(smoothStep < 1.0f);
+        assert(controls[0].map(-1.0f) == controls[0].minimum);
+        assert(controls[0].map(2.0f) == controls[0].maximum);
+
+        assert(!dexter::parsePortableUserSynthControls(
+            "freq 20 20000 440\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "Amp 0 1 0.5\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "fx_mix 0 1 0.5\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "bad-name 0 1 0.5\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "shape 1 1 1\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "shape 0 10 2 log\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "shape 0 1 nan\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "shape 0 1 0.5 cubic\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "shape 0 1 0.5 extra field\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            std::string("shape 0 1 0.5\n") + '\0', controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            "shape 0 1 0.5\nshape 0 1 0.5\n", controls, error));
+        assert(!dexter::parsePortableUserSynthControls(
+            std::string(dexter::kMaxPortableUserSynthControlFileBytes + 1,
+                        'x'),
+            controls, error));
+
+        std::string tooMany;
+        for (int index = 0; index < 8; ++index)
+            tooMany += "control" + std::to_string(index) + " 0 1 0.5\n";
+        assert(!dexter::parsePortableUserSynthControls(
+            tooMany, controls, error));
+        assert(controls.empty());
+    }
     assert(std::abs(smoothEditorPlayerControl(0.0f, 1.0f, 0.25f) - 0.25f) <
            1e-6f);
     {
         std::vector<std::string> embedded{
             "sine", "square", "pluck", "sample", "sawbass"};
-        std::vector<std::string> external{"CustomPluck", "Chorus"};
+        std::vector<std::string> external{
+            "CustomPluck", "Chorus", "LimutVocoder", "KickDrum"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
-                if (left.category != right.category)
-                    return left.category < right.category;
-                auto a = left.label;
-                auto b = right.label;
-                std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) {
-                    return static_cast<char>(std::tolower(c));
-                });
-                std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) {
-                    return static_cast<char>(std::tolower(c));
-                });
-                return a < b;
+                return std::make_tuple(
+                           left.category, left.subcategory,
+                           catalogLower(left.label)) <
+                       std::make_tuple(
+                           right.category, right.subcategory,
+                           catalogLower(right.label));
             }));
         assert(std::any_of(instruments.begin(), instruments.end(),
             [](const auto& entry) {
-                return entry.name == "sawbass" && entry.category == "Bass";
+                return entry.name == "sawbass" &&
+                       entry.category == "Bass" &&
+                       entry.subcategory == "Saw bass";
+            }));
+        assert(std::any_of(instruments.begin(), instruments.end(),
+            [](const auto& entry) {
+                return entry.name == "play" &&
+                       entry.category == "Drums & Percussion" &&
+                       entry.subcategory == "WAV sample player";
             }));
         assert(std::none_of(instruments.begin(), instruments.end(),
             [](const auto& entry) { return entry.name == "square"; }));
@@ -87,30 +151,39 @@ int main() {
         const auto chorus = std::find_if(instruments.begin(), instruments.end(),
             [](const auto& entry) { return entry.name == "Chorus"; });
         assert(chorus == instruments.end());
+        const auto vocoder = std::find_if(
+            instruments.begin(), instruments.end(), [](const auto& entry) {
+                return entry.name == "LimutVocoder";
+            });
+        assert(vocoder == instruments.end());
         const auto custom = std::find_if(instruments.begin(), instruments.end(),
             [](const auto& entry) { return entry.name == "CustomPluck"; });
         assert(custom != instruments.end() &&
-               custom->kind == CatalogKind::UserSynth);
+               custom->kind == CatalogKind::UserSynth &&
+               custom->category == "Plucked & Stringed" &&
+               custom->subcategory == "Precompiled plucked/stringed");
+        const auto kickSynth = std::find_if(
+            instruments.begin(), instruments.end(), [](const auto& entry) {
+                return entry.name == "KickDrum";
+            });
+        assert(kickSynth != instruments.end() &&
+               kickSynth->category == "Drums & Percussion");
         const auto effects = makeEffectCatalog(external);
         assert(effects.size() >= 28);
         assert(std::is_sorted(effects.begin(), effects.end(),
             [](const auto& left, const auto& right) {
-                if (left.category != right.category)
-                    return left.category < right.category;
-                auto a = left.label;
-                auto b = right.label;
-                std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) {
-                    return static_cast<char>(std::tolower(c));
-                });
-                std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) {
-                    return static_cast<char>(std::tolower(c));
-                });
-                return a < b;
+                return std::make_tuple(
+                           left.category, left.subcategory,
+                           catalogLower(left.label)) <
+                       std::make_tuple(
+                           right.category, right.subcategory,
+                           catalogLower(right.label));
             }));
         assert(std::any_of(effects.begin(), effects.end(),
             [](const auto& entry) {
                 return entry.name == "AirwindowsEchojam" &&
-                       entry.category == "Delay";
+                       entry.category == "Delay" &&
+                       entry.subcategory == "Multi-tap echo";
             }));
         const auto loadedChorus = std::find_if(effects.begin(), effects.end(),
             [](const auto& entry) { return entry.name == "Chorus"; });
@@ -118,6 +191,43 @@ int main() {
             [](const auto& entry) { return entry.name == "JPverb"; });
         assert(loadedChorus != effects.end() && loadedChorus->available);
         assert(unloadedJPverb != effects.end() && !unloadedJPverb->available);
+        const auto chorusControls = playerEffectControlSpecs("Chorus");
+        assert(chorusControls.size() == 7);
+        assert(chorusControls[0].name == "fx_mix" &&
+               chorusControls[0].minimum == 0.0f &&
+               chorusControls[0].maximum == 1.0f);
+        assert(chorusControls[3].name == "fx_delay" &&
+               chorusControls[3].minimum == 0.005f &&
+               chorusControls[3].maximum == 0.04f);
+        const auto duckControls = playerEffectControlSpecs("LimutDuck");
+        assert(duckControls.size() == 5 &&
+               duckControls[1].name == "fx_period" &&
+               duckControls[1].minimum == 0.05f &&
+               duckControls[1].maximum == 8.0f);
+        const auto tapeControls =
+            playerEffectControlSpecs("AirwindowsTapeDelay2");
+        assert(tapeControls.size() == 6 &&
+               tapeControls[0].name == "fx_vib" &&
+               tapeControls[0].minimum == 0.0f &&
+               tapeControls[0].maximum == 1.0f);
+        const auto reverbControls = playerEffectControlSpecs("JPverb");
+        assert(reverbControls.size() == 7 &&
+               reverbControls[1].name == "fx_t60" &&
+               reverbControls[1].minimum == 0.1f &&
+               reverbControls[1].maximum == 60.0f);
+    }
+    {
+        const auto kick = sampleCategoryForFilename("00-test-kick.wav");
+        const auto snare = sampleCategoryForFilename("00-Test-Snare.wav");
+        const auto hat = sampleCategoryForFilename("test-hihat.ogg");
+        const auto other = sampleCategoryForFilename("test-chirp.wav");
+        assert(kick.first == "Drums & Percussion" && kick.second == "Kick");
+        assert(snare.first == "Drums & Percussion" &&
+               snare.second == "Snare");
+        assert(hat.first == "Drums & Percussion" &&
+               hat.second == "Hi-hat");
+        assert(other.first == "Other Samples" &&
+               other.second == "Tonal and FX");
     }
     {
         const auto effects = makeEffectCatalog(

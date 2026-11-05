@@ -1,0 +1,4 @@
+# Visible, smoothed controls for the CustomTone SynthDef.
+blend 0.0 1.0 0.25
+cutoff 100.0 12000.0 4000.0 log
+resonance 0.05 0.95 0.25

@@ -1,5 +1,14 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.162 adds bounded `.controls` sidecars and live Players-panel
+sliders for custom instrument SynthDefs. The bundled CustomPluck exposes
+brightness and a sub-octave blend with zero defaults that preserve its prior
+sine tone; CustomTone exposes waveform blend, filter cutoff, and resonance.
+Ranges are explicit, validated against actual SynthDef parameters, and capped
+at seven controls / 8 KiB per sidecar. Example 94 demonstrates CustomPluck;
+Example 202 demonstrates CustomTone. Rebuild both demo SynthDefs, only when
+their sources change, with `python tools/build-portable-user-synthdefs.py`.
+
 Version 0.4.161 adds three SCLOrk-derived stereo insert effects: Phazer,
 Decimator, and Crossover Distortion. They use SuperCollider core UGens only.
 The loader detects each definition's output width, reserves isolated voice

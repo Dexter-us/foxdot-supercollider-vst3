@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.161' not in cmake_source or
+if ('VERSION 0.4.162' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -67,11 +67,16 @@ for live_panel_fragment in (
         'kSciPositionFromPointClose',
         'beginCatalogDrag(', 'finishCatalogDrag(', 'showCatalogAbout(',
         'makeInstrumentCatalog(', 'makeEffectCatalog(', 'applyCatalogEntry(',
-        'renderCatalogEntries()', 'entry.category',
+        'renderCatalogEntries()', 'entry.category', 'entry.subcategory',
         'collapsedCatalogCategories_', 'catalogCategoryHeaderRows_',
+        'collapsedCatalogSubcategories_', 'catalogSubcategoryHeaderRows_',
         'return "Waveforms";',
         'selectPlayerAtEditorCaret()', 'SCN_UPDATEUI',
-        'catalogCategoryCollapsed(', 'collapsedCatalogCategories_.emplace(key, true)',
+        'catalogCategoryCollapsed(', 'catalogSubcategoryCollapsed(',
+        'collapsedCatalogCategories_.emplace(key, true)',
+        'collapsedCatalogSubcategories_.emplace(key, true)',
+        'sampleCategoryForFilename(', 'Drums & Percussion',
+        'Precompiled percussion',
         'onPanelListSelectionChanged()', 'L"[+] "', 'L"[-] "',
         'firstConfiguredEffectSlot(', 'panelItemForEffect(headerPlayer, firstSlot)',
         'instrumentCategory(', 'effectCategory(',
@@ -2496,10 +2501,32 @@ assert 'Portable/Samples' in sampleSetupHtml and 'properly licensed WAV' in samp
 userSynthBinaryPath = os.path.join(sys.argv[2], 'SynthDefs', 'CustomPluck.scsyndef')
 userSynthBinary = open(userSynthBinaryPath, 'rb').read()
 assert b'CustomPluck' in userSynthBinary
+assert all(name in userSynthBinary for name in (b'brightness', b'sub'))
 assert b'DexterPluck' not in userSynthBinary
 assert not os.path.exists(os.path.join(sys.argv[2], 'SynthDefs', 'DexterPluck.scsyndef'))
+userSynthControls = open(
+    os.path.join(sys.argv[2], 'SynthDefs', 'CustomPluck.controls'),
+    encoding='utf-8').read()
+assert 'brightness 0.0 1.0 0.0' in userSynthControls
+assert 'sub 0.0 0.5 0.0' in userSynthControls
 userSynthRows = run_example('94-user-synthdef-loader.py', ('CustomPluck',))
 assert [int(row[6]) for row in userSynthRows] == [58, 58]
+customTonePath = os.path.join(sys.argv[2], 'SynthDefs', 'CustomTone.scsyndef')
+customToneBinary = open(customTonePath, 'rb').read()
+assert customToneBinary.startswith(b'SCgf')
+assert all(name in customToneBinary
+           for name in (b'CustomTone', b'blend', b'cutoff', b'resonance'))
+customToneControls = open(
+    os.path.join(sys.argv[2], 'SynthDefs', 'CustomTone.controls'),
+    encoding='utf-8').read()
+assert 'blend 0.0 1.0 0.25' in customToneControls
+assert 'cutoff 100.0 12000.0 4000.0 log' in customToneControls
+customToneRows = run_example(
+    '202-custom-synth-live-controls.py', ('CustomTone',),
+    include_synth_controls=True)
+assert len(customToneRows) == 2
+assert customToneRows[0][0][0] == 'P'
+assert customToneRows[1][0][0] == 'S'
 missingUserSynth = run_error_script(
     'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
 assert 'not a loaded Portable/SynthDefs entry' in missingUserSynth
@@ -2719,9 +2746,12 @@ def test_embedded_synthdef():
         return_controls=True)
     assert user_version == 2 and set(user_graphs) == {'CustomPluck'}
     assert user_controls['CustomPluck'] == {
-        'out': 0, 'freq': 1, 'amp': 2, 'gate': 3, 'atk': 4, 'rel': 5}
+        'out': 0, 'freq': 1, 'amp': 2, 'gate': 3, 'atk': 4, 'rel': 5,
+        'brightness': 6, 'sub': 7}
     assert any(ugen[0] == 'Out' for ugen in user_graphs['CustomPluck'])
     assert any(ugen[0] == 'SinOsc' for ugen in user_graphs['CustomPluck'])
+    assert any(ugen[0] == 'Saw' for ugen in user_graphs['CustomPluck'])
+    assert any(ugen[0] == 'XFade2' for ugen in user_graphs['CustomPluck'])
     assert not set(graphs).intersection(core_graphs)
     for graph, ugens in core_graphs.items():
         assert any(name == 'EnvGen' for name, _, _ in ugens), graph
@@ -3494,6 +3524,8 @@ assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_
 for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
         example_names = (
+            ('CustomTone',)
+            if filename == '202-custom-synth-live-controls.py' else
             ('CustomPluck',) if filename == '94-user-synthdef-loader.py' else
             ('AirwindowsTapeDelay2',)
             if filename == '103-sample-player-airwindows-delay.py' else

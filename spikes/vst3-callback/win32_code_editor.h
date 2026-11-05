@@ -5,10 +5,21 @@
 #include "live_player_controls.h"
 
 #include <array>
+#include <cstddef>
 #include <string>
 #include <vector>
 
 struct EditorPlayerState {
+    struct UserSynthControl {
+        std::string name;
+        float minimum = 0.0f;
+        float maximum = 1.0f;
+        float normalizedValue = 0.0f;
+        bool logarithmic = false;
+    };
+
+    static constexpr std::size_t kMaxUserSynthControls = 7;
+
     bool active = false;
     bool muted = false;
     bool effectMixAvailable = false;
@@ -16,6 +27,8 @@ struct EditorPlayerState {
     int effectIndex = -1;
     std::array<int, 4> effectIndices{{-1, -1, -1, -1}};
     std::array<std::array<float, 7>, 4> effectControlValues{};
+    std::array<UserSynthControl, kMaxUserSynthControls> userSynthControls{};
+    std::size_t userSynthControlCount = 0;
     int reverbIndex = 0;
     bool echoEnabled = false;
     bool reverbEnabled = false;
@@ -58,6 +71,9 @@ public:
     virtual void setEditorPlayerEffectControl(int playerIndex, int effectSlot,
                                               int controlIndex,
                                               float normalizedValue) = 0;
+    virtual void setEditorPlayerUserSynthControl(int playerIndex,
+                                                 int controlIndex,
+                                                 float normalizedValue) = 0;
 };
 
 Steinberg::IPlugView* createCodeEditorView(ICodeEditorHost* host,

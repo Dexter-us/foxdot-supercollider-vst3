@@ -35,9 +35,46 @@ any UGen module's license before distributing it.
 The folder accepts at most 256 definitions, with an 8 MiB per-file and
 64 MiB total size limit.
 
-The included CustomPluck source and compiled example are CC0-1.0:
+Custom SynthDef sliders
+-----------------------
+An optional text sidecar can give up to seven of a custom SynthDef's controls
+live Players-panel sliders with explicit, trustworthy ranges. Name it exactly
+like the SynthDef but use the `.controls` extension; for example:
+
+  CustomPluck.scsyndef
+  CustomPluck.controls
+
+The bundled CustomPluck has `brightness` (pure sine through saw) and `sub`
+(sub-octave oscillator blend) sliders. Their defaults are zero, preserving
+the earlier sine-only sound. CustomTone provides `blend`, `cutoff`, and
+`resonance`.
+
+Each non-comment line in the sidecar is:
+
+  control_name minimum maximum default [linear|log]
+
+Example declarations (the names must actually exist in that SynthDef):
+
+  brightness 0.0 1.0 0.6
+  resonance 100 12000 1800 log
+
+Blank lines and `#` comments are allowed. Ranges/defaults are not inferred
+from the SynthDef: the sidecar author must declare them. Names must be unique,
+Python-style identifiers, and cannot override routing/note controls such as
+`out`, `inbus`, `freq`, `amp`, `pan`, `gate`, `atk`, `rel`, or `sus`.
+Logarithmic ranges must be positive. Every declared name must match a real
+SynthDef parameter; invalid sidecars prevent that SynthDef from loading.
+Sidecars are limited to 8 KiB and seven controls. The sliders smoothly update
+the running player's graph; these temporary overrides reset on script rerun.
+To change a persistent default, edit the sidecar's `default` value.
+
+The included CustomPluck and CustomTone sources and compiled examples are
+CC0-1.0:
 https://creativecommons.org/publicdomain/zero/1.0/
-Example source for offline compilation: CustomPluck.scd
+Example sources for offline compilation: CustomPluck.scd and CustomTone.scd
+From the repository root, `python tools/build-portable-user-synthdefs.py`
+rebuilds these two optional examples; ordinary Windows VST builds package the
+checked-in .scsyndef files and do not compile SuperCollider or UGens.
 
 SCLOrk-derived effects
 ----------------------
