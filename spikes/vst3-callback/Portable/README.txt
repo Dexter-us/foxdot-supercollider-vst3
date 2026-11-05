@@ -1,3 +1,19 @@
+0.4.155 adds bounded metadata helpers: get_data() returns the live list-backed
+view (unwrapping one nested Pattern), get_methods() returns the curated
+embedded API names, help() returns text without printing, new(data) creates a
+bounded Pattern, make() flattens one nested Pattern in place, and
+get_behaviour() returns None. Structural bounds are 256 nodes and 16 levels.
+Example 194 demonstrates them.
+
+0.4.154 adds bounded Pattern.true_copy(new_data=None) and
+Pattern.convert_data(dtype=float). true_copy makes an independent top-level
+list while retaining shared references to nested Patterns and groups; optional
+new_data supplies replacement top-level values. The list-backed engine cannot
+alias the root list the way Renardo's internal data model does. convert_data
+recursively applies an approved pure one-argument converter and preserves
+nested structure where possible. Both cap recursion at 16 levels and each
+input/output structure at 256 nodes. See Example 193.
+
 0.4.153 adds recursive Pattern.transform(func) for approved pure one-argument
 mappers. It transforms leaves inside nested patterns and chord groups, retains
 structure, and uses 16-level and 256-node input/output bounds. See Example 192.

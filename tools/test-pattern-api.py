@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.153' not in cmake_source or
+if ('VERSION 0.4.155' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -102,7 +102,9 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                         '189-renardo-seed-default.py',
                         '190-renardo-probability-fibonacci-patterns.py',
                          '191-pattern-comparison-operators.py',
-                          '192-pattern-transform-recursive.py'):
+                            '192-pattern-transform-recursive.py',
+                             '193-true-copy-convert-data.py',
+                              '194-pattern-metadata-helpers.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -1653,6 +1655,91 @@ except ValueError as error:
     assert '16 nested pattern levels' in str(error)
 else:
     raise AssertionError('transform must enforce its nesting bound')
+sharedNested = namespace['P'][2, 3]
+trueCopySource = namespace['P'][1, sharedNested,
+                                namespace['PGroup'](4, 5)]
+trueCopyResult = trueCopySource.true_copy()
+assert trueCopyResult is not trueCopySource
+assert trueCopyResult[1] is sharedNested
+assert trueCopyResult[2] is trueCopySource[2]
+trueCopyResult[0] = 9
+assert trueCopySource[0] == 1
+sharedNested.append(6)
+assert trueCopyResult[1][-1] == 6 and trueCopySource[1][-1] == 6
+replacementData = [sharedNested, namespace['PGroup'](7, 8)]
+replacementCopy = trueCopySource.true_copy(replacementData)
+assert len(replacementCopy) == 2 and replacementCopy[0] is sharedNested
+replacementCopy.append(10)
+assert len(replacementData) == 2
+convertedPattern = namespace['P'][
+    1.8,
+    namespace['PGroup'](2.9, 4.1),
+    namespace['P'][5.7, 6.2]
+].convert_data(int)
+assert convertedPattern == [
+    1, namespace['PGroup'](2, 4), [5, 6]]
+assert convertedPattern.convert_data() == [
+    1.0, namespace['PGroup'](2.0, 4.0), [5.0, 6.0]]
+assert namespace['P'][1, -2].convert_data(str) == ['1', '-2']
+assert namespace['_FoxDotFinitePattern']().true_copy() == []
+assert namespace['_FoxDotFinitePattern']().convert_data(int) == []
+methodNames = namespace['P'][0].get_methods()
+assert len(methodNames) == len(set(methodNames))
+assert {'get_data', 'get_methods', 'help', 'new', 'make',
+        'get_behaviour', 'transform', 'convert_data'}.issubset(
+            set(methodNames))
+assert '__class__' not in methodNames
+assert '256 nodes' in namespace['P'][0].help()
+assert namespace['P'][0].get_behaviour() is None
+liveDataPattern = namespace['P'][1, 2]
+assert liveDataPattern.get_data() is liveDataPattern
+liveDataPattern.get_data().append(3)
+assert liveDataPattern == [1, 2, 3]
+wrappedData = namespace['_FoxDotFinitePattern']([
+    namespace['P'][4, 5]])
+assert wrappedData.get_data() is wrappedData[0]
+templatePattern = namespace['P'][0]
+assert templatePattern.new([3, 5]) == [3, 5]
+assert templatePattern.new('x-o') == ['x-o']
+assert templatePattern.new(sharedNested) == [2, 3, 6]
+assert templatePattern.new(7) == [7]
+singleNestedForMake = namespace['_FoxDotFinitePattern']([
+    namespace['P'][2, 4]])
+assert singleNestedForMake.make() is singleNestedForMake
+assert singleNestedForMake == [2, 4]
+multipleNestedForMake = namespace['_FoxDotFinitePattern']([
+    namespace['P'][2, 4], 6])
+assert multipleNestedForMake.make() is multipleNestedForMake
+assert multipleNestedForMake == [[2, 4], 6]
+assert namespace['P']['x-o'].make() == ['x-o']
+too_many_true_copy_nodes = namespace['_FoxDotFinitePattern']([
+    namespace['_FoxDotFinitePattern']([
+        namespace['_FoxDotFinitePattern']()])
+    for _ in range(256)])
+for invalid_copy_conversion in (
+        lambda: namespace['P'][0].true_copy(object()),
+        lambda: namespace['P'][0].true_copy([object()]),
+        lambda: namespace['P'][0].true_copy(range(257)),
+        lambda: too_many_true_copy_nodes.true_copy(),
+        lambda: namespace['P'][0].new(range(257)),
+        lambda: namespace['_FoxDotFinitePattern'](range(257)).make(),
+        lambda: namespace['P'][0].convert_data(lambda value: value ** 2),
+        lambda: namespace['P'][0].convert_data(int, 2),
+        lambda: namespace['_FoxDotFinitePattern'](range(257)).convert_data(int)):
+    try:
+        invalid_copy_conversion()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError(
+            'true_copy/convert_data must enforce their callable and data bounds')
+try:
+    namespace['P'][None].convert_data(int)
+except TypeError:
+    pass
+else:
+    raise AssertionError(
+        'convert_data(int) should preserve upstream conversion errors on rests')
 assert namespace['P'][0, 1, 2, 3].pivot(0) == [0, 3, 2, 1]
 assert namespace['P'][0, 1, 2, 3].pivot(1) == [2, 1, 0, 3]
 assert namespace['P'][0, 1, 2, 3].pivot(3) == [2, 1, 0, 3]
@@ -3646,6 +3733,26 @@ transformExample, transformEvents = run_script(
     transformExampleText, include_events=True)
 assert len(transformEvents) > 0
 assert len([row for row in transformExample if row[0] == 'P' and
+            row[2] == '0']) == 2
+copyConvertExampleText = open(os.path.join(
+    sys.argv[2], '193-true-copy-convert-data.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    copyConvertExampleText)
+copyConvertExample, copyConvertEvents = run_script(
+    copyConvertExampleText, include_events=True)
+assert len(copyConvertEvents) > 0
+assert len([row for row in copyConvertExample if row[0] == 'P' and
+            row[2] == '0']) == 2
+metadataExampleText = open(os.path.join(
+    sys.argv[2], '194-pattern-metadata-helpers.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    metadataExampleText)
+metadataExample, metadataEvents = run_script(
+    metadataExampleText, include_events=True)
+assert len(metadataEvents) > 0
+assert len([row for row in metadataExample if row[0] == 'P' and
             row[2] == '0']) == 2
 example103, example103EffectRows = run_example(
     '103-sample-player-airwindows-delay.py', ('AirwindowsTapeDelay2',),

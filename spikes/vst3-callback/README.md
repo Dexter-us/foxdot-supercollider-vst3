@@ -1,5 +1,25 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.155 adds bounded Pattern metadata helpers: `get_data()` returns the
+live list-backed data view (unwrapping a single nested Pattern), `get_methods()`
+lists the curated embedded API, `help()` returns help text without printing,
+`new(data)` creates a bounded Pattern, `make()` flattens a single nested
+Pattern in place, and `get_behaviour()` returns the default `None`. The
+compatibility layer caps inputs and nesting at 256 nodes and 16 levels.
+Example 194 demonstrates these helpers. Returning help text rather than
+printing and making the supported method list curated are embedded-editor
+adaptations.
+
+Version 0.4.154 adds bounded `Pattern.true_copy(new_data=None)` and
+`Pattern.convert_data(dtype=float)`. `true_copy` returns a shallow copy: the
+top-level list is independent, while nested Patterns/groups are shared; an
+optional finite `new_data` replaces the copied top-level values. Because this
+engine stores Pattern values directly in a list, it cannot alias the root data
+list as Renardo's internal Pattern object does. `convert_data` recursively
+applies an approved pure one-argument converter, preserving nested patterns and
+numeric chord groups when possible. Both methods enforce 16-level and
+256-node/input/output bounds. Example 193 demonstrates copying and conversion.
+
 Version 0.4.153 adds recursive Renardo-compatible `Pattern.transform(func)`.
 It applies an approved pure one-argument mapper to numeric, text, or rest leaves,
 recursing through nested patterns and chord groups while preserving their

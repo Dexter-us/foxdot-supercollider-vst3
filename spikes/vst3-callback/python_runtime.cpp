@@ -145,7 +145,8 @@ _COMPAT_PATTERN_METHODS = {
     'asGroup', 'group', 'flatten', 'int', 'float', 'str', 'append', 'extend',
     'insert', 'pop', 'remove', 'set', 'alt', 'string', 'items', 'getitem',
     'getslice', 'setitem', 'eq', 'ne', 'i_rotate', 'i_reverse', 'i_sort',
-    'i_shuf', 'transform'
+    'i_shuf', 'transform', 'true_copy', 'convert_data', 'get_data',
+    'get_methods', 'help', 'new', 'make', 'get_behaviour'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
@@ -2313,6 +2314,89 @@ class _FoxDotFinitePattern(list):
         return _FoxDotFinitePattern([
             visit(value, 0) for value in self])
 
+    def convert_data(self, dtype=float, *args, **kwargs):
+        """Recursively convert leaves using an approved one-argument mapper."""
+        if args or kwargs:
+            raise TypeError(
+                'convert_data accepts only a pure one-argument converter')
+        if not _safe_pattern_mapper(dtype):
+            raise TypeError(
+                'convert_data requires a pure one-argument converter')
+        return self.transform(dtype)
+
+    def get_methods(self):
+        """Return names of methods supported by the embedded Pattern API."""
+        return [
+            'abs', 'accum', 'add', 'all', 'alt', 'append', 'arp', 'asGroup',
+            'choose', 'compress', 'concat', 'convert_data', 'copy',
+            'count', 'deep_shuffle', 'deepzip', 'deeprzip', 'duplicate', 'eq',
+            'every', 'extend', 'float', 'flatten', 'get_behaviour', 'get_data',
+            'get_methods', 'getitem', 'getslice', 'group', 'help', 'insert',
+            'int', 'invert', 'i_reverse', 'i_rotate', 'i_shuf', 'i_sort',
+            'items', 'iter', 'layer', 'limit', 'loop', 'ltrim', 'make', 'map',
+            'index', 'mirror', 'new', 'ne', 'norm', 'normalise', 'palindrome',
+            'pivot', 'pop', 'remove', 'replace', 'reverse', 'rotate', 'sample', 'select',
+            'repeat', 'set', 'setitem', 'shuffle', 'shufflets', 'sort', 'splice',
+            'startswith', 'stutter', 'str', 'string', 'submap', 'transform',
+            'stretch', 'swap', 'trim', 'true_copy', 'true_shuffle', 'undup', 'unduplicate',
+            'zip', 'zipx'
+        ]
+
+    def help(self):
+        """Return embedded Pattern help text (no console side effect)."""
+        return (
+            'Embedded FoxDot Pattern helpers. Patterns and groups are limited '
+            'to 256 nodes, nesting to 16 levels, and chords to 8 notes. '
+            'get_methods() lists the supported Pattern API; get_data() returns '
+            'the live list-backed data view; new(data) creates a bounded Pattern; '
+            'make() flattens one nested Pattern in place. help() returns this '
+            'text and get_behaviour() returns None.')
+
+    def get_data(self):
+        """Return the live list-backed data, unwrapping a single Pattern."""
+        if len(self) > 256:
+            raise ValueError('get_data input is limited to 256 items')
+        if len(self) == 1 and isinstance(list.__getitem__(self, 0),
+                                         _FoxDotFinitePattern):
+            return list.__getitem__(self, 0)
+        return self
+
+    def get_behaviour(self):
+        """Return the default behaviour marker used by upstream Patterns."""
+        return None
+
+    def new(self, data):
+        """Create a finite Pattern of this class from sequence or scalar data."""
+        if isinstance(data, _FoxDotFinitePattern):
+            values = list(data)
+        elif isinstance(data, range):
+            try:
+                if len(data) > 256:
+                    raise ValueError('new input is limited to 256 items')
+            except OverflowError:
+                raise ValueError('new range is too large')
+            values = list(data)
+        elif isinstance(data, (list, tuple)):
+            values = list(data)
+        else:
+            # Text is one value here; do not split sample strings into notes.
+            values = [data]
+        if len(values) > 256:
+            raise ValueError('new input is limited to 256 items')
+        return self.true_copy(values)
+
+    def make(self):
+        """Normalize the single-nested-Pattern case in place, boundedly."""
+        self.true_copy()
+        if len(self) == 1 and isinstance(list.__getitem__(self, 0),
+                                         _FoxDotFinitePattern):
+            nested = list.__getitem__(self, 0)
+            if len(nested) > 256:
+                raise ValueError('make output is limited to 256 items')
+            list.__setitem__(self, slice(None), list(nested))
+        self.true_copy()
+        return self
+
     def _map_dictionary(self, mapping, preserve_unmapped):
         if len(mapping) > 256:
             raise ValueError('map dictionaries are limited to 256 entries')
@@ -2548,6 +2632,71 @@ class _FoxDotFinitePattern(list):
 
         return _FoxDotFinitePattern([
             clone(item, 1) for item in self])
+
+    def true_copy(self, new_data=None):
+        """Return a bounded shallow copy, preserving nested object references."""
+        source = self if new_data is None else new_data
+        if isinstance(source, _FoxDotFinitePattern):
+            values = list(source)
+        elif isinstance(source, (list, tuple)):
+            values = list(source)
+        elif isinstance(source, range):
+            try:
+                if len(source) > 256:
+                    raise ValueError(
+                        'true_copy input is limited to 256 items')
+            except OverflowError:
+                raise ValueError('true_copy range is too large')
+            values = list(source)
+        else:
+            raise TypeError(
+                'true_copy data must be a finite Pattern, list, tuple, or range')
+        if len(values) > 256:
+            raise ValueError('true_copy input is limited to 256 items')
+
+        budget = [0]
+
+        def validate(value, depth):
+            if depth > 16:
+                raise ValueError(
+                    'true_copy nesting is limited to 16 levels')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError(
+                    'true_copy structure is limited to 256 nodes')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError(
+                        'true_copy nested patterns are limited to 256 items')
+                for child in value:
+                    validate(child, depth + 1)
+                return
+            if isinstance(value, _FoxDotChord):
+                if len(value) > 8:
+                    raise ValueError(
+                        'true_copy chord groups are limited to 8 notes')
+                for child in value:
+                    validate(child, depth + 1)
+                return
+            if isinstance(value, (list, tuple)):
+                if len(value) > 256:
+                    raise ValueError(
+                        'true_copy groups are limited to 256 items')
+                for child in value:
+                    validate(child, depth + 1)
+                return
+            if value is None or _finite_note_number(value):
+                return
+            if isinstance(value, str) and len(value) <= 256:
+                return
+            raise TypeError(
+                'true_copy supports finite values, text, rests, and groups')
+
+        for value in values:
+            validate(value, 0)
+        # This engine stores Pattern data in the list itself. The root list is
+        # detached, while nested Pattern/group objects intentionally stay shared.
+        return _FoxDotFinitePattern(values)
 
     def asGroup(self):
         """Treat this finite note pattern as one simultaneous chord."""
