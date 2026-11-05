@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.159' not in cmake_source or
+if ('VERSION 0.4.160' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2752,9 +2752,12 @@ def test_embedded_synthdef():
     assert 'scPoolCapacity(kSynthGraphCount + kReverbGraphCount)' in processor_source
     assert 'scPoolCapacity(kCalculatedWorldNodeCapacity < 2048 ? 2048 : kCalculatedWorldNodeCapacity)' in processor_source
     assert 'prepareSynthGraphs(updates, updateMask, userSynthNames,' in processor_source
-    assert 'static bool hasOutUnit(GraphDef* definition, std::size_t channels)' in processor_source
-    assert 'unit.mNumInputs == channels + 1' in processor_source
-    assert 'needs an Out UGen that writes exactly one mono signal' in processor_source
+    assert 'static int synthOutputChannels(GraphDef* definition)' in processor_source
+    assert 'mergeSynthOutputChannels' in processor_source
+    assert 'needs consistent Out UGens with either one mono or two stereo channels' in processor_source
+    assert 'kStereoSynthOutputBaseBus' in processor_source
+    assert 'sourceRight = world_->mAudioBus' in processor_source
+    assert 'stereoBalanceGains(voice.pan)' in processor_source
     assert 'Graph_New(world_, synthDefinitions_[graphIndex]' in processor_source
     assert 'name.size() > kSCNodeDefNameByteLen - 1' in processor_source, \
         'user SynthDef identifiers must allow SuperCollider names up to 255 bytes'
