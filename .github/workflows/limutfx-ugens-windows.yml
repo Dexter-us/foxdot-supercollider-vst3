@@ -57,12 +57,21 @@ jobs:
           $pack = "$env:RUNNER_TEMP\dexter-limutfx-win-x64"
           New-Item -ItemType Directory -Force `
             "$pack\Portable\SCPlugins", "$pack\Portable\SynthDefs", `
+            "$pack\Portable\Sidechain\SynthDefs", `
             "$pack\Sources\LimutFX", "$pack\Licenses" | Out-Null
           Copy-Item $module.FullName "$pack\Portable\SCPlugins\LimutFX.scx"
           Copy-Item ".\UGens\LimutFX\Portable\SynthDefs\*.scsyndef" `
             "$pack\Portable\SynthDefs"
           Copy-Item ".\UGens\LimutFX\Portable\*.py" "$pack\Portable"
           Copy-Item ".\UGens\LimutFX\Portable\*.txt" "$pack\Portable"
+          Copy-Item ".\UGens\LimutFX\Portable\Sidechain\*.scd" `
+            "$pack\Portable\Sidechain"
+          Copy-Item ".\UGens\LimutFX\Portable\Sidechain\*.txt" `
+            "$pack\Portable\Sidechain"
+          Copy-Item ".\UGens\LimutFX\Portable\Sidechain\README.md" `
+            "$pack\Portable\Sidechain"
+          Copy-Item ".\UGens\LimutFX\Portable\Sidechain\SynthDefs\*.scsyndef" `
+            "$pack\Portable\Sidechain\SynthDefs"
           Copy-Item ".\UGens\LimutFX\ATTRIBUTION.txt" "$pack\Licenses"
           Copy-Item ".\UGens\LimutFX\README.md" "$pack\Sources\LimutFX"
           Copy-Item ".\UGens\LimutFX\CMakeLists.txt" "$pack\Sources\LimutFX"

@@ -178,7 +178,7 @@ _COMPAT_WAVE_KEYWORDS = {
     'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period',
     'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages',
     'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold',
-    'fx_hold', 'fx_release'
+    'fx_hold', 'fx_release', 'fx_knee'
 }
 _USER_SYNTH_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
@@ -194,7 +194,7 @@ _USER_SYNTH_KEYWORDS = {
     'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period',
     'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages',
     'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold',
-    'fx_hold', 'fx_release'
+    'fx_hold', 'fx_release', 'fx_knee'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -207,9 +207,10 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center',
     'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack',
     'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio',
-    'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release'
+    'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release',
+    'fx_knee'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee'}
 _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'AirwindowsTapeDelay2': {
         'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'},
@@ -244,7 +245,10 @@ _COMPAT_PLAYER_EFFECT_CONTROLS = {
         'fx_mix', 'fx_ratio', 'fx_window', 'fx_room', 'fx_damp'},
     'LimutGatedVerb': {
         'fx_mix', 'fx_room', 'fx_damp', 'fx_threshold', 'fx_hold',
-        'fx_attack', 'fx_release'}
+        'fx_attack', 'fx_release'},
+    'LimutCompressor': {
+        'fx_mix', 'fx_threshold', 'fx_ratio', 'fx_attack', 'fx_release',
+        'fx_knee'}
 }
 for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
                          _COMPAT_SEQUENCE_KEYWORDS, _COMPAT_NOTE_PLAY_KEYWORDS):
@@ -881,10 +885,16 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo',
                         'LimutPingPong', 'LimutDuck', 'LimutDisperser',
                         'LimutFuzz', 'LimutShifter', 'LimutShimmer',
-                        'LimutGatedVerb'}:
+                        'LimutGatedVerb', 'LimutCompressor',
+                        'LimutVocoder'}:
                     self.add(keyword.lineno or node.lineno,
                              'effect= supports the bundled Airwindows, reverb, '
                              'modulation, and LimutFX player-effect SynthDefs.')
+                elif keyword.value.value == 'LimutVocoder':
+                    self.add(
+                        keyword.lineno or node.lineno,
+                        'LimutVocoder requires a separate modulator bus; the '
+                        'current player effect insert accepts only one player signal.')
                 elif keyword.value.value not in _USER_SYNTH_NAMES:
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires the matching player-effect SynthDef in Portable/SynthDefs.')
@@ -927,7 +937,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                                     'Phaser', 'Tremolo', 'LimutPingPong',
                                     'LimutDuck', 'LimutDisperser',
                                     'LimutFuzz', 'LimutShifter',
-                                    'LimutShimmer', 'LimutGatedVerb'}):
+                                     'LimutShimmer', 'LimutGatedVerb',
+                                     'LimutCompressor'}):
                             self.add(entry.lineno, 'Unsupported effect-chain name.')
                         elif effectName.value not in _USER_SYNTH_NAMES:
                             self.add(entry.lineno,
@@ -5569,7 +5580,7 @@ def userSynth(name, notes=0, **kwargs):
     if name in ('JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser',
                 'Tremolo', 'LimutPingPong', 'LimutDuck', 'LimutDisperser',
                 'LimutFuzz', 'LimutShifter', 'LimutShimmer',
-                'LimutGatedVerb'):
+                'LimutGatedVerb', 'LimutCompressor'):
         raise ValueError(name + ' is an insert, not a note source; use effect="' +
                          name + '" on a synth or play() player')
     if (name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam') and
@@ -6081,7 +6092,14 @@ _PLAYER_EFFECT_SPECS = {
         ('fx_threshold', 3, 0.001, 0.25, 0.02),
         ('fx_hold', 4, 0.0, 2.0, 0.25),
         ('fx_attack', 5, 0.001, 0.25, 0.015),
-        ('fx_release', 6, 0.01, 1.0, 0.15))
+        ('fx_release', 6, 0.01, 1.0, 0.15)),
+    'LimutCompressor': (
+        ('fx_mix', 0, 0.0, 1.0, 0.5),
+        ('fx_threshold', 1, -60.0, 0.0, -24.0),
+        ('fx_ratio', 2, 0.0, 20.0, 6.0),
+        ('fx_attack', 3, 0.0, 1.0, 0.01),
+        ('fx_release', 4, 0.001, 3.0, 0.1),
+        ('fx_knee', 5, 0.0, 24.0, 3.0))
 }
 def _player_effect_control_values(effect, controls):
     provided = [key for key in controls if key.startswith('fx_')]
@@ -6089,6 +6107,10 @@ def _player_effect_control_values(effect, controls):
         if provided:
             raise ValueError('fx_* controls require effect= with a named per-player effect')
         return None, ('-', '-', '-', '-', '-', '-', '-')
+    if effect == 'LimutVocoder':
+        raise ValueError(
+            'LimutVocoder requires a separate modulator bus; the current '
+            'player effect insert accepts only one player signal')
     specs = _PLAYER_EFFECT_SPECS.get(effect)
     if specs is None:
         raise ValueError('unsupported persistent player effect: ' + str(effect))
@@ -6130,6 +6152,10 @@ def _player_effect_chain(effect, effects, controls):
         if effect is None:
             _player_effect_control_values(None, controls)
             return []
+        if effect == 'LimutVocoder':
+            raise ValueError(
+                'LimutVocoder requires a separate modulator bus; it is not a '
+                'single-player insert')
         if effect not in _PLAYER_EFFECT_SPECS:
             raise ValueError('unsupported persistent player effect: ' + str(effect))
         if effect not in _dexter_user_synth_names:
@@ -6151,6 +6177,10 @@ def _player_effect_chain(effect, effects, controls):
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             raise TypeError('each effects item must be (name, controls)')
         name, effectValues = item
+        if name == 'LimutVocoder':
+            raise ValueError(
+                'LimutVocoder requires a separate modulator bus; it is not a '
+                'single-player insert')
         if not isinstance(name, str) or name not in _PLAYER_EFFECT_SPECS:
             raise ValueError('unsupported persistent player effect: ' + str(name))
         if name not in _dexter_user_synth_names:

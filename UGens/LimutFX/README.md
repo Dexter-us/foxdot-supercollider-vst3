@@ -1,6 +1,6 @@
 # Optional Limut-inspired effect UGen pack
 
-The pack contains seven optional stereo inserts:
+The pack contains eight optional stereo inserts plus one two-input UGen:
 
 - `LimutPingPong`: stereo cross-feedback delay with smoothly moving delay time.
 - `LimutDuck`: tempo-pump style gain envelope with bounded timing and smoothed
@@ -16,6 +16,11 @@ The pack contains seven optional stereo inserts:
 - `LimutGatedVerb`: a stereo reverb with a smoothed threshold gate; threshold
   0.001–0.25, hold 0–2 seconds, attack 0.001–0.25 seconds and release
   0.01–1 second.
+- `LimutCompressor`: a stereo-linked compressor with dB threshold, Limut-style
+  ratio-in-dB, attack/release and soft knee controls.
+- `LimutVocoder`: a 16-band carrier/modulator vocoder UGen. It is compiled into
+  `LimutFX.scx`, but the current embedded player-effect chain has no second
+  modulator bus, so it is intentionally not offered as `effect=` yet.
 
 They are separate SuperCollider plug-in UGens compiled as `LimutFX.scx` on
 Windows (or the platform's module suffix elsewhere). The VST3 itself does not
@@ -28,16 +33,15 @@ Frequency, Q, stage count, and tone are smoothed; values are clamped to safe
 ranges. The Disperser uses cascaded digital all-pass sections, while Fuzz uses
 normalized tanh saturation followed by a one-pole tone filter. These are
 standalone DSP implementations, not bit-identical SuperCollider or Limut
-graphs. Shifter, Shimmer and GatedVerb are also standalone bounded DSP
+graphs. Shifter, Shimmer, GatedVerb and Compressor are standalone bounded DSP
 implementations; they use no additional libraries or SuperCollider plugin
-modules beyond this `LimutFX.scx`. Examples 197–198 demonstrate the three
-effects, including a Shifter → Shimmer chain.
+modules beyond this `LimutFX.scx`. Examples 197–199 demonstrate the inserts,
+including a Shifter → Shimmer chain and the compressor. The standalone
+two-bus SuperCollider vocoder example is in `Portable/Sidechain`.
 
-The implementation is intentionally incremental. Limut also defines effects
-that already overlap this VST (chorus, flanger, phaser, echo, tape and reverb),
-as well as larger granular, vocoder, multiband and fuzz graphs. Those are not
-duplicated in this first pack; they can be mapped to existing effects or ported
-as later, separately tested modules.
+Limut also defines effects that overlap this VST (chorus, flanger, phaser, echo,
+tape and reverb); these remain represented by the existing effect controls.
+Granular and multiband processing are not included in this batch.
 
 ## Build and test
 
@@ -60,8 +64,7 @@ SuperCollider engine and existing VST/UGen packs are not rebuilt.
 
 ## License and attribution
 
-The PingPong and Duck adaptations are based on Limut's `effects.limut`
-definitions, licensed CC BY-SA 4.0. The Disperser, Fuzz, Shifter, Shimmer and
-GatedVerb DSP algorithms are independent implementations for this pack.
-Attribution and license details are in `ATTRIBUTION.txt`; the pack is
-distributed under CC BY-SA 4.0.
+PingPong and Duck behavior, the Compressor control model and the Vocoder node
+topology are based on Limut material licensed CC BY-SA 4.0. Attribution and
+license details are in `ATTRIBUTION.txt`; the pack is distributed under
+CC BY-SA 4.0.

@@ -34,3 +34,11 @@ struct LimutGatedVerb : public Unit {
     limutfx::GatedVerbState state;
 };
 
+struct LimutCompressor : public Unit {
+    limutfx::CompressorState state;
+};
+
+struct LimutVocoder : public Unit {
+    limutfx::VocoderState state;
+};
+

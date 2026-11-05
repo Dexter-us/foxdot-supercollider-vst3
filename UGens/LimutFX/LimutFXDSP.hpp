@@ -593,4 +593,221 @@ inline void gatedVerbSample(GatedVerbState& state, float inputLeft,
                            wetRight * state.gateGain * mix);
 }
 
+// Limut compressor/limiter controls use a ratio expressed in dB. Convert that
+// to the conventional linear compression ratio before applying the curve.
+struct CompressorState {
+    float sampleRate = 44100.0f;
+    float detector = 0.0f;
+    float gainDb = 0.0f;
+    float mix = 0.5f;
+    bool initialized = false;
+};
+
+inline float compressorReductionDb(float levelDb, float thresholdDb,
+                                   float ratioDb, float kneeDb) {
+    thresholdDb = clampFinite(thresholdDb, -60.0f, 0.0f, -24.0f);
+    ratioDb = clampFinite(ratioDb, 0.0f, 20.0f, 6.0f);
+    kneeDb = clampFinite(kneeDb, 0.0f, 24.0f, 3.0f);
+    const float ratio = std::max(1.0f, std::pow(10.0f, ratioDb / 20.0f));
+    const float slope = 1.0f - 1.0f / ratio;
+    const float over = levelDb - thresholdDb;
+    if (kneeDb <= 1.0e-4f)
+        return std::max(0.0f, over * slope);
+    const float halfKnee = 0.5f * kneeDb;
+    if (over <= -halfKnee)
+        return 0.0f;
+    if (over >= halfKnee)
+        return over * slope;
+    const float kneePosition = over + halfKnee;
+    return slope * kneePosition * kneePosition / (2.0f * kneeDb);
+}
+
+inline void compressorSample(CompressorState& state, float inputLeft,
+                             float inputRight, float mix, float thresholdDb,
+                             float ratioDb, float attackSeconds,
+                             float releaseSeconds, float kneeDb,
+                             float& outputLeft, float& outputRight) {
+    inputLeft = finiteOr(inputLeft);
+    inputRight = finiteOr(inputRight);
+    mix = clampFinite(mix, 0.0f, 1.0f, 0.5f);
+    thresholdDb = clampFinite(thresholdDb, -60.0f, 0.0f, -24.0f);
+    ratioDb = clampFinite(ratioDb, 0.0f, 20.0f, 6.0f);
+    attackSeconds = clampFinite(attackSeconds, 0.0f, 1.0f, 0.01f);
+    releaseSeconds = clampFinite(releaseSeconds, 0.001f, 3.0f, 0.1f);
+    kneeDb = clampFinite(kneeDb, 0.0f, 24.0f, 3.0f);
+    if (!std::isfinite(state.sampleRate) || state.sampleRate < 1000.0f)
+        state.sampleRate = 44100.0f;
+
+    const float safeRate = state.sampleRate;
+    const float detector = std::max(std::fabs(inputLeft),
+                                    std::fabs(inputRight));
+    const float detectorTime = detector > state.detector
+        ? std::max(attackSeconds, 1.0f / safeRate) : releaseSeconds;
+    const float detectorCoefficient = attackSeconds <= 0.0f &&
+            detector > state.detector
+        ? 1.0f
+        : 1.0f - std::exp(-1.0f / (detectorTime * safeRate));
+    state.detector += detectorCoefficient * (detector - state.detector);
+
+    const float levelDb = 20.0f * std::log10(std::max(state.detector, 1.0e-6f));
+    const float targetGainDb = -compressorReductionDb(
+        levelDb, thresholdDb, ratioDb, kneeDb);
+    const float gainTime = targetGainDb < state.gainDb
+        ? std::max(attackSeconds, 1.0f / safeRate) : releaseSeconds;
+    const float gainCoefficient = attackSeconds <= 0.0f &&
+            targetGainDb < state.gainDb
+        ? 1.0f
+        : 1.0f - std::exp(-1.0f / (gainTime * safeRate));
+    state.gainDb += gainCoefficient * (targetGainDb - state.gainDb);
+
+    // Smooth the wet/dry control to avoid clicks when an automation point or
+    // panel slider changes at a block boundary.
+    if (!state.initialized) {
+        state.mix = mix;
+        state.initialized = true;
+    } else {
+        const float mixCoefficient = 1.0f - std::exp(-1.0f / (0.005f * safeRate));
+        state.mix += mixCoefficient * (mix - state.mix);
+    }
+    const float gain = std::pow(10.0f, state.gainDb / 20.0f);
+    outputLeft = finiteOr(inputLeft * (1.0f - state.mix) +
+                          inputLeft * gain * state.mix);
+    outputRight = finiteOr(inputRight * (1.0f - state.mix) +
+                           inputRight * gain * state.mix);
+}
+
+constexpr uint32_t kVocoderBandCount = 16;
+
+struct VocoderBiquad {
+    float b0 = 0.0f;
+    float b1 = 0.0f;
+    float b2 = 0.0f;
+    float a1 = 0.0f;
+    float a2 = 0.0f;
+};
+
+struct VocoderFilterState {
+    float x1 = 0.0f;
+    float x2 = 0.0f;
+    float y1 = 0.0f;
+    float y2 = 0.0f;
+};
+
+struct VocoderState {
+    float sampleRate = 44100.0f;
+    std::array<VocoderBiquad, kVocoderBandCount> filters{};
+    std::array<VocoderFilterState, kVocoderBandCount> carrierLeft{};
+    std::array<VocoderFilterState, kVocoderBandCount> carrierRight{};
+    std::array<VocoderFilterState, kVocoderBandCount> modulatorLeft{};
+    std::array<VocoderFilterState, kVocoderBandCount> modulatorRight{};
+    std::array<float, kVocoderBandCount> envelopes{};
+    std::array<float, kVocoderBandCount> bandGains{};
+    float lowHz = 120.0f;
+    float highHz = 8000.0f;
+    float tilt = 0.0f;
+};
+
+inline VocoderBiquad makeVocoderBandpass(float centerHz, float q,
+                                         float sampleRate) {
+    const float safeRate = std::max(1000.0f, finiteOr(sampleRate, 44100.0f));
+    const float frequency = clampFinite(
+        centerHz, 20.0f, safeRate * 0.45f, 1000.0f);
+    const float omega = 6.2831853071795864769f * frequency / safeRate;
+    const float cosine = std::cos(omega);
+    const float alpha = std::sin(omega) /
+        (2.0f * clampFinite(q, 0.2f, 20.0f, 3.0f));
+    const float inverseA0 = 1.0f / (1.0f + alpha);
+    return {alpha * inverseA0, 0.0f, -alpha * inverseA0,
+            -2.0f * cosine * inverseA0,
+            (1.0f - alpha) * inverseA0};
+}
+
+inline void updateVocoderBands(VocoderState& state, float lowHz,
+                               float highHz, float tilt) {
+    const float nyquistLimit = std::max(200.0f, state.sampleRate * 0.45f);
+    // Keep enough room for the high-edge minimum below, even at low sample
+    // rates or when a host supplies an extreme lowHz value.
+    const float maximumLow = std::max(40.0f, nyquistLimit / 1.25f);
+    const float low = clampFinite(lowHz, 40.0f, maximumLow, 120.0f);
+    const float high = clampFinite(highHz, low * 1.2f, nyquistLimit, 8000.0f);
+    state.lowHz = low;
+    state.highHz = high;
+    state.tilt = clampFinite(tilt, -1.0f, 1.0f, 0.0f);
+    for (uint32_t band = 0; band < kVocoderBandCount; ++band) {
+        const float position = (static_cast<float>(band) + 0.5f) /
+                               static_cast<float>(kVocoderBandCount);
+        const float center = low * std::pow(high / low, position);
+        state.filters[band] = makeVocoderBandpass(center, 2.2f,
+                                                  state.sampleRate);
+        const float tiltDb = state.tilt * (position - 0.5f) * 12.0f;
+        state.bandGains[band] = std::pow(10.0f, tiltDb / 20.0f);
+    }
+}
+
+inline float vocoderFilter(const VocoderBiquad& coefficients,
+                           VocoderFilterState& state, float input) {
+    input = finiteOr(input);
+    const float output = finiteOr(
+        coefficients.b0 * input + coefficients.b1 * state.x1 +
+        coefficients.b2 * state.x2 - coefficients.a1 * state.y1 -
+        coefficients.a2 * state.y2);
+    state.x2 = state.x1;
+    state.x1 = input;
+    state.y2 = state.y1;
+    state.y1 = output;
+    return output;
+}
+
+inline void vocoderSample(VocoderState& state, float carrierLeft,
+                          float carrierRight, float modulatorLeft,
+                          float modulatorRight, float mix, float attackSeconds,
+                          float releaseSeconds, float boost,
+                          float& outputLeft, float& outputRight) {
+    carrierLeft = finiteOr(carrierLeft);
+    carrierRight = finiteOr(carrierRight);
+    modulatorLeft = finiteOr(modulatorLeft);
+    modulatorRight = finiteOr(modulatorRight);
+    mix = clampFinite(mix, 0.0f, 1.0f, 0.75f);
+    attackSeconds = clampFinite(attackSeconds, 0.001f, 0.25f, 0.01f);
+    releaseSeconds = clampFinite(releaseSeconds, 0.005f, 1.0f, 0.12f);
+    boost = clampFinite(boost, 0.0f, 4.0f, 1.5f);
+    if (!std::isfinite(state.sampleRate) || state.sampleRate < 1000.0f)
+        state.sampleRate = 44100.0f;
+
+    const float attackCoefficient = 1.0f - std::exp(
+        -1.0f / (attackSeconds * state.sampleRate));
+    const float releaseCoefficient = 1.0f - std::exp(
+        -1.0f / (releaseSeconds * state.sampleRate));
+    float wetLeft = 0.0f;
+    float wetRight = 0.0f;
+    for (uint32_t band = 0; band < kVocoderBandCount; ++band) {
+        const auto& filter = state.filters[band];
+        const float modLeft = vocoderFilter(
+            filter, state.modulatorLeft[band], modulatorLeft);
+        const float modRight = vocoderFilter(
+            filter, state.modulatorRight[band], modulatorRight);
+        const float detector = 0.5f * (std::fabs(modLeft) +
+                                       std::fabs(modRight));
+        const float coefficient = detector > state.envelopes[band]
+            ? attackCoefficient : releaseCoefficient;
+        state.envelopes[band] += coefficient *
+            (detector - state.envelopes[band]);
+
+        const float carrierBandLeft = vocoderFilter(
+            filter, state.carrierLeft[band], carrierLeft);
+        const float carrierBandRight = vocoderFilter(
+            filter, state.carrierRight[band], carrierRight);
+        const float bandGain = state.envelopes[band] * state.bandGains[band] *
+                               boost;
+        wetLeft += carrierBandLeft * bandGain;
+        wetRight += carrierBandRight * bandGain;
+    }
+    const float normalization =
+        2.0f / std::sqrt(static_cast<float>(kVocoderBandCount));
+    wetLeft *= normalization;
+    wetRight *= normalization;
+    outputLeft = finiteOr(carrierLeft * (1.0f - mix) + wetLeft * mix);
+    outputRight = finiteOr(carrierRight * (1.0f - mix) + wetRight * mix);
+}
+
 } // namespace limutfx

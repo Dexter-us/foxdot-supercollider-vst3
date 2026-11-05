@@ -13,7 +13,7 @@ SOURCE = (ROOT / "spikes/vst3-callback/python_runtime.cpp").read_text(
     encoding="utf-8", errors="replace")
 NAMES = (
     "LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz",
-    "LimutShifter", "LimutShimmer", "LimutGatedVerb",
+    "LimutShifter", "LimutShimmer", "LimutGatedVerb", "LimutCompressor",
 )
 
 
@@ -117,6 +117,9 @@ expected = {
     "LimutGatedVerb": (
         "out inbus mix room damp threshold hold attack release",
         "LimutGatedVerb", 9),
+    "LimutCompressor": (
+        "out inbus mix threshold ratioDb attack release knee",
+        "LimutCompressor", 8),
 }
 for name, (control_names, ugen_name, ugen_inputs) in expected.items():
     actual, controls, defaults, units = synthdef_info(
@@ -133,12 +136,14 @@ for path in HERE.glob("Portable/*.py"):
     report = check(text)
     assert "No unsupported constructs detected" in report, report
     output, scope = evaluate(text)
-    assert output.count("W\t") >= 3, output
+    minimum_writes = 2 if path.name == "199-limut-compressor.py" else 3
+    assert output.count("W\t") >= minimum_writes, output
     expected_indices = {
         "195-limut-pingpong-duck.py": {0: 0, 1: 1, 2: 0},
         "196-limut-disperser-fuzz.py": {0: 2, 1: 3, 2: 2},
         "197-limut-shifter-shimmer.py": {0: 4, 1: 5, 2: -1},
         "198-limut-gated-reverb.py": {0: 6, 1: 4, 2: -1},
+        "199-limut-compressor.py": {0: 7, 1: -1},
     }[path.name]
     assert scope["_dexter_player_effect_indices"] == expected_indices
     for values in scope["_dexter_effect_control_values"].values():
@@ -152,11 +157,33 @@ for name, control in (("LimutPingPong", "fx_time"),
                       ("LimutFuzz", "fx_drive"),
                       ("LimutShifter", "fx_ratio"),
                       ("LimutShimmer", "fx_room"),
-                      ("LimutGatedVerb", "fx_hold")):
+                      ("LimutGatedVerb", "fx_hold"),
+                      ("LimutCompressor", "fx_ratio")):
     text = f'p1 >> pluck([0], effect="{name}", {control}=var([0.25, 0.5], 4))'
     assert "No unsupported constructs detected" in check(text), check(text)
     assert "matching player-effect SynthDef" in check(text, ()), check(text, ())
     print("PASS", name, "time-variable controls and unloaded-def diagnostic")
 
+vocoder, vocoder_controls, vocoder_defaults, vocoder_units = synthdef_info(
+    HERE / "Portable/Sidechain/SynthDefs/LimutVocoder.scsyndef")
+assert vocoder == "LimutVocoder"
+assert vocoder_controls == {
+    key: index for index, key in enumerate(
+        "out inbus modbus mix low high attack release tilt boost".split())}
+assert len(vocoder_defaults) == len(vocoder_controls)
+assert vocoder_units["In"] == (1, 2)
+assert vocoder_units["LimutVocoder"] == (11, 2)
+assert vocoder_units["Out"] == (3, 0)
+print("PASS LimutVocoder two-input sidechain SynthDef ABI")
+
 bad = 'p1 >> pluck([0], effect="LimutDuck", fx_time=0.3)'
 assert "is not a control on LimutDuck" in check(bad), check(bad)
+bad_knee = 'p1 >> pluck([0], effect="LimutCompressor", fx_knee=30)'
+assert "No unsupported constructs detected" in check(bad_knee), check(bad_knee)
+bad_knee_output, _ = evaluate(bad_knee, should_pass=False)
+assert "fx_knee must be between 0.0 and 24.0" in bad_knee_output, bad_knee_output
+blocked_vocoder = check(
+    'p1 >> pluck([0], effect="LimutVocoder")',
+    NAMES + ("LimutVocoder",))
+assert "separate modulator bus" in blocked_vocoder, blocked_vocoder
+print("PASS LimutVocoder is blocked as a single-input insert with explanation")

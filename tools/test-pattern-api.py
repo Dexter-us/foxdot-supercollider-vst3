@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.158' not in cmake_source or
+if ('VERSION 0.4.159' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -60,12 +60,14 @@ for live_panel_fragment in (
         '"fx_frequency"', '"fx_drive"', '"fx_stages"',
         'fx_frequency fx_q fx_stages fx_drive',
         'LimutGatedVerb', 'LimutShifter', 'LimutShimmer',
+        'LimutCompressor', 'LimutVocoder',
         'TB_ENDTRACK', 'commitPlayerControlToSource(',
         'kSciPositionFromPointClose',
         'beginCatalogDrag(', 'finishCatalogDrag(', 'showCatalogAbout(',
         'makeInstrumentCatalog(', 'makeEffectCatalog(', 'applyCatalogEntry(',
         'renderCatalogEntries()', 'entry.category',
         'collapsedCatalogCategories_', 'catalogCategoryHeaderRows_',
+        'return "Waveforms";',
         'selectPlayerAtEditorCaret()', 'SCN_UPDATEUI',
         'catalogCategoryCollapsed(', 'collapsedCatalogCategories_.emplace(key, true)',
         'onPanelListSelectionChanged()', 'L"[+] "', 'L"[-] "',
@@ -143,7 +145,8 @@ for airwindows_layout_fragment in (
     'isLimutPingPong ? 5u : isLimutDuck ? 7u :',
     'isLimutDisperser ? 6u : isLimutFuzz ? 5u :',
     'isLimutShifter ? 5u : isLimutShimmer ? 7u :',
-    'isLimutGatedVerb ? 9u : 9u;',
+    'isLimutGatedVerb ? 9u :',
+    'isLimutCompressor ? 8u : 9u;',
     'userDefinition.outControl = 0;',
     'userDefinition.inputBusControl = 1;',
     'std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}',
@@ -155,6 +158,9 @@ for airwindows_layout_fragment in (
     'userDefinition.name == "LimutShifter"',
     'userDefinition.name == "LimutShimmer"',
     'userDefinition.name == "LimutGatedVerb"',
+    'userDefinition.name == "LimutCompressor"',
+    'std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}}',
+    'std::array<float, 7>{{0.0f, -60.0f, 0.0f, 0.0f,',
         'std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}}',
         'std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}}',
         'std::array<float, 7>{{0.0f, 30.0f, 0.1f,',
@@ -3500,6 +3506,8 @@ for filename in os.listdir(sys.argv[2]):
             ('LimutShifter', 'LimutShimmer', 'LimutGatedVerb')
             if filename in ('197-limut-shifter-shimmer.py',
                             '198-limut-gated-reverb.py') else ())
+        if filename == '199-limut-compressor.py':
+            example_names = ('LimutCompressor',)
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
@@ -3911,6 +3919,16 @@ limutGatedCompatibility = run_compatibility_check(
     'fx_threshold=0.02, fx_hold=var([0.1, 0.2], 4), '
     'fx_attack=0.01, fx_release=0.15)\n', ('LimutGatedVerb',))
 assert 'No unsupported constructs detected' in limutGatedCompatibility
+limutCompressorCompatibility = run_compatibility_check(
+    'p1 >> pluck([0, 3, 7], effect="LimutCompressor", '
+    'fx_threshold=-24, fx_ratio=var([3, 9], 4), fx_attack=0.01, '
+    'fx_release=0.12, fx_knee=4)\n', ('LimutCompressor',))
+assert 'No unsupported constructs detected' in limutCompressorCompatibility
+assert 'fx_knee is not a control on LimutDuck' in run_compatibility_check(
+    'p1 >> pluck([0], effect="LimutDuck", fx_knee=4)\n', ('LimutDuck',))
+vocoderCompatibility = run_compatibility_check(
+    'p1 >> pluck([0], effect="LimutVocoder")\n', ('LimutVocoder',))
+assert 'requires a separate modulator bus' in vocoderCompatibility
 assert 'fx_time is not a control on LimutShifter' in run_compatibility_check(
     'p1 >> pluck([0], effect="LimutShifter", fx_time=0.2)\n',
     ('LimutShifter',))

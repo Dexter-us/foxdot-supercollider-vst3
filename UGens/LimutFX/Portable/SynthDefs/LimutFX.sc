@@ -100,3 +100,35 @@ LimutGatedVerb : MultiOutUGen {
 
     checkInputs { ^this.checkNInputs(2) }
 }
+
+LimutCompressor : MultiOutUGen {
+    *ar { |inLeft, inRight, mix=0.5, threshold=(-24), ratioDb=6, attack=0.01, release=0.1, knee=3|
+        ^this.multiNew(
+            'audio', inLeft, inRight, mix, threshold, ratioDb, attack,
+            release, knee)
+    }
+
+    init { |...theInputs|
+        inputs = theInputs;
+        channels = [OutputProxy(rate, this, 0), OutputProxy(rate, this, 1)];
+        ^channels
+    }
+
+    checkInputs { ^this.checkNInputs(2) }
+}
+
+LimutVocoder : MultiOutUGen {
+    *ar { |carrierLeft, carrierRight, modulatorLeft, modulatorRight, mix=0.75, low=120, high=8000, attack=0.01, release=0.12, tilt=0, boost=1.5|
+        ^this.multiNew(
+            'audio', carrierLeft, carrierRight, modulatorLeft, modulatorRight,
+            mix, low, high, attack, release, tilt, boost)
+    }
+
+    init { |...theInputs|
+        inputs = theInputs;
+        channels = [OutputProxy(rate, this, 0), OutputProxy(rate, this, 1)];
+        ^channels
+    }
+
+    checkInputs { ^this.checkNInputs(4) }
+}

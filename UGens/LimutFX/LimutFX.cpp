@@ -289,6 +289,58 @@ static void LimutGatedVerb_Dtor(LimutGatedVerb* unit) {
     releaseReverb(unit, unit->state.reverb);
 }
 
+static void LimutCompressor_next(LimutCompressor* unit, int sampleFrames) {
+    const float mix = IN0(2);
+    const float thresholdDb = IN0(3);
+    const float ratioDb = IN0(4);
+    const float attackSeconds = IN0(5);
+    const float releaseSeconds = IN0(6);
+    const float kneeDb = IN0(7);
+    const float* inputLeft = IN(0);
+    const float* inputRight = IN(1);
+    float* outputLeft = OUT(0);
+    float* outputRight = OUT(1);
+    for (int frame = 0; frame < sampleFrames; ++frame)
+        limutfx::compressorSample(unit->state, inputLeft[frame],
+            inputRight[frame], mix, thresholdDb, ratioDb, attackSeconds,
+            releaseSeconds, kneeDb, outputLeft[frame], outputRight[frame]);
+}
+
+static void LimutCompressor_Ctor(LimutCompressor* unit) {
+    unit->state.sampleRate = boundedSampleRate(unit);
+    SETCALC(LimutCompressor_next);
+    LimutCompressor_next(unit, 1);
+}
+
+static void LimutVocoder_next(LimutVocoder* unit, int sampleFrames) {
+    const float mix = IN0(4);
+    const float lowHz = IN0(5);
+    const float highHz = IN0(6);
+    const float attackSeconds = IN0(7);
+    const float releaseSeconds = IN0(8);
+    const float tilt = IN0(9);
+    const float boost = IN0(10);
+    const float* carrierLeft = IN(0);
+    const float* carrierRight = IN(1);
+    const float* modulatorLeft = IN(2);
+    const float* modulatorRight = IN(3);
+    float* outputLeft = OUT(0);
+    float* outputRight = OUT(1);
+    limutfx::updateVocoderBands(unit->state, lowHz, highHz, tilt);
+    for (int frame = 0; frame < sampleFrames; ++frame)
+        limutfx::vocoderSample(unit->state, carrierLeft[frame],
+            carrierRight[frame], modulatorLeft[frame], modulatorRight[frame],
+            mix, attackSeconds, releaseSeconds, boost, outputLeft[frame],
+            outputRight[frame]);
+}
+
+static void LimutVocoder_Ctor(LimutVocoder* unit) {
+    unit->state.sampleRate = boundedSampleRate(unit);
+    limutfx::updateVocoderBands(unit->state, 120.0f, 8000.0f, 0.0f);
+    SETCALC(LimutVocoder_next);
+    LimutVocoder_next(unit, 1);
+}
+
 PluginLoad(LimutFX) {
     ft = inTable;
     DefineDtorCantAliasUnit(LimutPingPong);
@@ -298,4 +350,6 @@ PluginLoad(LimutFX) {
     DefineDtorCantAliasUnit(LimutShifter);
     DefineDtorCantAliasUnit(LimutShimmer);
     DefineDtorCantAliasUnit(LimutGatedVerb);
+    DefineSimpleCantAliasUnit(LimutCompressor);
+    DefineSimpleCantAliasUnit(LimutVocoder);
 }

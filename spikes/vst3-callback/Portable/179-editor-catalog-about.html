@@ -54,8 +54,8 @@ restarted.</p>
 <nav><a href="#instruments">Instruments</a><a href="#effects">Effects</a>
 <a href="#optional">Optional packs</a><a href="#drag">Editing workflow</a></nav>
 <section id="instruments"><h2>Instruments</h2>
-<p>The menu alphabetizes the bundled calls. The labels map to functions accepted
-by the embedded Python API; “square” is shown as its actual call name,
+<p>The menu groups the bundled calls by family. The labels map to functions
+accepted by the embedded Python API; “square” is shown as its actual call name,
 <code>pulse</code>. To create a new voice, right-click an empty
 <code>p3 &gt;&gt;</code> line, or drag a catalog item onto that line. A small
 starter pattern is inserted so it can run immediately.</p>
@@ -74,6 +74,8 @@ starter pattern is inserted so it can run immediately.</p>
 <code>space</code>, <code>spark</code>, <code>squish</code>, <code>star</code>,
 <code>swell</code>, <code>triangle</code>, <code>twang</code>,
 <code>varsaw</code>, <code>viola</code>, <code>zap</code>.</p>
+<p><b>Waveforms</b> contains <code>sine</code>, <code>saw</code>,
+<code>pulse</code> (including the square alias) and <code>triangle</code>.</p>
 <div id="generated-about"></div>
 <p><code>play</code> is the WAV sample player and is listed separately. It keeps
 its sample-string syntax. External precompiled SynthDefs appear as
@@ -153,6 +155,13 @@ use their effect-specific controls instead.</p>
 <code>fx_threshold</code>: 0.001–0.25; <code>fx_hold</code>: 0–2 seconds;
 <code>fx_attack</code>: 0.001–0.25 seconds;
 <code>fx_release</code>: 0.01–1 second.</td></tr>
+<tr id="LimutCompressor"><td>LimutCompressor</td><td><code>fx_mix</code> 0–1;
+<code>fx_threshold</code> −60–0 dB; <code>fx_ratio</code> 0–20 dB;
+<code>fx_attack</code> 0–1 s; <code>fx_release</code> 0.001–3 s;
+<code>fx_knee</code> 0–24 dB.</td></tr>
+<tr id="LimutVocoder"><td>LimutVocoder (not yet insertable)</td><td>True
+two-input UGen; requires separate carrier and modulator buses. The embedded
+player-effect chain currently provides no second bus.</td></tr>
 <tr id="Chorus"><td>Chorus</td><td>mix 0–1, rate 0.05–5 Hz, depth 0–1,
 delay 0.005–0.04 seconds, spread 0–1, feedback 0–0.75, tone 200–16000 Hz.</td></tr>
 <tr id="Flanger"><td>Flanger</td><td>mix 0–1, rate 0.05–4 Hz, depth 0–1,

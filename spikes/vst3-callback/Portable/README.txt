@@ -1,3 +1,10 @@
+0.4.159 adds LimutCompressor as an insert under Dynamics and adds a separate
+Waveforms category for sine, saw, pulse and triangle. The LimutFX UGen pack also
+contains a true two-input LimutVocoder. It requires separate carrier and
+modulator buses, so it is not exposed as a player insert until the embedded
+engine has sidechain routing. Example 199 demonstrates the compressor; the
+standalone bus example is Portable/Sidechain/200-limut-vocoder-two-bus.scd.
+
 0.4.158 adds three optional compiled LimutFX effect UGens: LimutShifter,
 LimutShimmer, and LimutGatedVerb, plus precompiled SynthDefs and Examples 197
 and 198. Install LimutFX.scx once under the host's SuperCollider SCPlugins

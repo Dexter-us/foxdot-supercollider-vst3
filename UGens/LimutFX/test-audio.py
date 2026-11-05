@@ -17,7 +17,7 @@ bundle, message, read_wav = (
 
 
 def render(module_dir, synth_name, synth_source, effect_name, effect_controls,
-           duration):
+           duration, synthdef_directory=None):
     scsynth = Path(shutil.which("scsynth")).resolve()
     stock = scsynth.parent.parent / "lib/SuperCollider/plugins"
     plugin_path = os.pathsep.join((str(module_dir.resolve()), str(stock)))
@@ -34,8 +34,8 @@ def render(module_dir, synth_name, synth_source, effect_name, effect_controls,
         assert compiled.returncode == 0 and "ERROR:" not in compiled.stdout, (
             compiled.stdout + compiled.stderr)
         input_def = (temp / (synth_name + ".scsyndef")).read_bytes()
-        effect_def = (
-            HERE / "Portable/SynthDefs" / (effect_name + ".scsyndef")).read_bytes()
+        synthdef_directory = synthdef_directory or HERE / "Portable/SynthDefs"
+        effect_def = (synthdef_directory / (effect_name + ".scsyndef")).read_bytes()
         score = bundle(0, message("/d_recv", input_def),
                       message("/d_recv", effect_def))
         score += bundle(.05, message("/s_new", effect_name, 100, 1, 0,
@@ -226,6 +226,52 @@ SynthDef(\LimutGatedVerbInput, { |out=16|
     assert gated_closed < gated_open * 0.2, (gated_open, gated_closed)
     assert max(abs(value) for value in gated) < 1.0
     print(f"PASS LimutGatedVerb gated tail; {rate} Hz")
+
+    compressor_source = r"""
+SynthDef(\LimutCompressorInput, { |out=16|
+    var signal = (SinOsc.ar(220) * 0.8) ! 2;
+    Out.ar(out, signal);
+    Out.ar(2, signal);
+}).writeDefFile("{directory}");
+"""
+    compressed, rate = render(
+        args.module_directory, "LimutCompressorInput", compressor_source,
+        "LimutCompressor",
+        [0, 0.0, 1, 16.0, 2, 1.0, 3, -18.0, 4, 12.0,
+         5, 0.005, 6, 0.12, 7, 4.0], 1.2)
+    compressor_wet = rms(compressed, rate, 0, .15, .9)
+    compressor_dry = rms(compressed, rate, 2, .15, .9)
+    assert compressor_dry > 0.1
+    assert 1e-3 < compressor_wet < compressor_dry * 0.8, (
+        compressor_wet, compressor_dry)
+    assert max(abs(value) for value in compressed) < 1.0
+    print(f"PASS LimutCompressor audible linked gain reduction; {rate} Hz")
+
+    vocoder_source = r"""
+SynthDef(\LimutVocoderInput, { |out=16, modbus=18|
+    var carrier = (Saw.ar(110) * 0.3) ! 2;
+    var syllable = LFPulse.kr(4, 0, 0.42);
+    var modulator = (Formant.ar(120, 500 + (syllable * 900), 80) *
+        syllable * 0.35) ! 2;
+    Out.ar(out, carrier);
+    Out.ar(modbus, modulator);
+    Out.ar(2, carrier);
+}).writeDefFile("{directory}");
+"""
+    vocoded, rate = render(
+        args.module_directory, "LimutVocoderInput", vocoder_source,
+        "LimutVocoder",
+        [0, 0.0, 1, 16.0, 2, 18.0, 3, 1.0, 4, 120.0,
+         5, 9000.0, 6, 0.005, 7, 0.08, 8, 0.0, 9, 1.8],
+        1.2, HERE / "Portable/Sidechain/SynthDefs")
+    vocoder_wet = rms(vocoded, rate, 0, .15, .9)
+    vocoder_dry = rms(vocoded, rate, 2, .15, .9)
+    assert vocoder_dry > 1e-4 and vocoder_wet > 1e-5, (
+        vocoder_wet, vocoder_dry)
+    assert abs(vocoder_wet - vocoder_dry) > vocoder_dry * 0.05, (
+        vocoder_wet, vocoder_dry)
+    assert max(abs(value) for value in vocoded) < 1.0
+    print(f"PASS LimutVocoder two-bus carrier/modulator output; {rate} Hz")
 
 
 if __name__ == "__main__":

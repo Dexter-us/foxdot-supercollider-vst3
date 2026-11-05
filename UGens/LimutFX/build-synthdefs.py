@@ -9,9 +9,11 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 SYNTHDEFS = HERE / "Portable" / "SynthDefs"
+SIDECHAIN_SYNTHDEFS = HERE / "Portable" / "Sidechain" / "SynthDefs"
 NAMES = (
     "LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz",
     "LimutShifter", "LimutShimmer", "LimutGatedVerb",
+    "LimutCompressor", "LimutVocoder",
 )
 
 
@@ -23,6 +25,7 @@ def main():
         extensions = temp / "data" / "SuperCollider" / "Extensions"
         extensions.mkdir(parents=True)
         shutil.copy2(SYNTHDEFS / "LimutFX.sc", extensions)
+        SIDECHAIN_SYNTHDEFS.mkdir(parents=True, exist_ok=True)
         # sclang's stdin mode parses each line as a standalone REPL input.
         # Keep every complete SynthDef expression on one line so multiline
         # source is not evaluated as a sequence of incomplete fragments.
@@ -34,9 +37,12 @@ def main():
             source = " ".join(source.split())
             if source.endswith(";"):
                 source = source[:-1]
+            destination = (
+                SIDECHAIN_SYNTHDEFS if name == "LimutVocoder" else SYNTHDEFS
+            )
             expressions.append(
                 source + ".writeDefFile("
-                + json.dumps(SYNTHDEFS.as_posix()) + ");"
+                + json.dumps(destination.as_posix()) + ");"
             )
         script = " ".join(expressions) + " 0.exit;\n"
         env = dict(
@@ -69,7 +75,10 @@ def main():
         if result.returncode or "ERROR:" in result.stdout:
             raise RuntimeError(result.stdout + result.stderr)
         for name in NAMES:
-            data = (SYNTHDEFS / (name + ".scsyndef")).read_bytes()
+            destination = (
+                SIDECHAIN_SYNTHDEFS if name == "LimutVocoder" else SYNTHDEFS
+            )
+            data = (destination / (name + ".scsyndef")).read_bytes()
             if not data.startswith(b"SCgf") or len(data) < 128:
                 raise RuntimeError(f"{name} did not produce a valid SynthDef")
             print(f"{name}: {len(data)} bytes")

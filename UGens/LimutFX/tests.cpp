@@ -14,6 +14,8 @@ using limutfx::GatedVerbState;
 using limutfx::ReverbState;
 using limutfx::ShifterState;
 using limutfx::ShimmerState;
+using limutfx::CompressorState;
+using limutfx::VocoderState;
 
 static bool near(float left, float right, float epsilon = 1e-5f) {
     return std::fabs(left - right) <= epsilon;
@@ -276,5 +278,103 @@ int main() {
         }
         assert(earlyPeak > 0.01f);
         assert(latePeak < earlyPeak * 0.2f);
+    }
+    {
+        assert(near(limutfx::compressorReductionDb(
+                        -6.0f, -18.0f, 20.0f, 0.0f),
+                    10.8f, 1e-3f));
+        assert(near(limutfx::compressorReductionDb(
+                        -30.0f, -18.0f, 20.0f, 0.0f),
+                    0.0f));
+        assert(limutfx::compressorReductionDb(
+                   -18.0f, -18.0f, 12.0f, 6.0f) > 0.0f);
+
+        constexpr float sampleRate = 48000.0f;
+        CompressorState state;
+        state.sampleRate = sampleRate;
+        float outLeft = 0.0f;
+        float outRight = 0.0f;
+        limutfx::compressorSample(state, 0.7f, -0.2f, 0.0f, -24.0f,
+            20.0f, 0.001f, 0.1f, 3.0f, outLeft, outRight);
+        assert(near(outLeft, 0.7f) && near(outRight, -0.2f));
+
+        state = CompressorState{};
+        state.sampleRate = sampleRate;
+        float peakLeft = 0.0f;
+        float peakRight = 0.0f;
+        for (int frame = 0; frame < 24000; ++frame) {
+            const float left = std::sin(
+                6.2831853071795864769f * 220.0f * frame / sampleRate);
+            limutfx::compressorSample(state, left, 0.1f * left, 1.0f,
+                -12.0f, 20.0f, 0.001f, 0.1f, 2.0f,
+                outLeft, outRight);
+            assert(std::isfinite(outLeft) && std::isfinite(outRight));
+            if (frame > 12000) {
+                peakLeft = std::max(peakLeft, std::fabs(outLeft));
+                peakRight = std::max(peakRight, std::fabs(outRight));
+            }
+        }
+        assert(peakLeft < 0.45f && peakLeft > 0.1f);
+        assert(peakRight < 0.05f); // linked stereo detector preserves image
+
+        limutfx::compressorSample(state,
+            std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::quiet_NaN(), 2.0f,
+            std::numeric_limits<float>::quiet_NaN(),
+            std::numeric_limits<float>::quiet_NaN(),
+            -1.0f, -1.0f, 99.0f, outLeft, outRight);
+        assert(std::isfinite(outLeft) && std::isfinite(outRight));
+    }
+    {
+        constexpr float sampleRate = 48000.0f;
+        VocoderState state;
+        state.sampleRate = sampleRate;
+        limutfx::updateVocoderBands(state, 120.0f, 9000.0f, 0.2f);
+        float outLeft = 0.0f;
+        float outRight = 0.0f;
+        limutfx::vocoderSample(state, 0.4f, -0.2f, 0.3f, 0.3f,
+            0.0f, 0.01f, 0.1f, 1.5f, outLeft, outRight);
+        assert(near(outLeft, 0.4f) && near(outRight, -0.2f));
+
+        state = VocoderState{};
+        state.sampleRate = sampleRate;
+        limutfx::updateVocoderBands(state, 120.0f, 9000.0f, 0.0f);
+        double wetEnergy = 0.0;
+        float peak = 0.0f;
+        for (int frame = 0; frame < 48000; ++frame) {
+            const float time = static_cast<float>(frame) / sampleRate;
+            const float carrier = 0.35f * std::sin(
+                6.2831853071795864769f * 440.0f * time);
+            const float modulator = (std::fmod(time * 8.0f, 1.0f) < 0.45f)
+                ? 0.4f : -0.2f;
+            limutfx::vocoderSample(state, carrier, carrier,
+                modulator, -0.5f * modulator, 1.0f,
+                0.005f, 0.08f, 1.5f, outLeft, outRight);
+            assert(std::isfinite(outLeft) && std::isfinite(outRight));
+            if (frame > 12000) {
+                wetEnergy += static_cast<double>(outLeft) * outLeft;
+                peak = std::max(peak, std::fabs(outLeft));
+            }
+        }
+        assert(wetEnergy > 0.1);
+        assert(peak < 1.0f);
+
+        state = VocoderState{};
+        state.sampleRate = sampleRate;
+        limutfx::updateVocoderBands(state, -500.0f, 50000.0f, 5.0f);
+        for (int frame = 0; frame < 1000; ++frame) {
+            limutfx::vocoderSample(state, 0.25f, 0.25f,
+                0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 99.0f,
+                outLeft, outRight);
+            assert(std::isfinite(outLeft) && std::isfinite(outRight));
+            assert(state.lowHz >= 40.0f && state.highHz > state.lowHz);
+        }
+
+        state = VocoderState{};
+        state.sampleRate = 1000.0f;
+        limutfx::updateVocoderBands(state, 50000.0f, -1.0f, 0.0f);
+        assert(state.lowHz <= 360.0f);
+        assert(state.highHz >= state.lowHz * 1.2f);
+        assert(state.highHz <= 450.0f);
     }
 }

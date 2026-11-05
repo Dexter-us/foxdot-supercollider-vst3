@@ -52,6 +52,8 @@ inline std::string instrumentCategory(const CatalogEntry& entry) {
         return "Sample player";
     if (entry.kind == CatalogKind::UserSynth)
         return "Portable SynthDefs";
+    static const std::vector<std::string> waveforms{
+        "pulse", "saw", "sine", "triangle"};
     static const std::vector<std::string> bass{
         "bass", "dbass", "jbass", "sawbass"};
     static const std::vector<std::string> keys{
@@ -63,6 +65,9 @@ inline std::string instrumentCategory(const CatalogEntry& entry) {
     static const std::vector<std::string> texture{
         "ambi", "creep", "dirt", "fuzz", "noise", "orient", "scratch",
         "scatter", "space", "spark", "swell"};
+    if (std::find(waveforms.begin(), waveforms.end(), entry.name) !=
+        waveforms.end())
+        return "Waveforms";
     if (std::find(bass.begin(), bass.end(), entry.name) != bass.end())
         return "Bass";
     if (std::find(keys.begin(), keys.end(), entry.name) != keys.end())
@@ -101,6 +106,10 @@ inline std::string effectCategory(const CatalogEntry& entry) {
         return "Phase";
     if (name == "LimutFuzz")
         return "Distortion and reduction";
+    if (name == "LimutCompressor")
+        return "Dynamics";
+    if (name == "LimutVocoder")
+        return "Vocoder";
     if (name == "Cut" || name == "Blur" || name == "FMod")
         return "Player controls";
     return "Other effects";
@@ -176,6 +185,10 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
                 {"fx_damp", 0, 1}, {"fx_threshold", 0.001f, 0.25f},
                 {"fx_hold", 0, 2}, {"fx_attack", 0.001f, 0.25f},
                 {"fx_release", 0.01f, 1}};
+    if (effectName == "LimutCompressor")
+        return {{"fx_mix", 0, 1}, {"fx_threshold", -60, 0},
+                {"fx_ratio", 0, 20}, {"fx_attack", 0, 1},
+                {"fx_release", 0.001f, 3}, {"fx_knee", 0, 24}};
     return {};
 }
 
@@ -351,7 +364,8 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
     static const std::vector<std::string> bundledEffects{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
         "Greyhole", "JPverb", "LimutDisperser", "LimutDuck",
-        "LimutFuzz", "LimutGatedVerb", "LimutPingPong", "LimutShifter",
+        "LimutCompressor", "LimutFuzz", "LimutGatedVerb",
+        "LimutPingPong", "LimutShifter",
         "LimutShimmer", "Phaser", "Tremolo"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
@@ -477,15 +491,16 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
     static const std::vector<std::string> knownExternal{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
         "Greyhole", "JPverb", "LimutDisperser", "LimutDuck", "LimutFuzz",
-        "LimutGatedVerb", "LimutPingPong", "LimutShifter", "LimutShimmer",
-        "Phaser", "Tremolo"};
+        "LimutCompressor", "LimutGatedVerb", "LimutPingPong",
+        "LimutShifter", "LimutShimmer", "LimutVocoder", "Phaser", "Tremolo"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
         std::string description;
         const bool hasMixControl =
             name != "AirwindowsEchojam" &&
-            name != "AirwindowsTapeDelay2";
+            name != "AirwindowsTapeDelay2" &&
+            name != "LimutVocoder";
         if (name == "AirwindowsEchojam" || name == "AirwindowsTapeDelay2")
             description = "Airwindows player-effect SynthDef. It has no "
                           "fx_mix control; use the documented effect-specific "
@@ -493,12 +508,18 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "under Portable/SynthDefs and restart the DAW.";
         else if (name == "LimutPingPong" || name == "LimutDuck" ||
                  name == "LimutDisperser" || name == "LimutFuzz" ||
-                 name == "LimutShifter" || name == "LimutShimmer" ||
+                 name == "LimutCompressor" || name == "LimutShifter" ||
+                 name == "LimutShimmer" ||
                  name == "LimutGatedVerb")
             description = "Optional Limut-inspired insert UGen. Install its "
                           "SynthDef under Portable/SynthDefs and LimutFX.scx "
                           "under SCPlugins, then restart the DAW. Controls "
                           "include range-checked FX sliders.";
+        else if (name == "LimutVocoder")
+            description = "Two-input vocoder UGen requiring separate carrier "
+                          "and modulator buses. The current player-effect chain "
+                          "has no sidechain route, so this is not yet an "
+                          "insertable FoxDot effect.";
         else if (name == "JPverb" || name == "Greyhole")
             description = "Optional stereo room/reverb SynthDef pack. Install "
                           "its Portable/SynthDefs file and required SCPlugins "
@@ -535,6 +556,10 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                         Arg{"fx_damp", "0.5"}, Arg{"fx_threshold", "0.02"},
                         Arg{"fx_hold", "0.25"}, Arg{"fx_attack", "0.015"},
                         Arg{"fx_release", "0.15"}};
+        } else if (name == "LimutCompressor") {
+            defaults = {Arg{"fx_mix", "0.5"}, Arg{"fx_threshold", "-24"},
+                        Arg{"fx_ratio", "6"}, Arg{"fx_attack", "0.01"},
+                        Arg{"fx_release", "0.1"}, Arg{"fx_knee", "3"}};
         } else if (hasMixControl) {
             defaults.push_back(Arg{"fx_mix", "0.25"});
         }

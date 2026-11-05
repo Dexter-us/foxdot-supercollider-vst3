@@ -1,5 +1,12 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.159 adds a stereo-linked `LimutCompressor` insert with live FX
+sliders, ranges, and `var()`/`linvar()` support. The built-in sine, saw, pulse,
+and triangle calls are grouped under Waveforms. The optional LimutFX module also
+contains a true two-input `LimutVocoder` UGen and a standalone bus example; it is
+not yet exposed as a FoxDot insert because the embedded engine has no
+per-player modulator/sidechain route. See `UGens/LimutFX/README.md`.
+
 Version 0.4.158 adds three compiled LimutFX player-effect UGens: `LimutShifter`,
 `LimutShimmer`, and `LimutGatedVerb`. They are optional members of
 `LimutFX.scx`, with matching precompiled SynthDefs, effect-chain controls, and
