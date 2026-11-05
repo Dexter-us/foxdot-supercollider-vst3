@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 SOURCE = (ROOT / "spikes/vst3-callback/python_runtime.cpp").read_text(
     encoding="utf-8", errors="replace")
-NAMES = ("LimutPingPong", "LimutDuck")
+NAMES = ("LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz")
 
 
 def embedded(name):
@@ -103,6 +103,10 @@ expected = {
         "out inbus mix delaytime feedback", "LimutPingPong", 4),
     "LimutDuck": (
         "out inbus mix period depth length attack", "LimutDuck", 6),
+    "LimutDisperser": (
+        "out inbus mix frequency q stages", "LimutDisperser", 6),
+    "LimutFuzz": (
+        "out inbus mix driveDb toneHz", "LimutFuzz", 5),
 }
 for name, (control_names, ugen_name, ugen_inputs) in expected.items():
     actual, controls, defaults, units = synthdef_info(
@@ -120,14 +124,21 @@ for path in HERE.glob("Portable/*.py"):
     assert "No unsupported constructs detected" in report, report
     output, scope = evaluate(text)
     assert output.count("W\t") >= 3, output
-    assert scope["_dexter_player_effect_indices"] == {0: 0, 1: 1, 2: 0}
+    expected_indices = (
+        {0: 0, 1: 1, 2: 0}
+        if path.name == "195-limut-pingpong-duck.py"
+        else {0: 2, 1: 3, 2: 2}
+    )
+    assert scope["_dexter_player_effect_indices"] == expected_indices
     for values in scope["_dexter_effect_control_values"].values():
         assert len(values) == 7 and all(
             math.isfinite(value) and 0.0 <= value <= 1.0 for value in values)
     print("PASS", path.name, "embedded checker and player-effect wrapper")
 
 for name, control in (("LimutPingPong", "fx_time"),
-                      ("LimutDuck", "fx_period")):
+                      ("LimutDuck", "fx_period"),
+                      ("LimutDisperser", "fx_frequency"),
+                      ("LimutFuzz", "fx_drive")):
     text = f'p1 >> pluck([0], effect="{name}", {control}=var([0.25, 0.5], 4))'
     assert "No unsupported constructs detected" in check(text), check(text)
     assert "matching player-effect SynthDef" in check(text, ()), check(text, ())

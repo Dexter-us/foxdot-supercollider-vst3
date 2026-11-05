@@ -105,8 +105,10 @@ constexpr char kFoxDotApiKeywords[] =
     "effect effects fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
     "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
-     "fx_center fx_shape fx_phase fx_time fx_period fx_length fx_attack "
-     "JPverb Greyhole Chorus Flanger Phaser Tremolo LimutPingPong LimutDuck "
+    "fx_center fx_shape fx_phase fx_time fx_period fx_length fx_attack "
+    "fx_frequency fx_q fx_stages fx_drive "
+    "JPverb Greyhole Chorus Flanger Phaser Tremolo LimutPingPong LimutDuck "
+    "LimutDisperser LimutFuzz "
     "vib depth lforate lfowidth rq fmod blur sample "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
     "echo delay mute unmute rate start end loop stretch shuffle repeat stutter "
@@ -121,8 +123,10 @@ constexpr char kFoxDotCompletions[] =
     "effect effects fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
     "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
-     "fx_center fx_shape fx_phase fx_time fx_period fx_length fx_attack "
-     "JPverb Greyhole Chorus Flanger Phaser Tremolo LimutPingPong LimutDuck "
+    "fx_center fx_shape fx_phase fx_time fx_period fx_length fx_attack "
+    "fx_frequency fx_q fx_stages fx_drive "
+    "JPverb Greyhole Chorus Flanger Phaser Tremolo LimutPingPong LimutDuck "
+    "LimutDisperser LimutFuzz "
     "vib depth lforate lfowidth rq fmod blur sample start end loop stretch "
     "shuffle repeat stutter palindrome mirror accum swap reverse rotate invert transpose arp splice sort unduplicate replace layer trim ltrim normalise choose zip deepzip deeprzip map pivot true_shuffle shufflets";
 
@@ -1078,11 +1082,34 @@ private:
                         itemData < kEffectChainHeaderDataBase + 8
                     ? itemData - kEffectChainHeaderDataBase : -1;
             if (headerPlayer >= 0) {
-                expandedEffectChains_[static_cast<std::size_t>(headerPlayer)] =
+                const bool expanding =
                     !expandedEffectChains_[static_cast<std::size_t>(
                         headerPlayer)];
+                expandedEffectChains_[static_cast<std::size_t>(headerPlayer)] =
+                    expanding;
                 panelPlayersInitialized_ = false;
                 renderPanelTab();
+                int targetItemData = headerPlayer;
+                if (expanding) {
+                    const int firstSlot =
+                        dexter::editor::firstConfiguredEffectSlot(
+                            lastPanelPlayers_[static_cast<std::size_t>(
+                                headerPlayer)].effectIndices);
+                    if (firstSlot >= 0)
+                        targetItemData =
+                            panelItemForEffect(headerPlayer, firstSlot);
+                }
+                const int count = static_cast<int>(
+                    SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+                for (int row = 0; row < count; ++row) {
+                    if (static_cast<int>(SendMessageW(
+                            panelList_, LB_GETITEMDATA, row, 0)) !=
+                        targetItemData)
+                        continue;
+                    SendMessageW(panelList_, LB_SETCURSEL, row, 0);
+                    break;
+                }
+                updatePlayerActionButtons();
                 return;
             }
         }
@@ -1885,10 +1912,15 @@ private:
 
     static const char* effectControlUnit(std::string_view name) {
         if (name == "fx_tone" || name == "fx_center" ||
+            name == "fx_frequency" ||
             name == "fx_rate" || name == "fx_modfreq")
             return " Hz";
         if (name == "fx_delay" || name == "fx_t60")
             return " s";
+        if (name == "fx_drive")
+            return " dB";
+        if (name == "fx_stages")
+            return " stages";
         return "";
     }
 

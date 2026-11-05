@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.156' not in cmake_source or
+if ('VERSION 0.4.157' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -57,6 +57,9 @@ for live_panel_fragment in (
         'selectedEffectSlotIndex()', 'setPlayerEffectControl(',
         'commitPlayerEffectControlToSource(', 'playerControlRanges_',
         'effectControlRangeText(', 'effectControlUnit(',
+        '"fx_frequency"', '"fx_drive"', '"fx_stages"',
+        'fx_frequency fx_q fx_stages fx_drive',
+        'LimutDisperser LimutFuzz',
         'TB_ENDTRACK', 'commitPlayerControlToSource(',
         'kSciPositionFromPointClose',
         'beginCatalogDrag(', 'finishCatalogDrag(', 'showCatalogAbout(',
@@ -66,6 +69,7 @@ for live_panel_fragment in (
         'selectPlayerAtEditorCaret()', 'SCN_UPDATEUI',
         'catalogCategoryCollapsed(', 'collapsedCatalogCategories_.emplace(key, true)',
         'onPanelListSelectionChanged()', 'L"[+] "', 'L"[-] "',
+        'firstConfiguredEffectSlot(', 'panelItemForEffect(headerPlayer, firstSlot)',
         'instrumentCategory(', 'effectCategory(',
         '179-editor-catalog-about.html',
         'L"Bits"', 'L"Crush"', 'EditorPlayerControl::BitDepth',
@@ -105,7 +109,8 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                             '192-pattern-transform-recursive.py',
                              '193-true-copy-convert-data.py',
                                '194-pattern-metadata-helpers.py',
-                                '195-limut-pingpong-duck.py'):
+                                 '195-limut-pingpong-duck.py',
+                                 '196-limut-disperser-fuzz.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -135,13 +140,22 @@ for snapshot_fragment in (
         raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (
     'isTapeDelay ? 8u : isEchojam ? 6u :',
-    'isLimutPingPong ? 5u : isLimutDuck ? 7u : 9u;',
+    'isLimutPingPong ? 5u : isLimutDuck ? 7u :',
+    'isLimutDisperser ? 6u : isLimutFuzz ? 5u : 9u;',
     'userDefinition.outControl = 0;',
     'userDefinition.inputBusControl = 1;',
     'std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}',
     'std::array<int, 7>{{2, 3, 4, -1, -1, -1, 5}}',
     'userDefinition.name == "LimutPingPong"',
     'userDefinition.name == "LimutDuck"',
+    'userDefinition.name == "LimutDisperser"',
+    'userDefinition.name == "LimutFuzz"',
+        'std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}}',
+        'std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}}',
+        'std::array<float, 7>{{0.0f, 30.0f, 0.1f,',
+        'std::array<float, 7>{{1.0f, 18000.0f, 10.0f,',
+        'std::array<float, 7>{{0.0f, 0.0f, 200.0f,',
+        'std::array<float, 7>{{1.0f, 36.0f, 16000.0f,',
 ):
     if airwindows_layout_fragment not in processor_source:
         raise AssertionError(
@@ -3475,7 +3489,9 @@ for filename in os.listdir(sys.argv[2]):
             ('Phaser', 'Tremolo') if filename == '173-ordered-player-effect-chain.py' else
             ('Flanger', 'Chorus') if filename == '174-drum-effect-chain.py' else
             ('LimutPingPong', 'LimutDuck')
-            if filename == '195-limut-pingpong-duck.py' else ())
+            if filename == '195-limut-pingpong-duck.py' else
+            ('LimutDisperser', 'LimutFuzz')
+            if filename == '196-limut-disperser-fuzz.py' else ())
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
@@ -3860,7 +3876,20 @@ assert 'requires the matching player-effect SynthDef' in run_compatibility_check
 assert 'fx_hold is not a control on LimutDuck' in run_compatibility_check(
     'p1 >> play("x", effect="LimutDuck", fx_hold=0.1)\n',
     ('LimutDuck',))
-assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser, Tremolo, LimutPingPong or LimutDuck' in run_compatibility_check(
+limutDisperserCompatibility = run_compatibility_check(
+    'p1 >> play("x-o-", effect="LimutDisperser", '
+    'fx_frequency=var([440, 880], 4), fx_q=3, fx_stages=12)\n',
+    ('LimutDisperser',))
+assert 'No unsupported constructs detected' in limutDisperserCompatibility
+limutFuzzCompatibility = run_compatibility_check(
+    'p1 >> play("x-o-", effects=[("LimutFuzz", '
+    '{"fx_mix": 0.4, "fx_drive": linvar([6, 24], 8), "fx_tone": 9000})])\n',
+    ('LimutFuzz',))
+assert 'No unsupported constructs detected' in limutFuzzCompatibility
+assert 'fx_stages is not a control on LimutFuzz' in run_compatibility_check(
+    'p1 >> play("x", effect="LimutFuzz", fx_stages=8)\n',
+    ('LimutFuzz',))
+assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser, Tremolo, LimutPingPong, LimutDuck, LimutDisperser or LimutFuzz' in run_compatibility_check(
     'p1 >> play("x-o-", effect="NotAnEffect")\n',
     ('NotAnEffect',))
 for name in ('Chorus', 'Flanger', 'Phaser', 'Tremolo'):

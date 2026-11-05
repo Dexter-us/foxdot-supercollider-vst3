@@ -3470,7 +3470,8 @@ private:
                name == "JPverb" || name == "Greyhole" ||
                name == "Chorus" || name == "Flanger" ||
                name == "Phaser" || name == "Tremolo" ||
-               name == "LimutPingPong" || name == "LimutDuck";
+               name == "LimutPingPong" || name == "LimutDuck" ||
+               name == "LimutDisperser" || name == "LimutFuzz";
     }
 
     static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
@@ -3613,9 +3614,13 @@ private:
                 const bool isLimutPingPong =
                     userDefinition.name == "LimutPingPong";
                 const bool isLimutDuck = userDefinition.name == "LimutDuck";
+                const bool isLimutDisperser =
+                    userDefinition.name == "LimutDisperser";
+                const bool isLimutFuzz = userDefinition.name == "LimutFuzz";
                 const uint32 expectedControlCount =
                     isTapeDelay ? 8u : isEchojam ? 6u :
-                    isLimutPingPong ? 5u : isLimutDuck ? 7u : 9u;
+                    isLimutPingPong ? 5u : isLimutDuck ? 7u :
+                    isLimutDisperser ? 6u : isLimutFuzz ? 5u : 9u;
                 if (loaded->mNumControls != expectedControlCount) {
                     error = synthFile.path.filename().string() +
                             " has an incompatible persistent-effect control layout (expected " +
@@ -3706,6 +3711,24 @@ private:
                     userDefinition.effectControlMaximum =
                         std::array<float, 7>{{1.0f, 8.0f, 1.0f,
                                               8.0f, 8.0f, 1.0f, 1.0f}};
+                } else if (isLimutDisperser) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 30.0f, 0.1f,
+                                              1.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 18000.0f, 10.0f,
+                                              24.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutFuzz) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 200.0f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 36.0f, 16000.0f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
                 }
                 const std::array<bool, 7> requiredEffectControls =
                     isTapeDelay
@@ -3716,6 +3739,10 @@ private:
                     ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
                     : isLimutDuck
                     ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isLimutDisperser
+                    ? std::array<bool, 7>{{true, true, true, true, false, false, false}}
+                    : isLimutFuzz
+                    ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
                     : std::array<bool, 7>{{true, true, true, true, true, true, true}};
                 bool missingRequiredEffectControl = false;
                 for (std::size_t index = 0;

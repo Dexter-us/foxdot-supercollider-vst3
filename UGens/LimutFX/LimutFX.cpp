@@ -1,4 +1,4 @@
-// Limut-inspired PingPong and Duck SuperCollider UGens.
+// Limut-inspired PingPong, Duck, Disperser, and Fuzz SuperCollider UGens.
 // Adapted from the effect graph concepts in sdclibbery/limut (CC BY-SA 4.0).
 #if defined(_WIN32)
 #    include <windows.h>
@@ -88,8 +88,70 @@ static void LimutDuck_Ctor(LimutDuck* unit) {
     LimutDuck_next(unit, 1);
 }
 
+static float sampleRateFor(Unit* unit) {
+    const double rate = unit->mWorld->mSampleRate;
+    return std::isfinite(rate) && rate > 1000.0
+        ? static_cast<float>(std::clamp(rate, 1000.0, 192000.0))
+        : 44100.0f;
+}
+
+static void LimutDisperser_next(LimutDisperser* unit, int sampleFrames) {
+    const float frequency = IN0(2);
+    const float q = IN0(3);
+    const float stages = IN0(4);
+    const float mix = IN0(5);
+    const float* inputLeft = IN(0);
+    const float* inputRight = IN(1);
+    float* outputLeft = OUT(0);
+    float* outputRight = OUT(1);
+
+    for (int frame = 0; frame < sampleFrames; ++frame) {
+        limutfx::disperserSample(
+            unit->state, inputLeft[frame], inputRight[frame], frequency, q,
+            stages, mix, outputLeft[frame], outputRight[frame]);
+    }
+}
+
+static void LimutDisperser_Ctor(LimutDisperser* unit) {
+    unit->state.sampleRate = sampleRateFor(unit);
+    unit->state.initialized = false;
+    for (auto& channel : unit->state.sections)
+        for (auto& stage : channel)
+            stage = {};
+    SETCALC(LimutDisperser_next);
+    LimutDisperser_next(unit, 1);
+}
+
+static void LimutFuzz_next(LimutFuzz* unit, int sampleFrames) {
+    const float driveDb = IN0(2);
+    const float toneHz = IN0(3);
+    const float mix = IN0(4);
+    const float* inputLeft = IN(0);
+    const float* inputRight = IN(1);
+    float* outputLeft = OUT(0);
+    float* outputRight = OUT(1);
+
+    for (int frame = 0; frame < sampleFrames; ++frame) {
+        limutfx::fuzzSample(unit->state, inputLeft[frame], inputRight[frame],
+                            driveDb, toneHz, mix, outputLeft[frame],
+                            outputRight[frame]);
+    }
+}
+
+static void LimutFuzz_Ctor(LimutFuzz* unit) {
+    unit->state.sampleRate = sampleRateFor(unit);
+    unit->state.currentToneHz = 9000.0f;
+    unit->state.lowpassLeft = 0.0f;
+    unit->state.lowpassRight = 0.0f;
+    unit->state.initialized = false;
+    SETCALC(LimutFuzz_next);
+    LimutFuzz_next(unit, 1);
+}
+
 PluginLoad(LimutFX) {
     ft = inTable;
     DefineDtorCantAliasUnit(LimutPingPong);
     DefineSimpleCantAliasUnit(LimutDuck);
+    DefineSimpleCantAliasUnit(LimutDisperser);
+    DefineSimpleCantAliasUnit(LimutFuzz);
 }

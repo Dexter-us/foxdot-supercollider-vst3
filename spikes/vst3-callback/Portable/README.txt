@@ -1,5 +1,11 @@
+0.4.157 adds Limut-inspired LimutDisperser and LimutFuzz effects. It also makes
+expanding any Players-panel effect chain select its first insert, so its
+effect-specific sliders appear immediately; selecting a later insert switches
+to that insert's sliders. LimutDuck is grouped under its own Duck category.
+See Example 196.
+
 0.4.156 adds Limut-inspired LimutPingPong and LimutDuck effects. Install the
-optional LimutFX.scx and merge the two matching SynthDefs; see Example 195 and
+optional LimutFX.scx and merge the matching SynthDefs; see Example 195 and
 UGens/LimutFX/Portable/LIMUT-FX-README.txt.
 
 0.4.155 adds bounded metadata helpers: get_data() returns the live list-backed

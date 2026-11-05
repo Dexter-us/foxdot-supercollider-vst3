@@ -14,3 +14,11 @@ struct LimutDuck : public Unit {
     limutfx::DuckState state;
 };
 
+struct LimutDisperser : public Unit {
+    limutfx::DisperserState state;
+};
+
+struct LimutFuzz : public Unit {
+    limutfx::FuzzState state;
+};
+

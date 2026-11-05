@@ -9,7 +9,7 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 SYNTHDEFS = HERE / "Portable" / "SynthDefs"
-NAMES = ("LimutPingPong", "LimutDuck")
+NAMES = ("LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz")
 
 
 def main():
@@ -20,18 +20,22 @@ def main():
         extensions = temp / "data" / "SuperCollider" / "Extensions"
         extensions.mkdir(parents=True)
         shutil.copy2(SYNTHDEFS / "LimutFX.sc", extensions)
-        script = temp / "build.scd"
-        script.write_text(
-            "\n".join(
-                (SYNTHDEFS / (name + ".scd")).read_text().strip()
-                + ".writeDefFile("
-                + json.dumps(SYNTHDEFS.as_posix())
-                + ");"
-                for name in NAMES
+        # sclang's stdin mode parses each line as a standalone REPL input.
+        # Keep every complete SynthDef expression on one line so multiline
+        # source is not evaluated as a sequence of incomplete fragments.
+        expressions = []
+        for name in NAMES:
+            source = (SYNTHDEFS / (name + ".scd")).read_text(encoding="utf-8")
+            source = "\n".join(line.split("//", 1)[0]
+                               for line in source.splitlines())
+            source = " ".join(source.split())
+            if source.endswith(";"):
+                source = source[:-1]
+            expressions.append(
+                source + ".writeDefFile("
+                + json.dumps(SYNTHDEFS.as_posix()) + ");"
             )
-            + "\n0.exit;\n",
-            encoding="utf-8",
-        )
+        script = " ".join(expressions) + " 0.exit;\n"
         env = dict(
             os.environ,
             XDG_DATA_HOME=str(temp / "data"),
@@ -40,13 +44,25 @@ def main():
             QT_OPENGL="software",
             QTWEBENGINE_DISABLE_SANDBOX="1",
         )
-        result = subprocess.run(
-            ["sclang", str(script)],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=90,
-        )
+        try:
+            result = subprocess.run(
+                ["sclang"],
+                input=script,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=int(os.environ.get("LIMUTFX_SYNTHDEF_TIMEOUT", "180")),
+            )
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout or ""
+            stderr = error.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            raise RuntimeError(
+                "sclang timed out while compiling SynthDefs.\n"
+                + stdout[-6000:] + stderr[-6000:]) from error
         if result.returncode or "ERROR:" in result.stdout:
             raise RuntimeError(result.stdout + result.stderr)
         for name in NAMES:

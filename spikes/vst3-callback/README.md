@@ -1,5 +1,9 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.157 adds optional Limut-inspired Disperser and Fuzz inserts, and
+fixes Players-panel chain selection so opening a chain selects its first insert.
+LimutDuck now appears in its own Duck category. See Example 196.
+
 Version 0.4.156 adds the optional Limut-inspired PingPong delay and Duck
 inserts, with CC BY-SA 4.0 attribution, range-checked controls, and Example 195.
 The separately compiled `LimutFX.scx` pack is not part of the VST3 build.

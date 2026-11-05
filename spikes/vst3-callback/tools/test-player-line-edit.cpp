@@ -202,9 +202,19 @@ int main() {
         const auto echoControls = playerEffectControlSpecs("AirwindowsEchojam");
         const auto pingPongControls = playerEffectControlSpecs("LimutPingPong");
         const auto duckControls = playerEffectControlSpecs("LimutDuck");
+        const auto disperserControls =
+            playerEffectControlSpecs("LimutDisperser");
+        const auto fuzzControls = playerEffectControlSpecs("LimutFuzz");
         assert(chorusControls.size() == 7);
         assert(echoControls.size() == 4);
         assert(pingPongControls.size() == 3 && duckControls.size() == 5);
+        assert(disperserControls.size() == 4 && fuzzControls.size() == 3);
+        assert(disperserControls[1].name == "fx_frequency" &&
+               disperserControls[1].minimum == 30.0f &&
+               disperserControls[1].maximum == 18000.0f);
+        assert(fuzzControls[1].name == "fx_drive" &&
+               fuzzControls[1].minimum == 0.0f &&
+               fuzzControls[1].maximum == 36.0f);
         assert(pingPongControls[1].name == "fx_time" &&
                pingPongControls[1].minimum == 0.01f &&
                pingPongControls[1].maximum == 2.0f);
@@ -212,7 +222,8 @@ int main() {
                duckControls[1].minimum == 0.05f &&
                duckControls[1].maximum == 8.0f);
         const auto limutCatalog =
-            makeEffectCatalog({"LimutPingPong", "LimutDuck"});
+            makeEffectCatalog(
+                {"LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz"});
         const auto findEffect = [&](const std::string& name) {
             return std::find_if(limutCatalog.begin(), limutCatalog.end(),
                 [&](const auto& item) { return item.name == name; });
@@ -221,8 +232,32 @@ int main() {
         const auto duck = findEffect("LimutDuck");
         assert(pingPong != limutCatalog.end() && pingPong->available);
         assert(duck != limutCatalog.end() && duck->available);
+        const auto disperser = findEffect("LimutDisperser");
+        const auto fuzz = findEffect("LimutFuzz");
+        assert(disperser != limutCatalog.end() && disperser->available);
+        assert(fuzz != limutCatalog.end() && fuzz->available);
         assert(pingPong->category == "Delay" && pingPong->arguments.size() == 3);
-        assert(duck->category == "Dynamics" && duck->arguments.size() == 5);
+        assert(duck->category == "Duck" && duck->arguments.size() == 5);
+        assert(disperser->category == "Phase" &&
+               disperser->arguments.size() == 4);
+        assert(fuzz->category == "Distortion and reduction" &&
+               fuzz->arguments.size() == 3);
+        assert(disperserControls.size() == 4 &&
+               disperserControls[1].name == "fx_frequency" &&
+               disperserControls[1].minimum == 30.0f &&
+               disperserControls[1].maximum == 18000.0f &&
+               disperserControls[3].name == "fx_stages" &&
+               disperserControls[3].minimum == 1.0f &&
+               disperserControls[3].maximum == 24.0f);
+        assert(fuzzControls.size() == 3 &&
+               fuzzControls[1].name == "fx_drive" &&
+               fuzzControls[1].minimum == 0.0f &&
+               fuzzControls[1].maximum == 36.0f &&
+               fuzzControls[2].name == "fx_tone" &&
+               fuzzControls[2].minimum == 200.0f &&
+               fuzzControls[2].maximum == 16000.0f);
+        assert(firstConfiguredEffectSlot({{-1, 23, 24, -1}}) == 1);
+        assert(firstConfiguredEffectSlot({{-1, -1, -1, -1}}) == -1);
         assert(chorusControls[1].name == "fx_rate" &&
                chorusControls[1].minimum == 0.05f &&
                chorusControls[1].maximum == 5.0f);

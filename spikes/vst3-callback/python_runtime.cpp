@@ -176,7 +176,8 @@ _COMPAT_WAVE_KEYWORDS = {
     'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq',
     'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
     'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period',
-    'fx_length', 'fx_attack'
+    'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages',
+    'fx_drive'
 }
 _USER_SYNTH_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
@@ -190,7 +191,8 @@ _USER_SYNTH_KEYWORDS = {
     'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq',
     'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
     'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period',
-    'fx_length', 'fx_attack'
+    'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages',
+    'fx_drive'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -201,9 +203,10 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size',
     'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff',
     'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center',
-    'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack'
+    'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack',
+    'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive'}
 _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'AirwindowsTapeDelay2': {
         'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'},
@@ -229,7 +232,10 @@ _COMPAT_PLAYER_EFFECT_CONTROLS = {
         'fx_phase', 'fx_tone'},
     'LimutPingPong': {'fx_mix', 'fx_time', 'fx_feedback'},
     'LimutDuck': {
-        'fx_mix', 'fx_period', 'fx_depth', 'fx_length', 'fx_attack'}
+        'fx_mix', 'fx_period', 'fx_depth', 'fx_length', 'fx_attack'},
+    'LimutDisperser': {
+        'fx_mix', 'fx_frequency', 'fx_q', 'fx_stages'},
+    'LimutFuzz': {'fx_mix', 'fx_drive', 'fx_tone'}
 }
 for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
                          _COMPAT_SEQUENCE_KEYWORDS, _COMPAT_NOTE_PLAY_KEYWORDS):
@@ -861,9 +867,9 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires a literal installed player-effect name.')
-                elif keyword.value.value not in {'AirwindowsTapeDelay2', 'AirwindowsEchojam', 'JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo', 'LimutPingPong', 'LimutDuck'}:
+                elif keyword.value.value not in {'AirwindowsTapeDelay2', 'AirwindowsEchojam', 'JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo', 'LimutPingPong', 'LimutDuck', 'LimutDisperser', 'LimutFuzz'}:
                     self.add(keyword.lineno or node.lineno,
-                             'effect= supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser, Tremolo, LimutPingPong or LimutDuck.')
+                             'effect= supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser, Tremolo, LimutPingPong, LimutDuck, LimutDisperser or LimutFuzz.')
                 elif keyword.value.value not in _USER_SYNTH_NAMES:
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires the matching player-effect SynthDef in Portable/SynthDefs.')
@@ -904,7 +910,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                                     'AirwindowsTapeDelay2', 'AirwindowsEchojam',
                                     'JPverb', 'Greyhole', 'Chorus', 'Flanger',
                                     'Phaser', 'Tremolo', 'LimutPingPong',
-                                    'LimutDuck'}):
+                                    'LimutDuck', 'LimutDisperser',
+                                    'LimutFuzz'}):
                             self.add(entry.lineno, 'Unsupported effect-chain name.')
                         elif effectName.value not in _USER_SYNTH_NAMES:
                             self.add(entry.lineno,
@@ -5544,7 +5551,8 @@ def userSynth(name, notes=0, **kwargs):
     if not isinstance(name, str) or name not in _dexter_user_synth_names:
         raise ValueError('userSynth name is not a loaded Portable/SynthDefs entry')
     if name in ('JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser',
-                'Tremolo', 'LimutPingPong', 'LimutDuck'):
+                'Tremolo', 'LimutPingPong', 'LimutDuck', 'LimutDisperser',
+                'LimutFuzz'):
         raise ValueError(name + ' is an insert, not a note source; use effect="' +
                          name + '" on a synth or play() player')
     if (name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam') and
@@ -6029,7 +6037,16 @@ _PLAYER_EFFECT_SPECS = {
         ('fx_period', 1, 0.05, 8.0, 0.5),
         ('fx_depth', 2, 0.0, 1.0, 0.7),
         ('fx_length', 3, 0.0, 8.0, 0.12),
-        ('fx_attack', 4, 0.001, 8.0, 0.18))
+        ('fx_attack', 4, 0.001, 8.0, 0.18)),
+    'LimutDisperser': (
+        ('fx_mix', 0, 0.0, 1.0, 0.35),
+        ('fx_frequency', 1, 30.0, 18000.0, 440.0),
+        ('fx_q', 2, 0.1, 10.0, 3.0),
+        ('fx_stages', 3, 1.0, 24.0, 24.0)),
+    'LimutFuzz': (
+        ('fx_mix', 0, 0.0, 1.0, 0.35),
+        ('fx_drive', 1, 0.0, 36.0, 18.0),
+        ('fx_tone', 2, 200.0, 16000.0, 9000.0))
 }
 def _player_effect_control_values(effect, controls):
     provided = [key for key in controls if key.startswith('fx_')]

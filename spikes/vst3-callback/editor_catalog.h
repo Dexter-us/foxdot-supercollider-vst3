@@ -3,6 +3,7 @@
 #include "player_line_edit.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <string>
 #include <string_view>
@@ -93,7 +94,11 @@ inline std::string effectCategory(const CatalogEntry& entry) {
     if (name == "Bits / Crush" || name == "Shape" || name == "Drive")
         return "Distortion and reduction";
     if (name == "LimutDuck")
-        return "Dynamics";
+        return "Duck";
+    if (name == "LimutDisperser")
+        return "Phase";
+    if (name == "LimutFuzz")
+        return "Distortion and reduction";
     if (name == "Cut" || name == "Blur" || name == "FMod")
         return "Player controls";
     return "Other effects";
@@ -151,7 +156,21 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
         return {{"fx_mix", 0, 1}, {"fx_period", 0.05f, 8},
                 {"fx_depth", 0, 1}, {"fx_length", 0, 8},
                 {"fx_attack", 0.001f, 8}};
+    if (effectName == "LimutDisperser")
+        return {{"fx_mix", 0, 1}, {"fx_frequency", 30, 18000},
+                {"fx_q", 0.1f, 10}, {"fx_stages", 1, 24}};
+    if (effectName == "LimutFuzz")
+        return {{"fx_mix", 0, 1}, {"fx_drive", 0, 36},
+                {"fx_tone", 200, 16000}};
     return {};
+}
+
+inline int firstConfiguredEffectSlot(
+    const std::array<int, 4>& effectIndices) {
+    for (std::size_t slot = 0; slot < effectIndices.size(); ++slot)
+        if (effectIndices[slot] >= 0)
+            return static_cast<int>(slot);
+    return -1;
 }
 
 inline std::string catalogInsertCall(const CatalogEntry& entry) {
@@ -317,8 +336,8 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         {}, true});
     static const std::vector<std::string> bundledEffects{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
-        "Greyhole", "JPverb", "LimutDuck", "LimutPingPong", "Phaser",
-        "Tremolo"};
+        "Greyhole", "JPverb", "LimutDisperser", "LimutDuck", "LimutFuzz",
+        "LimutPingPong", "Phaser", "Tremolo"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
                 bundledEffects.end() ||
@@ -442,8 +461,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
     };
     static const std::vector<std::string> knownExternal{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
-        "Greyhole", "JPverb", "LimutDuck", "LimutPingPong", "Phaser",
-        "Tremolo"};
+        "Greyhole", "JPverb", "LimutDisperser", "LimutDuck", "LimutFuzz",
+        "LimutPingPong", "Phaser", "Tremolo"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
@@ -456,7 +475,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "fx_mix control; use the documented effect-specific "
                           "fx_* parameters. Install its SynthDef/UGen pack "
                           "under Portable/SynthDefs and restart the DAW.";
-        else if (name == "LimutPingPong" || name == "LimutDuck")
+        else if (name == "LimutPingPong" || name == "LimutDuck" ||
+                 name == "LimutDisperser" || name == "LimutFuzz")
             description = "Optional Limut-inspired insert UGen. Install its "
                           "SynthDef under Portable/SynthDefs and LimutFX.scx "
                           "under SCPlugins, then restart the DAW. Controls "
@@ -479,6 +499,12 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
             defaults = {Arg{"fx_mix", "1"}, Arg{"fx_period", "0.5"},
                         Arg{"fx_depth", "0.7"}, Arg{"fx_length", "0.12"},
                         Arg{"fx_attack", "0.18"}};
+        } else if (name == "LimutDisperser") {
+            defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_frequency", "440"},
+                        Arg{"fx_q", "3"}, Arg{"fx_stages", "24"}};
+        } else if (name == "LimutFuzz") {
+            defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_drive", "18"},
+                        Arg{"fx_tone", "9000"}};
         } else if (hasMixControl) {
             defaults.push_back(Arg{"fx_mix", "0.25"});
         }

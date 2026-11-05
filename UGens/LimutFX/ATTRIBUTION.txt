@@ -10,6 +10,8 @@ Attribution-ShareAlike 4.0 International Public License (CC BY-SA 4.0):
   https://creativecommons.org/licenses/by-sa/4.0/
   Legal code: https://creativecommons.org/licenses/by-sa/4.0/legalcode
 
-The effect implementations in this directory are adapted material and are
-distributed under CC BY-SA 4.0. The UGen wrappers and DSP here are a new C++
-implementation; no Limut runtime, server, or source package is required.
+The PingPong and Duck adaptations are distributed under CC BY-SA 4.0. The
+Disperser and Fuzz algorithms were authored for this pack and do not copy the
+Limut implementation. All files in the pack are distributed under CC BY-SA
+4.0. The UGen wrappers and DSP are implemented in C++; no Limut runtime, server,
+or source package is required.

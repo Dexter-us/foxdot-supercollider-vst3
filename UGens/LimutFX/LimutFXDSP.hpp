@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 
@@ -138,6 +139,177 @@ inline void duckSample(DuckState& state, float inputLeft, float inputRight,
     state.phaseSeconds += 1.0f / state.sampleRate;
     if (state.phaseSeconds >= period)
         state.phaseSeconds = std::fmod(state.phaseSeconds, period);
+}
+
+constexpr uint32_t kMaximumDisperserStages = 24;
+
+struct AllpassSectionState {
+    float x1 = 0.0f;
+    float x2 = 0.0f;
+    float y1 = 0.0f;
+    float y2 = 0.0f;
+};
+
+struct DisperserState {
+    std::array<std::array<AllpassSectionState, kMaximumDisperserStages>, 2>
+        sections{};
+    float sampleRate = 44100.0f;
+    float currentFrequency = 440.0f;
+    float currentQ = 3.0f;
+    float currentStages = 24.0f;
+    bool initialized = false;
+};
+
+struct AllpassCoefficients {
+    float b0 = 0.0f;
+    float b1 = 0.0f;
+    float a1 = 0.0f;
+    float a2 = 0.0f;
+};
+
+inline AllpassCoefficients allpassCoefficients(float frequency, float q,
+                                                float sampleRate) {
+    const float maximumFrequency =
+        std::max(30.0f, std::min(18000.0f, sampleRate * 0.45f));
+    frequency = clampFinite(frequency, 30.0f, maximumFrequency, 440.0f);
+    q = clampFinite(q, 0.1f, 10.0f, 3.0f);
+    const float omega = 6.2831853071795864769f * frequency / sampleRate;
+    const float cosine = std::cos(omega);
+    const float alpha = std::sin(omega) / (2.0f * q);
+    const float denominator = 1.0f + alpha;
+    AllpassCoefficients result;
+    result.b0 = (1.0f - alpha) / denominator;
+    result.b1 = -2.0f * cosine / denominator;
+    result.a1 = result.b1;
+    result.a2 = result.b0;
+    return result;
+}
+
+inline float allpassSample(AllpassSectionState& state, float input,
+                           const AllpassCoefficients& coefficients) {
+    const float output = finiteOr(
+        coefficients.b0 * input + coefficients.b1 * state.x1 + state.x2 -
+        coefficients.a1 * state.y1 - coefficients.a2 * state.y2);
+    state.x2 = state.x1;
+    state.x1 = input;
+    state.y2 = state.y1;
+    state.y1 = output;
+    return output;
+}
+
+inline void disperserSample(DisperserState& state, float inputLeft,
+                            float inputRight, float frequency, float q,
+                            float stages, float mix, float& outputLeft,
+                            float& outputRight) {
+    inputLeft = finiteOr(inputLeft);
+    inputRight = finiteOr(inputRight);
+    mix = clampFinite(mix, 0.0f, 1.0f, 0.35f);
+    frequency = clampFinite(frequency, 30.0f,
+        std::max(30.0f, std::min(18000.0f, state.sampleRate * 0.45f)),
+        440.0f);
+    q = clampFinite(q, 0.1f, 10.0f, 3.0f);
+    stages = clampFinite(stages, 1.0f,
+                         static_cast<float>(kMaximumDisperserStages), 24.0f);
+    if (!std::isfinite(state.sampleRate) || state.sampleRate < 1000.0f)
+        state.sampleRate = 44100.0f;
+
+    if (!state.initialized) {
+        state.currentFrequency = frequency;
+        state.currentQ = q;
+        state.currentStages = stages;
+        state.initialized = true;
+    } else {
+        const float smoothing = 1.0f - std::exp(
+            -1.0f / (0.02f * state.sampleRate));
+        state.currentFrequency +=
+            (frequency - state.currentFrequency) * smoothing;
+        state.currentQ += (q - state.currentQ) * smoothing;
+        state.currentStages += (stages - state.currentStages) * smoothing;
+    }
+
+    const int lowerCount = std::clamp(
+        static_cast<int>(std::floor(state.currentStages)), 1,
+        static_cast<int>(kMaximumDisperserStages));
+    const int upperCount = std::min(
+        static_cast<int>(kMaximumDisperserStages), lowerCount + 1);
+    const float countBlend = std::clamp(
+        state.currentStages - static_cast<float>(lowerCount), 0.0f, 1.0f);
+    const auto coefficients = allpassCoefficients(
+        state.currentFrequency, state.currentQ, state.sampleRate);
+    const auto processChannel = [&](int channel, float input) {
+        float value = input;
+        float lower = input;
+        float upper = input;
+        for (int stage = 0; stage < upperCount; ++stage) {
+            value = allpassSample(state.sections[static_cast<std::size_t>(channel)]
+                                                  [static_cast<std::size_t>(stage)],
+                                  value, coefficients);
+            const int completedStages = stage + 1;
+            if (completedStages == lowerCount)
+                lower = value;
+            if (completedStages == upperCount)
+                upper = value;
+        }
+        return lower * (1.0f - countBlend) + upper * countBlend;
+    };
+    const float wetLeft = processChannel(0, inputLeft);
+    const float wetRight = processChannel(1, inputRight);
+    outputLeft = finiteOr(inputLeft * (1.0f - mix) + wetLeft * mix);
+    outputRight = finiteOr(inputRight * (1.0f - mix) + wetRight * mix);
+}
+
+struct FuzzState {
+    float sampleRate = 44100.0f;
+    float currentToneHz = 12000.0f;
+    float currentDriveDb = 12.0f;
+    float lowpassLeft = 0.0f;
+    float lowpassRight = 0.0f;
+    bool initialized = false;
+};
+
+inline float fuzzChannel(float input, float drive, float normalizer,
+                         float toneHz, float sampleRate, float& lowpass) {
+    input = std::clamp(finiteOr(input), -8.0f, 8.0f);
+    const float shaped = std::tanh(input * drive) / normalizer;
+    const float cutoff = std::min(toneHz, sampleRate * 0.45f);
+    const float coefficient = 1.0f - std::exp(
+        -6.2831853071795864769f * cutoff / sampleRate);
+    lowpass += coefficient * (shaped - lowpass);
+    return finiteOr(lowpass);
+}
+
+inline void fuzzSample(FuzzState& state, float inputLeft, float inputRight,
+                       float driveDb, float toneHz, float mix,
+                       float& outputLeft, float& outputRight) {
+    inputLeft = finiteOr(inputLeft);
+    inputRight = finiteOr(inputRight);
+    driveDb = clampFinite(driveDb, 0.0f, 36.0f, 12.0f);
+    toneHz = clampFinite(toneHz, 200.0f, 16000.0f, 9000.0f);
+    mix = clampFinite(mix, 0.0f, 1.0f, 0.35f);
+    if (!std::isfinite(state.sampleRate) || state.sampleRate < 1000.0f)
+        state.sampleRate = 44100.0f;
+    if (!state.initialized) {
+        state.currentToneHz = toneHz;
+        state.currentDriveDb = driveDb;
+        state.initialized = true;
+    } else {
+        const float smoothing = 1.0f - std::exp(
+            -1.0f / (0.01f * state.sampleRate));
+        state.currentToneHz +=
+            (toneHz - state.currentToneHz) * smoothing;
+        state.currentDriveDb +=
+            (driveDb - state.currentDriveDb) * smoothing;
+    }
+    const float drive = std::pow(10.0f, state.currentDriveDb / 20.0f);
+    const float normalizer = std::max(0.001f, std::tanh(drive));
+    const float wetLeft = fuzzChannel(
+        inputLeft, drive, normalizer, state.currentToneHz, state.sampleRate,
+        state.lowpassLeft);
+    const float wetRight = fuzzChannel(
+        inputRight, drive, normalizer, state.currentToneHz, state.sampleRate,
+        state.lowpassRight);
+    outputLeft = finiteOr(inputLeft * (1.0f - mix) + wetLeft * mix);
+    outputRight = finiteOr(inputRight * (1.0f - mix) + wetRight * mix);
 }
 
 } // namespace limutfx

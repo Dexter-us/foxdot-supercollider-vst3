@@ -118,6 +118,45 @@ SynthDef(\LimutDuckInput, { |out=16|
     assert duck_dry > 1e-4
     print(f"PASS LimutDuck audible pump and recovery; {rate} Hz")
 
+    disperser_source = r"""
+SynthDef(\LimutDisperserInput, { |out=16|
+    var env = EnvGen.ar(Env([1,1],[1.2]), doneAction:2);
+    var signal = (SinOsc.ar(440) * env * 0.3) ! 2;
+    Out.ar(out, signal);
+    Out.ar(2, signal);
+}).writeDefFile("{directory}");
+"""
+    disperser, rate = render(
+        args.module_directory, "LimutDisperserInput", disperser_source,
+        "LimutDisperser",
+        [0, 0.0, 1, 16.0, 2, 1.0, 3, 1250.0, 4, 4.0, 5, 18.0], 1.2)
+    disperser_wet = rms(disperser, rate, 0, .15, .9)
+    disperser_dry = rms(disperser, rate, 2, .15, .9)
+    assert disperser_wet > 1e-3 and disperser_dry > 1e-3
+    assert abs(disperser_wet - disperser_dry) < disperser_dry * 0.35, (
+        disperser_wet, disperser_dry)
+    assert max(abs(value) for value in disperser) < 1.0
+    print(f"PASS LimutDisperser stable all-pass output; {rate} Hz")
+
+    fuzz_source = r"""
+SynthDef(\LimutFuzzInput, { |out=16|
+    var env = EnvGen.ar(Env([1,1],[1.2]), doneAction:2);
+    var signal = (SinOsc.ar(220) * env * 0.3) ! 2;
+    Out.ar(out, signal);
+    Out.ar(2, signal);
+}).writeDefFile("{directory}");
+"""
+    fuzz, rate = render(
+        args.module_directory, "LimutFuzzInput", fuzz_source, "LimutFuzz",
+        [0, 0.0, 1, 16.0, 2, 1.0, 3, 30.0, 4, 5000.0], 1.2)
+    fuzz_wet = rms(fuzz, rate, 0, .15, .9)
+    fuzz_dry = rms(fuzz, rate, 2, .15, .9)
+    assert fuzz_wet > 1e-3 and fuzz_dry > 1e-3
+    assert abs(fuzz_wet - fuzz_dry) > fuzz_dry * 0.25, (
+        fuzz_wet, fuzz_dry)
+    assert max(abs(value) for value in fuzz) < 1.0
+    print(f"PASS LimutFuzz audible saturation; {rate} Hz")
+
 
 if __name__ == "__main__":
     main()
