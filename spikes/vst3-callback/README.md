@@ -1,5 +1,28 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.153 adds recursive Renardo-compatible `Pattern.transform(func)`.
+It applies an approved pure one-argument mapper to numeric, text, or rest leaves,
+recursing through nested patterns and chord groups while preserving their
+structure. The callable and every result are validated, with the existing
+16-level and 256-node input/output bounds. Example 192 demonstrates nested
+transformation.
+
+Version 0.4.152 adds bounded FoxDot-style elementwise `==`, `!=`, `<`, `<=`,
+`>`, `>=`, and unary `~` for finite patterns. Comparisons produce bounded 0/1
+patterns, preserve rests, recursively compare chord groups, and use finite
+LCM-based lacing capped at 256 values. Unary `~` mirrors the pattern and nested
+groups. Example 191 uses comparison masks to select notes.
+
+Version 0.4.151 adds bounded Renardo `PZ12` and `PFibMod` generators.
+`PZ12(tokens, p, length=256)` follows Renardo's documented experimental
+two-token deficit ordering; `PFibMod(length=31)` provides the Fibonacci prefix,
+limited so its values remain within the embedded note range. Example 190
+combines weighted note selection, a Fibonacci-derived melody, and a steady
+sample groove.
+Renardo's callback-based `PTree`
+generator is intentionally deferred because arbitrary user callbacks do not
+fit the embedded engine's bounded evaluation model.
+
 Version 0.4.150 adds a collapsible per-player effect-chain list. Selecting an
 insert displays only that effect's supported controls, current values, and
 numeric min/max ranges with units; dragging a slider changes the sound live,

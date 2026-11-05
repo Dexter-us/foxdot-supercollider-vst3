@@ -1,3 +1,20 @@
+0.4.153 adds recursive Pattern.transform(func) for approved pure one-argument
+mappers. It transforms leaves inside nested patterns and chord groups, retains
+structure, and uses 16-level and 256-node input/output bounds. See Example 192.
+
+0.4.152 adds bounded elementwise ==, !=, <, <=, >, >=, and unary ~ for finite
+Patterns. Comparisons return 0/1 patterns, preserve rests, recurse into chord
+groups, and cap LCM lacing at 256 results. Unary ~ reverses the top-level and
+nested pattern order. Example 191 demonstrates comparison masks and selection.
+
+0.4.151 adds bounded Renardo PZ12 and PFibMod generators. PZ12(tokens, p,
+length=256) follows Renardo's documented experimental two-token deficit
+ordering; PFibMod(length=31) returns the Fibonacci prefix, capped so notes
+remain within the embedded range.
+Example 190 combines weighted note selection, a Fibonacci-derived melody, and a
+steady sample groove. Callback-based PTree is deferred because arbitrary user
+functions are not safe to run in the bounded embedded evaluator.
+
 0.4.150 adds collapsible effect-chain rows in the Players panel. Select an
 insert to show only its own controls, current value, and min/max range with
 units; dragging a slider changes audio live, and releasing it writes that value

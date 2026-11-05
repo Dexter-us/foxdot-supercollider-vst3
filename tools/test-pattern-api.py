@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.150' not in cmake_source or
+if ('VERSION 0.4.153' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -99,7 +99,10 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                      '186-airwindows-echojam-on-chords.py',
                       '187-effect-chain-control-sliders.py',
                        '188-renardo-clock-clear.py',
-                       '189-renardo-seed-default.py'):
+                        '189-renardo-seed-default.py',
+                        '190-renardo-probability-fibonacci-patterns.py',
+                         '191-pattern-comparison-operators.py',
+                          '192-pattern-transform-recursive.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -275,7 +278,8 @@ assert all(value in ('x', 'o', '-', ' ') for value in randomSamples)
 white = namespace['PWhite'](-1.0, 1.0, length=256, seed=123)
 assert len(white) == 256 and all(-1.0 <= value <= 1.0 for value in white)
 assert white == namespace['PWhite'](-1.0, 1.0, length=256, seed=123)
-assert white != namespace['PWhite'](-1.0, 1.0, length=256, seed=124)
+assert list(white) != list(namespace['PWhite'](
+    -1.0, 1.0, length=256, seed=124))
 assert abs(sum(white) / len(white)) < 0.15
 assert namespace['PWhite'](0.5, 0.5, length=8, seed=2) == [0.5] * 8
 walk = namespace['PWalk'](max=7, step=namespace['P'][1, 2, 1],
@@ -298,13 +302,13 @@ seededDefaultWhiteB = namespace['PWhite'](-1, 1, length=32)
 assert seededDefaultWhiteA == seededDefaultWhiteB
 assert seededDefaultWhiteA == namespace['PWhite'](
     -1, 1, length=32, seed=5)
-assert seededDefaultRandA != namespace['PRand'](
-    0, 100, length=32, seed=99)
+assert list(seededDefaultRandA) != list(namespace['PRand'](
+    0, 100, length=32, seed=99))
 namespace['Seed'].default = None
 assert namespace['Seed'].default is None
 unseededDefaultA = namespace['PRand'](0, 100, length=32)
 unseededDefaultB = namespace['PRand'](0, 100, length=32)
-assert unseededDefaultA != unseededDefaultB
+assert list(unseededDefaultA) != list(unseededDefaultB)
 for invalid_seed in (True, 1.5, '5', -1, 0x100000000):
     try:
         namespace['Seed'].default = invalid_seed
@@ -378,6 +382,38 @@ assert abs(sum(namespace['PSum'](17, 13.25, lim=0.015625)) -
 assert namespace['PIndex'](8) == list(range(8))
 assert namespace['PIndex'](1) == [0]
 assert len(namespace['PIndex']()) == 256
+assert namespace['PZ12']([1, 0], [1, 0.5], length=16) == [
+    1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1]
+assert namespace['PZ12']([3, 7], [1, 1], length=8) == [
+    3, 7, 3, 7, 3, 7, 3, 7]
+assert namespace['PZ12']([3, 7], [0, 1], length=4) == [7, 7, 7, 7]
+assert namespace['PZ12']([0, 1], [1, 0.5], length=256) == namespace[
+    'PZ12']([0, 1], [1, 0.5], length=256)
+assert len(namespace['PZ12']()) == 256
+fibonacci = namespace['PFibMod'](16)
+assert fibonacci == [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610]
+assert fibonacci % 12 == [0, 1, 1, 2, 3, 5, 8, 1, 9, 10, 7, 5, 0, 5, 5, 10]
+assert namespace['PFibMod'](1) == [0]
+assert namespace['PFibMod'](31)[30] == 832040
+for invalid_generator in (
+        lambda: namespace['PZ12']([0]),
+        lambda: namespace['PZ12']([0, 1, 2]),
+        lambda: namespace['PZ12']([0, 0]),
+        lambda: namespace['PZ12'](['x', 'o']),
+        lambda: namespace['PZ12']([0, 1], [1]),
+        lambda: namespace['PZ12']([0, 1], [-1, 0]),
+        lambda: namespace['PZ12']([0, 1], [0, 0]),
+        lambda: namespace['PZ12']([0, 1], [1, float('inf')]),
+        lambda: namespace['PZ12']([0, 1], [1, 0.5], length=0),
+        lambda: namespace['PZ12']([0, 1], [1, 0.5], length=257),
+        lambda: namespace['PFibMod'](0),
+        lambda: namespace['PFibMod'](32)):
+    try:
+        invalid_generator()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('bounded Renardo generator accepted invalid input')
 pxrand = namespace['PxRand'](
     namespace['P'][0, 2, 4, 7], length=128, seed=37)
 assert len(pxrand) == 128 and set(pxrand) <= {0, 2, 4, 7}
@@ -1266,6 +1302,45 @@ assert comparison_source.ne(namespace['P'][0, 0]) == [0, 1, 0, 1]
 assert comparison_source.eq(1) == [0, 1, 0, 1]
 assert namespace['P']['x', 'o'].eq('x') == [1, 0]
 assert namespace['_FoxDotFinitePattern']().eq([]) == []
+assert list(namespace['P'][1, 2, 3] == 2) == [0, 1, 0]
+assert list(namespace['P'][1, 2, 3] != 2) == [1, 0, 1]
+assert list(namespace['P'][1, 3, 5] < 4) == [1, 1, 0]
+assert list(namespace['P'][1, 3, 5] <= 3) == [1, 1, 0]
+assert list(namespace['P'][1, 3, 5] > 3) == [0, 0, 1]
+assert list(namespace['P'][1, 3, 5] >= 3) == [0, 1, 1]
+assert list(namespace['P'][1, 4] < namespace['P'][2, 3, 0]) == [
+    1, 0, 0, 0, 1, 0]
+assert list(namespace['P'][None, 2] == namespace['P'][None, 3]) == [1, 0]
+assert list(namespace['P'][None, 2] < namespace['P'][None, 3]) == [
+    None, 1]
+assert list(namespace['P']['x', 'o'] == 'x') == [1, 0]
+assert list(namespace['P'][0, 1.5, -2].str() ==
+            namespace['P']['0', '1.5', '-2']) == [1, 1, 1]
+assert list(namespace['P'][
+    namespace['PGroup'](1, 4), 2] >
+    namespace['P'][namespace['PGroup'](0, 5), 3]) == [
+        namespace['PGroup'](1, 0), 0]
+assert bool(namespace['P'][1, 2] == [1, 2])
+assert not bool(namespace['P'][1, 2] == [1, 3])
+assert list(~namespace['P'][1, namespace['PGroup'](2, 3)]) == [
+    namespace['PGroup'](3, 2), 1]
+for invalid_comparison in (
+        lambda: namespace['P'][1] < 'x',
+        lambda: namespace['P'][1, 2] == [],
+        lambda: namespace['P'][1] == object(),
+        lambda: namespace['_FoxDotFinitePattern']([
+            namespace['_FoxDotChord'](1, 2)]) == namespace[
+                '_FoxDotFinitePattern']([
+                    namespace['_FoxDotChord'](1, 2, 3)]),
+        lambda: namespace['PRange'](16) < namespace['PRange'](17),
+        lambda: namespace['_FoxDotFinitePattern'](range(257)) == 0):
+    try:
+        invalid_comparison()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('comparison operators must enforce value and size bounds')
+assert list(~namespace['P'][1, 2, 3]) == [3, 2, 1]
 try:
     comparison_source.eq([])
 except ValueError:
@@ -1500,6 +1575,20 @@ callableMappedGroup = namespace['P'][
     namespace['P'][1, -4], 2].map(lambda value: abs(value) + 1)
 assert callableMappedGroup == [[2, 5], 3]
 assert isinstance(callableMappedGroup[0], namespace['_FoxDotFinitePattern'])
+transformedNested = namespace['P'][
+    -1,
+    namespace['PGroup'](-2, 3),
+    namespace['P'][4, namespace['PGroup'](-5, 6)]
+].transform(abs)
+assert transformedNested == [
+    1, namespace['PGroup'](2, 3), [4, namespace['PGroup'](5, 6)]]
+assert transformedNested.transform(
+    lambda value: value + 1) == [
+        2, namespace['PGroup'](3, 4), [5, namespace['PGroup'](6, 7)]]
+assert namespace['P'][1.2, 2.9].transform(int) == [1, 2]
+assert namespace['P'][1, -2].transform(str) == ['1', '-2']
+assert namespace['_FoxDotFinitePattern'](range(256)).transform(
+    lambda value: value + 1) == list(range(1, 257))
 assert namespace['P'][1, 2, 3].map({1: 8}) == [8, 0, 0]
 assert namespace['P'][1, 2, 3].submap({1: 8}) == [8, 2, 3]
 assert namespace['P'][namespace['P'][1, 2],
@@ -1531,6 +1620,22 @@ for invalid_mapper in (
         pass
     else:
         raise AssertionError('map/submap must validate callables, values, and bounds')
+for invalid_transform in (
+        lambda: namespace['P'][0, 1].transform({0: 2}),
+        lambda: namespace['P'][0, 1].transform(lambda value: value ** 2),
+        lambda: namespace['P'][0, 1].transform(lambda value: object()),
+        lambda: namespace['P'][0].transform(lambda value: ((),) * 256),
+        lambda: namespace['_FoxDotFinitePattern'](range(257)).transform(abs),
+        lambda: namespace['_FoxDotFinitePattern']([
+            namespace['_FoxDotFinitePattern']([
+                namespace['_FoxDotFinitePattern']()])
+            for _ in range(256)]).transform(abs)):
+    try:
+        invalid_transform()
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('transform must enforce callable and size bounds')
 deepMapPattern = namespace['P'][0]
 for _ in range(17):
     deepMapPattern = namespace['_FoxDotFinitePattern']([deepMapPattern])
@@ -1542,6 +1647,12 @@ for method in ('map', 'submap'):
         assert '16 nested pattern levels' in str(error)
     else:
         raise AssertionError(method + ' must enforce its nesting bound')
+try:
+    deepMapPattern.transform(abs)
+except ValueError as error:
+    assert '16 nested pattern levels' in str(error)
+else:
+    raise AssertionError('transform must enforce its nesting bound')
 assert namespace['P'][0, 1, 2, 3].pivot(0) == [0, 3, 2, 1]
 assert namespace['P'][0, 1, 2, 3].pivot(1) == [2, 1, 0, 3]
 assert namespace['P'][0, 1, 2, 3].pivot(3) == [2, 1, 0, 3]
@@ -3505,6 +3616,37 @@ renardoSeedExample = run_example('189-renardo-seed-default.py')
 assert len(renardoSeedExample) == 8
 assert all(row[0] == 'P' for row in renardoSeedExample)
 assert sum(row[2] == '0' for row in renardoSeedExample) == 3
+renardoGeneratorExampleText = open(os.path.join(
+    sys.argv[2], '190-renardo-probability-fibonacci-patterns.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    renardoGeneratorExampleText)
+renardoGeneratorExample, renardoGeneratorEvents = run_script(
+    renardoGeneratorExampleText, include_events=True)
+assert len(renardoGeneratorExample) == 8
+assert {int(row[1]) for row in renardoGeneratorExample if row[2] == '0'} == {
+    0, 1, 2}
+assert len(renardoGeneratorEvents) > 0
+comparisonExampleText = open(os.path.join(
+    sys.argv[2], '191-pattern-comparison-operators.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    comparisonExampleText)
+comparisonExample, comparisonEvents = run_script(
+    comparisonExampleText, include_events=True)
+assert len(comparisonEvents) > 0
+assert len([row for row in comparisonExample if row[0] == 'P' and
+            row[2] == '0']) == 3
+transformExampleText = open(os.path.join(
+    sys.argv[2], '192-pattern-transform-recursive.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    transformExampleText)
+transformExample, transformEvents = run_script(
+    transformExampleText, include_events=True)
+assert len(transformEvents) > 0
+assert len([row for row in transformExample if row[0] == 'P' and
+            row[2] == '0']) == 2
 example103, example103EffectRows = run_example(
     '103-sample-player-airwindows-delay.py', ('AirwindowsTapeDelay2',),
     include_player_effects=True)

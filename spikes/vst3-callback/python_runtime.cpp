@@ -118,6 +118,7 @@ _COMPAT_CALLS = {
     'PShuf', 'PJoin', 'PBeat', 'PDur', 'PDelay', 'PStrum', 'PQuicken', 'PRhythm',
     'PZip', 'PZip2', 'PRand', 'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar',
     'P10', 'PBern', 'PSine', 'PTri', 'PSum', 'PIndex', 'PxRand', 'PwRand',
+    'PZ12', 'PFibMod',
     'PSquare', 'PSq', 'PRange', 'PStep', 'PEuclid', 'PEuclid2',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
@@ -144,12 +145,13 @@ _COMPAT_PATTERN_METHODS = {
     'asGroup', 'group', 'flatten', 'int', 'float', 'str', 'append', 'extend',
     'insert', 'pop', 'remove', 'set', 'alt', 'string', 'items', 'getitem',
     'getslice', 'setitem', 'eq', 'ne', 'i_rotate', 'i_reverse', 'i_sort',
-    'i_shuf'
+    'i_shuf', 'transform'
 }
 _COMPAT_PATTERN_CALLS = {
     'PAlt', 'PStretch', 'PStutter', 'PShuf', 'PJoin', 'PBeat', 'PDur',
     'PDelay', 'PStrum', 'PQuicken', 'PRhythm', 'PZip', 'PZip2', 'PRand',
-    'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar', 'PSquare', 'PSq',
+    'PWhite', 'PWalk', 'PChain', 'PDelta', 'Pvar', 'PZ12', 'PFibMod',
+    'PSquare', 'PSq',
     'PRange', 'PStep', 'PEuclid', 'PEuclid2', 'P10', 'PBern', 'PSine',
     'PTri', 'PSum', 'PIndex', 'PxRand', 'PwRand', 'reverse', 'rotate', 'repeat',
     'palindrome', 'stutter', 'interleave', 'transpose', 'euclid'
@@ -1479,8 +1481,60 @@ class _FoxDotFinitePattern(list):
             raise ValueError('P arithmetic must produce finite values')
         return value
 
+    def _comparison_apply(self, left, right, operation, method_name,
+                          budget, depth=0):
+        if depth > 16:
+            raise ValueError(method_name + ' nesting is limited to 16 levels')
+        left_group = isinstance(left, (list, tuple))
+        right_group = isinstance(right, (list, tuple))
+        if left_group or right_group:
+            if left_group and right_group:
+                if len(left) != len(right):
+                    raise ValueError(
+                        method_name + ' chord groups must have matching sizes')
+                source = left
+                pairs = zip(left, right)
+            elif left_group:
+                source = left
+                pairs = ((item, right) for item in left)
+            else:
+                source = right
+                pairs = ((left, item) for item in right)
+            values = [
+                self._comparison_apply(a, b, operation, method_name,
+                                      budget, depth + 1)
+                for a, b in pairs
+            ]
+            if isinstance(source, _FoxDotFinitePattern):
+                return _FoxDotComparisonPattern(values)
+            if isinstance(source, _FoxDotChord):
+                return _FoxDotChord(*values)
+            return tuple(values) if isinstance(source, tuple) else values
+
+        budget[0] += 1
+        if budget[0] > 256:
+            raise ValueError(method_name + ' output is limited to 256 values')
+        if left is None or right is None:
+            if method_name in ('eq', 'ne'):
+                return int(operation(left, right))
+            return None
+        left_number = _finite_note_number(left)
+        right_number = _finite_note_number(right)
+        left_text = isinstance(left, str) and len(left) <= 256
+        right_text = isinstance(right, str) and len(right) <= 256
+        if left_number and right_number:
+            return int(operation(left, right))
+        if left_text and right_text:
+            return int(operation(left, right))
+        if method_name in ('eq', 'ne') and (
+                (left_number and right_text) or
+                (left_text and right_number)):
+            return int(operation(left, right))
+        raise TypeError(
+            method_name + ' compares finite numeric notes or bounded text')
+
     def _binary(self, other, operation, reflected=False):
-        if not self:
+        if not len(self):
             return _FoxDotFinitePattern()
         if isinstance(other, (list, tuple)):
             if not other:
@@ -1587,6 +1641,33 @@ class _FoxDotFinitePattern(list):
 
     def __rpow__(self, other):
         return self._binary(other, self._power, True)
+
+    def __eq__(self, other):
+        return self._compare_pattern(
+            other, lambda left, right: left == right, 'eq')
+
+    def __ne__(self, other):
+        return self._compare_pattern(
+            other, lambda left, right: left != right, 'ne')
+
+    def __lt__(self, other):
+        return self._compare_pattern(
+            other, lambda left, right: left < right, 'lt')
+
+    def __le__(self, other):
+        return self._compare_pattern(
+            other, lambda left, right: left <= right, 'le')
+
+    def __gt__(self, other):
+        return self._compare_pattern(
+            other, lambda left, right: left > right, 'gt')
+
+    def __ge__(self, other):
+        return self._compare_pattern(
+            other, lambda left, right: left >= right, 'ge')
+
+    def __invert__(self):
+        return self.mirror()
 
     def __xor__(self, other):
         return self.__pow__(other)
@@ -1931,7 +2012,7 @@ class _FoxDotFinitePattern(list):
         mask = self._selector_values(selector, 'select')
         if len(self) > 256:
             raise ValueError('select input is limited to 256 items')
-        if not self:
+        if not len(self):
             return _FoxDotFinitePattern()
         if all(value == 1 for value in mask):
             return _FoxDotFinitePattern(self)
@@ -1984,7 +2065,7 @@ class _FoxDotFinitePattern(list):
         return _FoxDotFinitePattern(self[-size:])
 
     def normalise(self):
-        if not self:
+        if not len(self):
             raise ValueError('normalise requires a non-empty numeric pattern')
         if any(not _finite_note_number(value) for value in self):
             raise TypeError('normalise supports finite numeric patterns only')
@@ -2006,7 +2087,7 @@ class _FoxDotFinitePattern(list):
         return self.normalise()
 
     def choose(self):
-        if not self:
+        if not len(self):
             raise ValueError('choose requires a non-empty finite pattern')
         return PRand(self, length=1)[0]
 
@@ -2167,6 +2248,71 @@ class _FoxDotFinitePattern(list):
 
         return _FoxDotFinitePattern([map_item(item, 0) for item in self])
 
+    def transform(self, func):
+        """Recursively apply a pure mapper under structural input/output caps."""
+        if not _safe_pattern_mapper(func):
+            raise TypeError(
+                'transform requires a pure one-argument mapper')
+        if len(self) > 256:
+            raise ValueError('transform input is limited to 256 top-level items')
+        input_budget = [0]
+        output_budget = [0]
+
+        def visit(value, depth, output=False):
+            if depth > 16:
+                raise ValueError(
+                    'transform is limited to 16 nested pattern levels')
+            budget = output_budget if output else input_budget
+            budget[0] += 1
+            if budget[0] > 256:
+                kind = 'output' if output else 'input'
+                raise ValueError(
+                    'transform ' + kind + ' structure is limited to 256 nodes')
+
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError(
+                        'transform nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    visit(child, depth + 1, output) for child in value])
+            if isinstance(value, _FoxDotChord):
+                if len(value) > 8:
+                    raise ValueError(
+                        'transform chord groups are limited to 8 notes')
+                values = [visit(child, depth + 1, output) for child in value]
+                return (_FoxDotChord(*values)
+                        if all(_finite_note_number(child) for child in values)
+                        else tuple(values))
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError(
+                        'transform groups are limited to 256 items')
+                return tuple(visit(child, depth + 1, output) for child in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError(
+                        'transform groups are limited to 256 items')
+                return [visit(child, depth + 1, output) for child in value]
+
+            if output:
+                if value is None or (
+                        isinstance(value, str) and len(value) <= 256):
+                    return value
+                if _finite_note_number(value):
+                    return value
+                raise TypeError(
+                    'transform results must be finite numbers, text, rests, or groups')
+
+            if value is not None and not (
+                    isinstance(value, str) and len(value) <= 256) and not \
+                    _finite_note_number(value):
+                raise TypeError(
+                    'transform supports finite numbers, text, rests, and groups')
+            return visit(func(value), depth, output=True)
+
+        return _FoxDotFinitePattern([
+            visit(value, 0) for value in self])
+
     def _map_dictionary(self, mapping, preserve_unmapped):
         if len(mapping) > 256:
             raise ValueError('map dictionaries are limited to 256 entries')
@@ -2262,10 +2408,10 @@ class _FoxDotFinitePattern(list):
         combined = list(self) + appended
         if not combined:
             return _FoxDotFinitePattern()
-        left_sample = self._sample_sequence(self) if self else None
+        left_sample = self._sample_sequence(self) if len(self) else None
         right_sample = self._sample_sequence(appended) if appended else None
         if left_sample is not None or right_sample is not None:
-            if ((self and left_sample is None) or
+            if ((len(self) and left_sample is None) or
                     (appended and right_sample is None)):
                 raise TypeError(
                     'concat cannot mix numeric note patterns with sample-symbol patterns')
@@ -2279,7 +2425,7 @@ class _FoxDotFinitePattern(list):
         """Return whether every top-level item passes a safe predicate."""
         if len(self) > 256:
             raise ValueError('all input is limited to 256 items')
-        if not self:
+        if not len(self):
             return False
         if not _safe_pattern_mapper(predicate):
             raise TypeError('all requires a pure one-argument predicate')
@@ -2627,7 +2773,7 @@ class _FoxDotFinitePattern(list):
             raise ValueError('getitem nested-pattern depth is limited to 16')
         if isinstance(index, bool) or not isinstance(index, int):
             raise TypeError('getitem index values must be whole numbers')
-        if not self:
+        if not len(self):
             raise ValueError('getitem cannot index an empty Pattern')
         position = index % len(self)
         value = list.__getitem__(self, position)
@@ -2683,25 +2829,109 @@ class _FoxDotFinitePattern(list):
         self._validate_mutation_values(values)
         return values
 
+    def _validate_comparison_values(self, values, method_name):
+        budget = [0]
+
+        def visit(item, depth):
+            if depth > 16:
+                raise ValueError(
+                    method_name + ' nesting is limited to 16 levels')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError(
+                    method_name + ' values are limited to 256 items')
+            if item is None or _finite_note_number(item):
+                return
+            if isinstance(item, str):
+                if len(item) > 256:
+                    raise ValueError(
+                        method_name + ' text values are limited to 256 characters')
+                return
+            if isinstance(item, (list, tuple)):
+                if len(item) > 256:
+                    raise ValueError(
+                        method_name + ' groups are limited to 256 items')
+                for child in item:
+                    visit(child, depth + 1)
+                return
+            raise TypeError(
+                method_name + ' supports finite values, text, rests, and groups')
+
+        for value in values:
+            visit(value, 0)
+
+    def _comparison_operand_values(self, other, method_name):
+        if isinstance(other, _FoxDotNumericText):
+            values, sequence = [other], False
+        elif isinstance(other, str):
+            sample_symbols = _sample_symbols_for_item(other)
+            if sample_symbols is not None:
+                values, sequence = [other], False
+            else:
+                sample_sequence = len(other) > 0
+                for char in other:
+                    if not char.isspace() and char not in _SAMPLE_SYMBOLS:
+                        sample_sequence = False
+                        break
+                if sample_sequence:
+                    values, sequence = list(other), True
+                else:
+                    values, sequence = [other], False
+        elif isinstance(other, (_FoxDotFinitePattern, list, tuple, range)):
+            try:
+                values = list(other)
+            except OverflowError:
+                raise ValueError(method_name + ' operand is too large')
+            sequence = True
+        else:
+            values, sequence = [other], False
+        if len(values) > 256:
+            raise ValueError(method_name + ' inputs are limited to 256 items')
+        self._validate_comparison_values(values, method_name)
+        return values, sequence
+
+    def _compare_pattern(self, other, operation, method_name):
+        if len(self) > 256:
+            raise ValueError(method_name + ' input is limited to 256 items')
+        self._validate_comparison_values(self, method_name)
+        values, sequence = self._comparison_operand_values(other, method_name)
+        if not len(self):
+            return _FoxDotComparisonPattern()
+        if sequence and not values:
+            raise ValueError(method_name + ' cannot cycle an empty Pattern')
+        length = (self._laced_length(self, values)
+                  if sequence else len(self))
+        if length > 256:
+            raise ValueError(method_name + ' expansion is limited to 256 items')
+        budget = [0]
+        result = [
+            self._comparison_apply(
+                self[index % len(self)],
+                values[index % len(values)] if sequence else values[0],
+                operation, method_name, budget)
+            for index in range(length)
+        ]
+        return _FoxDotComparisonPattern(result)
+
     def eq(self, other):
         """Return FoxDot-style 0/1 equality values with right-side cycling."""
         self._validate_mutation_values(self)
         values = self._comparison_values(other, 'eq')
-        if self and not values:
+        if len(self) and not values:
             raise ValueError('eq cannot cycle an empty right-hand Pattern')
         return _FoxDotFinitePattern([
             1 if value == values[index % len(values)] else 0
-            for index, value in enumerate(self)]) if self else _FoxDotFinitePattern()
+            for index, value in enumerate(self)]) if len(self) else _FoxDotFinitePattern()
 
     def ne(self, other):
         """Return FoxDot-style 0/1 inequality values with right-side cycling."""
         self._validate_mutation_values(self)
         values = self._comparison_values(other, 'ne')
-        if self and not values:
+        if len(self) and not values:
             raise ValueError('ne cannot cycle an empty right-hand Pattern')
         return _FoxDotFinitePattern([
             1 if value != values[index % len(values)] else 0
-            for index, value in enumerate(self)]) if self else _FoxDotFinitePattern()
+            for index, value in enumerate(self)]) if len(self) else _FoxDotFinitePattern()
 
     def _mutation_kind(self, value, budget, depth=0):
         """Validate one appended value and return numeric/sample/neutral kind."""
@@ -2886,7 +3116,7 @@ class _FoxDotFinitePattern(list):
             index, (list, tuple, _FoxDotFinitePattern)) else [index])
         if len(indices) > 256:
             raise ValueError('pivot index patterns are limited to 256 items')
-        if self and len(self) * len(indices) > 256:
+        if len(self) and len(self) * len(indices) > 256:
             raise ValueError('pivot output is limited to 256 items')
         result = []
         length = len(self)
@@ -2951,7 +3181,7 @@ class _FoxDotFinitePattern(list):
         counts = list(count) if isinstance(count, (list, tuple)) else [count]
         if not counts:
             raise ValueError('stutter requires at least one repeat count')
-        if not self:
+        if not len(self):
             return _FoxDotFinitePattern()
         length = self._laced_length(self, counts)
         if length > 256:
@@ -3524,6 +3754,53 @@ def PIndex(length=256):
     length = _random_pattern_length(length, 'PIndex')
     return _FoxDotFinitePattern(range(length))
 
+def PZ12(tokens=(1, 0), p=(1.0, 0.5), length=256):
+    """Bounded Renardo PZ12 experimental two-token ordering."""
+    length = _random_pattern_length(length, 'PZ12')
+    tokenValues, tokenKind = _pattern_items(tokens, 'PZ12 tokens')
+    if tokenKind != 'numeric' or len(tokenValues) != 2:
+        raise TypeError('PZ12 tokens must contain exactly two numeric values')
+    if tokenValues[0] == tokenValues[1]:
+        raise ValueError('PZ12 tokens must be distinct')
+
+    weights, weightKind = _pattern_items(p, 'PZ12 weights')
+    if weightKind != 'numeric' or len(weights) != 2:
+        raise TypeError('PZ12 p must contain exactly two numeric weights')
+    if any(not _finite_note_number(weight) or
+           not 0.0 <= float(weight) <= 1000000.0 for weight in weights):
+        raise ValueError('PZ12 weights must be finite and within 0..1000000')
+    maximum = max(float(weight) for weight in weights)
+    if maximum <= 0.0:
+        raise ValueError('PZ12 requires at least one positive weight')
+
+    # Renardo's PZ12 chooses the token with the greatest cumulative target
+    # deficit; ties go to the first token. Keep that ordering, but materialize
+    # a finite phrase rather than exposing an unbounded GeneratorPattern.
+    probabilities = [float(weight) / maximum for weight in weights]
+    counts = [0, 0]
+    result = []
+    for index in range(length):
+        target = index + 1
+        deficits = [probabilities[tokenIndex] * target - counts[tokenIndex]
+                    for tokenIndex in range(2)]
+        chosen = 0 if deficits[0] >= deficits[1] else 1
+        result.append(tokenValues[chosen])
+        counts[chosen] += 1
+    return _FoxDotFinitePattern(result)
+
+def PFibMod(length=31):
+    """Bounded prefix of Renardo's Fibonacci-number pattern generator."""
+    length = _random_pattern_length(length, 'PFibMod')
+    if length > 31:
+        raise ValueError(
+            'PFibMod output is limited to 31 items to keep notes within 1000000')
+    result = []
+    previous, current = 0, 1
+    for _ in range(length):
+        result.append(previous)
+        previous, current = current, previous + current
+    return _FoxDotFinitePattern(result)
+
 def PxRand(start, stop=None, length=256, seed=None):
     """FoxDot PxRand with bounded output and seeded no-adjacent-repeat choice."""
     length = _random_pattern_length(length, 'PxRand')
@@ -3948,6 +4225,30 @@ def PZip2(pat1, pat2, rule=None):
             if len(result) > 256:
                 raise ValueError('PZip2 output is limited to 256 zipped pairs')
     return _FoxDotFinitePattern(result)
+
+class _FoxDotComparisonPattern(_FoxDotFinitePattern):
+    """Pattern of 0/1 comparison results with FoxDot-style truth evaluation."""
+
+    def __bool__(self):
+        def all_positive(item, depth=0):
+            if depth > 16:
+                raise ValueError('comparison truth is limited to 16 nested levels')
+            if item is None:
+                return False
+            if isinstance(item, (list, tuple)):
+                for value in item:
+                    if not all_positive(value, depth + 1):
+                        return False
+                return True
+            if not _finite_note_number(item):
+                raise TypeError('comparison truth requires numeric results or rests')
+            return item > 0
+
+        for item in self:
+            if not all_positive(item):
+                return False
+        return True
+
 
 class _FoxDotDurationGroup(tuple):
     def __new__(cls, values):
