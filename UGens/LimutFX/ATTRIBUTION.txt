@@ -1,0 +1,15 @@
+Limut-inspired effects for Dexter U.S. FoxDot
+
+The PingPong and Duck effect behavior is adapted from the effect definitions
+named "pingpong" and "duck" in:
+  Limut, by sdclibbery
+  https://github.com/sdclibbery/limut/blob/main/lib/effects.limut
+
+Limut's Licensed Material is available under the Creative Commons
+Attribution-ShareAlike 4.0 International Public License (CC BY-SA 4.0):
+  https://creativecommons.org/licenses/by-sa/4.0/
+  Legal code: https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+The effect implementations in this directory are adapted material and are
+distributed under CC BY-SA 4.0. The UGen wrappers and DSP here are a new C++
+implementation; no Limut runtime, server, or source package is required.

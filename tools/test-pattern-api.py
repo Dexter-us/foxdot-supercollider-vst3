@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.155' not in cmake_source or
+if ('VERSION 0.4.156' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -104,7 +104,8 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                          '191-pattern-comparison-operators.py',
                             '192-pattern-transform-recursive.py',
                              '193-true-copy-convert-data.py',
-                              '194-pattern-metadata-helpers.py'):
+                               '194-pattern-metadata-helpers.py',
+                                '195-limut-pingpong-duck.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -133,11 +134,14 @@ for snapshot_fragment in (
     if snapshot_fragment not in processor_source:
         raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (
-    'isTapeDelay ? 8u : isEchojam ? 6u : 9u;',
+    'isTapeDelay ? 8u : isEchojam ? 6u :',
+    'isLimutPingPong ? 5u : isLimutDuck ? 7u : 9u;',
     'userDefinition.outControl = 0;',
     'userDefinition.inputBusControl = 1;',
     'std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}',
     'std::array<int, 7>{{2, 3, 4, -1, -1, -1, 5}}',
+    'userDefinition.name == "LimutPingPong"',
+    'userDefinition.name == "LimutDuck"',
 ):
     if airwindows_layout_fragment not in processor_source:
         raise AssertionError(
@@ -3469,7 +3473,9 @@ for filename in os.listdir(sys.argv[2]):
             ('Phaser',) if filename == '171-phaser-sweep.py' else
             ('Tremolo',) if filename == '172-tremolo-motion.py' else
             ('Phaser', 'Tremolo') if filename == '173-ordered-player-effect-chain.py' else
-            ('Flanger', 'Chorus') if filename == '174-drum-effect-chain.py' else ())
+            ('Flanger', 'Chorus') if filename == '174-drum-effect-chain.py' else
+            ('LimutPingPong', 'LimutDuck')
+            if filename == '195-limut-pingpong-duck.py' else ())
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
@@ -3838,7 +3844,23 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> play("x-o-", effects=[("AirwindowsEchojam", {"fx_depth": 0.25}), '
     '("Chorus", {"fx_mix": 0.3, "fx_rate": 0.6})])\n',
     ('AirwindowsEchojam', 'Chorus'))
-assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser or Tremolo' in run_compatibility_check(
+limutPingPongCompatibility = run_compatibility_check(
+    'p1 >> play("x-o-", effect="LimutPingPong", '
+    'fx_time=var([0.25, 0.5], 4), fx_feedback=0.55)\n',
+    ('LimutPingPong',))
+assert 'No unsupported constructs detected' in limutPingPongCompatibility
+limutDuckCompatibility = run_compatibility_check(
+    'p2 >> play("x-o-", effects=[("LimutPingPong", {"fx_time": 0.25}), '
+    '("LimutDuck", {"fx_period": 0.5, "fx_depth": 0.7, '
+    '"fx_length": 0.12, "fx_attack": 0.18})])\n',
+    ('LimutPingPong', 'LimutDuck'))
+assert 'No unsupported constructs detected' in limutDuckCompatibility
+assert 'requires the matching player-effect SynthDef' in run_compatibility_check(
+    'p1 >> play("x", effect="LimutDuck")\n')
+assert 'fx_hold is not a control on LimutDuck' in run_compatibility_check(
+    'p1 >> play("x", effect="LimutDuck", fx_hold=0.1)\n',
+    ('LimutDuck',))
+assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser, Tremolo, LimutPingPong or LimutDuck' in run_compatibility_check(
     'p1 >> play("x-o-", effect="NotAnEffect")\n',
     ('NotAnEffect',))
 for name in ('Chorus', 'Flanger', 'Phaser', 'Tremolo'):

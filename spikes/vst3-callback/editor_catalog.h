@@ -76,7 +76,7 @@ inline std::string instrumentCategory(const CatalogEntry& entry) {
 inline std::string effectCategory(const CatalogEntry& entry) {
     const auto& name = entry.name;
     if (name == "Echo" || name == "AirwindowsEchojam" ||
-        name == "AirwindowsTapeDelay2")
+        name == "AirwindowsTapeDelay2" || name == "LimutPingPong")
         return "Delay";
     if (name == "Freeverb" || name == "Freeverb2" || name == "GVerb" ||
         name == "Greyhole" || name == "JPverb")
@@ -92,6 +92,8 @@ inline std::string effectCategory(const CatalogEntry& entry) {
         return "Pitch and formant";
     if (name == "Bits / Crush" || name == "Shape" || name == "Drive")
         return "Distortion and reduction";
+    if (name == "LimutDuck")
+        return "Dynamics";
     if (name == "Cut" || name == "Blur" || name == "FMod")
         return "Player controls";
     return "Other effects";
@@ -142,6 +144,13 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
                 {"fx_depth", 0, 1}, {"fx_shape", 0, 1},
                 {"fx_spread", 0, 1}, {"fx_phase", 0, 1},
                 {"fx_tone", 200, 16000}};
+    if (effectName == "LimutPingPong")
+        return {{"fx_mix", 0, 1}, {"fx_time", 0.01f, 2},
+                {"fx_feedback", 0, 0.95f}};
+    if (effectName == "LimutDuck")
+        return {{"fx_mix", 0, 1}, {"fx_period", 0.05f, 8},
+                {"fx_depth", 0, 1}, {"fx_length", 0, 8},
+                {"fx_attack", 0.001f, 8}};
     return {};
 }
 
@@ -308,7 +317,8 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         {}, true});
     static const std::vector<std::string> bundledEffects{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
-        "Greyhole", "JPverb", "Phaser", "Tremolo"};
+        "Greyhole", "JPverb", "LimutDuck", "LimutPingPong", "Phaser",
+        "Tremolo"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
                 bundledEffects.end() ||
@@ -432,7 +442,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
     };
     static const std::vector<std::string> knownExternal{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
-        "Greyhole", "JPverb", "Phaser", "Tremolo"};
+        "Greyhole", "JPverb", "LimutDuck", "LimutPingPong", "Phaser",
+        "Tremolo"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
@@ -445,6 +456,11 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "fx_mix control; use the documented effect-specific "
                           "fx_* parameters. Install its SynthDef/UGen pack "
                           "under Portable/SynthDefs and restart the DAW.";
+        else if (name == "LimutPingPong" || name == "LimutDuck")
+            description = "Optional Limut-inspired insert UGen. Install its "
+                          "SynthDef under Portable/SynthDefs and LimutFX.scx "
+                          "under SCPlugins, then restart the DAW. Controls "
+                          "include range-checked FX sliders.";
         else if (name == "JPverb" || name == "Greyhole")
             description = "Optional stereo room/reverb SynthDef pack. Install "
                           "its Portable/SynthDefs file and required SCPlugins "
@@ -456,8 +472,16 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "in Portable/179-editor-catalog-about.html where "
                           "applicable. FX Mix controls the first chain insert.";
         std::vector<Arg> defaults;
-        if (hasMixControl)
+        if (name == "LimutPingPong") {
+            defaults = {Arg{"fx_mix", "0.28"}, Arg{"fx_time", "0.32"},
+                        Arg{"fx_feedback", "0.45"}};
+        } else if (name == "LimutDuck") {
+            defaults = {Arg{"fx_mix", "1"}, Arg{"fx_period", "0.5"},
+                        Arg{"fx_depth", "0.7"}, Arg{"fx_length", "0.12"},
+                        Arg{"fx_attack", "0.18"}};
+        } else if (hasMixControl) {
             defaults.push_back(Arg{"fx_mix", "0.25"});
+        }
         result.push_back({CatalogKind::ExternalEffect, name, name,
                           std::move(description), std::move(defaults), loaded});
     }

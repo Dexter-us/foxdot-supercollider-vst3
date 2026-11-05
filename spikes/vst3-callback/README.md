@@ -1,5 +1,9 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.156 adds the optional Limut-inspired PingPong delay and Duck
+inserts, with CC BY-SA 4.0 attribution, range-checked controls, and Example 195.
+The separately compiled `LimutFX.scx` pack is not part of the VST3 build.
+
 Version 0.4.155 adds bounded Pattern metadata helpers: `get_data()` returns the
 live list-backed data view (unwrapping a single nested Pattern), `get_methods()`
 lists the curated embedded API, `help()` returns help text without printing,
@@ -770,9 +774,27 @@ SynthDefs, malformed entries and more than four inserts produce diagnostics.
 `effects=[]` removes the inserts. Stopping a player feeds silence into its
 existing chain so delay/reverb state can finish. Changing a chain may reset
 the replaced insert's state; a 10 ms de-click transition softens topology
-switches. Unchanged inserts retain their graph state. Optional Airwindows or space-reverb inserts still
+ switches. Unchanged inserts retain their graph state. Optional Airwindows or space-reverb inserts still
 require their separately installed UGen packs; stock modulation inserts do not.
 No SuperCollider or UGen rebuild is needed for this routing change.
+
+## Optional Limut-inspired inserts (separate UGen pack)
+
+The test branch contains a separate `UGens/LimutFX` pack with two newly
+implemented SuperCollider inserts: `LimutPingPong` (stereo cross-feedback
+delay) and `LimutDuck` (rhythmic gain pumping). They are adapted from Limut's
+`pingpong` and `duck` effect graphs and distributed under CC BY-SA 4.0 with
+attribution in the pack. Their timing controls are seconds; at a chosen BPM,
+convert beat values with `seconds = beats * 60 / Clock.bpm`.
+
+Install the pack's `LimutFX.scx` into `Portable/SCPlugins` and its two
+`.scsyndef` files into `Portable/SynthDefs`, merging those files into the
+existing folders, then restart the DAW. The editor/compatibility checker then
+offers the effects and their ranged sliders. Example 195 demonstrates both
+effects and an ordered two-insert chain. This optional module compiles by
+itself against pinned SuperCollider plugin headers; it does not build or bundle
+SuperCollider. Other Limut effects that overlap existing inserts are not
+duplicated in this pack.
 
 ## Per-player modulation inserts (0.4.135–0.4.136)
 

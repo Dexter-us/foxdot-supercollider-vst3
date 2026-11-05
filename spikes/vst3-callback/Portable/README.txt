@@ -1,3 +1,7 @@
+0.4.156 adds Limut-inspired LimutPingPong and LimutDuck effects. Install the
+optional LimutFX.scx and merge the two matching SynthDefs; see Example 195 and
+UGens/LimutFX/Portable/LIMUT-FX-README.txt.
+
 0.4.155 adds bounded metadata helpers: get_data() returns the live list-backed
 view (unwrapping one nested Pattern), get_methods() returns the curated
 embedded API names, help() returns text without printing, new(data) creates a

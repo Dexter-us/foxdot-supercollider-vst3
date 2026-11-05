@@ -2,6 +2,7 @@
 #include "../live_player_controls.h"
 #include "../editor_catalog.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <string>
@@ -199,8 +200,29 @@ int main() {
         assert(source == unchanged);
         const auto chorusControls = playerEffectControlSpecs("Chorus");
         const auto echoControls = playerEffectControlSpecs("AirwindowsEchojam");
+        const auto pingPongControls = playerEffectControlSpecs("LimutPingPong");
+        const auto duckControls = playerEffectControlSpecs("LimutDuck");
         assert(chorusControls.size() == 7);
         assert(echoControls.size() == 4);
+        assert(pingPongControls.size() == 3 && duckControls.size() == 5);
+        assert(pingPongControls[1].name == "fx_time" &&
+               pingPongControls[1].minimum == 0.01f &&
+               pingPongControls[1].maximum == 2.0f);
+        assert(duckControls[1].name == "fx_period" &&
+               duckControls[1].minimum == 0.05f &&
+               duckControls[1].maximum == 8.0f);
+        const auto limutCatalog =
+            makeEffectCatalog({"LimutPingPong", "LimutDuck"});
+        const auto findEffect = [&](const std::string& name) {
+            return std::find_if(limutCatalog.begin(), limutCatalog.end(),
+                [&](const auto& item) { return item.name == name; });
+        };
+        const auto pingPong = findEffect("LimutPingPong");
+        const auto duck = findEffect("LimutDuck");
+        assert(pingPong != limutCatalog.end() && pingPong->available);
+        assert(duck != limutCatalog.end() && duck->available);
+        assert(pingPong->category == "Delay" && pingPong->arguments.size() == 3);
+        assert(duck->category == "Dynamics" && duck->arguments.size() == 5);
         assert(chorusControls[1].name == "fx_rate" &&
                chorusControls[1].minimum == 0.05f &&
                chorusControls[1].maximum == 5.0f);

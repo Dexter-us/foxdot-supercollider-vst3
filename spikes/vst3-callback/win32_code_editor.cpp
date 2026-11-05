@@ -105,8 +105,8 @@ constexpr char kFoxDotApiKeywords[] =
     "effect effects fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
     "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
-    "fx_center fx_shape fx_phase "
-    "JPverb Greyhole Chorus Flanger Phaser Tremolo "
+     "fx_center fx_shape fx_phase fx_time fx_period fx_length fx_attack "
+     "JPverb Greyhole Chorus Flanger Phaser Tremolo LimutPingPong LimutDuck "
     "vib depth lforate lfowidth rq fmod blur sample "
     "p1 p2 p3 p4 p5 p6 p7 p8 amp dur sus oct pan strum cutoff resonance room reverb "
     "echo delay mute unmute rate start end loop stretch shuffle repeat stutter "
@@ -121,8 +121,8 @@ constexpr char kFoxDotCompletions[] =
     "effect effects fx_vib fx_depth fx_lforate fx_lfowidth fx_rq fx_blur "
     "fx_mix fx_t60 fx_damp fx_size fx_earlydiff fx_moddepth fx_modfreq "
     "fx_delay fx_diff fx_feedback fx_rate fx_spread fx_tone "
-    "fx_center fx_shape fx_phase "
-    "JPverb Greyhole Chorus Flanger Phaser Tremolo "
+     "fx_center fx_shape fx_phase fx_time fx_period fx_length fx_attack "
+     "JPverb Greyhole Chorus Flanger Phaser Tremolo LimutPingPong LimutDuck "
     "vib depth lforate lfowidth rq fmod blur sample start end loop stretch "
     "shuffle repeat stutter palindrome mirror accum swap reverse rotate invert transpose arp splice sort unduplicate replace layer trim ltrim normalise choose zip deepzip deeprzip map pivot true_shuffle shufflets";
 
