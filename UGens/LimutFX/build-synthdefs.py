@@ -26,6 +26,10 @@ def main():
         extensions.mkdir(parents=True)
         shutil.copy2(SYNTHDEFS / "LimutFX.sc", extensions)
         SIDECHAIN_SYNTHDEFS.mkdir(parents=True, exist_ok=True)
+        # Older bundles accidentally placed this stereo, two-bus SynthDef in
+        # the VST's auto-scanned mono instrument folder. Keep only the
+        # sidechain copy there, where the standalone SC example loads it.
+        (SYNTHDEFS / "LimutVocoder.scsyndef").unlink(missing_ok=True)
         # sclang's stdin mode parses each line as a standalone REPL input.
         # Keep every complete SynthDef expression on one line so multiline
         # source is not evaluated as a sequence of incomplete fragments.

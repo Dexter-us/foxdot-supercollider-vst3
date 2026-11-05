@@ -62,6 +62,10 @@ jobs:
           Copy-Item $module.FullName "$pack\Portable\SCPlugins\LimutFX.scx"
           Copy-Item ".\UGens\LimutFX\Portable\SynthDefs\*.scsyndef" `
             "$pack\Portable\SynthDefs"
+          # The vocoder uses stereo carrier/modulator buses and is not a
+          # single-input VST insert. Never ship it in the auto-scanned folder.
+          Remove-Item "$pack\Portable\SynthDefs\LimutVocoder.scsyndef" `
+            -Force -ErrorAction SilentlyContinue
           Copy-Item ".\UGens\LimutFX\Portable\*.py" "$pack\Portable"
           Copy-Item ".\UGens\LimutFX\Portable\*.txt" "$pack\Portable"
           Copy-Item ".\UGens\LimutFX\Portable\Sidechain\*.scd" `

@@ -166,6 +166,8 @@ for name, control in (("LimutPingPong", "fx_time"),
 
 vocoder, vocoder_controls, vocoder_defaults, vocoder_units = synthdef_info(
     HERE / "Portable/Sidechain/SynthDefs/LimutVocoder.scsyndef")
+assert not (HERE / "Portable/SynthDefs/LimutVocoder.scsyndef").exists(), (
+    "Two-bus vocoder must not be installed in the VST's mono SynthDef folder")
 assert vocoder == "LimutVocoder"
 assert vocoder_controls == {
     key: index for index, key in enumerate(
