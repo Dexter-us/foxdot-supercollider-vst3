@@ -68,8 +68,6 @@ jobs:
             "$pack\Portable\Sidechain"
           Copy-Item ".\UGens\LimutFX\Portable\Sidechain\*.txt" `
             "$pack\Portable\Sidechain"
-          Copy-Item ".\UGens\LimutFX\Portable\Sidechain\README.md" `
-            "$pack\Portable\Sidechain"
           Copy-Item ".\UGens\LimutFX\Portable\Sidechain\SynthDefs\*.scsyndef" `
             "$pack\Portable\Sidechain\SynthDefs"
           Copy-Item ".\UGens\LimutFX\ATTRIBUTION.txt" "$pack\Licenses"
