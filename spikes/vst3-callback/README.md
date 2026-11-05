@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.160 adds mono and stereo routing for user-loaded SynthDefs.
+The loader detects each definition's output width, reserves isolated voice
+buses, preserves stereo image, and rejects mixed-width or multichannel graphs.
+Example SCLOrkSynths instrument definitions and three starter scripts are
+provided separately in the GPL-3.0 compiled-instrument pack.
+
 Version 0.4.159 adds a stereo-linked `LimutCompressor` insert with live FX
 sliders, ranges, and `var()`/`linvar()` support. The built-in sine, saw, pulse,
 and triangle calls are grouped under Waveforms. The optional LimutFX module also
@@ -736,7 +742,7 @@ This Windows-first prototype embeds `libscsynth` and CPython 3.12 in a VST3 inst
 - The VST continues to manage MIDI note-on/off independently of these audio envelopes. The reverb send remains alive for a short silent tail after an audible voice ends, so its control-rate fade completes before its SuperCollider graph stops.
 - The host owns the audio callback; each VST block is split into SuperCollider's fixed 64-sample blocks and buffered for variable host block sizes.
 - The plugin bundles supported official SuperCollider UGen modules in `Contents/Resources/SCPlugins` and scans `Portable/SCPlugins` for additional compatible Windows `.scx` modules. DiskIO_UGens and shared libsndfile are a **separate optional pack**, not part of the normal cached engine build. UIUGens is included for desktop mouse input; KeyState's Windows keyboard polling is disabled upstream. Six CC0 WAVs exercise the independent in-memory PlayBuf sample player, which does not use libsndfile. Restart the DAW after installing modules; avoid duplicate module copies. Ableton Link and Bela-specific modules remain excluded. SC modules use GPL terms; Boost headers have the included Boost Software License notice.
-- User SynthDefs load from `Portable/SynthDefs` at engine startup, after compatible UGen modules. Each `.scsyndef` must contain one definition whose name matches its Python-safe filename, and it must expose an `out` control that writes one mono signal. `freq`, `gate`, `atk`, `rel`, and `sus`/`sustain` are mapped when present; `atk`/`rel` and `sus`/`sustain` receive seconds, while the plugin applies player amplitude, pan, filters, voice safety fades, and node cleanup. The folder is bounded to 256 definitions (8 MB per file/64 MB total). Example 94 uses a patch compiled offline from `Portable/SynthDefs/CustomPluck.scd`. The VST does not embed or launch `sclang`, and this first pass does not provide a GUI for authoring SynthDefs.
+- User SynthDefs load from `Portable/SynthDefs` at engine startup, after compatible UGen modules. Each `.scsyndef` must contain one definition whose name matches its Python-safe filename, and expose an `out` control that writes either one mono or two stereo channels. Stereo SynthDefs keep their center image; the player's pan setting balances the left/right channels, while mono SynthDefs retain equal-power panning. `freq`, `gate`, `atk`, `rel`, and `sus`/`sustain` are mapped when present; `atk`/`rel` and `sus`/`sustain` receive seconds, while the plugin applies player amplitude, filters, voice safety fades, and node cleanup. The folder is bounded to 256 definitions (8 MB per file/64 MB total). Example 94 uses a patch compiled offline from `Portable/SynthDefs/CustomPluck.scd`. The VST does not embed or launch `sclang`, and this first pass does not provide a GUI for authoring SynthDefs.
 - The required CPython embeddable runtime files are copied into `Contents/Resources/Python`, with the Python license notice.
 - The bounded pattern helpers `P[...].mirror()`, `.accum(n)`, and `.swap(n)` match FoxDot's nested reversal, cumulative-sum, and reversed-block behavior; numeric `accum` lengths and expanded results are capped at 256. See Portable Example 120.
 - Finite `P[...]` patterns also support FoxDot-style `.arp(intervals)` for numeric-note arpeggiation and `.splice(pattern, ...)` for cyclic interleaving of numeric or sample-symbol patterns; outputs are capped at 256 items. See Portable Example 123.

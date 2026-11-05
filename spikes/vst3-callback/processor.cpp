@@ -35,6 +35,7 @@
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
+#include "user_synth_routing.h"
 
 #include <algorithm>
 #include <array>
@@ -1243,7 +1244,10 @@ private:
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
-    static constexpr int kReverbBaseBus = kFirstAudioBus + static_cast<int>(kAudioVoiceCount) * kAudioBusStride;
+    static constexpr int kStereoSynthOutputBaseBus =
+        kFirstAudioBus + static_cast<int>(kAudioVoiceCount) * kAudioBusStride;
+    static constexpr int kReverbBaseBus =
+        kStereoSynthOutputBaseBus + static_cast<int>(kAudioVoiceCount) * 2;
     static constexpr int kAirwindowsInputBusBase =
         kReverbBaseBus + static_cast<int>(kPlayerCount) * kReverbBusStride;
     static constexpr int kAirwindowsOutputBusBase =
@@ -1255,8 +1259,25 @@ private:
     static constexpr double kMixSmoothingSeconds = 0.010;
     static constexpr std::size_t kMaxEchoBufferSamples = 96000;
     static constexpr double kPi = 3.14159265358979323846;
-    static_assert(kFirstAudioBus + kAudioVoiceCount * kAudioBusStride <= kNumAudioBusChannels,
+    static_assert(kStereoSynthOutputBaseBus + kAudioVoiceCount * 2 <=
+                      kNumAudioBusChannels,
+                  "The SuperCollider world needs a private stereo output pair per voice.");
+    static_assert(kFirstAudioBus + kAudioVoiceCount * kAudioBusStride <=
+                      kStereoSynthOutputBaseBus,
                   "The SuperCollider world needs three private buses per synth voice.");
+    static_assert(dexter::synthOutputChannelsFromOutInputCount(2) == 1 &&
+                      dexter::synthOutputChannelsFromOutInputCount(3) == 2 &&
+                      dexter::synthOutputChannelsFromOutInputCount(4) == 0,
+                  "User SynthDefs support only mono or stereo Out units.");
+    static_assert(dexter::userSynthOutputBus(
+                      1, 2, kFirstAudioBus, kAudioBusStride,
+                      kStereoSynthOutputBaseBus) ==
+                      kFirstAudioBus + 2 * kAudioBusStride &&
+                  dexter::userSynthOutputBus(
+                      2, 2, kFirstAudioBus, kAudioBusStride,
+                      kStereoSynthOutputBaseBus) ==
+                      kStereoSynthOutputBaseBus + 4,
+                  "Mono and stereo user SynthDefs must use their reserved buses.");
     static_assert(kReverbBaseBus + kPlayerCount * kReverbBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per player reverb.");
     static_assert(kAirwindowsOutputBusBase +
@@ -1551,6 +1572,7 @@ private:
         std::string name;
         GraphDef* definition = nullptr;
         bool persistentPlayerEffect = false;
+        int outputChannels = 1;
         int outControl = -1;
         int inputBusControl = -1;
         int frequencyControl = -1;
@@ -1630,6 +1652,7 @@ private:
         float cutoffHz = 20000.0f;
         float frequencyHz = 440.0f;
         float filterState = 0.0f;
+        float filterStateRight = 0.0f;
         float filterCoefficient = 1.0f;
         float lpfHz = 0.0f;
         float lpr = 1.0f;
@@ -1644,10 +1667,16 @@ private:
         float swellCutoffHz = 0.0f;
         ModulationNoiseState bpfNoise;
         ModulationNoiseState bprNoise;
+        dexter::FoxDotFormantState formantStateRight{};
         BiquadState lpfState;
         BiquadState hpfState;
         BiquadState bpfState;
         BiquadState swellState;
+        BiquadState lpfRightState;
+        BiquadState hpfRightState;
+        BiquadState bpfRightState;
+        BiquadState swellRightState;
+        bool stereoUserSynth = false;
         bool mousePan = false;
         bool mouseCutoff = false;
         double attackSeconds = kAttackSeconds;
@@ -2260,8 +2289,9 @@ private:
                     " (error " + std::to_string(static_cast<int>(graphError)) + ").";
             return nullptr;
         }
-        const auto outputBus = kFirstAudioBus +
-                               kAudioBusStride * static_cast<int>(voiceIndex);
+        const auto outputBus = dexter::userSynthOutputBus(
+            userDefinition.outputChannels, voiceIndex, kFirstAudioBus,
+            kAudioBusStride, kStereoSynthOutputBaseBus);
         Graph_SetControl(created, userDefinition.outControl,
                          static_cast<float>(outputBus));
         if (userDefinition.frequencyControl >= 0)
@@ -3059,6 +3089,17 @@ private:
                 found->midiNote = note.midiNote;
                 found->velocity = note.velocity;
                 found->synthIndex = note.synthIndex;
+                found->stereoUserSynth = false;
+                if (static_cast<std::size_t>(note.synthIndex) >=
+                    kSynthIndexToGraphIndex.size()) {
+                    const auto userIndex =
+                        static_cast<std::size_t>(note.synthIndex) -
+                        kSynthIndexToGraphIndex.size();
+                    if (userIndex < userSynthDefinitions_.size())
+                        found->stereoUserSynth =
+                            userSynthDefinitions_[userIndex].outputChannels == 2 &&
+                            !userSynthDefinitions_[userIndex].persistentPlayerEffect;
+                }
                 found->amplitude = foxDotAmplitude(note.synthIndex, note.amplitude);
                 found->mousePan = note.mousePan;
                 found->mouseCutoff = note.mouseCutoff;
@@ -3087,10 +3128,16 @@ private:
                 seedNoiseState(found->bpfNoise, seed ^ 0x9e3779b9u);
                 seedNoiseState(found->bprNoise, seed ^ 0x85ebca6bu);
                 found->filterState = 0.0f;
+                found->filterStateRight = 0.0f;
                 found->lpfState = {};
                 found->hpfState = {};
                 found->bpfState = {};
                 found->swellState = {};
+                found->lpfRightState = {};
+                found->hpfRightState = {};
+                found->bpfRightState = {};
+                found->swellRightState = {};
+                found->formantStateRight = {};
                 const double maxCutoff = sampleRate_ * 0.45;
                 const double clampedCutoff = std::min<double>(note.cutoffHz, maxCutoff);
                 const bool isUserSynth =
@@ -3491,9 +3538,10 @@ private:
         return -1;
     }
 
-    static bool hasOutUnit(GraphDef* definition, std::size_t channels) {
+    static int synthOutputChannels(GraphDef* definition) {
         if (!definition || !definition->mUnitSpecs)
-            return false;
+            return 0;
+        int outputChannels = 0;
         for (uint32 index = 0; index < definition->mNumUnitSpecs; ++index) {
             const auto& unit = definition->mUnitSpecs[index];
             if (!unit.mUnitDef)
@@ -3503,11 +3551,14 @@ private:
             std::size_t length = 0;
             while (length < sizeof(unit.mUnitDef->mUnitDefName) && bytes[length] != '\0')
                 ++length;
-            if (std::string_view(bytes, length) == "Out" &&
-                unit.mNumInputs == channels + 1)
-                return true;
+            if (std::string_view(bytes, length) == "Out") {
+                outputChannels = dexter::mergeSynthOutputChannels(
+                    outputChannels, unit.mNumInputs);
+                if (outputChannels == 0)
+                    return 0;
+            }
         }
-        return false;
+        return outputChannels;
     }
 
     std::vector<std::string> availableUserSynthNames(std::string& error) {
@@ -3810,15 +3861,19 @@ private:
                             " is missing a required inbus or persistent-effect control.";
                     return false;
                 }
-                if (!hasOutUnit(loaded, 2)) {
+                if (synthOutputChannels(loaded) != 2) {
                     error = synthFile.path.filename().string() +
-                            " needs an Out UGen that writes a stereo signal to its 'out' control.";
+                            " needs consistent stereo Out UGens routed to its 'out' control.";
                     return false;
                 }
-            } else if (!hasOutUnit(loaded, 1)) {
-                error = synthFile.path.filename().string() +
-                        " needs an Out UGen that writes exactly one mono signal to its 'out' control.";
-                return false;
+                userDefinition.outputChannels = 2;
+            } else {
+                userDefinition.outputChannels = synthOutputChannels(loaded);
+                if (userDefinition.outputChannels == 0) {
+                    error = synthFile.path.filename().string() +
+                            " needs consistent Out UGens with either one mono or two stereo channels routed to its 'out' control.";
+                    return false;
+                }
             }
 
             std::array<int32, kSCNodeDefNameLen> nameKey{};
@@ -4226,7 +4281,19 @@ private:
                                  voiceIndex * static_cast<std::size_t>(kAudioBusStride);
                 const auto busLength = static_cast<std::size_t>(world_->mBufLength);
                 const auto offset = bus * busLength + static_cast<std::size_t>(sampleIndex);
-                const float source = world_->mAudioBus[offset];
+                float source = world_->mAudioBus[offset];
+                float sourceRight = source;
+                if (voice.stereoUserSynth) {
+                    const auto stereoBus =
+                        static_cast<std::size_t>(kStereoSynthOutputBaseBus) +
+                        voiceIndex * 2;
+                    source = world_->mAudioBus[
+                        stereoBus * busLength +
+                        static_cast<std::size_t>(sampleIndex)];
+                    sourceRight = world_->mAudioBus[
+                        (stereoBus + 1) * busLength +
+                        static_cast<std::size_t>(sampleIndex)];
+                }
                 const auto controlPlayerIndex = static_cast<std::size_t>(voice.playerIndex);
                 const auto& livePattern = activePatterns_[controlPlayerIndex];
                 const double beat = controlBeatStart[controlPlayerIndex] +
@@ -4306,6 +4373,9 @@ private:
                     voice.filterState = source;
                 else
                     voice.filterState += voice.filterCoefficient * (source - voice.filterState);
+                if (voice.stereoUserSynth)
+                    voice.filterStateRight += voice.filterCoefficient *
+                        (sourceRight - voice.filterStateRight);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
                 auto updateFilterControl = [&](float& current, const TimeVarControl& control, float fallback) {
                     if (!control.active) return;
@@ -4358,14 +4428,40 @@ private:
                                     voice.modulatedBpr, 2);
                     configureBiquad(voice.swellState, voice.swellCutoffHz,
                                     voice.hpr, 1);
+                    if (voice.stereoUserSynth) {
+                        configureBiquad(voice.lpfRightState, voice.lpfHz,
+                                        voice.lpr, 0);
+                        configureBiquad(voice.hpfRightState, voice.hpfHz,
+                                        voice.hpr, 1);
+                        configureBiquad(voice.bpfRightState,
+                                        voice.modulatedBpfHz,
+                                        voice.modulatedBpr, 2);
+                        configureBiquad(voice.swellRightState,
+                                        voice.swellCutoffHz, voice.hpr, 1);
+                    }
                 }
                 float shaped = processBiquad(voice.lpfState, voice.filterState);
                 shaped = processBiquad(voice.hpfState, shaped);
                 shaped = processBiquad(voice.bpfState, shaped);
                 shaped = processBiquad(voice.swellState, shaped);
+                float shapedRight = shaped;
+                if (voice.stereoUserSynth) {
+                    shapedRight = processBiquad(voice.lpfRightState,
+                                                voice.filterStateRight);
+                    shapedRight = processBiquad(voice.hpfRightState,
+                                                shapedRight);
+                    shapedRight = processBiquad(voice.bpfRightState,
+                                                shapedRight);
+                    shapedRight = processBiquad(voice.swellRightState,
+                                                shapedRight);
+                }
                 if (voice.formant >= 0.0f)
                     shaped = dexter::foxDotFormantSample(
                         voice.formantState, shaped, voice.formant, sampleRate_);
+                if (voice.stereoUserSynth && voice.formant >= 0.0f)
+                    shapedRight = dexter::foxDotFormantSample(
+                        voice.formantStateRight, shapedRight, voice.formant,
+                        sampleRate_);
                 const double effectDuration =
                     voice.sustainEndSample > voice.startSample
                     ? static_cast<double>(voice.sustainEndSample -
@@ -4388,11 +4484,21 @@ private:
                 const auto spinGains = dexter::foxDotSpinGains(
                     elapsedSeconds, voice.spin);
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
-                const float amplitude = shaped * envelope * velocity *
-                    voice.amplitude *
+                const float noteGain = envelope * velocity * voice.amplitude *
                     noteEffectGain * chopGain * coarseGain;
-                playerLeft[player] += amplitude * voice.leftGain * spinGains.left;
-                playerRight[player] += amplitude * voice.rightGain * spinGains.right;
+                const float amplitude = shaped * noteGain;
+                if (voice.stereoUserSynth) {
+                    const auto balance = dexter::stereoBalanceGains(voice.pan);
+                    playerLeft[player] += amplitude * balance[0] *
+                        spinGains.left;
+                    playerRight[player] += shapedRight * noteGain * balance[1] *
+                        spinGains.right;
+                } else {
+                    playerLeft[player] += amplitude * voice.leftGain *
+                        spinGains.left;
+                    playerRight[player] += amplitude * voice.rightGain *
+                        spinGains.right;
+                }
                 playerHasVoice[player] = playerMuteGain_[player] > 1e-4f;
                 if (playerMuteGain_[player] > 1e-4f)
                     ++contributingVoices;

@@ -59,10 +59,24 @@ safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filte
               'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str',
               'sum', 'tuple', 'zip', 'ValueError', 'TypeError',
               'ZeroDivisionError', '__build_class__')
+example_synth_names = (
+    'CustomPluck', 'AirwindowsTapeDelay2', 'AirwindowsEchojam',
+    'JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo',
+    'LimutPingPong', 'LimutDuck', 'LimutDisperser', 'LimutFuzz',
+    'LimutShifter', 'LimutShimmer', 'LimutGatedVerb', 'LimutCompressor',
+    'SCL_bass_acidOto3091', 'SCL_bass_bassWarsaw', 'SCL_bass_moogBass',
+    'SCL_bass_subBass1', 'SCL_bells_glockenspiel', 'SCL_bells_prayerBell',
+    'SCL_drums_hihat1', 'SCL_drums_kick808', 'SCL_drums_snare909',
+    'SCL_guitar_modalElectricGuitar', 'SCL_guitar_pluck',
+    'SCL_keyboards_FMRhodes1', 'SCL_keyboards_harpsichord1',
+    'SCL_organ_organTonewheel0', 'SCL_pads_sawSynth',
+    'SCL_percussion_kalimba', 'SCL_percussion_marimba1',
+    'SCL_strings_violin')
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
-    '_dexter_root': 60, '_dexter_updates': {}, '_dexter_mutes': {},
+    '_dexter_root': 60, '_dexter_root_control': None,
+    '_dexter_updates': {}, '_dexter_mutes': {},
     '_dexter_default_touched': False, '__name__': 'dexter_test',
     '__builtins__': {name: getattr(builtins, name) for name in safe_names},
 }
@@ -272,6 +286,15 @@ assert b'DexterPluck' not in userSynthBinary
 assert not os.path.exists(os.path.join(userSynthDir, 'DexterPluck.scsyndef'))
 userSynthRows = run_example('94-user-synthdef-loader.py', ('CustomPluck',))
 assert [int(row[6]) for row in userSynthRows] == [58, 58]
+for filename, expected_players in (
+        ('200-sclork-melodic-starter.py', 3),
+        ('201-sclork-drum-kit.py', 3),
+        ('202-sclork-guitar-and-pad.py', 3)):
+    example_path = os.path.join(sys.argv[2], filename)
+    if os.path.isfile(example_path):
+        rows = run_example(filename, example_synth_names)
+        assert len(rows) == expected_players, (filename, rows)
+        assert all(int(row[6]) >= 58 for row in rows), (filename, rows)
 missingUserSynth = run_error_script(
     'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
 assert 'not a loaded Portable/SynthDefs entry' in missingUserSynth
@@ -571,7 +594,7 @@ rootRows, rootEvents = run_script(open(os.path.join(sys.argv[2], '27-root-and-sc
 assert len(rootRows) == 3 and [row[1] for row in rootRows] == ['0', '1', '2']
 assert [int(event[3]) for event in rootEvents] == [62, 65, 69, 72, 55, 58, 62, 57, 60, 63, 63, 67, 70, 74]
 assert 'No unsupported constructs detected' in run_compatibility_check('Scale.default = "minor"\nRoot.default.set("Eb")\np1 >> saw([0, 2, 4], root=7)\n')
-assert 'Root.default only supports .set(note)' in run_compatibility_check('Root.default.notes\n')
+assert 'Root.default only supports .set(root)' in run_compatibility_check('Root.default.notes\n')
 chordRows, chordEvents = run_script(open(os.path.join(sys.argv[2], '28-roman-numeral-chords.py'), encoding='utf-8').read(), include_events=True)
 assert len(chordRows) == 2 and [row[1] for row in chordRows] == ['0', '1']
 assert [int(event[3]) for event in chordEvents[:14]] == [48, 52, 55, 53, 57, 48, 55, 47, 50, 65, 48, 52, 55, 59]
@@ -662,7 +685,7 @@ assert len(example37Rows) == 3 and len(example37Modulations) == 3
 assert [row[0] for row in example37Modulations] == ['G', 'G', 'G']
 assert [round(float(row[2]), 2) for row in example37Modulations] == [0.18, 0.0, 0.22]
 assert [round(float(row[3]), 2) for row in example37Modulations] == [0.0, 1.2, 0.2]
-assert example37Modulations[2][4].startswith('v:') and example37Modulations[2][5].startswith('l:')
+assert example37Modulations[2][6].startswith('v:') and example37Modulations[2][7].startswith('l:')
 example38Rows = run_example('38-bass-varsaw-release-check.py')
 assert len(example38Rows) == 2 and [int(row[6]) for row in example38Rows] == [4, 5]
 assert [float(row[14]) for row in example38Rows] == [0.04, 0.04]
@@ -697,12 +720,31 @@ syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
 for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
-        example_names = ('CustomPluck',) if filename == '94-user-synthdef-loader.py' else ()
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
-            example_names)
+            example_synth_names)
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Examples 01-42, and user SynthDef Example 94.')
+
+# Keep the custom-SynthDef mono/stereo routing contract tied to the engine
+# implementation. The small C++ unit test exercises the width/bus/pan helpers;
+# these checks ensure the processor uses both channel layouts end-to-end.
+processor_path = os.path.join(os.path.dirname(__file__), '..', 'processor.cpp')
+processor_source = open(processor_path, encoding='utf-8').read()
+routing_header_path = os.path.join(os.path.dirname(__file__), '..',
+                                   'user_synth_routing.h')
+routing_header = open(routing_header_path, encoding='utf-8').read()
+assert 'synthOutputChannels(loaded)' in processor_source
+assert 'mergeSynthOutputChannels' in processor_source
+assert 'userDefinition.outputChannels = synthOutputChannels(loaded)' in processor_source
+assert 'userDefinition.outputChannels = 2' in processor_source
+assert 'kStereoSynthOutputBaseBus' in processor_source
+assert 'sourceRight = world_->mAudioBus' in processor_source
+assert 'voice.lpfRightState' in processor_source
+assert 'stereoBalanceGains(voice.pan)' in processor_source
+assert 'synthOutputChannelsFromOutInputCount' in routing_header
+assert 'mergeSynthOutputChannels' in routing_header
+assert 'userSynthOutputBus' in routing_header
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, all Portable examples, user SynthDef mono/stereo routing, and Example 94.')
