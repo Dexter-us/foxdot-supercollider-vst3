@@ -1,10 +1,14 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.160 adds mono and stereo routing for user-loaded SynthDefs.
+Version 0.4.161 adds three SCLOrk-derived stereo insert effects: Phazer,
+Decimator, and Crossover Distortion. They use SuperCollider core UGens only.
 The loader detects each definition's output width, reserves isolated voice
 buses, preserves stereo image, and rejects mixed-width or multichannel graphs.
-Example SCLOrkSynths instrument definitions and three starter scripts are
-provided separately in the GPL-3.0 compiled-instrument pack.
+These are player-chain effects, not instruments, so they appear in the Effects
+sidebar category. The bundled portable SynthDefs are `SCLOrkPhazerFX`,
+`SCLOrkDecimatorFX`, and `SCLOrkCrossoverDistortionFX`; source, attribution,
+and the GPL-3.0 license accompany them. Example 201 demonstrates all three.
+They do not require an SCPlugins module or a SuperCollider rebuild.
 
 Version 0.4.159 adds a stereo-linked `LimutCompressor` insert with live FX
 sliders, ranges, and `var()`/`linvar()` support. The built-in sine, saw, pulse,

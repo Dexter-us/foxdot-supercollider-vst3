@@ -89,7 +89,8 @@ inline std::string effectCategory(const CatalogEntry& entry) {
         name == "LimutShimmer" || name == "LimutGatedVerb")
         return "Reverb";
     if (name == "Chorus" || name == "Flanger" || name == "Phaser" ||
-        name == "Tremolo" || name == "Chop" || name == "Spin")
+        name == "SCLOrkPhazerFX" || name == "Tremolo" ||
+        name == "Chop" || name == "Spin")
         return "Modulation and rhythm";
     if (name == "Low-pass" || name == "High-pass" ||
         name == "Band-pass" || name == "LFO filter")
@@ -98,7 +99,9 @@ inline std::string effectCategory(const CatalogEntry& entry) {
         name == "PShift" || name == "Coarse" || name == "Formant" ||
         name == "LimutShifter")
         return "Pitch and formant";
-    if (name == "Bits / Crush" || name == "Shape" || name == "Drive")
+    if (name == "Bits / Crush" || name == "Shape" || name == "Drive" ||
+        name == "SCLOrkDecimatorFX" ||
+        name == "SCLOrkCrossoverDistortionFX")
         return "Distortion and reduction";
     if (name == "LimutDuck")
         return "Duck";
@@ -155,6 +158,18 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
                 {"fx_depth", 0, 1}, {"fx_center", 150, 1800},
                 {"fx_spread", 0, 1}, {"fx_feedback", 0, 0.85f},
                 {"fx_tone", 200, 16000}};
+    if (effectName == "SCLOrkPhazerFX")
+        return {{"fx_mix", 0, 1}, {"fx_rate", 0.05f, 8},
+                {"fx_depth", 0, 1}, {"fx_center", 150, 1800},
+                {"fx_spread", 0, 1}, {"fx_q", 0.05f, 1},
+                {"fx_tone", 200, 16000}};
+    if (effectName == "SCLOrkDecimatorFX")
+        return {{"fx_mix", 0, 1}, {"fx_rate", 80, 22000},
+                {"fx_bits", 1, 16}, {"fx_drive", 0.5f, 8},
+                {"fx_tone", 200, 16000}};
+    if (effectName == "SCLOrkCrossoverDistortionFX")
+        return {{"fx_mix", 0, 1}, {"fx_drive", 0.5f, 8},
+                {"fx_shape", 0, 1}, {"fx_tone", 200, 16000}};
     if (effectName == "Tremolo")
         return {{"fx_mix", 0, 1}, {"fx_rate", 0.05f, 20},
                 {"fx_depth", 0, 1}, {"fx_shape", 0, 1},
@@ -366,7 +381,8 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         "Greyhole", "JPverb", "LimutDisperser", "LimutDuck",
         "LimutCompressor", "LimutFuzz", "LimutGatedVerb",
         "LimutPingPong", "LimutShifter",
-        "LimutShimmer", "Phaser", "Tremolo"};
+        "LimutShimmer", "Phaser", "SCLOrkPhazerFX",
+        "SCLOrkDecimatorFX", "SCLOrkCrossoverDistortionFX", "Tremolo"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
                 bundledEffects.end() ||
@@ -492,7 +508,9 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
         "Greyhole", "JPverb", "LimutDisperser", "LimutDuck", "LimutFuzz",
         "LimutCompressor", "LimutGatedVerb", "LimutPingPong",
-        "LimutShifter", "LimutShimmer", "LimutVocoder", "Phaser", "Tremolo"};
+        "LimutShifter", "LimutShimmer", "LimutVocoder", "Phaser",
+        "SCLOrkPhazerFX", "SCLOrkDecimatorFX",
+        "SCLOrkCrossoverDistortionFX", "Tremolo"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
@@ -520,6 +538,13 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "and modulator buses. The current player-effect chain "
                           "has no sidechain route, so this is not yet an "
                           "insertable FoxDot effect.";
+        else if (name == "SCLOrkPhazerFX" ||
+                 name == "SCLOrkDecimatorFX" ||
+                 name == "SCLOrkCrossoverDistortionFX")
+            description = "Stereo insert adapted from Josh Mitchell's "
+                          "SCLOrkSynths patch. It uses SuperCollider core UGens "
+                          "only; source and GPL-3.0 license are included with "
+                          "the Portable SynthDefs pack.";
         else if (name == "JPverb" || name == "Greyhole")
             description = "Optional stereo room/reverb SynthDef pack. Install "
                           "its Portable/SynthDefs file and required SCPlugins "
@@ -560,6 +585,18 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
             defaults = {Arg{"fx_mix", "0.5"}, Arg{"fx_threshold", "-24"},
                         Arg{"fx_ratio", "6"}, Arg{"fx_attack", "0.01"},
                         Arg{"fx_release", "0.1"}, Arg{"fx_knee", "3"}};
+        } else if (name == "SCLOrkPhazerFX") {
+            defaults = {Arg{"fx_mix", "0.45"}, Arg{"fx_rate", "0.22"},
+                        Arg{"fx_depth", "0.65"}, Arg{"fx_center", "650"},
+                        Arg{"fx_spread", "0.8"}, Arg{"fx_q", "0.25"},
+                        Arg{"fx_tone", "11000"}};
+        } else if (name == "SCLOrkDecimatorFX") {
+            defaults = {Arg{"fx_mix", "0.4"}, Arg{"fx_rate", "8000"},
+                        Arg{"fx_bits", "8"}, Arg{"fx_drive", "1.3"},
+                        Arg{"fx_tone", "8000"}};
+        } else if (name == "SCLOrkCrossoverDistortionFX") {
+            defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_drive", "2.0"},
+                        Arg{"fx_shape", "0.75"}, Arg{"fx_tone", "9000"}};
         } else if (hasMixControl) {
             defaults.push_back(Arg{"fx_mix", "0.25"});
         }

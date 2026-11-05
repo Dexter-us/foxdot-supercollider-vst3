@@ -200,6 +200,12 @@ int main() {
         assert(source == unchanged);
         const auto chorusControls = playerEffectControlSpecs("Chorus");
         const auto echoControls = playerEffectControlSpecs("AirwindowsEchojam");
+        const auto sclorkPhazerControls =
+            playerEffectControlSpecs("SCLOrkPhazerFX");
+        const auto sclorkDecimatorControls =
+            playerEffectControlSpecs("SCLOrkDecimatorFX");
+        const auto sclorkCrossoverControls =
+            playerEffectControlSpecs("SCLOrkCrossoverDistortionFX");
         const auto pingPongControls = playerEffectControlSpecs("LimutPingPong");
         const auto duckControls = playerEffectControlSpecs("LimutDuck");
         const auto disperserControls =
@@ -207,6 +213,12 @@ int main() {
         const auto fuzzControls = playerEffectControlSpecs("LimutFuzz");
         assert(chorusControls.size() == 7);
         assert(echoControls.size() == 4);
+        assert(sclorkPhazerControls.size() == 7);
+        assert(sclorkDecimatorControls.size() == 5);
+        assert(sclorkCrossoverControls.size() == 4);
+        assert(sclorkDecimatorControls[2].name == "fx_bits" &&
+               sclorkDecimatorControls[2].minimum == 1.0f &&
+               sclorkDecimatorControls[2].maximum == 16.0f);
         assert(pingPongControls.size() == 3 && duckControls.size() == 5);
         assert(disperserControls.size() == 4 && fuzzControls.size() == 3);
         assert(disperserControls[1].name == "fx_frequency" &&
@@ -242,6 +254,28 @@ int main() {
                disperser->arguments.size() == 4);
         assert(fuzz->category == "Distortion and reduction" &&
                fuzz->arguments.size() == 3);
+        const auto sclorkCatalog = makeEffectCatalog(
+            {"SCLOrkPhazerFX", "SCLOrkDecimatorFX",
+             "SCLOrkCrossoverDistortionFX"});
+        const auto findSCLOrkEffect = [&](const std::string& name) {
+            return std::find_if(sclorkCatalog.begin(), sclorkCatalog.end(),
+                [&](const auto& item) { return item.name == name; });
+        };
+        const auto sclorkPhazer = findSCLOrkEffect("SCLOrkPhazerFX");
+        const auto sclorkDecimator = findSCLOrkEffect("SCLOrkDecimatorFX");
+        const auto sclorkCrossover =
+            findSCLOrkEffect("SCLOrkCrossoverDistortionFX");
+        assert(sclorkPhazer != sclorkCatalog.end() && sclorkPhazer->available);
+        assert(sclorkDecimator != sclorkCatalog.end() &&
+               sclorkDecimator->available);
+        assert(sclorkCrossover != sclorkCatalog.end() &&
+               sclorkCrossover->available);
+        assert(sclorkPhazer->category == "Modulation and rhythm" &&
+               sclorkPhazer->arguments.size() == 7);
+        assert(sclorkDecimator->category == "Distortion and reduction" &&
+               sclorkDecimator->arguments.size() == 5);
+        assert(sclorkCrossover->category == "Distortion and reduction" &&
+               sclorkCrossover->arguments.size() == 4);
         assert(disperserControls.size() == 4 &&
                disperserControls[1].name == "fx_frequency" &&
                disperserControls[1].minimum == 30.0f &&

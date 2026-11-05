@@ -3517,6 +3517,9 @@ private:
                name == "JPverb" || name == "Greyhole" ||
                name == "Chorus" || name == "Flanger" ||
                name == "Phaser" || name == "Tremolo" ||
+                name == "SCLOrkPhazerFX" ||
+                name == "SCLOrkDecimatorFX" ||
+                name == "SCLOrkCrossoverDistortionFX" ||
                name == "LimutPingPong" || name == "LimutDuck" ||
                name == "LimutDisperser" || name == "LimutFuzz" ||
                name == "LimutShifter" || name == "LimutShimmer" ||
@@ -3664,6 +3667,12 @@ private:
                 const bool isFlanger = userDefinition.name == "Flanger";
                 const bool isPhaser = userDefinition.name == "Phaser";
                 const bool isTremolo = userDefinition.name == "Tremolo";
+                const bool isSCLOrkPhazer =
+                    userDefinition.name == "SCLOrkPhazerFX";
+                const bool isSCLOrkDecimator =
+                    userDefinition.name == "SCLOrkDecimatorFX";
+                const bool isSCLOrkCrossover =
+                    userDefinition.name == "SCLOrkCrossoverDistortionFX";
                 const bool isLimutPingPong =
                     userDefinition.name == "LimutPingPong";
                 const bool isLimutDuck = userDefinition.name == "LimutDuck";
@@ -3684,7 +3693,9 @@ private:
                     isLimutDisperser ? 6u : isLimutFuzz ? 5u :
                     isLimutShifter ? 5u : isLimutShimmer ? 7u :
                     isLimutGatedVerb ? 9u :
-                    isLimutCompressor ? 8u : 9u;
+                    isLimutCompressor ? 8u :
+                    isSCLOrkDecimator ? 7u :
+                    isSCLOrkCrossover ? 6u : 9u;
                 if (loaded->mNumControls != expectedControlCount) {
                     error = synthFile.path.filename().string() +
                             " has an incompatible persistent-effect control layout (expected " +
@@ -3748,6 +3759,33 @@ private:
                     userDefinition.effectControlMaximum =
                         std::array<float, 7>{{1.0f, 8.0f, 1.0f, 1800.0f,
                                               1.0f, 0.85f, 16000.0f}};
+                } else if (isSCLOrkPhazer) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f, 150.0f,
+                                              0.0f, 0.05f, 200.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 8.0f, 1.0f, 1800.0f,
+                                              1.0f, 1.0f, 16000.0f}};
+                } else if (isSCLOrkDecimator) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 80.0f, 1.0f, 0.5f,
+                                              200.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 22000.0f, 16.0f, 8.0f,
+                                              16000.0f, 1.0f, 1.0f}};
+                } else if (isSCLOrkCrossover) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.5f, 0.0f, 200.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 8.0f, 1.0f, 16000.0f,
+                                              1.0f, 1.0f, 1.0f}};
                 } else if (isTremolo) {
                     userDefinition.effectControlIndices =
                         std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
@@ -3849,6 +3887,10 @@ private:
                     ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
                     : isLimutCompressor
                     ? std::array<bool, 7>{{true, true, true, true, true, true, false}}
+                    : isSCLOrkDecimator
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isSCLOrkCrossover
+                    ? std::array<bool, 7>{{true, true, true, true, false, false, false}}
                     : std::array<bool, 7>{{true, true, true, true, true, true, true}};
                 bool missingRequiredEffectControl = false;
                 for (std::size_t index = 0;

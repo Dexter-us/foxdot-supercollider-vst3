@@ -255,7 +255,23 @@ with tempfile.TemporaryDirectory() as directory:
             ("Tremolo",) if example.name == "172-tremolo-motion.py" else
             ("Phaser", "Tremolo") if example.name == "173-ordered-player-effect-chain.py" else
             ("Flanger", "Chorus") if example.name == "174-drum-effect-chain.py" else
+             ("AirwindowsEchojam",)
+             if example.name == "186-airwindows-echojam-on-chords.py" else
+             ("Chorus", "Phaser", "Tremolo")
+             if example.name == "187-effect-chain-control-sliders.py" else
             ("JPverb", "Greyhole") if example.parent == space_portable else
+             ("LimutPingPong", "LimutDuck")
+             if example.name == "195-limut-pingpong-duck.py" else
+             ("LimutDisperser", "LimutFuzz")
+             if example.name == "196-limut-disperser-fuzz.py" else
+             ("LimutShifter", "LimutShimmer", "LimutGatedVerb")
+             if example.name in ("197-limut-shifter-shimmer.py",
+                                 "198-limut-gated-reverb.py") else
+             ("LimutCompressor",)
+             if example.name == "199-limut-compressor.py" else
+             ("SCLOrkPhazerFX", "SCLOrkDecimatorFX",
+              "SCLOrkCrossoverDistortionFX")
+             if example.name == "201-sclork-insert-effects.py" else
             ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
             ("AirwindowsTapeDelay2",)
             if example.name == "103-sample-player-airwindows-delay.py" else

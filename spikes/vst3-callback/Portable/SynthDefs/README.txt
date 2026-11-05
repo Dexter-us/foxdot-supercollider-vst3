@@ -38,3 +38,15 @@ The folder accepts at most 256 definitions, with an 8 MiB per-file and
 The included CustomPluck source and compiled example are CC0-1.0:
 https://creativecommons.org/publicdomain/zero/1.0/
 Example source for offline compilation: CustomPluck.scd
+
+SCLOrk-derived effects
+----------------------
+SCLOrkPhazerFX.scsyndef, SCLOrkDecimatorFX.scsyndef, and
+SCLOrkCrossoverDistortionFX.scsyndef are stereo player inserts adapted from
+SCLOrkSynths by Josh Mitchell. Their .scd source and attribution are included
+here; the full GPL-3.0 license is in
+../../Licenses/SCLOrkSynths-GPL-3.0.txt.
+They use SuperCollider core UGens only; no additional SCPlugins module is
+needed. Restart the DAW after copying the .scsyndef files here.
+The required packaging/ABI check is tools/test-sclork-synthdefs.py; the
+optional native dry/wet audio render is tools/test-sclork-synthdefs-audio.py.

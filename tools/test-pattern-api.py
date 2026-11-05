@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.160' not in cmake_source or
+if ('VERSION 0.4.161' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -57,8 +57,10 @@ for live_panel_fragment in (
         'selectedEffectSlotIndex()', 'setPlayerEffectControl(',
         'commitPlayerEffectControlToSource(', 'playerControlRanges_',
         'effectControlRangeText(', 'effectControlUnit(',
-        '"fx_frequency"', '"fx_drive"', '"fx_stages"',
-        'fx_frequency fx_q fx_stages fx_drive',
+        '"fx_frequency"', '"fx_drive"', '"fx_stages"', '"fx_bits"',
+        'fx_frequency fx_q fx_stages fx_drive fx_bits',
+        'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
+        'SCLOrkCrossoverDistortionFX',
         'LimutGatedVerb', 'LimutShifter', 'LimutShimmer',
         'LimutCompressor', 'LimutVocoder',
         'TB_ENDTRACK', 'commitPlayerControlToSource(',
@@ -112,7 +114,8 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                              '193-true-copy-convert-data.py',
                                '194-pattern-metadata-helpers.py',
                                  '195-limut-pingpong-duck.py',
-                                 '196-limut-disperser-fuzz.py'):
+                                  '196-limut-disperser-fuzz.py',
+                                  '201-sclork-insert-effects.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -146,7 +149,15 @@ for airwindows_layout_fragment in (
     'isLimutDisperser ? 6u : isLimutFuzz ? 5u :',
     'isLimutShifter ? 5u : isLimutShimmer ? 7u :',
     'isLimutGatedVerb ? 9u :',
-    'isLimutCompressor ? 8u : 9u;',
+    'isSCLOrkDecimator ? 7u :',
+    'isSCLOrkCrossover ? 6u : 9u;',
+    'isSCLOrkPhazer',
+    'isSCLOrkDecimator',
+    'isSCLOrkCrossover',
+    'std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}}',
+    'std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}}',
+    'std::array<float, 7>{{0.0f, 80.0f, 1.0f, 0.5f,',
+    'std::array<float, 7>{{0.0f, 0.5f, 0.0f, 200.0f,',
     'userDefinition.outControl = 0;',
     'userDefinition.inputBusControl = 1;',
     'std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}',
@@ -3509,6 +3520,10 @@ for filename in os.listdir(sys.argv[2]):
             ('LimutShifter', 'LimutShimmer', 'LimutGatedVerb')
             if filename in ('197-limut-shifter-shimmer.py',
                             '198-limut-gated-reverb.py') else ())
+        if filename == '201-sclork-insert-effects.py':
+            example_names = (
+                'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
+                'SCLOrkCrossoverDistortionFX')
         if filename == '199-limut-compressor.py':
             example_names = ('LimutCompressor',)
         example_report = run_compatibility_check(
@@ -5267,6 +5282,11 @@ subprocess.run([
     os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), '..', '..',
                  'tools', 'test-modulation-synthdefs.py'),
     os.path.dirname(os.path.abspath(sys.argv[1]))], check=True)
+subprocess.run([
+    sys.executable,
+    os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), '..', '..',
+                 'tools', 'test-sclork-synthdefs.py'),
+    os.path.dirname(os.path.abspath(sys.argv[1]))], check=True)
 
 chainScript = (
     'p1 >> sine([0,2,4], effects=[("Phaser", {"fx_mix": 0.4}),'
@@ -5289,6 +5309,37 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
 echojamExampleRows = run_example(
     echojamExampleName, ('AirwindowsEchojam',))
 assert len(echojamExampleRows) == 2
+sclorkEffectNames = (
+    'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
+    'SCLOrkCrossoverDistortionFX')
+sclorkEffectExample = open(
+    os.path.join(sys.argv[2], '201-sclork-insert-effects.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    sclorkEffectExample, sclorkEffectNames)
+sclorkRows = run_example('201-sclork-insert-effects.py', sclorkEffectNames)
+assert len(sclorkRows) == 3
+sclorkChainScript = (
+    'p1 >> sine([0, 3, 7], effects=['
+    '("SCLOrkPhazerFX", {"fx_center": 700}),'
+    '("SCLOrkDecimatorFX", {"fx_bits": 7}),'
+    '("SCLOrkCrossoverDistortionFX", {"fx_shape": 0.8})])\n')
+_, sclorkChainRows = run_script(
+    sclorkChainScript, user_synth_names=sclorkEffectNames,
+    include_effect_chains=True)
+assert len(sclorkChainRows) == 1 and sclorkChainRows[0][0] == 'J'
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    sclorkChainScript, sclorkEffectNames)
+for invalidSCLOrkControl in (
+        ('SCLOrkDecimatorFX', 'fx_bits', 17),
+        ('SCLOrkPhazerFX', 'fx_q', 1.1),
+        ('SCLOrkCrossoverDistortionFX', 'fx_shape', -0.1)):
+    effectName, controlName, controlValue = invalidSCLOrkControl
+    badControls = run_error_script(
+        'p1 >> sine(0, effect="' + effectName + '", ' +
+        controlName + '=' + repr(controlValue) + ')\n',
+        (effectName,))
+    assert 'between' in badControls, badControls
 _, maxChain = run_script(
     'p1 >> sine(0, effects=[("Tremolo", {"fx_rate":1}),'
     '("Tremolo", {"fx_rate":2}),("Tremolo", {"fx_rate":3}),'

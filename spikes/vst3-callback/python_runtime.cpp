@@ -178,7 +178,7 @@ _COMPAT_WAVE_KEYWORDS = {
     'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period',
     'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages',
     'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold',
-    'fx_hold', 'fx_release', 'fx_knee'
+    'fx_hold', 'fx_release', 'fx_knee', 'fx_bits'
 }
 _USER_SYNTH_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
@@ -194,7 +194,7 @@ _USER_SYNTH_KEYWORDS = {
     'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period',
     'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages',
     'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold',
-    'fx_hold', 'fx_release', 'fx_knee'
+    'fx_hold', 'fx_release', 'fx_knee', 'fx_bits'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -208,9 +208,9 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack',
     'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio',
     'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release',
-    'fx_knee'
+    'fx_knee', 'fx_bits'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee', 'fx_bits'}
 _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'AirwindowsTapeDelay2': {
         'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'},
@@ -234,6 +234,13 @@ _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'Tremolo': {
         'fx_mix', 'fx_rate', 'fx_depth', 'fx_shape', 'fx_spread',
         'fx_phase', 'fx_tone'},
+    'SCLOrkPhazerFX': {
+        'fx_mix', 'fx_rate', 'fx_depth', 'fx_center', 'fx_spread',
+        'fx_q', 'fx_tone'},
+    'SCLOrkDecimatorFX': {
+        'fx_mix', 'fx_rate', 'fx_bits', 'fx_drive', 'fx_tone'},
+    'SCLOrkCrossoverDistortionFX': {
+        'fx_mix', 'fx_drive', 'fx_shape', 'fx_tone'},
     'LimutPingPong': {'fx_mix', 'fx_time', 'fx_feedback'},
     'LimutDuck': {
         'fx_mix', 'fx_period', 'fx_depth', 'fx_length', 'fx_attack'},
@@ -883,6 +890,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 elif keyword.value.value not in {
                         'AirwindowsTapeDelay2', 'AirwindowsEchojam', 'JPverb',
                         'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo',
+                        'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
+                        'SCLOrkCrossoverDistortionFX',
                         'LimutPingPong', 'LimutDuck', 'LimutDisperser',
                         'LimutFuzz', 'LimutShifter', 'LimutShimmer',
                         'LimutGatedVerb', 'LimutCompressor',
@@ -934,7 +943,10 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                                 effectName.value not in {
                                     'AirwindowsTapeDelay2', 'AirwindowsEchojam',
                                     'JPverb', 'Greyhole', 'Chorus', 'Flanger',
-                                    'Phaser', 'Tremolo', 'LimutPingPong',
+                                    'Phaser', 'Tremolo', 'SCLOrkPhazerFX',
+                                    'SCLOrkDecimatorFX',
+                                    'SCLOrkCrossoverDistortionFX',
+                                    'LimutPingPong',
                                     'LimutDuck', 'LimutDisperser',
                                     'LimutFuzz', 'LimutShifter',
                                      'LimutShimmer', 'LimutGatedVerb',
@@ -6048,6 +6060,25 @@ _PLAYER_EFFECT_SPECS = {
         ('fx_spread', 4, 0.0, 1.0, 0.8),
         ('fx_feedback', 5, 0.0, 0.85, 0.25),
         ('fx_tone', 6, 200.0, 16000.0, 11000.0)),
+    'SCLOrkPhazerFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.45),
+        ('fx_rate', 1, 0.05, 8.0, 0.22),
+        ('fx_depth', 2, 0.0, 1.0, 0.65),
+        ('fx_center', 3, 150.0, 1800.0, 650.0),
+        ('fx_spread', 4, 0.0, 1.0, 0.8),
+        ('fx_q', 5, 0.05, 1.0, 0.25),
+        ('fx_tone', 6, 200.0, 16000.0, 11000.0)),
+    'SCLOrkDecimatorFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.4),
+        ('fx_rate', 1, 80.0, 22000.0, 8000.0),
+        ('fx_bits', 2, 1.0, 16.0, 8.0),
+        ('fx_drive', 3, 0.5, 8.0, 1.3),
+        ('fx_tone', 4, 200.0, 16000.0, 8000.0)),
+    'SCLOrkCrossoverDistortionFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.35),
+        ('fx_drive', 1, 0.5, 8.0, 2.0),
+        ('fx_shape', 2, 0.0, 1.0, 0.75),
+        ('fx_tone', 3, 200.0, 16000.0, 9000.0)),
     'Tremolo': (
         ('fx_mix', 0, 0.0, 1.0, 1.0),
         ('fx_rate', 1, 0.05, 20.0, 5.0),

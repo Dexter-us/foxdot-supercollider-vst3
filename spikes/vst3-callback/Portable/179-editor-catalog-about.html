@@ -125,8 +125,9 @@ selects algorithm; <code>room</code>, <code>mix</code>, <code>damp</code> 0–1;
 optional entries remain visible for information but cannot be inserted until
 the matching SynthDef/UGen pack is installed and the host restarted. Loaded
 player effects include Airwindows TapeDelay2 and Echojam, Chorus, Flanger,
-Phaser, Tremolo, JPverb, Greyhole, and optional LimutFX inserts such as
-LimutShifter, LimutShimmer, and LimutGatedVerb. A chain may contain up to four inserts.
+Phaser, Tremolo, JPverb, Greyhole, the SCLOrk-derived Phazer/Decimator/Crossover
+Distortion inserts, and optional LimutFX inserts such as LimutShifter,
+LimutShimmer, and LimutGatedVerb. A chain may contain up to four inserts.
 Use <code>effects=[("Chorus", {"fx_mix": 0.4}), ...]</code> for a chain or the
 legacy <code>effect="Chorus", fx_mix=0.4</code> form for one insert when that
 effect exposes <code>fx_mix</code>. Airwindows Echojam and TapeDelay2 do not:
@@ -168,6 +169,16 @@ delay 0.005–0.04 seconds, spread 0–1, feedback 0–0.75, tone 200–16000 Hz
 delay 0.0005–0.015 seconds, spread 0–1, feedback 0–0.95, tone 200–16000 Hz.</td></tr>
 <tr id="Phaser"><td>Phaser</td><td>mix 0–1, rate 0.05–8 Hz, depth 0–1,
 center 150–1800 Hz, spread 0–1, feedback 0–0.85, tone 200–16000 Hz.</td></tr>
+<tr id="SCLOrkPhazerFX"><td>SCLOrk Phazer</td><td><code>fx_mix</code> 0–1,
+<code>fx_rate</code> 0.05–8 Hz, <code>fx_depth</code> 0–1,
+<code>fx_center</code> 150–1800 Hz, <code>fx_spread</code> 0–1,
+<code>fx_q</code> 0.05–1, <code>fx_tone</code> 200–16000 Hz.</td></tr>
+<tr id="SCLOrkDecimatorFX"><td>SCLOrk Decimator</td><td><code>fx_mix</code> 0–1,
+<code>fx_rate</code> 80–22000 Hz, <code>fx_bits</code> 1–16,
+<code>fx_drive</code> 0.5–8, <code>fx_tone</code> 200–16000 Hz.</td></tr>
+<tr id="SCLOrkCrossoverDistortionFX"><td>SCLOrk Crossover Distortion</td>
+<td><code>fx_mix</code> 0–1, <code>fx_drive</code> 0.5–8,
+<code>fx_shape</code> 0–1, <code>fx_tone</code> 200–16000 Hz.</td></tr>
 <tr id="Tremolo"><td>Tremolo</td><td>mix, depth, shape, spread and phase 0–1;
 rate 0.05–20 Hz, tone 200–16000 Hz.</td></tr>
 </tbody></table>

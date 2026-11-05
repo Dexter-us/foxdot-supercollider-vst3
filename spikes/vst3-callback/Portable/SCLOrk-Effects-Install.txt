@@ -1,0 +1,41 @@
+SCLOrk-derived stereo insert pack
+================================
+
+This pack contains three precompiled SuperCollider SynthDefs, not three new
+SCPlugins .scx modules. The definitions use SuperCollider core UGens already
+included in the plugin, so there is no separate UGen DLL or SuperCollider
+rebuild to install.
+
+IMPORTANT: these SynthDef names are recognized by the updated Dexter engine
+in version 0.4.161. A 0.4.160 plugin will not expose them in the compatibility
+checker or Effects panel. Wait for/install the matching 0.4.161-or-newer VST3
+before using these files.
+
+After installing the matching VST3:
+1. Close the DAW completely.
+2. Extract this ZIP into the existing dexter_sc_tone.vst3 folder and merge its
+   Portable and Licenses folders. Do not delete or replace the existing
+   Portable/Samples, Portable/SCPlugins, or personal SynthDefs.
+3. Restart the DAW. The three loaded names should appear under Effects:
+   SCLOrkPhazerFX, SCLOrkDecimatorFX, and SCLOrkCrossoverDistortionFX.
+4. Open Portable/201-sclork-insert-effects.py in the plugin editor, or use the
+   same effect names and controls on a player line.
+
+Controls and ranges
+-------------------
+SCLOrkPhazerFX:
+  fx_mix 0..1, fx_rate 0.05..8 Hz, fx_depth 0..1,
+  fx_center 150..1800 Hz, fx_spread 0..1, fx_q 0.05..1,
+  fx_tone 200..16000 Hz.
+
+SCLOrkDecimatorFX:
+  fx_mix 0..1, fx_rate 80..22000 Hz, fx_bits 1..16,
+  fx_drive 0.5..8, fx_tone 200..16000 Hz.
+
+SCLOrkCrossoverDistortionFX:
+  fx_mix 0..1, fx_drive 0.5..8, fx_shape 0..1,
+  fx_tone 200..16000 Hz.
+
+The DSP smooths control changes. The rate/tone ceiling is also limited safely
+against the active sample rate. Source attribution and GPL-3.0 license are
+included with the SynthDefs. See Portable/SynthDefs/README.txt.
