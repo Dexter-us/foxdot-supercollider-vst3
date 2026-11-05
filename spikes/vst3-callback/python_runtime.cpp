@@ -1934,7 +1934,5982 @@ class _FoxDotFinitePattern(list):
         if len(expanded) * total > 256:
             raise ValueError('true_shuffle output is limited to 256 items')
         result = []
-        source = _FoxD   << "            if _synth == 57:\n"
+        source = _FoxDotFinitePattern(expanded)
+        for repetitions in counts:
+            for _ in range(repetitions):
+                result.extend(PShuf(source))
+        return _FoxDotFinitePattern(result)
+
+    def shufflets(self, count=1):
+        counts = self._shuffle_counts(count, 'shufflets')
+        if len(self) > 8:
+            raise ValueError('shufflets chord groups are limited to 8 notes')
+        total = sum(counts)
+        if total > 256:
+            raise ValueError('shufflets output is limited to 256 groups')
+        if total and not self:
+            raise ValueError('shufflets requires a non-empty source pattern')
+        if any(not _finite_note_number(value) for value in self):
+            raise TypeError('shufflets supports numeric note patterns only')
+        return _FoxDotFinitePattern([
+            _FoxDotChord(*PShuf(self))
+            for repetitions in counts for _ in range(repetitions)])
+
+    def invert(self):
+        return _invert_pitch_pattern(self)
+
+    def arp(self, arp_pattern):
+        sequences, kind = _compatible_pattern_sequences(
+            (self, arp_pattern), 'arp', 2)
+        if kind != 'numeric':
+            raise TypeError('arp supports numeric note patterns and chords only')
+        intervals = _FoxDotFinitePattern(sequences[1])
+        return self.stutter(len(intervals)) + intervals
+
+    def splice(self, seq, *seqs):
+        sequences, _ = _compatible_pattern_sequences(
+            (self, seq) + seqs, 'splice', 2)
+        size = 1
+        for sequence in sequences:
+            size = size * len(sequence) // self._gcd(size, len(sequence))
+            if size > 256 // len(sequences):
+                raise ValueError('splice output is limited to 256 items')
+        result = []
+        for index in range(size):
+            for sequence in sequences:
+                result.append(sequence[index % len(sequence)])
+        return _FoxDotFinitePattern(result)
+
+    def sort(self):
+        return _FoxDotFinitePattern(sorted(self))
+
+    def _selector_values(self, selector, method):
+        if isinstance(selector, _FoxDotFinitePattern):
+            values = list(selector)
+        elif isinstance(selector, (list, tuple)):
+            if len(selector) > 256:
+                raise ValueError(method + ' selector is limited to 256 items')
+            values = list(selector)
+        elif selector is None or isinstance(selector, (bool, int, float, str)):
+            values = [selector]
+        else:
+            raise TypeError(
+                method + ' requires a finite selector pattern or scalar value')
+        if not values:
+            raise ValueError(method + ' selector cannot be empty')
+        if len(values) > 256:
+            raise ValueError(method + ' selector is limited to 256 items')
+        if any(isinstance(value, _DexterTimeVar) for value in values):
+            raise TypeError(
+                method + ' requires a static finite selector; var/linvar masks are not supported')
+        return values
+
+    def compress(self, selector):
+        """Keep truthy items under a cycling selector, bounded by this pattern."""
+        mask = self._selector_values(selector, 'compress')
+        if len(self) > 256:
+            raise ValueError('compress input is limited to 256 items')
+        return _FoxDotFinitePattern([
+            item for index, item in enumerate(self)
+            if bool(mask[index % len(mask)])
+        ])
+
+    def select(self, selector):
+        """Cycle a selector over the LCM span, with a hard 256-item cap."""
+        mask = self._selector_values(selector, 'select')
+        if len(self) > 256:
+            raise ValueError('select input is limited to 256 items')
+        if not len(self):
+            return _FoxDotFinitePattern()
+        if all(value == 1 for value in mask):
+            return _FoxDotFinitePattern(self)
+        length = self._laced_length(self, mask)
+        if length > 256:
+            raise ValueError('select expansion is limited to 256 items')
+        return _FoxDotFinitePattern([
+            self[index % len(self)] for index in range(length)
+            if bool(mask[index % len(mask)])
+        ])
+
+    def unduplicate(self):
+        result = []
+        for item in self:
+            if not result or item != result[-1]:
+                result.append(item)
+        return _FoxDotFinitePattern(result)
+
+    def undup(self):
+        """FoxDot-compatible alias for removing adjacent repeated items."""
+        return self.unduplicate()
+
+    def replace(self, old, new):
+        def replace_item(item, depth):
+            if depth > 16:
+                raise ValueError('replace is limited to 16 nested pattern levels')
+            if isinstance(item, _FoxDotFinitePattern):
+                return _FoxDotFinitePattern([
+                    replace_item(child, depth + 1) for child in item])
+            if isinstance(item, _FoxDotChord):
+                return _FoxDotChord(*[
+                    replace_item(child, depth + 1) for child in item])
+            if isinstance(item, tuple):
+                return tuple(replace_item(child, depth + 1) for child in item)
+            if isinstance(item, list):
+                return [replace_item(child, depth + 1) for child in item]
+            return new if item == old else item
+
+        return _FoxDotFinitePattern([
+            replace_item(item, 0) for item in self])
+
+    def trim(self, size):
+        if isinstance(size, bool) or not isinstance(size, int):
+            raise TypeError('trim size must be a whole number')
+        return _FoxDotFinitePattern(self[:size])
+
+    def ltrim(self, size):
+        if isinstance(size, bool) or not isinstance(size, int):
+            raise TypeError('ltrim size must be a whole number')
+        return _FoxDotFinitePattern(self[-size:])
+
+    def normalise(self):
+        if not len(self):
+            raise ValueError('normalise requires a non-empty numeric pattern')
+        if any(not _finite_note_number(value) for value in self):
+            raise TypeError('normalise supports finite numeric patterns only')
+        low = min(self)
+        high = max(self)
+        span = high - low
+        if span == 0:
+            return _FoxDotFinitePattern([0.0 for _ in self])
+        result = []
+        for value in self:
+            normalized = (value - low) / span
+            if not _finite_note_number(normalized):
+                raise ValueError('normalise results must remain finite')
+            result.append(normalized)
+        return _FoxDotFinitePattern(result)
+
+    def norm(self):
+        """FoxDot-compatible alias for numeric pattern normalization."""
+        return self.normalise()
+
+    def choose(self):
+        if not len(self):
+            raise ValueError('choose requires a non-empty finite pattern')
+        return PRand(self, length=1)[0]
+
+    def zip(self, other, dtype=None):
+        if dtype is not None:
+            raise TypeError('zip accepts only the built-in chord-group output')
+        if isinstance(other, str):
+            other = _FoxDotFinitePattern(list(other))
+        elif not isinstance(other, (list, tuple, _FoxDotFinitePattern)):
+            other = _FoxDotFinitePattern([other])
+        return self._zip_with(other)
+
+    def _zipx_note_count(self, item, depth=0):
+        if depth > 16:
+            raise ValueError('P.zipx nesting is limited to 16 levels')
+        if item is None:
+            return 0
+        if isinstance(item, (list, tuple, _FoxDotFinitePattern)):
+            if len(item) > 256:
+                raise ValueError('P.zipx nested patterns are limited to 256 items')
+            count = 0
+            for value in item:
+                count += self._zipx_note_count(value, depth + 1)
+                if count > 8:
+                    return count
+            return count
+        if _finite_note_number(item):
+            return 1
+        raise TypeError('P.zipx requires finite numeric notes, rests, or chords')
+
+    def zipx(self, other):
+        """FoxDot-style LCM zip that preserves each nested pair."""
+        left = list(self)
+        if isinstance(other, str):
+            right = list(other)
+        elif isinstance(other, (list, tuple, _FoxDotFinitePattern)):
+            right = list(other)
+        else:
+            right = [other]
+        if not left or not right:
+            return _FoxDotFinitePattern()
+        left_sample = self._sample_sequence(left)
+        right_sample = self._sample_sequence(right)
+        if left_sample is not None or right_sample is not None:
+            if left_sample is None or right_sample is None:
+                raise TypeError(
+                    'P.zipx cannot mix numeric note patterns with sample-symbol patterns')
+            left, right = left_sample, right_sample
+            length = self._laced_length(left, right)
+            if length > 256:
+                raise ValueError('P.zipx output is limited to 256 items')
+            result = []
+            for index in range(length):
+                left_item = left[index % len(left)]
+                right_item = right[index % len(right)]
+                pair = (left_item, right_item)
+                symbols = _sample_symbols_for_item(pair)
+                if symbols is None:
+                    raise TypeError('P.zipx could not form a sample-symbol pair')
+                if len(symbols) > 8:
+                    raise ValueError(
+                        'P.zipx sample pairs can contain at most 8 symbols')
+                result.append(pair)
+            return _FoxDotFinitePattern(result)
+        left = self._composition_items(left)
+        right = self._composition_items(right)
+        if not left or not right:
+            return _FoxDotFinitePattern()
+        length = self._laced_length(left, right)
+        if length > 256:
+            raise ValueError('P.zipx output is limited to 256 items')
+        result = []
+        for index in range(length):
+            left_item = left[index % len(left)]
+            right_item = right[index % len(right)]
+            note_count = (self._zipx_note_count(left_item) +
+                          self._zipx_note_count(right_item))
+            if note_count > 8:
+                raise ValueError('P.zipx chord pairs can contain at most 8 notes')
+            result.append((left_item, right_item))
+        return _FoxDotFinitePattern(result)
+
+    def deepzip(self, other):
+        return _deep_zip_pattern(self, other, reverse=False)
+
+    def deeprzip(self, other):
+        return _deep_zip_pattern(self, other, reverse=True)
+
+    def map(self, mapping=_FOXDOT_MAP_MISSING, *, func=_FOXDOT_MAP_MISSING):
+        if mapping is _FOXDOT_MAP_MISSING:
+            mapping = func
+        elif func is not _FOXDOT_MAP_MISSING:
+            raise TypeError('map accepts one callable or dictionary argument')
+        if mapping is _FOXDOT_MAP_MISSING:
+            raise TypeError('map requires a callable or dictionary')
+        if isinstance(mapping, dict):
+            if len(mapping) > 256:
+                raise ValueError('map dictionaries are limited to 256 entries')
+            return self._map_dictionary(mapping, preserve_unmapped=False)
+        if not _safe_pattern_mapper(mapping):
+            raise TypeError(
+                'map requires a dictionary or a pure one-argument mapper')
+        if len(self) > 256:
+            raise ValueError('map input is limited to 256 top-level items')
+        input_budget = [0]
+        output_budget = [0]
+
+        def validate_value(value, depth):
+            if depth > 16:
+                raise ValueError('map is limited to 16 nested pattern levels')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    validate_value(child, depth + 1) for child in value])
+            if isinstance(value, _FoxDotChord):
+                values = [validate_value(child, depth + 1) for child in value]
+                if all(_finite_note_number(child) for child in values):
+                    return _FoxDotChord(*values)
+                return tuple(values)
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return tuple(validate_value(child, depth + 1)
+                             for child in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return [validate_value(child, depth + 1) for child in value]
+            output_budget[0] += 1
+            if output_budget[0] > 256:
+                raise ValueError('map output is limited to 256 values')
+            if (value is None or isinstance(value, str) or
+                    _finite_note_number(value)):
+                return value
+            raise TypeError(
+                'map results must be finite numbers, rests, symbols, or groups')
+
+        def map_item(item, depth):
+            if depth > 16:
+                raise ValueError('map is limited to 16 nested pattern levels')
+            if isinstance(item, _FoxDotFinitePattern):
+                return _FoxDotFinitePattern([
+                    map_item(value, depth + 1) for value in item])
+            if isinstance(item, _FoxDotChord):
+                values = [map_item(value, depth + 1) for value in item]
+                if all(_finite_note_number(value) for value in values):
+                    return _FoxDotChord(*values)
+                return tuple(values)
+            if isinstance(item, tuple):
+                return tuple(map_item(value, depth + 1) for value in item)
+            if isinstance(item, list):
+                return [map_item(value, depth + 1) for value in item]
+            input_budget[0] += 1
+            if input_budget[0] > 256:
+                raise ValueError('map input is limited to 256 values')
+            return validate_value(mapping(item), depth)
+
+        return _FoxDotFinitePattern([map_item(item, 0) for item in self])
+
+    def transform(self, func):
+        """Recursively apply a pure mapper under structural input/output caps."""
+        if not _safe_pattern_mapper(func):
+            raise TypeError(
+                'transform requires a pure one-argument mapper')
+        if len(self) > 256:
+            raise ValueError('transform input is limited to 256 top-level items')
+        input_budget = [0]
+        output_budget = [0]
+
+        def visit(value, depth, output=False):
+            if depth > 16:
+                raise ValueError(
+                    'transform is limited to 16 nested pattern levels')
+            budget = output_budget if output else input_budget
+            budget[0] += 1
+            if budget[0] > 256:
+                kind = 'output' if output else 'input'
+                raise ValueError(
+                    'transform ' + kind + ' structure is limited to 256 nodes')
+
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError(
+                        'transform nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    visit(child, depth + 1, output) for child in value])
+            if isinstance(value, _FoxDotChord):
+                if len(value) > 8:
+                    raise ValueError(
+                        'transform chord groups are limited to 8 notes')
+                values = [visit(child, depth + 1, output) for child in value]
+                return (_FoxDotChord(*values)
+                        if all(_finite_note_number(child) for child in values)
+                        else tuple(values))
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError(
+                        'transform groups are limited to 256 items')
+                return tuple(visit(child, depth + 1, output) for child in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError(
+                        'transform groups are limited to 256 items')
+                return [visit(child, depth + 1, output) for child in value]
+
+            if output:
+                if value is None or (
+                        isinstance(value, str) and len(value) <= 256):
+                    return value
+                if _finite_note_number(value):
+                    return value
+                raise TypeError(
+                    'transform results must be finite numbers, text, rests, or groups')
+
+            if value is not None and not (
+                    isinstance(value, str) and len(value) <= 256) and not \
+                    _finite_note_number(value):
+                raise TypeError(
+                    'transform supports finite numbers, text, rests, and groups')
+            return visit(func(value), depth, output=True)
+
+        return _FoxDotFinitePattern([
+            visit(value, 0) for value in self])
+
+    def convert_data(self, dtype=float, *args, **kwargs):
+        """Recursively convert leaves using an approved one-argument mapper."""
+        if args or kwargs:
+            raise TypeError(
+                'convert_data accepts only a pure one-argument converter')
+        if not _safe_pattern_mapper(dtype):
+            raise TypeError(
+                'convert_data requires a pure one-argument converter')
+        return self.transform(dtype)
+
+    def get_methods(self):
+        """Return names of methods supported by the embedded Pattern API."""
+        return [
+            'abs', 'accum', 'add', 'all', 'alt', 'append', 'arp', 'asGroup',
+            'choose', 'compress', 'concat', 'convert_data', 'copy',
+            'count', 'deep_shuffle', 'deepzip', 'deeprzip', 'duplicate', 'eq',
+            'every', 'extend', 'float', 'flatten', 'get_behaviour', 'get_data',
+            'get_methods', 'getitem', 'getslice', 'group', 'help', 'insert',
+            'int', 'invert', 'i_reverse', 'i_rotate', 'i_shuf', 'i_sort',
+            'items', 'iter', 'layer', 'limit', 'loop', 'ltrim', 'make', 'map',
+            'index', 'mirror', 'new', 'ne', 'norm', 'normalise', 'palindrome',
+            'pivot', 'pop', 'remove', 'replace', 'reverse', 'rotate', 'sample', 'select',
+            'repeat', 'set', 'setitem', 'shuffle', 'shufflets', 'sort', 'splice',
+            'startswith', 'stutter', 'str', 'string', 'submap', 'transform',
+            'stretch', 'swap', 'trim', 'true_copy', 'true_shuffle', 'undup', 'unduplicate',
+            'zip', 'zipx'
+        ]
+
+    def help(self):
+        """Return embedded Pattern help text (no console side effect)."""
+        return (
+            'Embedded FoxDot Pattern helpers. Patterns and groups are limited '
+            'to 256 nodes, nesting to 16 levels, and chords to 8 notes. '
+            'get_methods() lists the supported Pattern API; get_data() returns '
+            'the live list-backed data view; new(data) creates a bounded Pattern; '
+            'make() flattens one nested Pattern in place. help() returns this '
+            'text and get_behaviour() returns None.')
+
+    def get_data(self):
+        """Return the live list-backed data, unwrapping a single Pattern."""
+        if len(self) > 256:
+            raise ValueError('get_data input is limited to 256 items')
+        if len(self) == 1 and isinstance(list.__getitem__(self, 0),
+                                         _FoxDotFinitePattern):
+            return list.__getitem__(self, 0)
+        return self
+
+    def get_behaviour(self):
+        """Return the default behaviour marker used by upstream Patterns."""
+        return None
+
+    def new(self, data):
+        """Create a finite Pattern of this class from sequence or scalar data."""
+        if isinstance(data, _FoxDotFinitePattern):
+            values = list(data)
+        elif isinstance(data, range):
+            try:
+                if len(data) > 256:
+                    raise ValueError('new input is limited to 256 items')
+            except OverflowError:
+                raise ValueError('new range is too large')
+            values = list(data)
+        elif isinstance(data, (list, tuple)):
+            values = list(data)
+        else:
+            # Text is one value here; do not split sample strings into notes.
+            values = [data]
+        if len(values) > 256:
+            raise ValueError('new input is limited to 256 items')
+        return self.true_copy(values)
+
+    def make(self):
+        """Normalize the single-nested-Pattern case in place, boundedly."""
+        self.true_copy()
+        if len(self) == 1 and isinstance(list.__getitem__(self, 0),
+                                         _FoxDotFinitePattern):
+            nested = list.__getitem__(self, 0)
+            if len(nested) > 256:
+                raise ValueError('make output is limited to 256 items')
+            list.__setitem__(self, slice(None), list(nested))
+        self.true_copy()
+        return self
+
+    def _map_dictionary(self, mapping, preserve_unmapped):
+        if len(mapping) > 256:
+            raise ValueError('map dictionaries are limited to 256 entries')
+        budget = [0]
+
+        def validate_value(value, depth):
+            if depth > 16:
+                raise ValueError('map is limited to 16 nested pattern levels')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    validate_value(child, depth + 1) for child in value])
+            if isinstance(value, _FoxDotChord):
+                values = [validate_value(child, depth + 1) for child in value]
+                if all(_finite_note_number(child) for child in values):
+                    return _FoxDotChord(*values)
+                return tuple(values)
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return tuple(validate_value(child, depth + 1)
+                             for child in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('map values are limited to 256 items')
+                return [validate_value(child, depth + 1) for child in value]
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError('map output is limited to 256 values')
+            if (value is None or isinstance(value, str) or
+                    _finite_note_number(value)):
+                return value
+            raise TypeError(
+                'map values must be finite numbers, rests, symbols, or groups')
+
+        def map_item(item, depth):
+            if depth > 16:
+                raise ValueError('map is limited to 16 nested pattern levels')
+            if isinstance(item, _FoxDotFinitePattern):
+                return _FoxDotFinitePattern([
+                    map_item(value, depth + 1) for value in item])
+            if isinstance(item, _FoxDotChord):
+                values = [map_item(value, depth + 1) for value in item]
+                if all(_finite_note_number(value) for value in values):
+                    return _FoxDotChord(*values)
+                return tuple(values)
+            if isinstance(item, tuple):
+                return tuple(map_item(value, depth + 1) for value in item)
+            if isinstance(item, list):
+                return [map_item(value, depth + 1) for value in item]
+            default = item if preserve_unmapped else 0
+            return validate_value(mapping.get(item, default), depth)
+
+        if len(self) > 256:
+            raise ValueError('map input is limited to 256 top-level items')
+        return _FoxDotFinitePattern([map_item(item, 0) for item in self])
+
+    def submap(self, mapping):
+        """Recursively replace mapped values, leaving unknowns unchanged."""
+        if not isinstance(mapping, dict):
+            raise TypeError('submap requires a dictionary')
+        return self._map_dictionary(mapping, preserve_unmapped=True)
+
+    def concat(self, other):
+        """Return a bounded copy with another finite sequence appended."""
+        if len(self) > 256:
+            raise ValueError('concat input is limited to 256 items')
+        if isinstance(other, _FoxDotFinitePattern):
+            if len(other) > 256:
+                raise ValueError('concat input is limited to 256 items')
+            appended = list(other)
+        elif isinstance(other, range):
+            try:
+                range_length = len(other)
+            except OverflowError:
+                raise ValueError('concat range is too large')
+            if range_length > 256:
+                raise ValueError('concat input is limited to 256 items')
+            appended = list(other)
+        elif isinstance(other, list):
+            if len(other) > 256:
+                raise ValueError('concat input is limited to 256 items')
+            appended = list(other)
+        elif isinstance(other, str):
+            if len(other) > 256:
+                raise ValueError('concat input is limited to 256 items')
+            appended = list(other)
+        else:
+            appended = [other]
+        if len(self) + len(appended) > 256:
+            raise ValueError('concat output is limited to 256 items')
+        combined = list(self) + appended
+        if not combined:
+            return _FoxDotFinitePattern()
+        left_sample = self._sample_sequence(self) if len(self) else None
+        right_sample = self._sample_sequence(appended) if appended else None
+        if left_sample is not None or right_sample is not None:
+            if ((len(self) and left_sample is None) or
+                    (appended and right_sample is None)):
+                raise TypeError(
+                    'concat cannot mix numeric note patterns with sample-symbol patterns')
+        else:
+            for item in combined:
+                if self._zipx_note_count(item) > 8:
+                    raise ValueError('concat chord groups are limited to 8 notes')
+        return _FoxDotFinitePattern(combined)
+
+    def all(self, predicate=bool):
+        """Return whether every top-level item passes a safe predicate."""
+        if len(self) > 256:
+            raise ValueError('all input is limited to 256 items')
+        if not len(self):
+            return False
+        if not _safe_pattern_mapper(predicate):
+            raise TypeError('all requires a pure one-argument predicate')
+        for item in self:
+            if not predicate(item):
+                return False
+        return True
+
+    def startswith(self, value):
+        """Return whether the first pattern item equals value."""
+        if len(self) > 256:
+            raise ValueError('startswith input is limited to 256 items')
+        return len(self) > 0 and self[0] == value
+
+    def limit(self, aggregator, value):
+        """Repeat numeric items until a safe monotonic aggregate reaches value."""
+        pattern_length = self.__len__()
+        if pattern_length > 256:
+            raise ValueError('limit input is limited to 256 items')
+        if pattern_length == 0:
+            raise ValueError('limit requires a non-empty pattern')
+        if not _finite_note_number(value):
+            raise TypeError('limit threshold must be a finite number')
+        if _dexter_builtin_module is None:
+            raise TypeError('limit requires trusted built-in aggregators')
+        trusted_builtins = _dexter_builtin_module.__dict__
+        max_aggregator = trusted_builtins['max']
+        allowed = (trusted_builtins['sum'], max_aggregator,
+                   trusted_builtins['len'])
+        if not any(aggregator is candidate for candidate in allowed):
+            raise TypeError('limit supports only the built-in sum, max, or len')
+        for item in self:
+            if not _finite_note_number(item):
+                raise TypeError('limit supports finite numeric note patterns only')
+        if (aggregator is max_aggregator and
+                aggregator(list(self)) < value):
+            raise ValueError('limit max threshold is not reachable from this pattern')
+
+        output = []
+        while True:
+            if output or aggregator is not max_aggregator:
+                aggregate = aggregator(output)
+                if not _finite_note_number(aggregate):
+                    raise ValueError('limit aggregate must remain finite')
+                if aggregate >= value:
+                    return _FoxDotFinitePattern(output)
+            output_length = output.__len__()
+            if output_length >= 256:
+                raise ValueError('limit output did not reach its threshold within 256 items')
+            output.append(self[output_length % pattern_length])
+
+    def every(self, count, method, *args, **kwargs):
+        """Repeat a phrase, then append one allowlisted transformed copy."""
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError('every count must be a whole number')
+        if not 1 <= count <= 256:
+            raise ValueError('every count must be from 1 to 256')
+        if len(self) > 256:
+            raise ValueError('every input is limited to 256 items')
+        if not isinstance(method, str):
+            raise TypeError('every transform must be a supported method name')
+        if kwargs:
+            raise TypeError('every does not accept keyword arguments')
+
+        if method in ('reverse', 'mirror'):
+            if args:
+                raise TypeError('every ' + method + ' takes no arguments')
+            transformed = self.reverse() if method == 'reverse' else self.mirror()
+        elif method == 'rotate':
+            amount = 1 if not args else args[0]
+            if len(args) > 1 or isinstance(amount, bool) or not isinstance(amount, int):
+                raise TypeError('every rotate accepts one whole-number amount')
+            transformed = self.rotate(amount)
+        elif method in ('shuffle', 'stutter'):
+            if len(args) > 1:
+                raise TypeError('every ' + method + ' accepts at most one count')
+            amount = (1 if method == 'shuffle' else 2) if not args else args[0]
+            if isinstance(amount, bool) or not isinstance(amount, int):
+                raise TypeError('every ' + method + ' count must be a whole number')
+            transformed = self.shuffle(amount) if method == 'shuffle' else self.stutter(amount)
+        else:
+            raise ValueError(
+                'every supports only reverse, rotate, mirror, shuffle, and stutter')
+
+        expanded_length = len(self) * (count - 1) + len(transformed)
+        if expanded_length > 256:
+            raise ValueError('every output is limited to 256 items')
+        return _FoxDotFinitePattern(
+            list(self) * (count - 1) + list(transformed))
+
+    def copy(self):
+        """Return an independent, bounded copy of pattern/group containers."""
+        if len(self) > 256:
+            raise ValueError('copy input is limited to 256 items')
+        budget = [0]
+
+        def clone(value, depth):
+            if depth > 16:
+                raise ValueError('copy nesting is limited to 16 levels')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError('copy structure is limited to 256 values')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('copy nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    clone(item, depth + 1) for item in value])
+            if isinstance(value, _FoxDotChord):
+                return _FoxDotChord(*[
+                    clone(item, depth + 1) for item in value])
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('copy groups are limited to 256 items')
+                return tuple(clone(item, depth + 1) for item in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('copy groups are limited to 256 items')
+                return [clone(item, depth + 1) for item in value]
+            return value
+
+        return _FoxDotFinitePattern([
+            clone(item, 1) for item in self])
+
+    def true_copy(self, new_data=None):
+        """Return a bounded shallow copy, preserving nested object references."""
+        source = self if new_data is None else new_data
+        if isinstance(source, _FoxDotFinitePattern):
+            values = list(source)
+        elif isinstance(source, (list, tuple)):
+            values = list(source)
+        elif isinstance(source, range):
+            try:
+                if len(source) > 256:
+                    raise ValueError(
+                        'true_copy input is limited to 256 items')
+            except OverflowError:
+                raise ValueError('true_copy range is too large')
+            values = list(source)
+        else:
+            raise TypeError(
+                'true_copy data must be a finite Pattern, list, tuple, or range')
+        if len(values) > 256:
+            raise ValueError('true_copy input is limited to 256 items')
+
+        budget = [0]
+
+        def validate(value, depth):
+            if depth > 16:
+                raise ValueError(
+                    'true_copy nesting is limited to 16 levels')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError(
+                    'true_copy structure is limited to 256 nodes')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError(
+                        'true_copy nested patterns are limited to 256 items')
+                for child in value:
+                    validate(child, depth + 1)
+                return
+            if isinstance(value, _FoxDotChord):
+                if len(value) > 8:
+                    raise ValueError(
+                        'true_copy chord groups are limited to 8 notes')
+                for child in value:
+                    validate(child, depth + 1)
+                return
+            if isinstance(value, (list, tuple)):
+                if len(value) > 256:
+                    raise ValueError(
+                        'true_copy groups are limited to 256 items')
+                for child in value:
+                    validate(child, depth + 1)
+                return
+            if value is None or _finite_note_number(value):
+                return
+            if isinstance(value, str) and len(value) <= 256:
+                return
+            raise TypeError(
+                'true_copy supports finite values, text, rests, and groups')
+
+        for value in values:
+            validate(value, 0)
+        # This engine stores Pattern data in the list itself. The root list is
+        # detached, while nested Pattern/group objects intentionally stay shared.
+        return _FoxDotFinitePattern(values)
+
+    def asGroup(self):
+        """Treat this finite note pattern as one simultaneous chord."""
+        if not 1 <= len(self) <= 8:
+            raise ValueError('asGroup requires 1..8 notes')
+        if any(not _finite_note_number(note) for note in self):
+            raise TypeError(
+                'asGroup supports flat finite numeric note patterns only')
+        return _FoxDotChord(*self)
+
+    def group(self):
+        """FoxDot-compatible alias for asGroup()."""
+        return self.asGroup()
+
+    def flatten(self):
+        """Flatten nested finite groups into one simultaneous chord."""
+        if len(self) > 256:
+            raise ValueError('flatten input is limited to 256 items')
+        notes = []
+
+        def collect(item, depth):
+            if depth > 16:
+                raise ValueError('flatten nesting is limited to 16 levels')
+            if isinstance(item, (_FoxDotChord, _FoxDotFinitePattern)):
+                if len(item) > 256:
+                    raise ValueError('flatten groups are limited to 256 items')
+                for child in item:
+                    collect(child, depth + 1)
+                return
+            notes.append(item)
+            if len(notes) > 8:
+                raise ValueError('flatten chord is limited to 8 notes')
+
+        for item in self:
+            collect(item, 1)
+        if not notes:
+            raise ValueError('flatten requires at least one note')
+        if any(not _finite_note_number(note) for note in notes):
+            raise TypeError('flatten supports numeric notes and PGroup chords only')
+        return _FoxDotChord(*notes)
+
+    def _convert_numeric(self, converter, method_name):
+        """Recursively convert a bounded numeric pattern, preserving rests."""
+        if len(self) > 256:
+            raise ValueError(method_name + ' input is limited to 256 items')
+        budget = [0]
+
+        def convert(value, depth, root=False):
+            if depth > 16:
+                raise ValueError(method_name + ' nesting is limited to 16 levels')
+            if not root:
+                budget[0] += 1
+                if budget[0] > 256:
+                    raise ValueError(
+                        method_name + ' structure is limited to 256 values')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError(
+                        method_name + ' nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    convert(item, depth + 1) for item in value])
+            if isinstance(value, _FoxDotChord):
+                return _FoxDotChord(*[
+                    convert(item, depth + 1) for item in value])
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError(
+                        method_name + ' groups are limited to 256 items')
+                return tuple(convert(item, depth + 1) for item in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError(
+                        method_name + ' groups are limited to 256 items')
+                return [convert(item, depth + 1) for item in value]
+            if value is None:
+                return None
+            if not _finite_note_number(value):
+                raise TypeError(
+                    method_name + ' supports finite numeric notes and rests only')
+            try:
+                converted = converter(value)
+            except (OverflowError, TypeError, ValueError):
+                raise ValueError(
+                    method_name + ' could not convert a numeric note')
+            if not _finite_note_number(converted):
+                raise ValueError(method_name + ' results must remain finite')
+            return converted
+
+        return convert(self, 0, root=True)
+
+    def int(self):
+        """Recursively truncate finite numeric notes to whole degrees."""
+        return self._convert_numeric(int, 'int')
+
+    def float(self):
+        """Recursively convert finite numeric notes to floating-point degrees."""
+        return self._convert_numeric(float, 'float')
+
+    def str(self):
+        """Convert numeric values to text while preserving sample symbols."""
+        if len(self) > 256:
+            raise ValueError('str input is limited to 256 items')
+        budget = [0]
+
+        def convert(value, depth, root=False):
+            if depth > 16:
+                raise ValueError('str nesting is limited to 16 levels')
+            if not root:
+                budget[0] += 1
+                if budget[0] > 256:
+                    raise ValueError('str structure is limited to 256 values')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('str nested patterns are limited to 256 items')
+                return _FoxDotFinitePattern([
+                    convert(item, depth + 1) for item in value])
+            if isinstance(value, _FoxDotChord):
+                if len(value) > 8:
+                    raise ValueError('str chord groups are limited to 8 items')
+                # A tuple of text is no longer a numeric chord, so do not
+                # preserve the chord marker after converting its notes.
+                return tuple(convert(item, depth + 1) for item in value)
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('str groups are limited to 256 items')
+                return tuple(convert(item, depth + 1) for item in value)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('str groups are limited to 256 items')
+                return [convert(item, depth + 1) for item in value]
+            if value is None or isinstance(value, str):
+                return value
+            if not _finite_note_number(value):
+                raise TypeError(
+                    'str supports finite numeric values, sample strings, and rests only')
+            return _FoxDotNumericText(str(value))
+
+        return convert(self, 0, root=True)
+
+    def string(self):
+        """Build a bounded FoxDot-style play string from finite Pattern data."""
+        if len(self) > 256:
+            raise ValueError('string input is limited to 256 items')
+        budget = [0]
+
+        def join_items(items, depth, wrap):
+            parts = []
+            output_length = 2 if wrap else 0
+            for item in items:
+                part = render_item(item, depth + 1)
+                output_length += len(part)
+                if output_length > 4096:
+                    raise ValueError('string output is limited to 4096 characters')
+                parts.append(part)
+            text = ''.join(parts)
+            return '(' + text + ')' if wrap else text
+
+        def render_item(value, depth):
+            if depth > 16:
+                raise ValueError('string nesting is limited to 16 levels')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError('string structure is limited to 256 values')
+            if isinstance(value, _FoxDotFinitePattern):
+                if len(value) > 256:
+                    raise ValueError('string nested patterns are limited to 256 items')
+                return join_items(value, depth, True)
+            if isinstance(value, _FoxDotChord):
+                if len(value) > 8:
+                    raise ValueError('string chords are limited to 8 notes')
+                return join_items(value, depth, False)
+            if isinstance(value, tuple):
+                if len(value) > 256:
+                    raise ValueError('string groups are limited to 256 items')
+                return join_items(value, depth, False)
+            if isinstance(value, list):
+                if len(value) > 256:
+                    raise ValueError('string nested groups are limited to 256 items')
+                return join_items(value, depth, True)
+            if value is None:
+                return ' '
+            if isinstance(value, _FoxDotNumericText):
+                return str(value)
+            if isinstance(value, str):
+                if len(value) > 4096:
+                    raise ValueError(
+                        'string input is limited to 4096 characters')
+                try:
+                    _sample_parse_nodes(value)
+                except (TypeError, ValueError):
+                    raise TypeError(
+                        'string supports valid sample symbols and numeric text only')
+                return value
+            if _finite_note_number(value):
+                return str(value)
+            raise TypeError(
+                'string supports finite notes, rests, groups, and sample symbols')
+
+        return join_items(self, 0, False)
+
+    def items(self):
+        """Return bounded, independent (index, value) pairs like enumerate."""
+        snapshot = self.copy()
+        return [(index, value) for index, value in enumerate(snapshot)]
+
+    def getitem(self, key):
+        """FoxDot-style cyclic access, with bounded pattern-key expansion."""
+        if len(self) > 256:
+            raise ValueError('getitem source is limited to 256 items')
+        if isinstance(key, slice):
+            return self[key]
+
+        if isinstance(key, (_FoxDotFinitePattern, list, tuple)):
+            if len(key) > 256:
+                raise ValueError('getitem index pattern is limited to 256 items')
+            indices = list(key)
+            return _FoxDotFinitePattern([
+                self._getitem_cyclic(index, 0) for index in indices])
+        return self._getitem_cyclic(key, 0)
+
+    def _getitem_cyclic(self, index, depth):
+        if depth > 16:
+            raise ValueError('getitem nested-pattern depth is limited to 16')
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError('getitem index values must be whole numbers')
+        if not len(self):
+            raise ValueError('getitem cannot index an empty Pattern')
+        position = index % len(self)
+        value = list.__getitem__(self, position)
+        if isinstance(value, _FoxDotFinitePattern):
+            return value._getitem_cyclic(index // len(self), depth + 1)
+        return value
+
+    def getslice(self, start=None, stop=None, step=1):
+        """FoxDot-style bounded slice using cyclic Pattern access."""
+        if len(self) > 256:
+            raise ValueError('getslice source is limited to 256 items')
+        if start is None:
+            start = 0
+        if stop is None:
+            stop = len(self)
+        if step is None:
+            step = 1
+        for name, value in (('start', start), ('stop', stop), ('step', step)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError('getslice ' + name + ' must be a whole number')
+        if step == 0:
+            raise ValueError('getslice step cannot be zero')
+        if stop < start:
+            stop = len(self) + stop
+        try:
+            indices = range(start, stop, step)
+            if len(indices) > 256:
+                raise ValueError('getslice output is limited to 256 items')
+        except OverflowError:
+            raise ValueError('getslice range is too large')
+        return self.getitem(_FoxDotFinitePattern(indices))
+
+    def _comparison_values(self, other, method_name):
+        if isinstance(other, _FoxDotNumericText):
+            raise TypeError(method_name + ' requires finite Pattern values')
+        if isinstance(other, str):
+            if _sample_symbols_for_item(other) is not None:
+                values = [other]
+            elif all(char.isspace() or char in _SAMPLE_SYMBOLS
+                     for char in other):
+                values = list(other)
+            else:
+                raise TypeError(
+                    method_name + ' accepts simple sample symbols or Patterns')
+        elif isinstance(other, (_FoxDotFinitePattern, list, tuple, range)):
+            if len(other) > 256:
+                raise ValueError(method_name + ' inputs are limited to 256 items')
+            values = list(other)
+        else:
+            values = [other]
+        if len(values) > 256:
+            raise ValueError(method_name + ' inputs are limited to 256 items')
+        self._validate_mutation_values(values)
+        return values
+
+    def _validate_comparison_values(self, values, method_name):
+        budget = [0]
+
+        def visit(item, depth):
+            if depth > 16:
+                raise ValueError(
+                    method_name + ' nesting is limited to 16 levels')
+            budget[0] += 1
+            if budget[0] > 256:
+                raise ValueError(
+                    method_name + ' values are limited to 256 items')
+            if item is None or _finite_note_number(item):
+                return
+            if isinstance(item, str):
+                if len(item) > 256:
+                    raise ValueError(
+                        method_name + ' text values are limited to 256 characters')
+                return
+            if isinstance(item, (list, tuple)):
+                if len(item) > 256:
+                    raise ValueError(
+                        method_name + ' groups are limited to 256 items')
+                for child in item:
+                    visit(child, depth + 1)
+                return
+            raise TypeError(
+                method_name + ' supports finite values, text, rests, and groups')
+
+        for value in values:
+            visit(value, 0)
+
+    def _comparison_operand_values(self, other, method_name):
+        if isinstance(other, _FoxDotNumericText):
+            values, sequence = [other], False
+        elif isinstance(other, str):
+            sample_symbols = _sample_symbols_for_item(other)
+            if sample_symbols is not None:
+                values, sequence = [other], False
+            else:
+                sample_sequence = len(other) > 0
+                for char in other:
+                    if not char.isspace() and char not in _SAMPLE_SYMBOLS:
+                        sample_sequence = False
+                        break
+                if sample_sequence:
+                    values, sequence = list(other), True
+                else:
+                    values, sequence = [other], False
+        elif isinstance(other, (_FoxDotFinitePattern, list, tuple, range)):
+            try:
+                values = list(other)
+            except OverflowError:
+                raise ValueError(method_name + ' operand is too large')
+            sequence = True
+        else:
+            values, sequence = [other], False
+        if len(values) > 256:
+            raise ValueError(method_name + ' inputs are limited to 256 items')
+        self._validate_comparison_values(values, method_name)
+        return values, sequence
+
+    def _compare_pattern(self, other, operation, method_name):
+        if len(self) > 256:
+            raise ValueError(method_name + ' input is limited to 256 items')
+        self._validate_comparison_values(self, method_name)
+        values, sequence = self._comparison_operand_values(other, method_name)
+        if not len(self):
+            return _FoxDotComparisonPattern()
+        if sequence and not values:
+            raise ValueError(method_name + ' cannot cycle an empty Pattern')
+        length = (self._laced_length(self, values)
+                  if sequence else len(self))
+        if length > 256:
+            raise ValueError(method_name + ' expansion is limited to 256 items')
+        budget = [0]
+        result = [
+            self._comparison_apply(
+                self[index % len(self)],
+                values[index % len(values)] if sequence else values[0],
+                operation, method_name, budget)
+            for index in range(length)
+        ]
+        return _FoxDotComparisonPattern(result)
+
+    def eq(self, other):
+        """Return FoxDot-style 0/1 equality values with right-side cycling."""
+        self._validate_mutation_values(self)
+        values = self._comparison_values(other, 'eq')
+        if len(self) and not values:
+            raise ValueError('eq cannot cycle an empty right-hand Pattern')
+        return _FoxDotFinitePattern([
+            1 if value == values[index % len(values)] else 0
+            for index, value in enumerate(self)]) if len(self) else _FoxDotFinitePattern()
+
+    def ne(self, other):
+        """Return FoxDot-style 0/1 inequality values with right-side cycling."""
+        self._validate_mutation_values(self)
+        values = self._comparison_values(other, 'ne')
+        if len(self) and not values:
+            raise ValueError('ne cannot cycle an empty right-hand Pattern')
+        return _FoxDotFinitePattern([
+            1 if value != values[index % len(values)] else 0
+            for index, value in enumerate(self)]) if len(self) else _FoxDotFinitePattern()
+
+    def _mutation_kind(self, value, budget, depth=0):
+        """Validate one appended value and return numeric/sample/neutral kind."""
+        if depth > 16:
+            raise ValueError('Pattern mutation nesting is limited to 16 levels')
+        budget[0] += 1
+        if budget[0] > 256:
+            raise ValueError('Pattern mutation is limited to 256 values')
+        if value is None:
+            return None
+        if _finite_note_number(value):
+            return 'numeric'
+        if isinstance(value, str):
+            if (value.__class__ is str and
+                    _sample_symbols_for_item(value) is not None):
+                return 'sample'
+            raise TypeError(
+                'Pattern mutation accepts sample symbols, not numeric text')
+        if isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+            if not 1 <= len(value) <= 8:
+                raise ValueError(
+                    'mutated chord/sample groups must contain 1..8 items')
+            kinds = []
+            for child in value:
+                kind = self._mutation_kind(child, budget, depth + 1)
+                if kind is not None and kind not in kinds:
+                    kinds.append(kind)
+            if len(kinds) > 1:
+                raise TypeError(
+                    'Pattern mutation cannot mix notes and sample symbols')
+            return kinds[0] if kinds else None
+        raise TypeError(
+            'Pattern mutation accepts finite notes, rests, groups, and sample symbols')
+
+    def _copy_mutation_item(self, value, depth=0):
+        if depth > 16:
+            raise ValueError('Pattern mutation nesting is limited to 16 levels')
+        if isinstance(value, _FoxDotFinitePattern):
+            if len(value) > 256:
+                raise ValueError('nested pattern is limited to 256 items')
+            return _FoxDotFinitePattern([
+                self._copy_mutation_item(item, depth + 1) for item in value])
+        if isinstance(value, _FoxDotChord):
+            return _FoxDotChord(*[
+                self._copy_mutation_item(item, depth + 1) for item in value])
+        if isinstance(value, tuple):
+            return tuple(self._copy_mutation_item(item, depth + 1)
+                         for item in value)
+        if isinstance(value, list):
+            return [self._copy_mutation_item(item, depth + 1)
+                    for item in value]
+        return value
+
+    def _validate_mutation_values(self, values):
+        budget = [0]
+        kinds = []
+        for value in values:
+            kind = self._mutation_kind(value, budget)
+            if kind is not None and kind not in kinds:
+                kinds.append(kind)
+        if len(kinds) > 1:
+            raise TypeError(
+                'Pattern mutation cannot mix notes and sample symbols')
+
+    def append(self, item):
+        """Append one bounded value in place and return None, like FoxDot."""
+        if len(self) >= 256:
+            raise ValueError('append result is limited to 256 top-level items')
+        pending = list(self) + [item]
+        self._validate_mutation_values(pending)
+        copied = self._copy_mutation_item(item)
+        list.append(self, copied)
+        return None
+
+    def extend(self, sequence):
+        """Append a bounded finite sequence in place and return None."""
+        if isinstance(sequence, _FoxDotNumericText):
+            raise TypeError('extend requires sample text or a finite sequence')
+        if isinstance(sequence, (str, _FoxDotFinitePattern, list, tuple, range)):
+            try:
+                sequence_length = len(sequence)
+            except OverflowError:
+                raise ValueError('extend input is too large')
+            if sequence_length > 256:
+                raise ValueError('extend input is limited to 256 items')
+            if len(self) + sequence_length > 256:
+                raise ValueError('extend result is limited to 256 top-level items')
+            additions = list(sequence)
+        else:
+            raise TypeError(
+                'extend requires a finite Pattern, list, tuple, range, or string')
+        if not additions:
+            return None
+        pending = list(self) + additions
+        self._validate_mutation_values(pending)
+        copied = [self._copy_mutation_item(item) for item in additions]
+        list.extend(self, copied)
+        return None
+
+    def insert(self, index, item):
+        """Insert a bounded value in place, with Python list index clamping."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError('insert index must be a whole number')
+        if len(self) >= 256:
+            raise ValueError('insert result is limited to 256 top-level items')
+        position = index
+        if position < 0:
+            position = max(0, len(self) + position)
+        else:
+            position = min(len(self), position)
+        pending = list(self)
+        pending.insert(position, item)
+        self._validate_mutation_values(pending)
+        copied = self._copy_mutation_item(item)
+        list.insert(self, position, copied)
+        return None
+
+    def pop(self, index=-1):
+        """Remove and return one item, using bounded Python list indexing."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError('pop index must be a whole number')
+        position = index
+        if position < 0:
+            position += len(self)
+        if position < 0 or position >= len(self):
+            raise IndexError('pop index out of range')
+        return list.pop(self, position)
+
+    def remove(self, item):
+        """Remove the first matching bounded item in place and return None."""
+        self._validate_mutation_values([item])
+        try:
+            index = list.index(self, item)
+        except ValueError:
+            raise ValueError('Pattern.remove(x): x is not in the pattern')
+        list.pop(self, index)
+        return None
+
+    def set(self, index, value):
+        """Replace one item in place and return this Pattern, like FoxDot."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError('set index must be a whole number')
+        position = index
+        if position < 0:
+            position += len(self)
+        if position < 0 or position >= len(self):
+            raise IndexError('Pattern.set index out of range')
+        pending = list(self)
+        pending[position] = value
+        self._validate_mutation_values(pending)
+        copied = self._copy_mutation_item(value)
+        list.__setitem__(self, position, copied)
+        return self
+
+    def setitem(self, index, value):
+        """FoxDot-compatible indexed mutation; returns None like the source API."""
+        self.set(index, value)
+        return None
+
+    def alt(self, other):
+        """Return a fresh bounded Pattern containing the alternate sequence."""
+        if isinstance(other, _FoxDotNumericText):
+            raise TypeError('alt requires a finite pattern or valid note/sample values')
+        if isinstance(other, (str, _FoxDotFinitePattern, list, tuple, range)):
+            try:
+                values = list(other)
+            except OverflowError:
+                raise ValueError('alt input is too large')
+        elif other is None or _finite_note_number(other):
+            values = [other]
+        else:
+            raise TypeError(
+                'alt requires a finite pattern or valid note/sample values')
+        if len(values) > 256:
+            raise ValueError('alt input is limited to 256 items')
+        self._validate_mutation_values(values)
+        return _FoxDotFinitePattern([
+            self._copy_mutation_item(item) for item in values])
+
+    def pivot(self, index):
+        indices = (list(index) if isinstance(
+            index, (list, tuple, _FoxDotFinitePattern)) else [index])
+        if len(indices) > 256:
+            raise ValueError('pivot index patterns are limited to 256 items')
+        if len(self) and len(self) * len(indices) > 256:
+            raise ValueError('pivot output is limited to 256 items')
+        result = []
+        length = len(self)
+        for pivot_index in indices:
+            if isinstance(pivot_index, bool) or not isinstance(pivot_index, int):
+                raise TypeError('pivot indices must be whole numbers')
+            if not length:
+                continue
+            midpoint = length / 2.0
+            if pivot_index > midpoint:
+                pivot_index = length - pivot_index - 1
+                transformed = self.mirror().rotate(
+                    (2 * (pivot_index % length)) + 1)
+            else:
+                transformed = self.rotate(
+                    (2 * (pivot_index % length)) + 1).mirror()
+            result.extend(transformed)
+        return _FoxDotFinitePattern(result)
+
+    def layer(self, method, *args, **kwargs):
+        if not isinstance(method, str):
+            raise ValueError(
+                'layer requires an allowed pattern method name')
+        methods = {
+            'reverse': self.reverse,
+            'rotate': self.rotate,
+            'mirror': self.mirror,
+            'invert': self.invert,
+            'palindrome': self.palindrome,
+            'stutter': self.stutter,
+            'repeat': self.repeat,
+            'stretch': self.stretch,
+            'loop': self.loop,
+            'shuffle': self.shuffle,
+            'true_shuffle': self.true_shuffle,
+            'shufflets': self.shufflets,
+            'sort': self.sort,
+            'unduplicate': self.unduplicate,
+            'undup': self.undup,
+            'arp': self.arp,
+            'splice': self.splice,
+            'replace': self.replace,
+            'trim': self.trim,
+            'ltrim': self.ltrim,
+            'normalise': self.normalise,
+            'norm': self.norm,
+            'zip': self.zip,
+            'deepzip': self.deepzip,
+            'deeprzip': self.deeprzip,
+            'map': self.map,
+            'pivot': self.pivot,
+        }
+        if method not in methods:
+            raise ValueError(
+                'layer requires an allowed pattern method name')
+        transformed = methods[method](*args, **kwargs)
+        if not isinstance(transformed, _FoxDotFinitePattern):
+            raise TypeError('layer transform must return a finite P pattern')
+        return self._zip_with(transformed)
+
+    def stutter(self, count=2):
+        counts = list(count) if isinstance(count, (list, tuple)) else [count]
+        if not counts:
+            raise ValueError('stutter requires at least one repeat count')
+        if not len(self):
+            return _FoxDotFinitePattern()
+        length = self._laced_length(self, counts)
+        if length > 256:
+            raise ValueError('stutter is limited to 256 expanded items')
+        values = []
+        for index in range(length):
+            repetitions = counts[index % len(counts)]
+            if not isinstance(repetitions, (int, float)):
+                raise ValueError('stutter counts must be whole numbers from 0 to 16')
+            repeat_count = int(repetitions)
+            if repeat_count != repetitions or repeat_count < 0 or repeat_count > 16:
+                raise ValueError('stutter counts must be whole numbers from 0 to 16')
+            if len(values) + repeat_count > 256:
+                raise ValueError('stutter is limited to 256 expanded items')
+            values.extend([self[index % len(self)]] * repeat_count)
+        return _FoxDotFinitePattern(values)
+
+    def palindrome(self):
+        if len(self) * 2 > 256:
+            raise ValueError('palindrome is limited to 256 expanded items')
+        return _FoxDotFinitePattern(list(self) + list(reversed(self)))
+
+    def _composition_items(self, value):
+        items = list(value) if isinstance(value, (list, tuple)) else [value]
+        if any(self._contains_string(item) for item in items):
+            raise TypeError('P pattern arithmetic is limited to numeric notes, rests, and chords; use reverse(), rotate(), or | for sample-symbol patterns')
+        return items
+
+    def _sample_sequence(self, value):
+        if isinstance(value, _FoxDotFinitePattern):
+            items = list(value)
+        elif isinstance(value, str):
+            items = list(value)
+        elif isinstance(value, (list, tuple)):
+            items = list(value)
+        else:
+            return None
+        if not items:
+            return None
+        if all(_sample_symbols_for_item(item) is not None for item in items):
+            return items
+        return None
+
+    def _concatenate(self, left_value, right_value):
+        left_sample = self._sample_sequence(left_value)
+        right_sample = self._sample_sequence(right_value)
+        if left_sample is not None or right_sample is not None:
+            if left_sample is None and isinstance(left_value, (list, tuple, str)) and not left_value:
+                left_sample = []
+            if right_sample is None and isinstance(right_value, (list, tuple, str)) and not right_value:
+                right_sample = []
+            if left_sample is None or right_sample is None:
+                raise TypeError('P sample-symbol concatenation requires sample symbols or space-rests on both sides')
+            if len(left_sample) + len(right_sample) > 256:
+                raise ValueError('P sample-symbol concatenation is limited to 256 items')
+            return _FoxDotFinitePattern(left_sample + right_sample)
+        left = self._composition_items(left_value)
+        right = self._composition_items(right_value)
+        if len(left) + len(right) > 256:
+            raise ValueError('P pattern concatenation is limited to 256 items')
+        return _FoxDotFinitePattern(left + right)
+
+    def _contains_string(self, item):
+        if isinstance(item, str):
+            return True
+        if isinstance(item, (list, tuple)):
+            return any(self._contains_string(value) for value in item)
+        return False
+
+    def _append_chord_notes(self, item, notes):
+        if item is None:
+            return
+        if isinstance(item, (list, tuple)):
+            for value in item:
+                self._append_chord_notes(value, notes)
+            return
+        notes.append(item)
+
+    def _zip_item(self, left, right):
+        notes = []
+        self._append_chord_notes(left, notes)
+        self._append_chord_notes(right, notes)
+        if len(notes) > 8:
+            raise ValueError('zipped chords can contain at most 8 notes')
+        if not notes:
+            return None
+        return notes[0] if len(notes) == 1 else tuple(notes)
+
+    def _zip_sample_item(self, left, right):
+        symbols = []
+        for item in (left, right):
+            members = _sample_symbols_for_item(item)
+            if members is None:
+                raise TypeError('P sample-symbol & requires finite sample-symbol patterns')
+            symbols.extend(members)
+            if len(symbols) > 8:
+                raise ValueError('zipped sample groups can contain at most 8 symbols')
+        if not symbols:
+            return ' '
+        return symbols[0] if len(symbols) == 1 else tuple(symbols)
+
+    def _zip_with(self, other, reflected=False):
+        left_value = other if reflected else self
+        right_value = self if reflected else other
+        left_sample = (self._sample_sequence(left_value)
+                       if isinstance(left_value, _FoxDotFinitePattern) else None)
+        right_sample = (self._sample_sequence(right_value)
+                        if isinstance(right_value, _FoxDotFinitePattern) else None)
+        if left_sample is not None or right_sample is not None:
+            if left_sample is None or right_sample is None:
+                raise TypeError('P & cannot mix numeric note patterns with sample-symbol patterns')
+            if not left_sample or not right_sample:
+                return _FoxDotFinitePattern()
+            length = self._laced_length(left_sample, right_sample)
+            if length > 256:
+                raise ValueError('P sample-symbol zipping is limited to 256 expanded items')
+            return _FoxDotFinitePattern([
+                self._zip_sample_item(
+                    left_sample[index % len(left_sample)],
+                    right_sample[index % len(right_sample)])
+                for index in range(length)
+            ])
+        left = self._composition_items(left_value)
+        right = self._composition_items(right_value)
+        if not left or not right:
+            return _FoxDotFinitePattern()
+        length = self._laced_length(left, right)
+        if length > 256:
+            raise ValueError('P pattern zipping is limited to 256 expanded items')
+        return _FoxDotFinitePattern([
+            self._zip_item(left[index % len(left)], right[index % len(right)])
+            for index in range(length)
+        ])
+
+    def __or__(self, other):
+        return self._concatenate(self, other)
+
+    def __ror__(self, other):
+        return self._concatenate(other, self)
+
+    def __and__(self, other):
+        return self._zip_with(other)
+
+    def __rand__(self, other):
+        return self._zip_with(other, True)
+
+def _deep_zip_pattern(left, right, reverse=False):
+    def is_sequence(value):
+        return isinstance(value, (list, tuple, _FoxDotFinitePattern))
+
+    budget = [0]
+
+    def zip_level(left_value, right_value, depth):
+        if depth > 16:
+            raise ValueError('deep zip is limited to 16 nested pattern levels')
+        left_items = (list(left_value) if is_sequence(left_value)
+                      else [left_value])
+        right_items = (list(right_value) if is_sequence(right_value)
+                       else [right_value])
+        if not left_items or not right_items:
+            return _FoxDotFinitePattern()
+        length = (len(left_items) * len(right_items) //
+                  _FoxDotFinitePattern()._gcd(
+                      len(left_items), len(right_items)))
+        if length > 256 or budget[0] + length > 256:
+            raise ValueError('deep zip output is limited to 256 paired items')
+        budget[0] += length
+        result = []
+        for index in range(length):
+            left_item = left_items[index % len(left_items)]
+            right_item = right_items[index % len(right_items)]
+            if is_sequence(left_item) or is_sequence(right_item):
+                item = zip_level(left_item, right_item, depth + 1)
+            else:
+                item = ((right_item, left_item) if reverse else
+                        (left_item, right_item))
+            result.append(item)
+        return _FoxDotFinitePattern(result)
+
+    return zip_level(left, right, 0)
+
+def _finite_note_number(value):
+    return (isinstance(value, (int, float)) and not isinstance(value, bool) and
+            value == value and value not in (float('inf'), float('-inf')))
+
+def _invert_pitch_values(values, depth=0):
+    if depth > 16:
+        raise ValueError('invert is limited to 16 nested pattern levels')
+    if len(values) > 256:
+        raise ValueError('invert input patterns are limited to 256 items')
+    notes = [value for value in values if _finite_note_number(value)]
+    pivot = max(notes) if notes else 0
+    result = []
+    for value in values:
+        if value is None:
+            result.append(None)
+        elif _finite_note_number(value):
+            inverted = pivot - value
+            if not _finite_note_number(inverted):
+                raise ValueError('invert results must remain finite numbers')
+            result.append(inverted)
+        elif isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+            if not isinstance(value, _FoxDotFinitePattern) and not 1 <= len(value) <= 8:
+                raise ValueError('invert chord groups must contain 1..8 notes')
+            children = _invert_pitch_values(value, depth + 1)
+            if isinstance(value, _FoxDotFinitePattern):
+                result.append(_FoxDotFinitePattern(children))
+            elif isinstance(value, tuple):
+                result.append(_FoxDotChord(*children) if isinstance(value, _FoxDotChord)
+                              else tuple(children))
+            else:
+                result.append(children)
+        else:
+            raise TypeError('invert supports finite numeric notes, rests, and numeric chords')
+    return result
+
+def _invert_pitch_pattern(pattern):
+    return _FoxDotFinitePattern(_invert_pitch_values(pattern))
+
+def _numeric_pattern_item(value):
+    if value is None or _finite_note_number(value):
+        return True
+    if isinstance(value, (list, tuple)):
+        return 1 <= len(value) <= 8 and all(_finite_note_number(note) for note in value)
+    return False
+
+def _pattern_items(pattern, name):
+    if isinstance(pattern, str):
+        values = list(pattern)
+    elif isinstance(pattern, (list, tuple, _FoxDotFinitePattern)):
+        values = list(pattern)
+    else:
+        raise TypeError(name + ' expects a finite numeric or sample-symbol pattern')
+    if len(values) > 256:
+        raise ValueError(name + ' input patterns are limited to 256 items')
+    if not values:
+        return values, None
+    if all(isinstance(item, str) and len(item) == 1 and
+           (item == ' ' or item in _SAMPLE_SYMBOLS) for item in values):
+        return values, 'sample'
+    if all(_numeric_pattern_item(item) for item in values):
+        return values, 'numeric'
+    raise TypeError(name +
+                    ' requires either numeric notes/rests/chords or sample symbols/space-rests; do not mix them')
+
+def _compatible_pattern_sequences(patterns, name, minimum=1):
+    if len(patterns) < minimum:
+        raise ValueError(name + ' requires at least ' + str(minimum) + ' finite patterns')
+    sequences = []
+    kind = None
+    for pattern in patterns:
+        values, patternKind = _pattern_items(pattern, name)
+        if not values:
+            raise ValueError(name + ' patterns cannot be empty')
+        if kind is not None and patternKind != kind:
+            raise TypeError(name + ' cannot mix numeric note patterns with sample-symbol patterns')
+        kind = patternKind
+        sequences.append(values)
+    return sequences, kind
+
+def _random_pattern_length(length, name):
+    if isinstance(length, bool) or not isinstance(length, int):
+        raise TypeError(name + ' length must be a whole number')
+    if not 1 <= length <= 256:
+        raise ValueError(name + ' length must be from 1 to 256')
+    return length
+
+def _random_pattern_seed(seed, name):
+    global _dexter_random_counter
+    if seed is None:
+        if _dexter_default_seed is not None:
+            seed = _dexter_default_seed
+        else:
+            _dexter_random_counter += 1
+            seed = (int(_dexter_shuffle_seed) +
+                    _dexter_random_counter * 1013904223) & 0xffffffff
+    elif isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError(name + ' seed must be a whole number')
+    elif not 0 <= seed <= 0xffffffff:
+        raise ValueError(name + ' seed must be from 0 to 4294967295')
+    seed = int(seed) & 0xffffffff
+    return seed if seed else 0x6d2b79f5
+
+def _random_pattern_step(state):
+    state ^= (state << 13) & 0xffffffff
+    state &= 0xffffffff
+    state ^= state >> 17
+    state &= 0xffffffff
+    state ^= (state << 5) & 0xffffffff
+    state &= 0xffffffff
+    return state, state / 4294967296.0
+
+def _seeded_pattern_shuffle(values, state):
+    shuffled = list(values)
+    for index in range(len(shuffled) - 1, 0, -1):
+        state, random_value = _random_pattern_step(state)
+        other = int(random_value * (index + 1))
+        shuffled[index], shuffled[other] = shuffled[other], shuffled[index]
+    return shuffled, state
+
+def PRand(start, stop=None, length=256, seed=None):
+    length = _random_pattern_length(length, 'PRand')
+    if isinstance(start, (str, list, tuple, _FoxDotFinitePattern)):
+        if stop is not None:
+            raise TypeError('PRand accepts one finite source pattern or integer bounds')
+        values, kind = _pattern_items(start, 'PRand')
+        if not values:
+            raise ValueError('PRand source pattern cannot be empty')
+        state = _random_pattern_seed(seed, 'PRand')
+        result = []
+        for _ in range(length):
+            state, _ = _random_pattern_step(state)
+            index = (state * len(values)) >> 32
+            result.append(values[index])
+        return _FoxDotFinitePattern(result)
+
+    if isinstance(start, bool) or not isinstance(start, int):
+        raise TypeError('PRand bounds must be whole numbers or a finite source pattern')
+    low = 0 if stop is None else start
+    high = start if stop is None else stop
+    if isinstance(high, bool) or not isinstance(high, int):
+        raise TypeError('PRand bounds must be whole numbers')
+    if not -1000000 <= low <= high <= 1000000:
+        raise ValueError('PRand bounds must be ordered and within -1000000..1000000')
+    state = _random_pattern_seed(seed, 'PRand')
+    span = high - low + 1
+    result = []
+    for _ in range(length):
+        state, _ = _random_pattern_step(state)
+        result.append(low + ((state * span) >> 32))
+    return _FoxDotFinitePattern(result)
+
+def PWhite(lo=0.0, hi=1.0, length=256, seed=None):
+    length = _random_pattern_length(length, 'PWhite')
+    for value in (lo, hi):
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or
+                value != value or value in (float('inf'), float('-inf')) or
+                not -1000000.0 <= value <= 1000000.0):
+            raise ValueError('PWhite bounds must be finite numbers within -1000000..1000000')
+    lo, hi = float(lo), float(hi)
+    if lo > hi:
+        raise ValueError('PWhite requires lo <= hi')
+    state = _random_pattern_seed(seed, 'PWhite')
+    result = []
+    for _ in range(length):
+        state, first = _random_pattern_step(state)
+        state, second = _random_pattern_step(state)
+        # FoxDot PWhite uses a symmetric triangular distribution, not uniform.
+        result.append(lo + ((first + second) * 0.5) * (hi - lo))
+    return _FoxDotFinitePattern(result)
+
+def PWalk(max=7, step=1, start=0, length=256, seed=None):
+    length = _random_pattern_length(length, 'PWalk')
+    for label, value in (('max', max), ('start', start)):
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or
+                value != value or value in (float('inf'), float('-inf')) or
+                not -1000000.0 <= value <= 1000000.0):
+            raise ValueError('PWalk ' + label + ' must be finite and within -1000000..1000000')
+    if isinstance(step, (list, tuple, _FoxDotFinitePattern)):
+        stepValues, stepKind = _pattern_items(step, 'PWalk step')
+        if stepKind != 'numeric' or not stepValues or not all(
+                _finite_note_number(value) for value in stepValues):
+            raise TypeError('PWalk step requires a non-empty numeric pattern')
+    elif _finite_note_number(step):
+        stepValues = [step]
+    else:
+        raise TypeError('PWalk step must be a finite number or numeric pattern')
+    stepValues = [abs(float(value)) for value in stepValues]
+    if any(value > 1000000.0 for value in stepValues):
+        raise ValueError('PWalk step values must be within -1000000..1000000')
+
+    boundary = abs(float(max))
+    value = float(start)
+    state = _random_pattern_seed(seed, 'PWalk')
+    result = []
+    for index in range(length):
+        if index:
+            if value >= boundary:
+                direction = -1.0
+            elif value <= -boundary:
+                direction = 1.0
+            else:
+                state, choice = _random_pattern_step(state)
+                direction = 1.0 if choice < 0.5 else -1.0
+            value += direction * stepValues[index % len(stepValues)]
+            if not _finite_note_number(value):
+                raise ValueError('PWalk generated a non-finite note')
+        result.append(value)
+    return _FoxDotFinitePattern(result)
+
+def PChain(mapping, length=256, seed=None):
+    length = _random_pattern_length(length, 'PChain')
+    if not isinstance(mapping, dict):
+        raise TypeError('PChain expects a dictionary of transition choices')
+    if not 1 <= len(mapping) <= 32:
+        raise ValueError('PChain mappings must contain 1 to 32 states')
+
+    normalized = {}
+    kind = None
+    choiceCount = 0
+    for key, rawChoices in mapping.items():
+        if isinstance(key, str) and len(key) == 1 and (
+                key == ' ' or key in _SAMPLE_SYMBOLS):
+            keyKind = 'sample'
+        elif _finite_note_number(key) and abs(float(key)) <= 1000000.0:
+            keyKind = 'numeric'
+        else:
+            raise TypeError(
+                'PChain keys must be finite numeric notes or single sample symbols')
+        if kind is not None and keyKind != kind:
+            raise TypeError('PChain cannot mix numeric notes and sample symbols')
+        kind = keyKind
+
+        if isinstance(rawChoices, _FoxDotFinitePattern):
+            choices = list(rawChoices)
+        elif isinstance(rawChoices, list):
+            choices = list(rawChoices)
+        elif isinstance(rawChoices, tuple):
+            choices = [rawChoices]
+        else:
+            choices = [rawChoices]
+        if not choices:
+            raise ValueError('PChain transition choices cannot be empty')
+        choiceCount += len(choices)
+        if choiceCount > 256:
+            raise ValueError('PChain transition choices are limited to 256 items')
+        choiceValues, choiceKind = _pattern_items(choices, 'PChain')
+        if choiceKind != keyKind:
+            raise TypeError('PChain transitions must match their key type')
+        normalized[key] = choiceValues
+
+    state = _random_pattern_seed(seed, 'PChain')
+    value = list(normalized.keys())[0]
+    result = []
+    for index in range(length):
+        if index:
+            choices = normalized.get(value)
+            if choices:
+                state, _ = _random_pattern_step(state)
+                choiceIndex = (state * len(choices)) >> 32
+                value = choices[choiceIndex]
+        result.append(value)
+    return _FoxDotFinitePattern(result)
+
+def PDelta(deltas, start=0, length=256):
+    length = _random_pattern_length(length, 'PDelta')
+    if not _finite_note_number(start) or abs(float(start)) > 1000000.0:
+        raise ValueError('PDelta start must be finite and within -1000000..1000000')
+    if _finite_note_number(deltas):
+        deltaValues = [deltas]
+    else:
+        deltaValues, deltaKind = _pattern_items(deltas, 'PDelta')
+        if not deltaValues:
+            raise ValueError('PDelta delta pattern cannot be empty')
+        if deltaKind != 'numeric':
+            raise TypeError('PDelta requires a numeric delta pattern')
+    if not deltaValues:
+        raise ValueError('PDelta delta pattern cannot be empty')
+    if any(not _finite_note_number(delta) or abs(float(delta)) > 1000000.0
+           for delta in deltaValues):
+        raise ValueError('PDelta deltas must be finite and within -1000000..1000000')
+
+    value = start
+    result = []
+    for index in range(length):
+        if index:
+            value += deltaValues[(index - 1) % len(deltaValues)]
+        if not _finite_note_number(value) or abs(float(value)) > 1000000.0:
+            raise ValueError('PDelta accumulated notes must stay within -1000000..1000000')
+        result.append(value)
+    return _FoxDotFinitePattern(result)
+
+def P10(n, seed=None):
+    """FoxDot P10: a bounded random binary pattern."""
+    length = _random_pattern_length(n, 'P10')
+    state = _random_pattern_seed(seed, 'P10')
+    result = []
+    for _ in range(length):
+        state, value = _random_pattern_step(state)
+        result.append(1 if value < 0.5 else 0)
+    return _FoxDotFinitePattern(result)
+
+def PBern(size=16, ratio=0.5, seed=None):
+    """FoxDot Bernoulli pattern of zeroes and ones, with deterministic seeding."""
+    length = _random_pattern_length(size, 'PBern')
+    if (not _finite_note_number(ratio) or
+            not 0.0 <= float(ratio) <= 1.0):
+        raise ValueError('PBern ratio must be finite and within 0..1')
+    ratio = float(ratio)
+    state = _random_pattern_seed(seed, 'PBern')
+    result = []
+    for _ in range(length):
+        state, value = _random_pattern_step(state)
+        result.append(1 if value < ratio else 0)
+    return _FoxDotFinitePattern(result)
+
+def PSine(n=16):
+    """One cycle of FoxDot's sine pattern, sampled at n evenly spaced points."""
+    length = _random_pattern_length(n, 'PSine')
+    step = (2.0 * 3.141592653589793) / length
+    return _FoxDotFinitePattern(
+        _dexter_math.sin(step * index) for index in range(length))
+
+def PTri(start, stop=None, step=1):
+    """FoxDot triangle sequence: bounded PRange followed by its inner reverse."""
+    base = list(PRange(start, stop, step))
+    if not base:
+        raise ValueError('PTri range cannot be empty')
+    result = base + base[::-1][1:-1]
+    if len(result) > 256:
+        raise ValueError('PTri output is limited to 256 items')
+    return _FoxDotFinitePattern(result)
+
+def PSum(n, total, lim=0.125):
+    """FoxDot-style bounded duration values whose sum approaches total."""
+    length = _random_pattern_length(n, 'PSum')
+    if (not _finite_note_number(total) or
+            not 0.0 <= float(total) <= 256.0):
+        raise ValueError('PSum total must be finite and within 0..256')
+    if (not _finite_note_number(lim) or
+            not 0.000001 <= float(lim) <= 1.0):
+        raise ValueError('PSum lim must be finite and within 0.000001..1')
+    total = float(total)
+    lim = float(lim)
+
+    # Match FoxDot's dyadic fill strategy while doing whole cyclic rounds in
+    # bounded work, rather than iterating once for every fractional increment.
+    if total == 0.0:
+        return _FoxDotFinitePattern([0.0] * length)
+    data = [total + 1.0]
+    step = 1.0
+    while sum(data) > total:
+        data = [step] * length
+        step *= 0.5
+        if step == 0.0:
+            raise ValueError('PSum could not represent the requested total')
+
+    current = sum(data)
+    cursor = 0
+    for _ in range(64):
+        if current >= total or step < lim:
+            break
+        remaining = total - current
+        if step > remaining:
+            step *= 0.5
+            continue
+        increments = int(remaining / step)
+        while increments > 0 and increments * step > remaining:
+            increments -= 1
+        if increments == 0:
+            step *= 0.5
+            continue
+        full_rounds, extra = divmod(increments, length)
+        if full_rounds:
+            for index in range(length):
+                data[index] += full_rounds * step
+        for offset in range(extra):
+            data[(cursor + offset) % length] += step
+        cursor = (cursor + extra) % length
+        current = sum(data)
+
+    if (len(data) != length or
+            any(not _finite_note_number(value) or value < 0.0 or value > 256.0
+                for value in data)):
+        raise ValueError('PSum generated values outside the finite pattern bounds')
+    return _FoxDotFinitePattern(data)
+
+def PIndex(length=256):
+    """Finite FoxDot PIndex: return the access index for each item."""
+    length = _random_pattern_length(length, 'PIndex')
+    return _FoxDotFinitePattern(range(length))
+
+def PZ12(tokens=(1, 0), p=(1.0, 0.5), length=256):
+    """Bounded Renardo PZ12 experimental two-token ordering."""
+    length = _random_pattern_length(length, 'PZ12')
+    tokenValues, tokenKind = _pattern_items(tokens, 'PZ12 tokens')
+    if tokenKind != 'numeric' or len(tokenValues) != 2:
+        raise TypeError('PZ12 tokens must contain exactly two numeric values')
+    if tokenValues[0] == tokenValues[1]:
+        raise ValueError('PZ12 tokens must be distinct')
+
+    weights, weightKind = _pattern_items(p, 'PZ12 weights')
+    if weightKind != 'numeric' or len(weights) != 2:
+        raise TypeError('PZ12 p must contain exactly two numeric weights')
+    if any(not _finite_note_number(weight) or
+           not 0.0 <= float(weight) <= 1000000.0 for weight in weights):
+        raise ValueError('PZ12 weights must be finite and within 0..1000000')
+    maximum = max(float(weight) for weight in weights)
+    if maximum <= 0.0:
+        raise ValueError('PZ12 requires at least one positive weight')
+
+    # Renardo's PZ12 chooses the token with the greatest cumulative target
+    # deficit; ties go to the first token. Keep that ordering, but materialize
+    # a finite phrase rather than exposing an unbounded GeneratorPattern.
+    probabilities = [float(weight) / maximum for weight in weights]
+    counts = [0, 0]
+    result = []
+    for index in range(length):
+        target = index + 1
+        deficits = [probabilities[tokenIndex] * target - counts[tokenIndex]
+                    for tokenIndex in range(2)]
+        chosen = 0 if deficits[0] >= deficits[1] else 1
+        result.append(tokenValues[chosen])
+        counts[chosen] += 1
+    return _FoxDotFinitePattern(result)
+
+def PFibMod(length=31):
+    """Bounded prefix of Renardo's Fibonacci-number pattern generator."""
+    length = _random_pattern_length(length, 'PFibMod')
+    if length > 31:
+        raise ValueError(
+            'PFibMod output is limited to 31 items to keep notes within 1000000')
+    result = []
+    previous, current = 0, 1
+    for _ in range(length):
+        result.append(previous)
+        previous, current = current, previous + current
+    return _FoxDotFinitePattern(result)
+
+def PxRand(start, stop=None, length=256, seed=None):
+    """FoxDot PxRand with bounded output and seeded no-adjacent-repeat choice."""
+    length = _random_pattern_length(length, 'PxRand')
+    state = _random_pattern_seed(seed, 'PxRand')
+    if isinstance(start, (str, list, tuple, _FoxDotFinitePattern)):
+        if stop is not None:
+            raise TypeError('PxRand accepts one finite source pattern or integer bounds')
+        values, _ = _pattern_items(start, 'PxRand')
+        if not values:
+            raise ValueError('PxRand source pattern cannot be empty')
+        result = []
+        previous = None
+        hasPrevious = False
+        for _ in range(length):
+            choices = ([value for value in values if value != previous]
+                       if hasPrevious else values)
+            if not choices:
+                raise ValueError(
+                    'PxRand needs at least two distinct choices for repeated output')
+            state, _ = _random_pattern_step(state)
+            index = (state * len(choices)) >> 32
+            previous = choices[index]
+            result.append(previous)
+            hasPrevious = True
+        return _FoxDotFinitePattern(result)
+
+    if isinstance(start, bool) or not isinstance(start, int):
+        raise TypeError('PxRand bounds must be whole numbers or a finite source pattern')
+    low = 0 if stop is None else start
+    high = start if stop is None else stop
+    if isinstance(high, bool) or not isinstance(high, int):
+        raise TypeError('PxRand bounds must be whole numbers')
+    if not -1000000 <= low <= high <= 1000000:
+        raise ValueError(
+            'PxRand bounds must be ordered and within -1000000..1000000')
+    span = high - low + 1
+    if length > 1 and span < 2:
+        raise ValueError(
+            'PxRand needs at least two distinct choices for repeated output')
+    result = []
+    previous = None
+    hasPrevious = False
+    for _ in range(length):
+        state, _ = _random_pattern_step(state)
+        if hasPrevious:
+            choiceIndex = (state * (span - 1)) >> 32
+            previousIndex = previous - low
+            if choiceIndex >= previousIndex:
+                choiceIndex += 1
+        else:
+            choiceIndex = (state * span) >> 32
+        previous = low + choiceIndex
+        result.append(previous)
+        hasPrevious = True
+    return _FoxDotFinitePattern(result)
+
+def PwRand(values, weights, length=256, seed=None):
+    """FoxDot weighted random choices with bounded weights and seeded output."""
+    length = _random_pattern_length(length, 'PwRand')
+    valueItems, _ = _pattern_items(values, 'PwRand values')
+    if not valueItems:
+        raise ValueError('PwRand values cannot be empty')
+    if _finite_note_number(weights):
+        weightItems = [weights]
+    else:
+        weightItems, weightKind = _pattern_items(weights, 'PwRand weights')
+        if weightKind != 'numeric':
+            raise TypeError('PwRand weights must be numeric whole numbers')
+    stretchedWeights = list(
+        _FoxDotFinitePattern(weightItems).stretch(len(valueItems)))
+    if any(isinstance(weight, bool) or not isinstance(weight, int)
+           for weight in stretchedWeights):
+        raise TypeError('PwRand weights must be whole numbers')
+    if any(weight < 0 or weight > 256 for weight in stretchedWeights):
+        raise ValueError('PwRand weights must be within 0..256')
+    poolSize = sum(stretchedWeights)
+    if not 1 <= poolSize <= 65536:
+        raise ValueError('PwRand total weight must be within 1..65536')
+    state = _random_pattern_seed(seed, 'PwRand')
+    result = []
+    for _ in range(length):
+        state, _ = _random_pattern_step(state)
+        choice = (state * poolSize) >> 32
+        for value, weight in zip(valueItems, stretchedWeights):
+            choice -= weight
+            if choice < 0:
+                result.append(value)
+                break
+    return _FoxDotFinitePattern(result)
+
+def PSquare(length=256):
+    length = _random_pattern_length(length, 'PSquare')
+    return _FoxDotFinitePattern(index * index for index in range(length))
+
+def _bounded_pattern_integer(value, name, argument, minimum, maximum):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(name + ' ' + argument + ' must be a whole number')
+    if not minimum <= value <= maximum:
+        raise ValueError(name + ' ' + argument + ' must be within ' +
+                         str(minimum) + '..' + str(maximum))
+    return value
+
+def PRange(start, stop=None, step=1):
+    """FoxDot-style finite range, limited to at most 256 output notes."""
+    if stop is None:
+        start, stop = 0, start
+    start = _bounded_pattern_integer(
+        start, 'PRange', 'start', -1000000, 1000000)
+    stop = _bounded_pattern_integer(
+        stop, 'PRange', 'stop', -1000000, 1000000)
+    step = _bounded_pattern_integer(
+        step, 'PRange', 'step', -1000000, 1000000)
+    if step == 0:
+        raise ValueError('PRange step cannot be zero')
+    if start == stop:
+        return _FoxDotFinitePattern([start])
+    if (start > stop and step > 0) or (start < stop and step < 0):
+        step = -step
+    values = range(start, stop, step)
+    if len(values) > 256:
+        raise ValueError('PRange output is limited to 256 notes')
+    return _FoxDotFinitePattern(values)
+
+def PSq(a=1, b=2, c=3):
+    """FoxDot-style bounded power sequence: a**b through (a+c-1)**b."""
+    a = _bounded_pattern_integer(a, 'PSq', 'a', -1000000, 1000000)
+    count = _random_pattern_length(c, 'PSq')
+    if not _finite_note_number(b) or abs(float(b)) > 16.0:
+        raise ValueError('PSq exponent must be finite and within -16..16')
+    result = []
+    for value in range(a, a + count):
+        try:
+            powered = value ** b
+        except (OverflowError, ZeroDivisionError, ValueError):
+            raise ValueError('PSq results must remain finite numbers')
+        if (not _finite_note_number(powered) or
+                abs(float(powered)) > 1000000.0):
+            raise ValueError('PSq results must stay within -1000000..1000000')
+        result.append(powered)
+    return _FoxDotFinitePattern(result)
+
+def PStep(n, value, default=0):
+    """FoxDot-style cyclic pattern with value on every nth step."""
+    count = _random_pattern_length(n, 'PStep')
+    output = [default] * (count - 1) + [value]
+    _pattern_items(output, 'PStep')
+    return _FoxDotFinitePattern(output)
+
+def _euclidean_binary_pattern(hits, steps, name):
+    hits = _bounded_pattern_integer(hits, name, 'hits', 0, 256)
+    steps = _bounded_pattern_integer(steps, name, 'steps', 1, 256)
+    if hits > steps:
+        raise ValueError(name + ' requires 0 <= hits <= steps <= 256')
+    # This evenly distributes hits and puts the first hit at step zero,
+    # matching FoxDot's PEuclid(3, 8) orientation.
+    return [1 if (index * hits) % steps < hits else 0
+            for index in range(steps)]
+
+def PEuclid(n, k):
+    """FoxDot-style Euclidean pattern of 1/0 values, capped at 256 steps."""
+    return _FoxDotFinitePattern(_euclidean_binary_pattern(n, k, 'PEuclid'))
+
+def PEuclid2(n, k, lo, hi):
+    """Euclidean pattern using FoxDot-compatible low/high values."""
+    bits = _euclidean_binary_pattern(n, k, 'PEuclid2')
+    output = [hi if bit else lo for bit in bits]
+    _pattern_items(output, 'PEuclid2')
+    return _FoxDotFinitePattern(output)
+
+def PAlt(*patterns):
+    sequences, kind = _compatible_pattern_sequences(patterns, 'PAlt', 2)
+    probe = _FoxDotFinitePattern()
+    length = 1
+    for values in sequences:
+        length = length * len(values) // probe._gcd(length, len(values))
+        if length * len(sequences) > 256:
+            raise ValueError('PAlt is limited to 256 expanded items')
+    return _FoxDotFinitePattern([
+        sequences[patternIndex][step % len(sequences[patternIndex])]
+        for step in range(length)
+        for patternIndex in range(len(sequences))
+    ])
+
+def PJoin(patterns):
+    if not isinstance(patterns, (str, list, tuple, _FoxDotFinitePattern)):
+        raise TypeError('PJoin expects a list or pattern of finite phrases')
+    if len(patterns) > 256:
+        raise ValueError('PJoin is limited to 256 input phrases')
+    result = []
+    kind = None
+    for pattern in patterns:
+        values, patternKind = _pattern_items(pattern, 'PJoin')
+        if patternKind is not None and kind is not None and patternKind != kind:
+            raise TypeError('PJoin cannot mix numeric note patterns with sample-symbol patterns')
+        if patternKind is not None:
+            kind = patternKind
+        if len(result) + len(values) > 256:
+            raise ValueError('PJoin output is limited to 256 items')
+        result.extend(values)
+    return _FoxDotFinitePattern(result)
+
+def _pulses_to_durations(pulses):
+    count = 1
+    result = []
+    for pulse in pulses[1:]:
+        if pulse == 1:
+            result.append(count)
+            count = 1
+        else:
+            count += 1
+    result.append(count)
+    return result
+
+def _rotate_foxdot_durations(values, amount):
+    items = list(values)
+    return _FoxDotFinitePattern(items[amount:] + items[:amount])
+
+def _scale_foxdot_durations(values, dur, name):
+    if isinstance(dur, _DexterTimeVar):
+        raise TypeError(name + ' dur must be a positive number or finite numeric pattern')
+    if isinstance(dur, (list, tuple, _FoxDotFinitePattern)):
+        scales = list(dur)
+        if not scales or len(scales) > 256:
+            raise ValueError(name + ' dur pattern must contain 1 to 256 values')
+    else:
+        scales = [dur]
+    for scale in scales:
+        if not isinstance(scale, (int, float)):
+            raise TypeError(name + ' dur must be a positive number or finite numeric pattern')
+        numeric = float(scale)
+        if numeric != numeric or numeric in (float('inf'), float('-inf')) or numeric <= 0.0:
+            raise ValueError(name + ' dur values must be finite and positive')
+    result = _FoxDotFinitePattern(values) * dur
+    if not result or len(result) > 256:
+        raise ValueError(name + ' output is limited to 256 duration values')
+    total = 0.0
+    for value in result:
+        numeric = float(value)
+        if numeric != numeric or numeric in (float('inf'), float('-inf')) or not 0.001 <= numeric <= 4096.0:
+            raise ValueError(name + ' durations must be between 0.001 and 4096 beats')
+        total += numeric
+    if total > 4096.0:
+        raise ValueError(name + ' total duration is limited to 4096 beats')
+    return _FoxDotFinitePattern(result)
+
+def PBeat(string, start=0, dur=0.5):
+    if not isinstance(string, str):
+        raise TypeError('PBeat expects a pulse string')
+    if len(string) > 256:
+        raise ValueError('PBeat pulse strings are limited to 256 characters')
+    try:
+        rotation = int(start)
+    except (TypeError, ValueError, OverflowError):
+        raise TypeError('PBeat start must be an integer')
+    pulses = [1 if character != ' ' else 0 for character in string]
+    durations = _pulses_to_durations(pulses)
+    return _scale_foxdot_durations(
+        _rotate_foxdot_durations(durations, rotation), dur, 'PBeat')
+
+def _foxdot_euclidean_pulses(hits, steps):
+    if hits == 0:
+        return [0 for _ in range(steps)]
+    groups = [[1 if index < hits else 0] for index in range(steps)]
+    remaining = steps
+    while True:
+        remaining -= hits
+        if remaining <= 1:
+            break
+        if remaining < hits:
+            hits, remaining = remaining, hits
+        for index in range(hits):
+            groups[index].extend(groups[-1])
+            del groups[-1]
+    return [pulse for group in groups for pulse in group]
+
+def PDur(n, k, start=0, dur=0.25):
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError('PDur pulse count must be an integer')
+    if isinstance(k, bool) or not isinstance(k, int):
+        raise TypeError('PDur step count must be an integer')
+    if n < 0 or n > 256 or k < 1 or k > 256:
+        raise ValueError('PDur requires 0 <= pulses <= 256 and 1 <= steps <= 256')
+    scale = 1.0
+    while n > k:
+        k *= 2
+        scale *= 0.5
+        if k > 256:
+            raise ValueError('PDur expansion is limited to 256 steps')
+    try:
+        rotation = int(start)
+    except (TypeError, ValueError, OverflowError):
+        raise TypeError('PDur start must be an integer')
+    durations = _pulses_to_durations(_foxdot_euclidean_pulses(n, k))
+    durations = [value * scale for value in durations]
+    return _scale_foxdot_durations(
+        _rotate_foxdot_durations(durations, rotation), dur, 'PDur')
+
+def PDelay(n, k, start=0, dur=0.25):
+    durations = PDur(n, k, start, dur)
+    offsets = [0.0]
+    for duration in durations[:-1]:
+        offsets.append(offsets[-1] + duration)
+    return _FoxDotFinitePattern(offsets)
+
+def PStrum(n=4):
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError('PStrum subdivision count must be an integer')
+    if n < 0 or n > 15:
+        raise ValueError('PStrum subdivision count must be between 0 and 15')
+    first = _FoxDotFinitePattern([1.0, 0.5]).stutter([1, n + 1])
+    second = _FoxDotFinitePattern([1.5, 0.5]).stutter([1, n])
+    return first | second | 1.0
+
+def _pzip_numeric_leaves(item, depth=0):
+    if item is None:
+        return []
+    if _finite_note_number(item):
+        return [item]
+    if not isinstance(item, (list, tuple)):
+        raise TypeError('expected a finite numeric note or chord group')
+    if depth >= 8 or not 1 <= len(item) <= 8:
+        raise TypeError('numeric chord groups are limited to 8 items and 8 levels')
+    notes = []
+    for child in item:
+        notes.extend(_pzip_numeric_leaves(child, depth + 1))
+        if len(notes) > 8:
+            raise ValueError('numeric chord groups are limited to 8 notes')
+    return notes
+
+def _pzip_pattern_values(pattern, name):
+    if isinstance(pattern, _FoxDotFinitePattern):
+        values = list(pattern)
+    elif isinstance(pattern, (list, tuple)):
+        values = list(pattern)
+    elif pattern is None or (isinstance(pattern, (int, float)) and
+                             not isinstance(pattern, bool)):
+        values = [pattern]
+    else:
+        raise TypeError(name +
+                        ' accepts finite numeric notes/rests or sample symbols/space-rests')
+    if not values:
+        raise ValueError(name + ' patterns cannot be empty')
+    if len(values) > 256:
+        raise ValueError(name + ' input patterns are limited to 256 items')
+    kind = None
+    for item in values:
+        try:
+            _pzip_numeric_leaves(item)
+            item_kind = 'numeric'
+        except TypeError:
+            item_kind = ('sample' if _sample_symbols_for_item(item) is not None
+                         else None)
+        if item_kind is None:
+            raise TypeError(name +
+                            ' accepts finite numeric notes/rests/chords or sample symbols/space-rests')
+        if kind is not None and item_kind != kind:
+            raise TypeError(name +
+                            ' cannot mix numeric note patterns with sample-symbol patterns')
+        kind = item_kind
+    return values, kind
+
+def _pzip_laced_length(patterns, name):
+    length = 1
+    for pattern in patterns:
+        other = len(pattern)
+        left, right = length, other
+        while right:
+            left, right = right, left % right
+        length = (length // left) * other
+        if length > 256:
+            raise ValueError(name + ' output is limited to 256 laced items')
+    return length
+
+def _pzip_numeric_chord(items, name):
+    notes = []
+    for item in items:
+        notes.extend(_pzip_numeric_leaves(item))
+    if len(notes) > 8:
+        raise ValueError(name + ' zipped chords are limited to 8 notes')
+    return tuple(items)
+
+def PZip(pat1, pat2, *patN):
+    parsed = [_pzip_pattern_values(pattern, 'PZip')
+              for pattern in (pat1, pat2) + patN]
+    if len(parsed) > 8:
+        raise ValueError('PZip accepts 2 to 8 patterns')
+    kinds = {kind for _, kind in parsed}
+    if len(kinds) > 1:
+        raise TypeError('PZip cannot mix numeric note patterns with sample-symbol patterns')
+    patterns = [values for values, _ in parsed]
+    length = _pzip_laced_length(patterns, 'PZip')
+    if kinds == {'sample'}:
+        zipper = _FoxDotFinitePattern()
+        zipped = []
+        for index in range(length):
+            item = patterns[0][index % len(patterns[0])]
+            for pattern in patterns[1:]:
+                item = zipper._zip_sample_item(item, pattern[index % len(pattern)])
+            zipped.append(item)
+        return _FoxDotFinitePattern(zipped)
+    return _FoxDotFinitePattern([
+        _pzip_numeric_chord(
+            [pattern[index % len(pattern)] for pattern in patterns], 'PZip')
+        for index in range(length)])
+
+def PZip2(pat1, pat2, rule=None):
+    parsed = [_pzip_pattern_values(pat1, 'PZip2'),
+              _pzip_pattern_values(pat2, 'PZip2')]
+    if parsed[0][1] != parsed[1][1]:
+        raise TypeError('PZip2 cannot mix numeric note patterns with sample-symbol patterns')
+    patterns = [values for values, _ in parsed]
+    length = _pzip_laced_length(patterns, 'PZip2')
+    result = []
+    sample_zipper = _FoxDotFinitePattern() if parsed[0][1] == 'sample' else None
+    for index in range(length):
+        left = patterns[0][index % len(patterns[0])]
+        right = patterns[1][index % len(patterns[1])]
+        if rule is None or rule(left, right):
+            result.append(sample_zipper._zip_sample_item(left, right)
+                          if sample_zipper is not None else
+                          _pzip_numeric_chord((left, right), 'PZip2'))
+            if len(result) > 256:
+                raise ValueError('PZip2 output is limited to 256 zipped pairs')
+    return _FoxDotFinitePattern(result)
+
+class _FoxDotComparisonPattern(_FoxDotFinitePattern):
+    """Pattern of 0/1 comparison results with FoxDot-style truth evaluation."""
+
+    def __bool__(self):
+        def all_positive(item, depth=0):
+            if depth > 16:
+                raise ValueError('comparison truth is limited to 16 nested levels')
+            if item is None:
+                return False
+            if isinstance(item, (list, tuple)):
+                for value in item:
+                    if not all_positive(value, depth + 1):
+                        return False
+                return True
+            if not _finite_note_number(item):
+                raise TypeError('comparison truth requires numeric results or rests')
+            return item > 0
+
+        for item in self:
+            if not all_positive(item):
+                return False
+        return True
+
+
+class _FoxDotDurationGroup(tuple):
+    def __new__(cls, values):
+        return tuple.__new__(cls, values)
+
+def PQuicken(dur=0.5, stepsize=3, steps=6):
+    if isinstance(dur, bool) or not isinstance(dur, (int, float)):
+        raise TypeError('PQuicken dur must be a positive number of beats')
+    dur = float(dur)
+    if dur != dur or dur in (float('inf'), float('-inf')) or not 0.0 < dur <= 8.0:
+        raise ValueError('PQuicken dur must be greater than 0 and at most 8 beats')
+    if isinstance(stepsize, bool) or not isinstance(stepsize, int):
+        raise TypeError('PQuicken stepsize must be an integer')
+    if isinstance(steps, bool) or not isinstance(steps, int):
+        raise TypeError('PQuicken steps must be an integer')
+    if stepsize < 2 or stepsize > 257 or steps < 1 or steps > 256:
+        raise ValueError('PQuicken requires 2 <= stepsize <= 257 and 1 <= steps <= 256')
+    if (stepsize - 1) * steps > 256:
+        raise ValueError('PQuicken output is limited to 256 delay offsets')
+    delays = []
+    count = 0.0
+    for _ in range(steps):
+        for _ in range(stepsize - 1):
+            delays.append(count)
+            count += dur / stepsize
+        dur /= stepsize
+    return _FoxDotFinitePattern(delays)
+
+def PRhythm(durations):
+    if not isinstance(durations, (list, tuple, _FoxDotFinitePattern)):
+        raise TypeError('PRhythm expects a finite list or P pattern')
+    values = list(durations)
+    if not values or len(values) > 256:
+        raise ValueError('PRhythm requires 1 to 256 duration items')
+    if len(values) == 1 and isinstance(values[0], _FoxDotDurationGroup):
+        return _FoxDotFinitePattern(values)
+    if len(values) == 1 and isinstance(values[0], tuple):
+        if not 2 <= len(values[0]) <= 4:
+            raise ValueError('PRhythm Euclidean tuples require 2 to 4 PDur arguments')
+        return PDur(*values[0])
+
+    expandedItems = [0]
+
+    def parseItem(item, depth):
+        if depth > 8:
+            raise ValueError('PRhythm nesting is limited to 8 levels')
+        if isinstance(item, _FoxDotDurationGroup):
+            if not item:
+                raise ValueError('PRhythm duration groups cannot be empty')
+            base = float(item[0])
+            offsets = [float(value) for value in item[1:]]
+            if (base != base or base < 0.001 or base > 4096.0 or
+                    any(value != value or value < 0.0 or value > 8.0 or value > base
+                        for value in offsets)):
+                raise ValueError('PRhythm duration-group offsets must fit the 8-beat delay range')
+            expandedItems[0] += len(item)
+            return item, base
+        if isinstance(item, tuple):
+            if not 2 <= len(item) <= 4:
+                raise ValueError('PRhythm Euclidean tuples require 2 to 4 PDur arguments')
+            euclideanDurations = PDur(*item)
+            baseDuration = sum(euclideanDurations)
+            offsets = []
+            elapsed = 0.0
+            for duration in euclideanDurations[:-1]:
+                elapsed += duration
+                offsets.append(elapsed)
+            if baseDuration > 4096.0 or any(value > 8.0 for value in offsets):
+                raise ValueError('PRhythm grouped offsets must fit the 8-beat delay range')
+            expandedItems[0] += len(euclideanDurations)
+            return _FoxDotDurationGroup([baseDuration] + offsets), baseDuration
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            value = float(item)
+            if value != value or value in (float('inf'), float('-inf')) or not 0.001 <= value <= 4096.0:
+                raise ValueError('PRhythm durations must be finite values from 0.001 to 4096 beats')
+            expandedItems[0] += 1
+            return value, value
+        if isinstance(item, (list, _FoxDotFinitePattern)):
+            children = list(item)
+            if not children or len(children) > 256:
+                raise ValueError('PRhythm nested patterns require 1 to 256 items')
+            parsed = [parseItem(child, depth + 1) for child in children]
+            if len(parsed) == 1:
+                return parsed[0]
+            offsets = []
+            elapsed = 0.0
+            for child, span in parsed:
+                if isinstance(child, _FoxDotDurationGroup):
+                    if elapsed > 0.0:
+                        offsets.append(elapsed)
+                    offsets.extend(elapsed + float(value) for value in child[1:])
+                elif elapsed > 0.0:
+                    offsets.append(elapsed)
+                elapsed += span
+            if elapsed > 4096.0 or any(
+                    value > 8.0 or value > elapsed for value in offsets):
+                raise ValueError('PRhythm nested offsets must fit the 8-beat delay range')
+            return _FoxDotDurationGroup([elapsed] + offsets), elapsed
+        raise TypeError(
+            'PRhythm supports numbers, nested duration patterns, and (n, k[, start[, dur]]) tuples')
+
+    output = []
+    totalBeats = 0.0
+    for item in values:
+        parsed, span = parseItem(item, 0)
+        output.append(parsed)
+        totalBeats += span
+        if expandedItems[0] > 256 or totalBeats > 4096.0:
+            raise ValueError('PRhythm is limited to 256 expanded items and 4096 total beats')
+    return _FoxDotFinitePattern(output)
+
+def PStretch(pattern, size):
+    values, kind = _pattern_items(pattern, 'PStretch')
+    if isinstance(size, bool) or not isinstance(size, int):
+        raise TypeError('PStretch target length must be an integer')
+    if size < 0:
+        raise ValueError('PStretch target length cannot be negative')
+    if size > 256:
+        raise ValueError('PStretch output is limited to 256 items')
+    if size and not values:
+        raise ValueError('PStretch cannot stretch an empty pattern')
+    return _FoxDotFinitePattern([
+        values[index % len(values)] for index in range(size)
+    ]) if size else _FoxDotFinitePattern()
+
+def PStutter(pattern, counts=2):
+    values, kind = _pattern_items(pattern, 'PStutter')
+    if isinstance(counts, _FoxDotFinitePattern):
+        repeats = list(counts)
+    elif isinstance(counts, (list, tuple)):
+        repeats = list(counts)
+    else:
+        repeats = [counts]
+    if not repeats:
+        raise ValueError('PStutter repeat counts cannot be empty')
+    for repeat_count in repeats:
+        if isinstance(repeat_count, bool) or not isinstance(repeat_count, int):
+            raise TypeError('PStutter counts must be whole numbers from 0 to 16')
+        if not 0 <= repeat_count <= 16:
+            raise ValueError('PStutter counts must be whole numbers from 0 to 16')
+    if len(repeats) > 256:
+        raise ValueError('PStutter repeat-count patterns are limited to 256 items')
+    if not values:
+        return _FoxDotFinitePattern()
+    iterationCount = _FoxDotFinitePattern()._laced_length(values, repeats)
+    if iterationCount > 256:
+        raise ValueError('PStutter is limited to 256 source/count pattern steps')
+    result = []
+    for index in range(iterationCount):
+        repeat_count = repeats[index % len(repeats)]
+        if len(result) + repeat_count > 256:
+            raise ValueError('PStutter output is limited to 256 items')
+        result.extend([values[index % len(values)]] * repeat_count)
+    return _FoxDotFinitePattern(result)
+
+def PShuf(pattern):
+    global _dexter_shuffle_counter
+    values, kind = _pattern_items(pattern, 'PShuf')
+    shuffled = list(values)
+    _dexter_shuffle_counter += 1
+    state = (int(_dexter_shuffle_seed) +
+             _dexter_shuffle_counter * 1013904223) & 0xffffffff
+    for item in values:
+        encoded = item if isinstance(item, str) else str(item)
+        for character in encoded:
+            state = ((state ^ ord(character)) * 16777619) & 0xffffffff
+    for index in range(len(shuffled) - 1, 0, -1):
+        state = (1664525 * state + 1013904223) & 0xffffffff
+        target = state % (index + 1)
+        shuffled[index], shuffled[target] = shuffled[target], shuffled[index]
+    return _FoxDotFinitePattern(shuffled)
+
+class _FoxDotPatternLiteral:
+    def __getitem__(self, items):
+        if isinstance(items, slice):
+            if items.stop is None:
+                raise ValueError('P range slices require a finite stop value')
+            for bound in (items.start, items.stop, items.step):
+                if bound is not None and not isinstance(bound, int):
+                    raise ValueError('P range slices require integer bounds and step values')
+            start = 0 if items.start is None else items.start
+            step = 1 if items.step is None else items.step
+            if step == 0:
+                raise ValueError('P range slice step cannot be zero')
+            values = range(start, items.stop, step)
+            if len(values) > 256:
+                raise ValueError('P range slices are limited to 256 generated items')
+            return _FoxDotFinitePattern(list(values))
+        values = list(items) if isinstance(items, tuple) else [items]
+        if len(values) > 256:
+            raise ValueError('P[...] is limited to 256 literal items')
+        return _FoxDotFinitePattern(values)
+
+class _FoxDotChord(tuple):
+    def __new__(cls, *notes):
+        if len(notes) == 1 and isinstance(notes[0], (list, tuple)):
+            notes = tuple(notes[0])
+        if not 1 <= len(notes) <= 8:
+            raise ValueError('a PGroup chord must contain 1..8 notes')
+        for note in notes:
+            if isinstance(note, bool) or not isinstance(note, (int, float)) or note != note:
+                raise ValueError('PGroup chords accept numeric scale degrees only')
+        return tuple.__new__(cls, notes)
+
+class _FoxDotNumericText(str):
+    """Text produced from a numeric note; never interpret it as a sample symbol."""
+    pass
+
+def PGroup(*notes):
+    return _FoxDotChord(*notes)
+
+I = PGroup(0, 2, 4)
+II = PGroup(1, 3, 5)
+III = PGroup(2, 4, -1)
+IV = PGroup(3, 5, 0)
+V = PGroup(4, -1, 1)
+VI = PGroup(5, 0, 2)
+VII = PGroup(-1, 1, 3)
+I7 = PGroup(0, 2, 4, 6)
+II7 = PGroup(1, 3, 5, 7)
+III7 = PGroup(2, 4, -1, 8)
+IV7 = PGroup(3, 5, 0, 9)
+V7 = PGroup(4, -1, 1, 10)
+VI7 = PGroup(5, 0, 2, 11)
+VII7 = PGroup(-1, 1, 3, 12)
+
+P = _FoxDotPatternLiteral()
+
+def reverse(pattern):
+    return list(reversed(pattern))
+
+def rotate(pattern, amount=1):
+    values = list(pattern)
+    if not values:
+        return values
+    amount = int(amount) % len(values)
+    return values[-amount:] + values[:-amount] if amount else values
+
+def repeat(pattern, count=2):
+    values = list(pattern)
+    count = int(count)
+    if count < 1 or len(values) * count > 256:
+        raise ValueError('repeat must produce between 1 and 256 steps')
+    return values * count
+
+def palindrome(pattern):
+    values = list(pattern)
+    if len(values) <= 1:
+        return values
+    if len(values) * 2 - 2 > 256:
+        raise ValueError('palindrome must produce no more than 256 steps')
+    return values + values[-2:0:-1]
+
+def stutter(pattern, count=2):
+    values = list(pattern)
+    count = int(count)
+    if count < 1 or count > 16 or len(values) * count > 256:
+        raise ValueError('stutter count must be 1 to 16 and produce no more than 256 steps')
+    return [item for item in values for _ in range(count)]
+
+def interleave(*patterns):
+    if len(patterns) < 2:
+        raise ValueError('interleave requires at least two patterns')
+    values = [list(pattern) for pattern in patterns]
+    total = sum(len(pattern) for pattern in values)
+    if total > 256:
+        raise ValueError('interleave must produce no more than 256 steps')
+    result = []
+    for index in range(max((len(pattern) for pattern in values), default=0)):
+        for pattern in values:
+            if index < len(pattern):
+                result.append(pattern[index])
+    return result
+
+def transpose(pattern, interval=1):
+    interval = int(interval)
+    result = []
+    for item in pattern:
+        if item is None:
+            result.append(None)
+        elif isinstance(item, (list, tuple)):
+            result.append([int(note) + interval for note in item])
+        else:
+            result.append(int(item) + interval)
+    return result
+
+def euclid(hits, steps, note=60, rotation=0):
+    hits = int(hits)
+    steps = int(steps)
+    note = int(note)
+    if steps < 1 or steps > 256 or hits < 0 or hits > steps:
+        raise ValueError('euclid requires 0 <= hits <= steps <= 256')
+    if not 0 <= note <= 127:
+        raise ValueError('euclidean note must be a MIDI pitch from 0 to 127')
+    values = []
+    accumulator = 0
+    for _ in range(steps):
+        accumulator += hits
+        if accumulator >= steps:
+            values.append(note)
+            accumulator -= steps
+        else:
+            values.append(None)
+    return rotate(values, rotation)
+
+def _timing_pattern(value, count, name, allowGroups=False,
+                    allowSustainGroups=False):
+    if count == 0:
+        return ([], []) if allowGroups or allowSustainGroups else []
+    values = ([value] if allowSustainGroups and isinstance(value, _FoxDotChord)
+              else [value] if isinstance(value, (int, float)) else list(value))
+    if not values:
+        raise ValueError(name + ' pattern cannot be empty')
+    result = []
+    groupOffsets = []
+    sustainGroups = []
+    for index in range(count):
+        item = values[index % len(values)]
+        if allowSustainGroups and isinstance(item, _FoxDotChord):
+            group = [float(member) for member in item]
+            if not group:
+                raise ValueError('sus groups cannot be empty')
+            result.append(min(group))
+            sustainGroups.append(group)
+            groupOffsets.append([])
+        elif isinstance(item, _FoxDotDurationGroup):
+            if not allowGroups:
+                raise TypeError('PRhythm duration groups are supported in dur=, not sus=')
+            if not item:
+                raise ValueError('PRhythm duration groups cannot be empty')
+            base = float(item[0])
+            offsets = [float(offset) for offset in item[1:]]
+            if (len(offsets) > 255 or
+                    any(offset != offset or offset < 0.0 or offset > 8.0 or offset > base
+                        for offset in offsets)):
+                raise ValueError('PRhythm group offsets must be within the 8-beat delay range and its base duration')
+            result.append(base)
+            groupOffsets.append(offsets)
+        else:
+            numeric = float(item)
+            result.append(numeric)
+            groupOffsets.append([])
+            if allowSustainGroups:
+                sustainGroups.append([numeric])
+    if allowSustainGroups:
+        return result, sustainGroups
+    return (result, groupOffsets) if allowGroups else result
+
+def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degrees=False,
+         strum=0.0,
+         _octave_control=None, _base_octave=5, _degrees_per_octave=7,
+         _attack_control=None, _release_control=None,
+         _attack_default=0.01, _release_default=0.04, _time_multipliers=None,
+         _allow_repeated_notes=False, _degree_control=None, _root_control=None,
+         _write_control_tokens=True, bits=0.0, crush=1.0,
+         vibdepth=0.5, slide=0.0, slidefrom=0.0, slidedelay=0.0,
+           bend=0.0, benddelay=0.0, pshift=0.0, chop=0.0, spin=0.0,
+          cut=1.0, coarse=0.0, formant=-1.0):
+    global _dexter_length, _dexter_slots, _dexter_default_touched
+    global _dexter_note_effect_control_variables, _dexter_bitcrusher_controls
+    _dexter_default_touched = True
+    if isinstance(notes, _DexterPVar):
+        notes = notes.expand(step, offset=offset)
+    if isinstance(notes, _FoxDotChord):
+        notes = [notes]
+    elif isinstance(notes, (int, float)):
+        notes = [notes]
+    if isinstance(notes, str):
+        raise ValueError('FoxDot sample strings are not included yet; sample support is deferred')
+    notes = list(notes)
+    timeMultipliers = [1.0] * len(notes) if _time_multipliers is None else list(_time_multipliers)
+    if len(timeMultipliers) != len(notes):
+        raise ValueError('internal sample timing map does not match the event slots')
+    stepIsVar = isinstance(step, _DexterTimeVar)
+    if stepIsVar:
+        steps = None
+        stepGroupOffsets = [[] for _ in notes]
+    else:
+        steps, stepGroupOffsets = _timing_pattern(
+            step, len(notes), 'dur', allowGroups=True)
+    durationSource = duration
+    durationIsVar = isinstance(durationSource, _DexterTimeVar)
+    sustainGroups = None
+    if not durationIsVar and durationSource is not None:
+        _, sustainGroups = _timing_pattern(
+            durationSource, len(notes), 'sus', allowSustainGroups=True)
+    offset = float(offset)
+    if offset != offset or offset < 0.0 or offset > 4096.0:
+        raise ValueError('offset must be between 0 and 4096 beats')
+    if stepIsVar and any(value < 0.1 or value > 4096.0 for value in step.values):
+        raise ValueError('dur values must be between 0.1 and 4096 beats')
+    if durationIsVar and any(value < 0.02 or value > 4096.0 for value in durationSource.values):
+        raise ValueError('sus values must be between 0.02 and 4096 beats')
+    if _octave_control is not None and any(value < 0.0 or value > 10.0 for value in _octave_control.values):
+        raise ValueError('oct values must be from 0 to 10')
+    if _attack_control is not None and any(value < 0.0 or value > 3.0 for value in _attack_control.values):
+        raise ValueError('atk values must be from 0 to 3 seconds')
+    if _release_control is not None and any(value < 0.0 or value > 3.0 for value in _release_control.values):
+        raise ValueError('rel values must be from 0 to 3 seconds')
+    vibDepthDefault, vibDepthControl = _note_effect_control(
+        vibdepth, 'vibdepth', 0.0, 10.0)
+    slideDefault, slideControl = _note_effect_control(
+        slide, 'slide', -1.0, 4.0)
+    slideFromDefault, slideFromControl = _note_effect_control(
+        slidefrom, 'slidefrom', -1.0, 4.0)
+    slideDelayDefault, slideDelayControl = _note_effect_control(
+        slidedelay, 'slidedelay', 0.0, 1.0)
+    bendDefault, bendControl = _note_effect_control(
+        bend, 'bend', -1.0, 4.0)
+    bendDelayDefault, bendDelayControl = _note_effect_control(
+        benddelay, 'benddelay', 0.0, 1.0)
+    chopDefault, chopControl = _note_effect_control(
+        chop, 'chop', 0.0, 32.0)
+    spinDefault, spinControl = _note_effect_control(
+        spin, 'spin', 0.0, 40.0)
+    cutDefault, cutControl = _note_effect_control(cut, 'cut', 0.0, 1.0)
+    coarseDefault, coarseControl = _note_effect_control(
+        coarse, 'coarse', 0.0, 32.0)
+    formantDefault, formantControl = _note_effect_control(
+        formant, 'formant', -1.0, 7.0)
+    pshiftDefault, pshiftControl = _note_effect_control(
+        pshift, 'pshift', -24.0, 24.0)
+    if isinstance(bits, bool) or isinstance(crush, bool):
+        raise TypeError('bits and crush require numeric controls, not bool')
+    bitsDefault, bitsControl = _event_control(bits, 'bits', 0.0, 24.0)
+    crushDefault, crushControl = _event_control(crush, 'crush', 1.0, 128.0)
+    if _write_control_tokens:
+        _dexter_note_effect_control_variables[0] = tuple(
+            control.wire() if isinstance(control, _DexterTimeVar) else '-'
+            for control in (vibDepthControl, slideControl, slideFromControl,
+                            slideDelayControl, bendControl, bendDelayControl,
+                            chopControl, spinControl, cutControl, coarseControl,
+                            formantControl, pshiftControl))
+        _dexter_bitcrusher_controls[0] = (
+            bitsDefault, bitsControl.wire()
+            if isinstance(bitsControl, _DexterTimeVar) else '-',
+            crushDefault, crushControl.wire()
+            if isinstance(crushControl, _DexterTimeVar) else '-')
+    strumIsVar = isinstance(strum, _DexterTimeVar)
+    if strumIsVar:
+        if any(value < 0.0 or value > 1.0 for value in strum.values):
+            raise ValueError('strum values must be between 0 and 1 beat')
+    else:
+        strum = float(strum)
+        if strum != strum or not 0.0 <= strum <= 1.0:
+            raise ValueError('strum must be between 0 and 1 beat')
+    velocityIsVar = isinstance(velocity, _DexterTimeVar)
+    if velocityIsVar:
+        if any(value < 1.0 or value > 127.0 for value in velocity.values):
+            raise ValueError('velocity values must be from 1 to 127')
+    else:
+        velocity = int(velocity)
+        if not 1 <= velocity <= 127:
+            raise ValueError('velocity must be 1..127')
+    if _dexter_slots + len(notes) > 256:
+        raise ValueError('a pattern is limited to 256 step slots')
+    starts = []
+    stepValues = []
+    sustainGroupValues = []
+    start = offset
+    for i in range(len(notes)):
+        multiplier = float(timeMultipliers[i])
+        if multiplier != multiplier or not 0.0 < multiplier <= 1.0:
+            raise ValueError('internal sample timing subdivisions must be in (0, 1]')
+        baseStepValue = step.at(start) if stepIsVar else steps[i]
+        stepValue = baseStepValue * multiplier
+        stepGroupOffsets[i] = [
+            delayOffset * multiplier for delayOffset in stepGroupOffsets[i]]
+        if durationSource is None:
+            durationValue = stepValue
+            sustainValues = [durationValue]
+        elif durationIsVar:
+            durationValue = durationSource.at(start)
+            sustainValues = [durationValue]
+        else:
+            sustainValues = sustainGroups[i]
+        if stepValue != stepValue or stepValue < 0.001 or stepValue > 4096.0:
+            raise ValueError('subdivided dur values must be between 0.001 and 4096 beats')
+        if any(value != value or value in (float('inf'), float('-inf')) or
+               value < 0.02 for value in sustainValues):
+            raise ValueError('each sus value must be finite and at least 0.02 beats')
+        starts.append(start)
+        stepValues.append(stepValue)
+        sustainGroupValues.append(sustainValues)
+        start += stepValue
+    totalBeats = sum(stepValues)
+    if offset + totalBeats > 4096.0:
+        raise ValueError('offset and pattern length must fit within 4096 beats')
+    polyphonyLength = max(_dexter_length, offset + totalBeats)
+    maxSustain = min(4096.0, polyphonyLength * 8.0)
+    if any(value > maxSustain + 1e-9
+           for group in sustainGroupValues for value in group):
+        raise ValueError('sus cannot exceed 8 cycles of the pattern or 4096 beats')
+    additions = []
+    for i, item in enumerate(notes):
+        start = starts[i]
+        noteVelocity = int(round(velocity.at(start))) if velocityIsVar else velocity
+        if not 1 <= noteVelocity <= 127:
+            raise ValueError('velocity values must be from 1 to 127')
+        if item is None:
+            continue
+        chord = _pzip_numeric_leaves(item)
+        if not chord:
+            continue
+        if _degree_control is not None:
+            degree = (int(round(_degree_control.at(start))) +
+                      (_base_octave - 5) * _degrees_per_octave)
+            if len(chord) > 1:
+                anchor = int(chord[0])
+                chord = [degree + (int(note) - anchor) for note in chord]
+            else:
+                chord = [degree]
+        if len(chord) > 8:
+            raise ValueError('a chord can contain at most 8 notes')
+        strumValue = strum.at(start) if strumIsVar else strum
+        offsets = [0.0] + stepGroupOffsets[i]
+        sustainValues = sustainGroupValues[i]
+        groupCount = max(len(chord), len(offsets), len(sustainValues))
+        for groupIndex in range(groupCount):
+            chordIndex = groupIndex % len(chord)
+            note = chord[chordIndex]
+            note = int(note)
+            if _octave_control is not None:
+                octave = int(round(_octave_control.at(start)))
+                note += (octave - _base_octave) * _degrees_per_octave
+            if degrees:
+                octave, degree = divmod(note, len(_dexter_scale))
+                rootControl = (_root_control if _root_control is not None
+                               else _dexter_root_control)
+                rootMidi = (int(round(rootControl.at(start)))
+                            if rootControl is not None else _dexter_root)
+                note = rootMidi + octave * 12 + _dexter_scale[degree]
+            if not 0 <= note <= 127:
+                raise ValueError('notes must resolve to MIDI pitches 0..127')
+            attackValue = _attack_control.at(start) if _attack_control is not None else float(_attack_default)
+            releaseValue = _release_control.at(start) if _release_control is not None else float(_release_default)
+            if attackValue != attackValue or not 0.0 <= attackValue <= 3.0:
+                raise ValueError('atk must be between 0 and 3 seconds')
+            if releaseValue != releaseValue or not 0.0 <= releaseValue <= 3.0:
+                raise ValueError('rel must be between 0 and 3 seconds')
+            groupOffset = offsets[groupIndex % len(offsets)]
+            sustainValue = sustainValues[groupIndex % len(sustainValues)]
+            vibDepthValue = _note_effect_value(
+                vibDepthDefault, vibDepthControl, start, i)
+            slideValue = _note_effect_value(slideDefault, slideControl, start, i)
+            slideFromValue = _note_effect_value(
+                slideFromDefault, slideFromControl, start, i)
+            slideDelayValue = _note_effect_value(
+                slideDelayDefault, slideDelayControl, start, i)
+            bendValue = _note_effect_value(bendDefault, bendControl, start, i)
+            bendDelayValue = _note_effect_value(
+                bendDelayDefault, bendDelayControl, start, i)
+            chopValue = _note_effect_value(chopDefault, chopControl, start, i)
+            spinValue = _note_effect_value(spinDefault, spinControl, start, i)
+            coarseValue = _note_effect_value(
+                coarseDefault, coarseControl, start, i)
+            formantValue = _note_effect_value(
+                formantDefault, formantControl, start, i)
+            pshiftValue = _note_effect_value(
+                pshiftDefault, pshiftControl, start, i)
+            additions.append((start, sustainValue, note, noteVelocity,
+                              attackValue, releaseValue,
+                              strumValue * chordIndex + groupOffset,
+                              bool(_allow_repeated_notes or
+                                   stepGroupOffsets[i] or
+                                   len(sustainValues) > 1),
+                              i, chordIndex, vibDepthValue, slideValue,
+                              slideFromValue, slideDelayValue, bendValue,
+                                bendDelayValue, chopValue, spinValue,
+                                _note_effect_value(cutDefault, cutControl,
+                                                   start, i),
+                                 coarseValue, formantValue, pshiftValue))
+    if len(_dexter_events) + len(additions) > 256:
+        raise ValueError('a pattern is limited to 256 note events')
+    candidate = _dexter_events + additions
+    boundaries = []
+    active = 0
+    for event in candidate:
+        durationValue = event[1]
+        fullCycles = int(durationValue // polyphonyLength)
+        active += fullCycles
+        if active > 8:
+            raise ValueError('pattern exceeds 8-note polyphony across overlapping sustains')
+        remainder = durationValue - fullCycles * polyphonyLength
+        if remainder <= 1e-9:
+            continue
+        startBeat = (event[0] + event[6]) % polyphonyLength
+        endBeat = startBeat + remainder
+        if endBeat <= polyphonyLength:
+            boundaries.extend(((startBeat, 1), (endBeat, -1)))
+        else:
+            boundaries.extend(((0.0, 1), (endBeat - polyphonyLength, -1),
+                               (startBeat, 1), (polyphonyLength, -1)))
+    for beat, delta in sorted(boundaries, key=lambda item: (item[0], item[1])):
+        active += delta
+        if active > 8:
+            raise ValueError('pattern exceeds 8-note polyphony near beat ' + str(round(beat, 3)))
+    _dexter_events.extend(additions)
+    _dexter_slots += len(notes)
+    _dexter_length = max(_dexter_length, offset + totalBeats)
+class _DexterMouseControl:
+    def __init__(self, axis):
+        self.axis = axis
+
+def MouseX():
+    return _DexterMouseControl('x')
+
+def MouseY():
+    return _DexterMouseControl('y')
+
+class _DexterTimeVar:
+    def __init__(self, values, durations, linear=False):
+        self.values = [float(value) for value in (values if isinstance(values, (list, tuple)) else [values])]
+        self.durations = [float(value) for value in (durations if isinstance(durations, (list, tuple)) else [durations])]
+        if not self.values or len(self.values) > 8:
+            raise ValueError('var/linvar supports 1..8 values')
+        if len(self.durations) == 1 and len(self.values) > 1:
+            self.durations = self.durations * len(self.values)
+        if len(self.durations) != len(self.values):
+            raise ValueError('var/linvar durations must be one value or match the values')
+        if any(value != value or value <= 0.0 or value > 4096.0 for value in self.durations):
+            raise ValueError('var/linvar durations must be between 0 and 4096 beats')
+        if any(value != value for value in self.values):
+            raise ValueError('var/linvar values must be finite numbers')
+        self.linear = bool(linear)
+
+    def wire(self):
+        mode = 'l' if self.linear else 'v'
+        token = mode + ':' + ','.join(str(value) for value in self.values) + ':' + ','.join(str(value) for value in self.durations)
+        if len(token) > 256:
+            raise ValueError('var/linvar control data exceeds the supported size')
+        return token
+
+    def at(self, beat):
+        cycle = sum(self.durations)
+        position = max(0.0, float(beat)) % cycle
+        for index, duration in enumerate(self.durations):
+            if position < duration or index + 1 == len(self.durations):
+                if not self.linear or len(self.values) == 1:
+                    return self.values[index]
+                progress = position / duration
+                following = self.values[(index + 1) % len(self.values)]
+                return self.values[index] + (following - self.values[index]) * progress
+            position -= duration
+        return self.values[-1]
+
+def var(values, durations=4.0):
+    return _DexterTimeVar(values, durations, False)
+
+def linvar(values, durations=4.0):
+    return _DexterTimeVar(values, durations, True)
+
+class _DexterPVar:
+    """A finite sequence of whole patterns selected over explicit beat spans."""
+    def __init__(self, patterns, dur=4.0):
+        if not isinstance(patterns, (list, tuple, _FoxDotFinitePattern)):
+            raise TypeError('Pvar expects a finite list of whole patterns')
+        if not 1 <= len(patterns) <= 8:
+            raise ValueError('Pvar supports 1 to 8 phrase states')
+        normalized = []
+        for phrase in patterns:
+            if isinstance(phrase, (int, float)) and not isinstance(phrase, bool):
+                phrase = [phrase]
+            normalized.append(phrase)
+        self.patterns, self.kind = _compatible_pattern_sequences(
+            normalized, 'Pvar')
+        rawDurations = (list(dur) if isinstance(
+            dur, (list, tuple, _FoxDotFinitePattern)) else [dur])
+        if not rawDurations or len(rawDurations) not in (1, len(self.patterns)):
+            raise ValueError('Pvar durations must be one value or match the phrase count')
+        if len(rawDurations) == 1 and len(self.patterns) > 1:
+            rawDurations *= len(self.patterns)
+        self.durations = []
+        for value in rawDurations:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError('Pvar durations must be finite beat values')
+            value = float(value)
+            if value != value or not 0.001 <= value <= 4096.0:
+                raise ValueError('Pvar durations must be between 0.001 and 4096 beats')
+            self.durations.append(value)
+        if sum(self.durations) > 4096.0:
+            raise ValueError('Pvar phrase cycle cannot exceed 4096 beats')
+
+    def expand(self, step, offset=0.0):
+        offset = float(offset)
+        if offset != offset or offset < 0.0 or offset > 4096.0:
+            raise ValueError('Pvar offset must be between 0 and 4096 beats')
+        if isinstance(step, _DexterTimeVar):
+            if any(value < 0.1 or value > 4096.0 for value in step.values):
+                raise ValueError('Pvar var/linvar dur values must be between 0.1 and 4096 beats')
+            stepCycle = sum(step.durations)
+            phraseCycle = sum(self.durations)
+            cycleCount = phraseCycle / stepCycle
+            if abs(cycleCount - round(cycleCount)) > 1e-8 * max(1.0, cycleCount):
+                raise ValueError(
+                    'Pvar cycle must be a whole number of var/linvar dur cycles')
+            stepValues = None
+        elif isinstance(step, bool):
+            raise TypeError('Pvar dur must be a number or finite numeric pattern')
+        elif isinstance(step, (int, float)):
+            stepValues = [float(step)]
+        elif isinstance(step, (list, tuple, _FoxDotFinitePattern)):
+            stepValues = list(step)
+        else:
+            raise TypeError('Pvar dur must be a number or finite numeric pattern')
+        if stepValues is not None and (not stepValues or len(stepValues) > 256):
+            raise ValueError('Pvar dur patterns are limited to 1..256 values')
+        if stepValues is not None:
+            normalizedStepValues = []
+            for value in stepValues:
+                if isinstance(value, _FoxDotDurationGroup):
+                    if not value:
+                        raise ValueError('Pvar dur groups cannot be empty')
+                    base = value[0]
+                    offsets = value[1:]
+                    if (isinstance(base, bool) or
+                            not isinstance(base, (int, float))):
+                        raise TypeError('Pvar grouped dur bases must be numeric')
+                    base = float(base)
+                    if base != base or not 0.001 <= base <= 4096.0:
+                        raise ValueError(
+                            'Pvar dur values must be between 0.001 and 4096 beats')
+                    if len(offsets) > 255:
+                        raise ValueError(
+                            'Pvar dur groups are limited to 256 note events')
+                    for groupOffset in offsets:
+                        if (isinstance(groupOffset, bool) or
+                                not isinstance(groupOffset, (int, float))):
+                            raise TypeError(
+                                'Pvar grouped dur offsets must be numeric')
+                        groupOffset = float(groupOffset)
+                        if (groupOffset != groupOffset or
+                                groupOffset < 0.0 or groupOffset > 8.0 or
+                                groupOffset > base):
+                            raise ValueError(
+                                'Pvar grouped dur offsets must be within 8 beats and the base duration')
+                    value = base
+                else:
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        raise TypeError('Pvar dur pattern values must be numeric or PRhythm groups')
+                    value = float(value)
+                if value != value or not 0.001 <= value <= 4096.0:
+                    raise ValueError('Pvar dur values must be between 0.001 and 4096 beats')
+                normalizedStepValues.append(value)
+            stepValues = normalizedStepValues
+        result = []
+        stepIndex = 0
+        totalElapsed = 0.0
+        for phrase, duration in zip(self.patterns, self.durations):
+            elapsed = 0.0
+            phraseIndex = 0
+            while elapsed < duration - 1e-9 * max(1.0, duration):
+                tolerance = 1e-8 * max(1.0, duration)
+                stepValue = (step.at(offset + totalElapsed)
+                             if stepValues is None else
+                             stepValues[stepIndex % len(stepValues)])
+                nextElapsed = elapsed + stepValue
+                if nextElapsed > duration + tolerance:
+                    raise ValueError(
+                        'Pvar phrase spans must align with the repeated dur pattern')
+                if len(result) >= 256:
+                    raise ValueError('Pvar expansion is limited to 256 note slots per player')
+                result.append(phrase[phraseIndex % len(phrase)])
+                elapsed = min(nextElapsed, duration)
+                totalElapsed += stepValue
+                phraseIndex += 1
+                stepIndex += 1
+            if abs(elapsed - duration) > 1e-8 * max(1.0, duration):
+                raise ValueError(
+                    'Pvar phrase spans must end on a note-duration boundary')
+        if stepValues is not None and stepIndex % len(stepValues):
+            raise ValueError(
+                'Pvar cycle must finish at the start of the repeated dur pattern')
+        return _FoxDotFinitePattern(result)
+
+def Pvar(patterns, dur=4.0):
+    """Switch between finite note or sample phrases after bounded beat spans."""
+    return _DexterPVar(patterns, dur)
+
+def _normalize_root_control(value):
+    if not isinstance(value, _DexterTimeVar):
+        return (None, None) if value is None else (_root_midi(value), None)
+    values = value.values
+    if any(not float(item).is_integer() for item in values):
+        raise ValueError('root var/linvar endpoints must be whole pitch classes or MIDI notes')
+    if all(0.0 <= item <= 11.0 for item in values):
+        midiValues = [60 + int(item) for item in values]
+    elif all(12.0 <= item <= 127.0 for item in values):
+        midiValues = [int(item) for item in values]
+    else:
+        raise ValueError(
+            'root var/linvar must use pitch classes 0..11 or MIDI notes 12..127')
+    control = _DexterTimeVar(midiValues, value.durations, value.linear)
+    return midiValues[0], control
+
+def _control_value(value, name, lower, upper):
+    if isinstance(value, _DexterTimeVar):
+        if any(item < lower or item > upper for item in value.values):
+            raise ValueError(name + ' time-var values are outside the supported range')
+        return value.values[0], value.wire()
+    result = float(value)
+    if result != result or result < lower or result > upper:
+        raise ValueError(name + ' is outside the supported range')
+    return result, '-'
+
+def _event_control(value, name, lower, upper):
+    if isinstance(value, _DexterTimeVar):
+        if any(item < lower or item > upper for item in value.values):
+            raise ValueError(name + ' time-var values are outside the supported range')
+        return value.values[0], value
+    result = float(value)
+    if result != result or result < lower or result > upper:
+        raise ValueError(name + ' is outside the supported range')
+    return result, None
+
+class _FoxDotNoteEffectPattern:
+    def __init__(self, values):
+        self.values = tuple(values)
+
+    def at_event(self, index):
+        return self.values[index % len(self.values)]
+
+def _note_effect_control(value, name, lower, upper):
+    if isinstance(value, bool):
+        raise TypeError(name + ' requires a number or var/linvar, not bool')
+    if isinstance(value, _FoxDotNoteEffectPattern):
+        return value.values[0], value
+    if isinstance(value, _FoxDotFinitePattern):
+        if not value or len(value) > 256:
+            raise ValueError(name + ' P pattern must contain 1 to 256 values')
+        values = []
+        for item in value:
+            if isinstance(item, bool) or isinstance(item, (list, tuple,
+                                                          _FoxDotChord,
+                                                          _FoxDotFinitePattern)):
+                raise TypeError(name + ' P pattern values must be flat numbers')
+            number = float(item)
+            if number != number or not lower <= number <= upper:
+                raise ValueError(name + ' P pattern values are outside the supported range')
+            values.append(number)
+        pattern = _FoxDotNoteEffectPattern(values)
+        return values[0], pattern
+    return _event_control(value, name, lower, upper)
+
+def _note_effect_value(default, control, beat, eventIndex):
+    if control is None:
+        return default
+    if isinstance(control, _DexterTimeVar):
+        return control.at(beat)
+    if isinstance(control, _FoxDotNoteEffectPattern):
+        return control.at_event(eventIndex)
+    return default
+
+def _player_effect_control(value, name):
+    if isinstance(value, bool):
+        raise TypeError(name + ' requires a number or var/linvar, not bool')
+    return _event_control(value, name, 0.0, 4.0)
+
+def _note_delay_control(value):
+    if isinstance(value, _FoxDotFinitePattern):
+        if not value or len(value) > 256:
+            raise ValueError('delay pattern must contain 1 to 256 offsets')
+        offsets = [float(item) for item in value]
+        if any(item != item or item < 0.0 or item > 8.0 for item in offsets):
+            raise ValueError('delay pattern offsets must be between 0 and 8 beats')
+        return offsets[0], _FoxDotFinitePattern(offsets)
+    return _event_control(value, 'delay', 0.0, 8.0)
+
+class PlayerPattern:
+    def __init__(self, notes, step=1.0, duration=None, velocity=100,
+                 offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
+                 cutoff=20000.0, echo=0.0, delay=0.0, scaleName=None,
+                 atk=0.01, rel=0.04, octaveControl=None, baseOctave=5, degreesPerOctave=7,
+                 reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
+                   lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, synthRate=None, bpnoise=0.0, swell=0.0,
+                    timeMultipliers=None, allowRepeatedNotes=False,
+                      shape=0.0, drive=0.0, chop=0.0, spin=0.0,
+                      coarse=0.0, formant=-1.0,
+                      vib=0.0, depth=None,
+                      vibdepth=None, slide=0.0, slidefrom=0.0,
+                      slidedelay=0.0, bend=0.0, benddelay=0.0,
+                      effect=None, **effectControls):
+        self.notes = notes
+        self.step = step
+        self.timeMultipliers = timeMultipliers
+        self.allowRepeatedNotes = bool(allowRepeatedNotes)
+        self.duration = duration
+        self.velocity = velocity
+        self.offset = offset
+        self.degrees = degrees
+        self.rootMidi, self.rootControl = _normalize_root_control(root)
+        if synth not in _DEXTER_BUILTIN_SYNTHS and \
+                synth not in _NEW_SYNTHS and \
+                synth not in _dexter_user_synth_names:
+            raise ValueError('Unknown embedded synth: ' + str(synth))
+        self.synth = synth
+        pshift = effectControls.pop('pshift', 0.0)
+        bits = effectControls.pop('bits', 0.0)
+        crush = effectControls.pop('crush', 1.0)
+        self.pshift, self.pshiftControl = _note_effect_control(
+            pshift, 'pshift', -24.0, 24.0)
+        self.cut, self.cutControl = _note_effect_control(
+            effectControls.pop('cut', 1.0), 'cut', 0.0, 1.0)
+        self.coarse, self.coarseControl = _note_effect_control(
+            coarse, 'coarse', 0.0, 32.0)
+        self.formant, self.formantControl = _note_effect_control(
+            formant, 'formant', -1.0, 7.0)
+        effectChain = effectControls.pop('effects', None)
+        self.playerEffects = _player_effect_chain(effect, effectChain, effectControls)
+        self.playerEffectUserIndex = (
+            self.playerEffects[0][0] if self.playerEffects else -1)
+        self.synthControls = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
+        if effectControls:
+            raise TypeError('Unsupported player control: ' +
+                            str(list(effectControls)[0]))
+        self.playerEffectControlValues = (
+            self.playerEffects[0][1] if self.playerEffects else
+            (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))
+        self.effectControlVariables = (
+            self.playerEffects[0][2] if self.playerEffects else
+            ('-', '-', '-', '-', '-', '-', '-'))
+        if isinstance(vib, bool) or isinstance(vib, _DexterTimeVar):
+            raise TypeError('vib requires a scalar rate from 0 to 100')
+        self.vibRate = float(vib)
+        if self.vibRate != self.vibRate or not 0.0 <= self.vibRate <= 100.0:
+            raise ValueError('vib must be between 0 and 100')
+        if depth is not None and vibdepth is not None:
+            raise ValueError('use depth or vibdepth, not both')
+        depthValue = (vibdepth if vibdepth is not None else depth)
+        if depthValue is None:
+            depthValue = 0.5
+        self.vibDepth, self.vibDepthControl = _note_effect_control(
+            depthValue, 'vibdepth', 0.0, 10.0)
+        self.slide, self.slideControl = _note_effect_control(
+            slide, 'slide', -1.0, 4.0)
+        self.slideFrom, self.slideFromControl = _note_effect_control(
+            slidefrom, 'slidefrom', -1.0, 4.0)
+        self.slideDelay, self.slideDelayControl = _note_effect_control(
+            slidedelay, 'slidedelay', 0.0, 1.0)
+        self.bend, self.bendControl = _note_effect_control(
+            bend, 'bend', -1.0, 4.0)
+        self.bendDelay, self.bendDelayControl = _note_effect_control(
+            benddelay, 'benddelay', 0.0, 1.0)
+        self.noteEffectControlVariables = tuple(
+            control.wire() if isinstance(control, _DexterTimeVar) else '-'
+            for control in (self.vibDepthControl, self.slideControl,
+                            self.slideFromControl, self.slideDelayControl,
+                            self.bendControl, self.bendDelayControl))
+        self.chop, self.chopControl = _note_effect_control(
+            chop, 'chop', 0.0, 32.0)
+        self.spin, self.spinControl = _note_effect_control(
+            spin, 'spin', 0.0, 40.0)
+        self.noteEffectControlVariables += tuple(
+            control.wire() if isinstance(control, _DexterTimeVar) else '-'
+            for control in (self.chopControl, self.spinControl))
+        self.noteEffectControlVariables += (
+            self.cutControl.wire()
+            if isinstance(self.cutControl, _DexterTimeVar) else '-',
+        )
+        self.noteEffectControlVariables += tuple(
+            control.wire() if isinstance(control, _DexterTimeVar) else '-'
+            for control in (self.coarseControl, self.formantControl))
+        self.noteEffectControlVariables += (
+            self.pshiftControl.wire()
+            if isinstance(self.pshiftControl, _DexterTimeVar) else '-',
+        )
+        if isinstance(bits, bool) or isinstance(crush, bool):
+            raise TypeError('bits and crush require numeric controls, not bool')
+        self.bits, self.bitsControl = _event_control(
+            bits, 'bits', 0.0, 24.0)
+        self.crush, self.crushControl = _event_control(
+            crush, 'crush', 1.0, 128.0)
+        self.synthControls = (self.vibRate, self.vibDepth, 1.0, 0.5,
+                              0.5, 0.0, 1.0)
+        if synthRate is None:
+            synthRate = 1.0 if synth == 'bug' else 0.0
+        try:
+            self.synthRate = float(synthRate)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError('rate must be a finite number for the embedded synths')
+        if self.synthRate != self.synthRate or not 0.0 <= self.synthRate <= 10.0:
+            raise ValueError('rate must be between 0 and 10 for the embedded synths')
+        if synth == 'varsaw' and self.synthRate > 1.0:
+            raise ValueError('varsaw rate is pulse width and must be between 0 and 1')
+        self.scaleName = scaleName
+        self.amp, self.ampControl = _control_value(amp, 'amp', 0.0, 1.0)
+        self.mousePan = isinstance(pan, _DexterMouseControl)
+        if self.mousePan:
+            if pan.axis != 'x':
+                raise ValueError('pan supports MouseX() only')
+            self.pan, self.panControl = 0.0, '-'
+        else:
+            self.pan, self.panControl = _control_value(pan, 'pan', -1.0, 1.0)
+        self.mouseCutoff = isinstance(cutoff, _DexterMouseControl)
+        if self.mouseCutoff:
+            if cutoff.axis != 'y':
+                raise ValueError('cutoff supports MouseY() only')
+            self.cutoff, self.cutoffControl = 4100.0, '-'
+        else:
+            self.cutoff, self.cutoffControl = _control_value(cutoff, 'cutoff', 20.0, 20000.0)
+        self.echoBeats, self.echoControl = _control_value(echo, 'echo', 0.0, 64.0)
+        self.delayBeats, self.delayControl = _note_delay_control(delay)
+        delaytimeValue = 0.0 if delaytime is None else delaytime
+        self.delayTimeSeconds, self.delayTimeControl = _control_value(delaytimeValue, 'delaytime', 0.0, 4.0)
+        self.echoMix, self.echoMixControl = _control_value(echomix, 'echomix', 0.0, 1.0)
+        self.feedback, self.feedbackControl = (-1.0, None) if feedback is None else _control_value(feedback, 'feedback', 0.0, 0.95)
+        if reverb not in ('freeverb', 'freeverb2', 'gverb', 'none'):
+            raise ValueError('reverb must be freeverb, freeverb2, gverb, or none')
+        self.reverb = reverb
+        self.reverbIndex = ('none', 'freeverb', 'freeverb2', 'gverb').index(reverb)
+        self.room = float(room)
+        self.mix = float(mix)
+        self.damp = float(damp)
+        self.revtime = float(revtime)
+        self.spread = float(spread)
+        if any(value != value for value in (self.room, self.mix, self.damp, self.revtime, self.spread)):
+            raise ValueError('reverb controls must be finite numbers')
+        if not 0.0 <= self.room <= 1.0 or not 0.0 <= self.mix <= 1.0 or not 0.0 <= self.damp <= 1.0:
+            raise ValueError('room, mix, and damp must be between 0 and 1')
+        if not 0.1 <= self.revtime <= 10.0:
+            raise ValueError('revtime must be between 0.1 and 10 seconds')
+        if not 0.0 <= self.spread <= 100.0:
+            raise ValueError('spread must be between 0 and 100')
+        self.attackSeconds, self.attackControl = _event_control(atk, 'atk', 0.0, 3.0)
+        self.releaseSeconds, self.releaseControl = _event_control(rel, 'rel', 0.0, 3.0)
+        self.lpfHz, self.lpfControl = _event_control(lpf, 'lpf', 0.0, 20000.0)
+        self.lpr, self.lprControl = _event_control(lpr, 'lpr', 0.05, 1.0)
+        self.hpfHz, self.hpfControl = _event_control(hpf, 'hpf', 0.0, 20000.0)
+        self.hpr, self.hprControl = _event_control(hpr, 'hpr', 0.05, 1.0)
+        self.bpfHz, self.bpfControl = _event_control(bpf, 'bpf', 0.0, 20000.0)
+        self.bpr, self.bprControl = _event_control(bpr, 'bpr', 0.05, 1.0)
+        self.bpnoise, self.bpnoiseControl = _event_control(bpnoise, 'bpnoise', 0.0, 10.0)
+        self.swell, self.swellControl = _event_control(swell, 'swell', 0.0, 4.0)
+        self.shape, self.shapeControl = _player_effect_control(shape, 'shape')
+        self.drive, self.driveControl = _player_effect_control(drive, 'drive')
+        self.echoDecayBeats, self.echoDecayControl = _event_control(decay, 'decay', 0.0, 64.0)
+        self.strumBeats, self.strumControl = _event_control(strum, 'strum', 0.0, 1.0)
+        self.octaveControl = octaveControl
+        self.degreeControl = None
+        self.baseOctave = baseOctave
+        self.degreesPerOctave = degreesPerOctave
+        if self.attackSeconds != self.attackSeconds or not 0.0 <= self.attackSeconds <= 3.0:
+            raise ValueError('atk must be between 0 and 3 seconds')
+        if self.releaseSeconds != self.releaseSeconds or not 0.0 <= self.releaseSeconds <= 3.0:
+            raise ValueError('rel must be between 0 and 3 seconds')
+
+def sequence(notes, step=1.0, duration=None, velocity=100,
+             offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
+             cutoff=20000.0, echo=0.0, delay=0.0, atk=0.01, rel=0.04,
+             reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
+             lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, rate=None, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, _time_multipliers=None, _allow_repeated_notes=False, **effectControls):
+    if isinstance(notes, _FoxDotChord):
+        notes = [notes]
+    if rate is None:
+        rate = 8.0 if synth == 'bass' else 0.0
+    return PlayerPattern(notes, step, duration, velocity, offset, degrees,
+                        synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
+                        reverb=reverb, room=room, mix=mix, damp=damp,
+                             revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, timeMultipliers=_time_multipliers, allowRepeatedNotes=_allow_repeated_notes, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, **effectControls)
+
+def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
+              amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0,
+              velocity=100, rate=0.0, atk=0.01, rel=0.04,
+              reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
+                     lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, **effectControls):
+    octaveControl = oct if isinstance(oct, _DexterTimeVar) else None
+    if octaveControl is not None:
+        if any(value < 0.0 or value > 10.0 for value in octaveControl.values):
+            raise ValueError('oct values must be from 0 to 10')
+        baseOctave = int(round(octaveControl.values[0]))
+    else:
+        baseOctave = int(oct)
+    if not 0 <= baseOctave <= 10:
+        raise ValueError('oct must be from 0 to 10 in the embedded FoxDot subset')
+    scaleName = None if scale is None else _scale_intervals(scale)
+    degreesPerOctave = len(scaleName) if scaleName is not None else len(_dexter_scale)
+    shift = (baseOctave - 5) * degreesPerOctave
+    if isinstance(notes, _DexterPVar):
+        notes = notes.expand(dur)
+    def shift_note(note):
+        if note is None:
+            return None
+        if isinstance(note, _FoxDotChord):
+            return _FoxDotChord(*[shift_note(value) for value in note])
+        if isinstance(note, (list, tuple)): 
+            return [shift_note(value) for value in note]
+        return int(note) + shift
+    if isinstance(notes, _FoxDotChord):
+        notes = [notes]
+    elif isinstance(notes, (int, float)):
+        notes = [notes]
+    if isinstance(notes, str):
+        raise ValueError('FoxDot sample strings are not included yet; sample support is deferred')
+    notes = [shift_note(note) for note in notes]
+    return PlayerPattern(notes, dur, sus, velocity,
+                         0.0, True, synthName, amp, pan, cutoff, echo, delay,
+                         scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave,
+                             reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, **effectControls)
+def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
+        pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
+        reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, **effectControls):
+    return _fox_wave('saw', notes, dur, oct, sus, scale, amp, pan, cutoff,
+                     echo, delay, velocity, rate, atk, rel,
+                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, **effectControls)
+
+def pulse(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
+          pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
+        reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
+          lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, **effectControls):
+    return _fox_wave('square', notes, dur, oct, sus, scale, amp, pan, cutoff,
+                     echo, delay, velocity, rate, atk, rel,
+                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, **effectControls)
+
+def sine(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
+         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
+        reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
+                  lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, **effectControls):
+    return _fox_wave('sine', notes, dur, oct, sus, scale, amp, pan, cutoff,
+                     echo, delay, velocity, rate, atk, rel,
+                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, **effectControls)
+
+def triangle(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
+             pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
+        reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
+                 lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, **effectControls):
+    return _fox_wave('triangle', notes, dur, oct, sus, scale, amp, pan, cutoff,
+                     echo, delay, velocity, rate, atk, rel,
+                          reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, **effectControls)
+
+def _make_named_synth(name, defaultRate):
+    def synth(notes=0, **kwargs):
+        kwargs.setdefault('rate', defaultRate)
+        return _fox_wave(name, notes, **kwargs)
+    return synth
+
+def userSynth(name, notes=0, **kwargs):
+    if not isinstance(name, str) or name not in _dexter_user_synth_names:
+        raise ValueError('userSynth name is not a loaded Portable/SynthDefs entry')
+    if name in ('JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser',
+                'Tremolo', 'LimutPingPong', 'LimutDuck'):
+        raise ValueError(name + ' is an insert, not a note source; use effect="' +
+                         name + '" on a synth or play() player')
+    if (name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam') and
+            (kwargs.get('effect') is not None or 'effects' in kwargs)):
+        raise ValueError('Use a note or sample source with effects=[...] when chaining inserts')
+    vib = kwargs.pop('vib', 0.0)
+    depth = kwargs.pop('depth', None)
+    vibdepth = kwargs.pop('vibdepth', None)
+    extraControls = []
+    specifications = (
+        ('lforate', 1.0, 0.0, 100.0),
+        ('lfowidth', 0.5, 0.0, 1.0), ('rq', 0.5, 0.01, 3.0),
+        ('fmod', 0.0, -2000.0, 2000.0), ('blur', 1.0, 0.01, 8.0))
+    for key, default, minimum, maximum in specifications:
+        value = float(kwargs.pop(key, default))
+        if value != value or not minimum <= value <= maximum:
+            raise ValueError(key + ' must be a finite scalar in the supported range')
+        extraControls.append(value)
+    pattern = _fox_wave(name, notes, vib=vib, depth=depth,
+                        vibdepth=vibdepth, **kwargs)
+    pattern.synthControls = tuple(pattern.synthControls[:2] + tuple(extraControls))
+    if name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam'):
+        pattern.playerEffectUserIndex = _dexter_user_synth_names.index(name)
+        pattern.playerEffectControlValues = tuple(
+            max(0.0, min(1.0, float(value))) for value in pattern.synthControls)
+        pattern.playerEffects = [(
+            pattern.playerEffectUserIndex, pattern.playerEffectControlValues,
+            pattern.effectControlVariables)]
+    return pattern
+
+bass = _make_named_synth('bass', 8.0)
+varsaw = _make_named_synth('varsaw', 0.0)
+dirt = _make_named_synth('dirt', 0.0)
+jbass = _make_named_synth('jbass', 0.0)
+noise = _make_named_synth('noise', 0.0)
+dub = _make_named_synth('dub', 0.0)
+growl = _make_named_synth('growl', 0.0)
+soprano = _make_named_synth('soprano', 0.0)
+crunch = _make_named_synth('crunch', 0.0)
+lazer = _make_named_synth('lazer', 2.0)
+rave = _make_named_synth('rave', 1.0)
+bell = _make_named_synth('bell', 1.0)
+gong = _make_named_synth('gong', 0.0)
+marimba = _make_named_synth('marimba', 0.0)
+pluck = _make_named_synth('pluck', 0.0)
+twang = _make_named_synth('twang', 0.0)
+donk = _make_named_synth('donk', 0.0)
+squish = _make_named_synth('squish', 0.0)
+charm = _make_named_synth('charm', 0.0)
+spark = _make_named_synth('spark', 0.0)
+blip = _make_named_synth('blip', 8.0)
+scatter = _make_named_synth('scatter', 0.0)
+orient = _make_named_synth('orient', 0.0)
+zap = _make_named_synth('zap', 0.0)
+fuzz = _make_named_synth('fuzz', 0.0)
+bug = _make_named_synth('bug', 1.0)
+ripple = _make_named_synth('ripple', 0.0)
+
+def _make_core_synth(name):
+    def synth(notes=0, **kwargs):
+        vib = kwargs.pop('vib', 6.0 if name == 'viola' else 0.0)
+        depth = kwargs.pop('depth', None)
+        vibdepth = kwargs.pop('vibdepth', None)
+        extraControls = []
+        specifications = (
+            ('lforate', 1.0, 0.0, 100.0),
+            ('lfowidth', 0.5, 0.0, 1.0), ('rq', 0.5 if name != 'prophet' else 0.4, 0.01, 3.0),
+            ('fmod', 0.0, -2000.0, 2000.0), ('blur', 1.0, 0.01, 8.0))
+        for key, default, minimum, maximum in specifications:
+            value = float(kwargs.pop(key, default))
+            if value != value or not minimum <= value <= maximum:
+                raise ValueError(key + ' must be a finite scalar in the supported range')
+            extraControls.append(value)
+        kwargs.setdefault('rate', 0.04 if name == 'scratch' else
+                          1.0 if name == 'swell' else
+                          0.3 if name == 'razz' else 0.0)
+        if name == 'pads':
+            kwargs.setdefault('atk', 0.1)
+        if name in ('sawbass', 'prophet', 'keys', 'pasha'):
+            kwargs.setdefault('cutoff', {'sawbass': 1000.0, 'prophet': 6000.0,
+                                         'keys': 400.0, 'pasha': 8000.0}[name])
+        pattern = _fox_wave(name, notes, vib=vib, depth=depth,
+                            vibdepth=vibdepth, **kwargs)
+        pattern.synthControls = tuple(pattern.synthControls[:2] +
+                                      tuple(extraControls))
+        return pattern
+    return synth
+
+viola = _make_core_synth('viola')
+nylon = _make_core_synth('nylon')
+arpy = _make_core_synth('arpy')
+dab = _make_core_synth('dab')
+sawbass = _make_core_synth('sawbass')
+dbass = _make_core_synth('dbass')
+prophet = _make_core_synth('prophet')
+pads = _make_core_synth('pads')
+pasha = _make_core_synth('pasha')
+ambi = _make_core_synth('ambi')
+sinepad = _make_core_synth('sinepad')
+keys = _make_core_synth('keys')
+klank = _make_core_synth('klank')
+feel = _make_core_synth('feel')
+glass = _make_core_synth('glass')
+soft = _make_core_synth('soft')
+quin = _make_core_synth('quin')
+space = _make_core_synth('space')
+scratch = _make_core_synth('scratch')
+creep = _make_core_synth('creep')
+snick = _make_core_synth('snick')
+swell = _make_core_synth('swell')
+razz = _make_core_synth('razz')
+sitar = _make_core_synth('sitar')
+star = _make_core_synth('star')
+karp = _make_core_synth('karp')
+
+_SAMPLE_SYMBOLS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ&*@^:$=!/#-%+?~\\1234'
+_dexter_sample_eval_count = 0
+
+def _sample_symbols_for_item(item):
+    if item.__class__ is str and len(item) == 1 and (
+            item == ' ' or item in _SAMPLE_SYMBOLS):
+        return [] if item == ' ' else [item]
+    if isinstance(item, (list, tuple)) and 1 <= len(item) <= 8:
+        if all(symbol.__class__ is str and len(symbol) == 1 and
+               (symbol == ' ' or symbol in _SAMPLE_SYMBOLS)
+               for symbol in item):
+            return [symbol for symbol in item if symbol != ' ']
+    return None
+
+def _sample_value(value, index, beat, name):
+    if isinstance(value, _DexterTimeVar):
+        return value.at(beat)
+    if isinstance(value, (int, float)):
+        return value
+    values = list(value)
+    if not values:
+        raise ValueError(name + ' pattern cannot be empty')
+    return values[index % len(values)]
+
+def _sample_timevar_value(control, beat):
+    if not control.linear or len(control.values) < 2:
+        return control.at(beat)
+    cycle = sum(control.durations)
+    position = max(0.0, float(beat)) % cycle
+    for index, duration in enumerate(control.durations):
+        if position < duration or index + 1 == len(control.values):
+            following = control.values[(index + 1) % len(control.values)]
+            return following if position / duration >= 0.5 else control.values[index]
+        position -= duration
+    return control.values[-1]
+
+def _sample_fraction_pattern(value, name):
+    if isinstance(value, _DexterTimeVar):
+        values = value.values
+        pattern = value
+        patternLength = None
+    elif isinstance(value, bool):
+        raise ValueError('sample ' + name + ' must contain numeric fractions')
+    elif isinstance(value, (int, float)):
+        values = [value]
+        pattern = float(value)
+        patternLength = None
+    elif isinstance(value, (list, tuple)):
+        if not value:
+            raise ValueError('sample ' + name + ' pattern cannot be empty')
+        if len(value) > 256:
+            raise ValueError('sample ' + name + ' pattern is limited to 256 values')
+        values = list(value)
+        pattern = []
+        for item in values:
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise ValueError('sample ' + name + ' must contain numeric fractions')
+            pattern.append(float(item))
+        values = pattern
+        patternLength = len(pattern)
+    else:
+        raise ValueError('sample ' + name + ' must be a number, P/list pattern, or var/linvar')
+
+    for item in values:
+        fraction = float(item)
+        if (fraction != fraction or fraction in (float('inf'), float('-inf')) or
+                not 0.0 <= fraction <= 1.0):
+            raise ValueError('sample ' + name + ' fractions must be finite values from 0 to 1')
+    return pattern, patternLength
+
+def _sample_parse_nodes(text, depth=0, closing=None, position=0):
+    if depth > 8:
+        raise ValueError('sample-string nesting is limited to 8 levels')
+    nodes = []
+    pairs = {'[':']', '(':')', '{':'}', '<':'>'}
+    while position < len(text):
+        symbol = text[position]
+        if closing is not None and symbol == closing:
+            return nodes, position + 1
+        if symbol in ')]}>':
+            raise ValueError('unmatched closing delimiter ' + symbol + ' in sample string')
+        if symbol == '|':
+            pipeIndex = text.find('|', position + 1)
+            if pipeIndex < 0:
+                raise ValueError("missing closing '|' in FoxDot sample-index selector; use |x1|")
+            selector = text[position + 1:pipeIndex]
+            if (len(selector) != 2 or selector[0] not in _SAMPLE_SYMBOLS or
+                    selector[1] not in '0123456789'):
+                raise ValueError('sample-index selector must contain one sample symbol and one digit, like |x1|')
+            nodes.append(('sample-index', (selector[0], int(selector[1]))))
+            position = pipeIndex + 1
+            continue
+        if symbol in pairs:
+            children, nextPosition = _sample_parse_nodes(
+                text, depth + 1, pairs[symbol], position + 1)
+            if not children:
+                raise ValueError('empty ' + symbol + pairs[symbol] + ' group in sample string')
+            kind = {'[':'subdivide', '(':'lace', '{':'random', '<':'angle'}[symbol]
+            node = (kind, children)
+            if kind == 'angle' and nodes and nodes[-1][0] == 'angle':
+                nodes[-1] = ('layers', (nodes[-1][1], children))
+            elif kind == 'angle' and nodes and nodes[-1][0] == 'layers':
+                nodes[-1] = ('layers', nodes[-1][1] + (children,))
+            else:
+                nodes.append(node)
+            position = nextPosition
+            continue
+        if not symbol.isspace() and symbol not in _SAMPLE_SYMBOLS:
+            raise ValueError('unsupported sample-string character ' + repr(symbol))
+        nodes.append(('symbol', symbol))
+        position += 1
+    if closing is not None:
+        raise ValueError('missing closing delimiter ' + closing + ' in sample string')
+    return nodes, position
+
+def _sample_lcm(left, right):
+    a, b = left, right
+    while b:
+        a, b = b, a % b
+    result = left * right // a
+    if result > 256:
+        raise ValueError('nested sample pattern exceeds the 256-slot limit')
+    return result
+
+def _sample_nodes_width(nodes):
+    width = 0
+    for kind, children in nodes:
+        if kind == 'angle':
+            width += _sample_nodes_width(children)
+        elif kind == 'layers':
+            layerWidths = [_sample_nodes_width(layer) for layer in children]
+            layerWidth = 1
+            for value in layerWidths:
+                layerWidth = _sample_lcm(layerWidth, value)
+            width += layerWidth
+        else:
+            width += 1
+        if width > 256:
+            raise ValueError('nested sample pattern exceeds the 256-slot limit')
+    return width
+
+def _sample_lace_period(nodes):
+    period = 1
+    for kind, children in nodes:
+        if kind == 'lace':
+            period = _sample_lcm(period, len(children))
+        elif kind == 'random':
+            period = _sample_lcm(period, 8)
+        if kind in ('subdivide', 'lace', 'random', 'angle'):
+            period = _sample_lcm(period, _sample_lace_period(children))
+        elif kind == 'layers':
+            for layer in children:
+                period = _sample_lcm(period, _sample_lace_period(layer))
+    return period
+
+def _sample_add_event(events, beat, symbols):
+    key = round(float(beat), 10)
+    if key not in events:
+        events[key] = []
+    events[key].extend(symbols)
+
+def _sample_layout_sequence(nodes, cycleIndex, randomState):
+    events = {}
+    boundaries = {0.0}
+    position = 0.0
+    for node in nodes:
+        width, childEvents, childBoundaries = _sample_layout_node(
+            node, cycleIndex, randomState)
+        for beat, symbols in childEvents.items():
+            _sample_add_event(events, position + beat, symbols)
+        boundaries.update(position + beat for beat in childBoundaries)
+        position += width
+        boundaries.add(position)
+    return position, events, boundaries
+
+def _sample_layout_node(node, cycleIndex, randomState):
+    kind, children = node
+    if kind == 'symbol':
+        symbol = children
+        return 1.0, ({0.0:[(symbol, None)]} if not symbol.isspace() else {}), {0.0, 1.0}
+    if kind == 'sample-index':
+        symbol, sampleIndex = children
+        return 1.0, {0.0:[(symbol, sampleIndex)]}, {0.0, 1.0}
+    if kind in ('subdivide', 'lace', 'random'):
+        if kind == 'subdivide':
+            innerWidth, innerEvents, innerBoundaries = _sample_layout_sequence(
+                children, cycleIndex, randomState)
+        else:
+            if kind == 'lace':
+                selected = children[cycleIndex % len(children)]
+            else:
+                randomState[0] = (1664525 * randomState[0] + 1013904223) & 0xffffffff
+                selected = children[randomState[0] % len(children)]
+            innerWidth, innerEvents, innerBoundaries = _sample_layout_node(
+                selected, cycleIndex, randomState)
+        scale = 1.0 / innerWidth
+        events = {}
+        for beat, symbols in innerEvents.items():
+            _sample_add_event(events, beat * scale, symbols)
+        boundaries = {beat * scale for beat in innerBoundaries}
+        boundaries.update((0.0, 1.0))
+        return 1.0, events, boundaries
+    if kind == 'angle':
+        return _sample_layout_sequence(children, cycleIndex, randomState)
+    if kind == 'layers':
+        layerWidths = [_sample_nodes_width(layer) for layer in children]
+        totalWidth = 1
+        for width in layerWidths:
+            totalWidth = _sample_lcm(totalWidth, width)
+        events = {}
+        boundaries = {0.0, float(totalWidth)}
+        for layer, width in zip(children, layerWidths):
+            repetitions = totalWidth // width
+            for repetition in range(repetitions):
+                _, layerEvents, layerBoundaries = _sample_layout_sequence(
+                    layer, cycleIndex, randomState)
+                offset = repetition * width
+                for beat, symbols in layerEvents.items():
+                    _sample_add_event(events, offset + beat, symbols)
+                boundaries.update(offset + beat for beat in layerBoundaries)
+        return float(totalWidth), events, boundaries
+    raise ValueError('unsupported nested sample pattern')
+
+def _sample_timeline(text, parameterLengths):
+    global _dexter_sample_eval_count
+    nodes, _ = _sample_parse_nodes(text)
+    seed = 2166136261
+    for character in text:
+        seed = ((seed ^ ord(character)) * 16777619) & 0xffffffff
+    _dexter_sample_eval_count += 1
+    seed = (seed + _dexter_sample_eval_count * 1013904223) & 0xffffffff
+    baseWidth = _sample_nodes_width(nodes)
+    lacePeriod = _sample_lace_period(nodes)
+    if baseWidth <= 0 or lacePeriod > 256:
+        raise ValueError('sample pattern has no bounded playback cycle')
+    cycleLayouts = []
+    unionBoundaries = set()
+    randomState = [seed]
+    for cycleIndex in range(lacePeriod):
+        layout = _sample_layout_sequence(nodes, cycleIndex, randomState)
+        width, events, boundaries = layout
+        if abs(width - baseWidth) > 1e-9:
+            raise ValueError('nested sample groups produced an inconsistent pattern length')
+        cycleLayouts.append((events, boundaries))
+        unionBoundaries.update(cycleIndex * baseWidth + beat for beat in boundaries)
+    unionBoundaries.add(lacePeriod * baseWidth)
+    baseBoundaries = sorted(unionBoundaries)
+    slotCount = len(baseBoundaries) - 1
+    if slotCount <= 0:
+        raise ValueError('sample pattern contains no playback slots')
+    period = slotCount
+    for length in parameterLengths:
+        period = _sample_lcm(period, length)
+    controlRepeats = period // slotCount
+    totalSlots = slotCount * controlRepeats
+    if totalSlots > 256:
+        raise ValueError('combined nested sample pattern exceeds 256 step slots')
+    notes = []
+    multipliers = []
+    symbolSlots = []
+    for repeat in range(controlRepeats):
+        for cycleIndex, (events, _) in enumerate(cycleLayouts):
+            for index in range(slotCount):
+                start = baseBoundaries[index]
+                end = baseBoundaries[index + 1]
+                if start < cycleIndex * baseWidth or start >= (cycleIndex + 1) * baseWidth:
+                    continue
+                localStart = start - cycleIndex * baseWidth
+                symbols = events.get(round(localStart, 10), [])
+                sampleSymbols = [symbol for symbol, _ in symbols]
+                notes.append(None if not sampleSymbols else
+                             ord(sampleSymbols[0]) if len(sampleSymbols) == 1 else
+                             tuple(ord(symbol) for symbol in sampleSymbols))
+                multipliers.append(end - start)
+                symbolSlots.append(tuple(symbols))
+    return notes, multipliers, symbolSlots
+
+def _sample_timeline_values(values, parameterLengths):
+    if not values or len(values) > 256:
+        raise ValueError('sample-symbol pattern requires 1 to 256 items')
+    period = len(values)
+    for length in parameterLengths:
+        period = _sample_lcm(period, length)
+    if period > 256:
+        raise ValueError('combined sample-symbol pattern exceeds the 256-slot limit')
+    notes = []
+    multipliers = []
+    symbolSlots = []
+    for index in range(period):
+        symbols = _sample_symbols_for_item(values[index % len(values)])
+        if symbols is None:
+            raise TypeError('play(P[...]) requires sample symbols, space-rests, or zipped sample groups')
+        notes.append(None if not symbols else
+                     ord(symbols[0]) if len(symbols) == 1 else
+                     tuple(ord(symbol) for symbol in symbols))
+        multipliers.append(1.0)
+        symbolSlots.append(tuple((symbol, None) for symbol in symbols))
+    return notes, multipliers, symbolSlots
+
+_PLAYER_EFFECT_SPECS = {
+    'AirwindowsTapeDelay2': (
+        ('fx_vib', 0, 0.0, 1.0, 0.94),
+        ('fx_depth', 1, 0.0, 1.0, 0.28),
+        ('fx_lforate', 2, 0.0, 1.0, 0.72),
+        ('fx_lfowidth', 3, 0.0, 1.0, 0.28),
+        ('fx_rq', 4, 0.0, 1.0, 0.12),
+        ('fx_blur', 6, 0.0, 1.0, 0.5)),
+    'AirwindowsEchojam': (
+        ('fx_vib', 0, 0.0, 1.0, 0.29),
+        ('fx_depth', 1, 0.0, 1.0, 0.32),
+        ('fx_lforate', 2, 0.0, 1.0, 0.48),
+        ('fx_blur', 6, 0.0, 1.0, 0.62)),
+    'JPverb': (
+        ('fx_mix', 0, 0.0, 1.0, 0.32),
+        ('fx_t60', 1, 0.1, 60.0, 3.0),
+        ('fx_damp', 2, 0.0, 0.999, 0.25),
+        ('fx_size', 3, 0.5, 3.0, 1.0),
+        ('fx_earlydiff', 4, 0.0, 0.99, 0.707),
+        ('fx_moddepth', 5, 0.0, 1.0, 0.1),
+        ('fx_modfreq', 6, 0.0, 10.0, 2.0)),
+    'Greyhole': (
+        ('fx_mix', 0, 0.0, 1.0, 0.32),
+        ('fx_delay', 1, 0.001, 1.45, 0.65),
+        ('fx_damp', 2, 0.0, 0.99, 0.25),
+        ('fx_size', 3, 0.5, 3.0, 1.0),
+        ('fx_diff', 4, 0.0, 0.99, 0.707),
+        ('fx_feedback', 5, 0.0, 0.98, 0.78),
+        ('fx_moddepth', 6, 0.0, 1.0, 0.1)),
+    'Chorus': (
+        ('fx_mix', 0, 0.0, 1.0, 0.35),
+        ('fx_rate', 1, 0.05, 5.0, 0.8),
+        ('fx_depth', 2, 0.0, 1.0, 0.35),
+        ('fx_delay', 3, 0.005, 0.04, 0.018),
+        ('fx_spread', 4, 0.0, 1.0, 0.7),
+        ('fx_feedback', 5, 0.0, 0.75, 0.08),
+        ('fx_tone', 6, 200.0, 16000.0, 12000.0)),
+    'Flanger': (
+        ('fx_mix', 0, 0.0, 1.0, 0.35),
+        ('fx_rate', 1, 0.05, 4.0, 0.4),
+        ('fx_depth', 2, 0.0, 1.0, 0.6),
+        ('fx_delay', 3, 0.0005, 0.015, 0.0035),
+        ('fx_spread', 4, 0.0, 1.0, 0.6),
+        ('fx_feedback', 5, 0.0, 0.95, 0.5),
+        ('fx_tone', 6, 200.0, 16000.0, 12000.0)),
+    'Phaser': (
+        ('fx_mix', 0, 0.0, 1.0, 0.45),
+        ('fx_rate', 1, 0.05, 8.0, 0.22),
+        ('fx_depth', 2, 0.0, 1.0, 0.65),
+        ('fx_center', 3, 150.0, 1800.0, 650.0),
+        ('fx_spread', 4, 0.0, 1.0, 0.8),
+        ('fx_feedback', 5, 0.0, 0.85, 0.25),
+        ('fx_tone', 6, 200.0, 16000.0, 11000.0)),
+    'Tremolo': (
+        ('fx_mix', 0, 0.0, 1.0, 1.0),
+        ('fx_rate', 1, 0.05, 20.0, 5.0),
+        ('fx_depth', 2, 0.0, 1.0, 0.7),
+        ('fx_shape', 3, 0.0, 1.0, 0.0),
+        ('fx_spread', 4, 0.0, 1.0, 0.5),
+        ('fx_phase', 5, 0.0, 1.0, 0.0),
+        ('fx_tone', 6, 200.0, 16000.0, 12000.0)),
+    'LimutPingPong': (
+        ('fx_mix', 0, 0.0, 1.0, 0.28),
+        ('fx_time', 1, 0.01, 2.0, 0.32),
+        ('fx_feedback', 2, 0.0, 0.95, 0.45)),
+    'LimutDuck': (
+        ('fx_mix', 0, 0.0, 1.0, 1.0),
+        ('fx_period', 1, 0.05, 8.0, 0.5),
+        ('fx_depth', 2, 0.0, 1.0, 0.7),
+        ('fx_length', 3, 0.0, 8.0, 0.12),
+        ('fx_attack', 4, 0.001, 8.0, 0.18))
+}
+def _player_effect_control_values(effect, controls):
+    provided = [key for key in controls if key.startswith('fx_')]
+    if effect is None:
+        if provided:
+            raise ValueError('fx_* controls require effect= with a named per-player effect')
+        return None, ('-', '-', '-', '-', '-', '-', '-')
+    specs = _PLAYER_EFFECT_SPECS.get(effect)
+    if specs is None:
+        raise ValueError('unsupported persistent player effect: ' + str(effect))
+    supported = {spec[0] for spec in specs}
+    unsupported = [key for key in provided if key not in supported]
+    if unsupported:
+        raise ValueError(unsupported[0] + ' is not a control on ' + effect)
+
+    values = [0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0]
+    variables = ['-', '-', '-', '-', '-', '-', '-']
+    for key, index, minimum, maximum, default in specs:
+        raw = controls.pop(key, default)
+        def normalized(value):
+            if isinstance(value, bool):
+                raise TypeError(key + ' must be a finite number or var/linvar')
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                raise TypeError(key + ' must be a finite number or var/linvar')
+            if (number != number or number in (float('inf'), float('-inf')) or
+                    number < minimum or number > maximum):
+                raise ValueError(key + ' must be between ' + str(minimum) +
+                                 ' and ' + str(maximum))
+            if maximum == minimum:
+                return 0.0
+            return (number - minimum) / (maximum - minimum)
+        if isinstance(raw, _DexterTimeVar):
+            normalizedValues = [normalized(value) for value in raw.values]
+            normalizedVar = _DexterTimeVar(
+                normalizedValues, raw.durations, raw.linear)
+            values[index] = normalizedValues[0]
+            variables[index] = normalizedVar.wire()
+        else:
+            values[index] = normalized(raw)
+    return tuple(values), tuple(variables)
+
+def _player_effect_chain(effect, effects, controls):
+    if effects is None:
+        if effect is None:
+            _player_effect_control_values(None, controls)
+            return []
+        if effect not in _PLAYER_EFFECT_SPECS:
+            raise ValueError('unsupported persistent player effect: ' + str(effect))
+        if effect not in _dexter_user_synth_names:
+            raise ValueError(
+                'player effect ' + effect +
+                ' is not loaded; install its UGen pack and SynthDef, then restart the DAW')
+        values, variables = _player_effect_control_values(effect, controls)
+        return [(_dexter_user_synth_names.index(effect), values, variables)]
+    if effect is not None:
+        raise ValueError('use effect= or effects=, not both')
+    if not isinstance(effects, (list, tuple)):
+        raise TypeError('effects must be a list of (name, controls) pairs')
+    if len(effects) > 4:
+        raise ValueError('a player effect chain is limited to four inserts')
+    if any(key.startswith('fx_') for key in controls):
+        raise TypeError('do not mix effects=[...] with standalone fx_* controls')
+    result = []
+    for item in effects:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise TypeError('each effects item must be (name, controls)')
+        name, effectValues = item
+        if not isinstance(name, str) or name not in _PLAYER_EFFECT_SPECS:
+            raise ValueError('unsupported persistent player effect: ' + str(name))
+        if name not in _dexter_user_synth_names:
+            raise ValueError(
+                'player effect ' + name +
+                ' is not loaded; install its UGen pack and SynthDef, then restart the DAW')
+        if not isinstance(effectValues, dict):
+            raise TypeError('effect controls must be a dictionary')
+        if any(not isinstance(key, str) for key in effectValues):
+            raise TypeError('effect control names must be fx_* strings')
+        effectValues = dict(effectValues)
+        values, variables = _player_effect_control_values(name, effectValues)
+        if effectValues:
+            raise TypeError('Unsupported effect-chain control: ' +
+                            str(list(effectValues)[0]))
+        result.append((_dexter_user_synth_names.index(name), values, variables))
+    return result
+
+def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
+                    start=0.0, end=1.0, loop=False, effect=None, **controls):
+    playerEffectUserIndex = -1
+    if isinstance(text, _DexterPVar):
+        text = text.expand(dur)
+    effectChain = controls.pop('effects', None)
+    playerEffects = _player_effect_chain(effect, effectChain, controls)
+    playerEffectUserIndex = playerEffects[0][0] if playerEffects else -1
+    effectControlValues = (
+        playerEffects[0][1] if playerEffects else
+        (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))
+    effectControlVariables = (
+        playerEffects[0][2] if playerEffects else
+        ('-', '-', '-', '-', '-', '-', '-'))
+    start, startPatternLength = _sample_fraction_pattern(start, 'start')
+    end, endPatternLength = _sample_fraction_pattern(end, 'end')
+    if not isinstance(loop, bool):
+        raise ValueError('sample loop must be True or False')
+    samplePatternValues = None
+    if isinstance(text, _FoxDotFinitePattern):
+        if any(_sample_symbols_for_item(item) is None for item in text):
+            raise TypeError('play(P[...]) sample patterns require sample symbols, space-rests, or zipped sample groups')
+        if any(isinstance(item, (list, tuple)) for item in text):
+            samplePatternValues = list(text)
+        else:
+            text = ''.join(text)
+    if samplePatternValues is None and (not isinstance(text, str) or not text):
+        raise ValueError('sample pattern cannot be empty')
+    if samplePatternValues is None and len(text) > 256:
+        raise ValueError('sample pattern text is limited to 256 characters')
+    sampleControl = sample if isinstance(sample, _DexterTimeVar) else None
+    rateControl = rate if isinstance(rate, _DexterTimeVar) else None
+    selections = ([sample.values[0]] if sampleControl is not None else
+                  [sample] if isinstance(sample, (int, float)) else list(sample))
+    rates = ([rate.values[0]] if rateControl is not None else
+             [rate] if isinstance(rate, (int, float)) else list(rate))
+    if not selections or not rates:
+        raise ValueError('sample and rate patterns cannot be empty')
+    if sampleControl is not None:
+        if any(not float(value).is_integer() or abs(value) > 1000000
+               for value in sampleControl.values):
+            raise ValueError('sample var/linvar values must be whole sample indexes from -1000000 to 1000000')
+    if rateControl is not None:
+        if any(not 0.0625 <= abs(value) <= 8.0 for value in rateControl.values):
+            raise ValueError('rate var/linvar values must have magnitude 0.0625 to 8')
+        if rateControl.linear and any(value * rateControl.values[0] <= 0.0
+                                      for value in rateControl.values):
+            raise ValueError('rate linvar values must keep the same sign; use var() to switch direction')
+    lengths = [len(selections), len(rates)]
+    if startPatternLength is not None:
+        lengths.append(startPatternLength)
+    if endPatternLength is not None:
+        lengths.append(endPatternLength)
+    if not isinstance(dur, (int, float, _DexterTimeVar)):
+        dur = list(dur)
+        if not dur:
+            raise ValueError('dur pattern cannot be empty')
+        lengths.append(len(dur))
+    if sus is not None and not isinstance(
+            sus, (int, float, _DexterTimeVar, _FoxDotChord)):
+        sus = list(sus)
+        if not sus:
+            raise ValueError('sus pattern cannot be empty')
+        lengths.append(len(sus))
+    notes, multipliers, symbolSlots = (
+        _sample_timeline_values(samplePatternValues, lengths)
+        if samplePatternValues is not None else
+        _sample_timeline(text, lengths))
+    positions = []
+    symbolEvents = []
+    for position, symbols in enumerate(symbolSlots):
+        for symbol, sampleOverride in symbols:
+            positions.append(position)
+            symbolEvents.append((symbol, position, sampleOverride))
+    if not any(symbols for symbols in symbolSlots):
+        raise ValueError('sample pattern contains only rests')
+    controls.setdefault('atk', 0.001)
+    controls.setdefault('rel', 0.005)
+    controls.setdefault('reverb', 'none')
+    pattern = sequence(notes, step=dur, duration=sus,
+                       _time_multipliers=multipliers,
+                       _allow_repeated_notes=True, **controls)
+    pattern.synth = 'sample'
+    pattern.synthRate = 1.0
+    pattern.sampleSpec = (selections, rates, sus is not None or loop, positions,
+                          sampleControl, rateControl, symbolEvents,
+                          start, end, loop)
+    pattern.playerEffectUserIndex = playerEffectUserIndex
+    pattern.playerEffects = playerEffects
+    if effectControlValues is not None:
+        pattern.playerEffectControlValues = effectControlValues
+        pattern.effectControlVariables = effectControlVariables
+    return pattern
+
+def play(notes, *args, **kwargs):
+    if (isinstance(notes, (str, _FoxDotFinitePattern)) or
+            isinstance(notes, _DexterPVar) and notes.kind == 'sample'):
+        return _sample_pattern(notes, *args, **kwargs)
+    return _play_notes(notes, *args, **kwargs)
+
+_GROUP_PATTERN_FIELDS = {
+    'amp': 'amp', 'pan': 'pan', 'cutoff': 'cutoff',
+    'echo': 'echoBeats', 'delaytime': 'delayTimeSeconds',
+    'atk': 'attackSeconds', 'rel': 'releaseSeconds',
+    'reverb': 'reverb', 'room': 'room', 'mix': 'mix', 'damp': 'damp',
+    'revtime': 'revtime', 'spread': 'spread', 'lpf': 'lpfHz',
+    'lpr': 'lpr', 'hpf': 'hpfHz', 'hpr': 'hpr', 'bpf': 'bpfHz',
+    'bpr': 'bpr', 'decay': 'echoDecayBeats', 'echomix': 'echoMix',
+    'feedback': 'feedback', 'bpnoise': 'bpnoise', 'swell': 'swell',
+    'shape': 'shape', 'drive': 'drive', 'chop': 'chop', 'spin': 'spin',
+    'cut': 'cut', 'coarse': 'coarse', 'formant': 'formant',
+    'pshift': 'pshift', 'bits': 'bits', 'crush': 'crush',
+    'degree': 'degreeControl', 'dur': 'step', 'sus': 'duration',
+    'oct': 'octaveControl', 'scale': 'scaleName', 'root': 'rootMidi'
+}
+
+def _group_degree_items(value):
+    if isinstance(value, _DexterTimeVar):
+        if any(item < -128.0 or item > 127.0 for item in value.values):
+            raise ValueError('Group.degree var/linvar values must be from -128 to 127')
+        return value
+    if isinstance(value, _FoxDotChord):
+        items = [value]
+    elif value is None or _finite_note_number(value):
+        items = [value]
+    elif isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+        items = list(value)
+    else:
+        raise TypeError('Group.degree requires finite numeric notes, rests, or chords')
+    if not items or len(items) > 256:
+        raise ValueError('Group.degree is limited to 1..256 note steps')
+    _, kind = _pattern_items(items, 'Group.degree')
+    if kind not in (None, 'numeric'):
+        raise TypeError('Group.degree accepts numeric note patterns, not sample symbols')
+    return _FoxDotFinitePattern(items)
+
+def _group_shift_notes(notes, semitones):
+    def shift_item(item):
+        if item is None:
+            return None
+        if isinstance(item, (list, tuple)):
+            values = [shift_item(value) for value in item]
+            return tuple(values) if isinstance(item, tuple) else values
+        if not _finite_note_number(item):
+            raise TypeError('Group pitch controls require finite numeric degrees')
+        return item + semitones
+    return [shift_item(item) for item in notes]
+
+def _validate_group_time_pattern(value, name):
+    lower = 0.001 if name == 'dur' else 0.02
+    source = value.values if isinstance(value, _DexterTimeVar) else value
+    if isinstance(source, (int, float)) and not isinstance(source, bool):
+        items = [source]
+    elif isinstance(source, _FoxDotDurationGroup):
+        items = [source]
+    elif name == 'sus' and isinstance(source, _FoxDotChord):
+        items = [source]
+    elif isinstance(source, (list, tuple, _FoxDotFinitePattern)):
+        items = list(source)
+    else:
+        raise TypeError('Group.' + name + ' requires a number or bounded pattern')
+    if not items or len(items) > 256:
+        raise ValueError('Group.' + name + ' is limited to 1..256 values')
+    for item in items:
+        values = list(item) if name == 'sus' and isinstance(
+            item, _FoxDotChord) else [item]
+        if isinstance(item, _FoxDotDurationGroup):
+            if name != 'dur' or not item:
+                raise TypeError('PRhythm duration groups are supported only in Group.dur')
+            base = float(item[0])
+            offsets = [float(offset) for offset in item[1:]]
+            if (base != base or not lower <= base <= 4096.0 or
+                    len(offsets) > 255 or
+                    any(offset != offset or offset < 0.0 or
+                        offset > 8.0 or offset > base for offset in offsets)):
+                raise ValueError('Group.dur PRhythm values are outside the supported bounds')
+            continue
+        for numeric in values:
+            if (isinstance(numeric, bool) or
+                    not isinstance(numeric, (int, float))):
+                raise TypeError('Group.' + name + ' values must be numeric')
+            numeric = float(numeric)
+            if (numeric != numeric or numeric in
+                    (float('inf'), float('-inf')) or
+                    not lower <= numeric <= 4096.0):
+                raise ValueError(
+                    'Group.' + name + ' values must be between ' +
+                    str(lower) + ' and 4096 beats')
+
+def _normalize_group_control(name, value):
+    if name == 'root':
+        return _normalize_root_control(value)
+    if name == 'degree':
+        return _group_degree_items(value)
+    if name in ('dur', 'sus'):
+        _validate_group_time_pattern(value, name)
+        return value
+    if name == 'oct':
+        if isinstance(value, _DexterTimeVar):
+            if any(item < 0.0 or item > 10.0 for item in value.values):
+                raise ValueError('Group.oct values must be from 0 to 10')
+            return value
+        if isinstance(value, bool) or not _finite_note_number(value):
+            raise TypeError('Group.oct requires a finite number or var/linvar')
+        octave = int(value)
+        if not 0 <= octave <= 10:
+            raise ValueError('Group.oct must be from 0 to 10')
+        return octave
+    if name == 'scale':
+        if isinstance(value, _DexterTimeVar):
+            raise TypeError('Group.scale does not accept var/linvar')
+        return _scale_intervals(value)
+    if name in ('shape', 'drive'):
+        _player_effect_control(value, name)
+        return value
+    if name in ('bits', 'crush'):
+        lower, upper = (0.0, 24.0) if name == 'bits' else (1.0, 128.0)
+        _event_control(value, name, lower, upper)
+        return value
+    if name in ('chop', 'spin', 'coarse', 'formant', 'pshift'):
+        lower, upper = {
+            'chop': (0.0, 32.0), 'spin': (0.0, 40.0),
+            'coarse': (0.0, 32.0), 'formant': (-1.0, 7.0),
+            'pshift': (-24.0, 24.0)
+        }[name]
+        _note_effect_control(value, name, lower, upper)
+        return value
+    return value
+
+def _set_group_pattern_control(pattern, name, value):
+    if name == 'root':
+        if pattern.synth == 'sample' or not pattern.degrees:
+            raise ValueError('Group.root applies only to scale-degree note players')
+        pattern.rootMidi, pattern.rootControl = value
+    elif name == 'degree':
+        if pattern.synth == 'sample':
+            raise ValueError('Group.degree applies to numeric note players, not sample players')
+        if not pattern.degrees:
+            raise ValueError('Group.degree applies only to scale-degree note players')
+        if isinstance(value, _DexterTimeVar):
+            pattern.degreeControl = value
+            return
+        pattern.degreeControl = None
+        shift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
+        pattern.notes = _group_shift_notes(value, shift)
+    elif name == 'dur':
+        pattern.step = value
+    elif name == 'sus':
+        pattern.duration = value
+    elif name == 'cut':
+        pattern.cut, pattern.cutControl = _note_effect_control(
+            value, 'cut', 0.0, 1.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:8] + (
+            pattern.cutControl.wire()
+            if isinstance(pattern.cutControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[9:]
+    elif name == 'coarse':
+        pattern.coarse, pattern.coarseControl = _note_effect_control(
+            value, 'coarse', 0.0, 32.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:9] + (
+            pattern.coarseControl.wire()
+            if isinstance(pattern.coarseControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[10:]
+    elif name == 'formant':
+        pattern.formant, pattern.formantControl = _note_effect_control(
+            value, 'formant', -1.0, 7.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:10] + (
+            pattern.formantControl.wire()
+            if isinstance(pattern.formantControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[11:]
+    elif name == 'pshift':
+        pattern.pshift, pattern.pshiftControl = _note_effect_control(
+            value, 'pshift', -24.0, 24.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:11] + (
+            pattern.pshiftControl.wire()
+            if isinstance(pattern.pshiftControl, _DexterTimeVar) else '-',
+        )
+    elif name == 'bits':
+        pattern.bits, pattern.bitsControl = _event_control(
+            value, 'bits', 0.0, 24.0)
+    elif name == 'crush':
+        pattern.crush, pattern.crushControl = _event_control(
+            value, 'crush', 1.0, 128.0)
+    elif name == 'oct':
+        if pattern.synth == 'sample' or not pattern.degrees:
+            raise ValueError('Group.oct applies only to scale-degree note players')
+        if isinstance(value, _DexterTimeVar):
+            baseOctave = int(round(value.values[0]))
+            octaveControl = value
+        else:
+            baseOctave = int(value)
+            octaveControl = None
+        oldShift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
+        rawNotes = _group_shift_notes(pattern.notes, -oldShift)
+        newShift = (baseOctave - 5) * pattern.degreesPerOctave
+        pattern.notes = _group_shift_notes(rawNotes, newShift)
+        pattern.baseOctave = baseOctave
+        pattern.octaveControl = octaveControl
+    elif name == 'scale':
+        if pattern.synth == 'sample' or not pattern.degrees:
+            raise ValueError('Group.scale applies only to scale-degree note players')
+        oldShift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
+        rawNotes = _group_shift_notes(pattern.notes, -oldShift)
+        intervals = _scale_intervals(value)
+        pattern.scaleName = intervals
+        pattern.degreesPerOctave = len(intervals)
+        newShift = (pattern.baseOctave - 5) * pattern.degreesPerOctave
+        pattern.notes = _group_shift_notes(rawNotes, newShift)
+    elif name == 'amp':
+        pattern.amp, pattern.ampControl = _control_value(value, 'amp', 0.0, 1.0)
+    elif name == 'pan':
+        pattern.pan, pattern.panControl = _control_value(value, 'pan', -1.0, 1.0)
+        pattern.mousePan = False
+    elif name == 'cutoff':
+        pattern.cutoff, pattern.cutoffControl = _control_value(
+            value, 'cutoff', 20.0, 20000.0)
+        pattern.mouseCutoff = False
+    elif name == 'echo':
+        pattern.echoBeats, pattern.echoControl = _control_value(
+            value, 'echo', 0.0, 64.0)
+    elif name == 'delaytime':
+        pattern.delayTimeSeconds, pattern.delayTimeControl = _control_value(
+            value, 'delaytime', 0.0, 4.0)
+    elif name == 'atk':
+        pattern.attackSeconds, pattern.attackControl = _event_control(
+            value, 'atk', 0.0, 3.0)
+    elif name == 'rel':
+        pattern.releaseSeconds, pattern.releaseControl = _event_control(
+            value, 'rel', 0.0, 3.0)
+    elif name == 'reverb':
+        if value not in ('freeverb', 'freeverb2', 'gverb', 'none'):
+            raise ValueError('reverb must be freeverb, freeverb2, gverb, or none')
+        pattern.reverb = value
+        pattern.reverbIndex = ('none', 'freeverb', 'freeverb2', 'gverb').index(value)
+    elif name in ('room', 'mix', 'damp'):
+        result = float(value)
+        if result != result or not 0.0 <= result <= 1.0:
+            raise ValueError(name + ' must be between 0 and 1')
+        if name == 'room':
+            pattern.room = result
+        elif name == 'mix':
+            pattern.mix = result
+        else:
+            pattern.damp = result
+    elif name == 'revtime':
+        result = float(value)
+        if result != result or not 0.1 <= result <= 10.0:
+            raise ValueError('revtime must be between 0.1 and 10 seconds')
+        pattern.revtime = result
+    elif name == 'spread':
+        result = float(value)
+        if result != result or not 0.0 <= result <= 100.0:
+            raise ValueError('spread must be between 0 and 100')
+        pattern.spread = result
+    elif name in ('lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr'):
+        lower, upper = ((0.05, 1.0) if name in ('lpr', 'hpr', 'bpr')
+                        else (0.0, 20000.0))
+        normalized, control = _event_control(value, name, lower, upper)
+        if name == 'lpf':
+            pattern.lpfHz, pattern.lpfControl = normalized, control
+        elif name == 'lpr':
+            pattern.lpr, pattern.lprControl = normalized, control
+        elif name == 'hpf':
+            pattern.hpfHz, pattern.hpfControl = normalized, control
+        elif name == 'hpr':
+            pattern.hpr, pattern.hprControl = normalized, control
+        elif name == 'bpf':
+            pattern.bpfHz, pattern.bpfControl = normalized, control
+        else:
+            pattern.bpr, pattern.bprControl = normalized, control
+    elif name == 'decay':
+        pattern.echoDecayBeats, pattern.echoDecayControl = _event_control(
+            value, 'decay', 0.0, 64.0)
+    elif name == 'echomix':
+        pattern.echoMix, pattern.echoMixControl = _control_value(
+            value, 'echomix', 0.0, 1.0)
+    elif name == 'feedback':
+        if value is None:
+            pattern.feedback, pattern.feedbackControl = -1.0, None
+        else:
+            pattern.feedback, pattern.feedbackControl = _control_value(
+                value, 'feedback', 0.0, 0.95)
+    elif name == 'bpnoise':
+        pattern.bpnoise, pattern.bpnoiseControl = _event_control(
+            value, 'bpnoise', 0.0, 10.0)
+    elif name == 'swell':
+        pattern.swell, pattern.swellControl = _event_control(
+            value, 'swell', 0.0, 4.0)
+    elif name == 'shape':
+        pattern.shape, pattern.shapeControl = _player_effect_control(value, 'shape')
+    elif name == 'drive':
+        pattern.drive, pattern.driveControl = _player_effect_control(value, 'drive')
+    elif name == 'chop':
+        pattern.chop, pattern.chopControl = _note_effect_control(
+            value, 'chop', 0.0, 32.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:6] + (
+            pattern.chopControl.wire()
+            if isinstance(pattern.chopControl, _DexterTimeVar) else '-',
+            pattern.spinControl.wire()
+            if isinstance(pattern.spinControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[8:]
+    elif name == 'spin':
+        pattern.spin, pattern.spinControl = _note_effect_control(
+            value, 'spin', 0.0, 40.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:6] + (
+            pattern.chopControl.wire()
+            if isinstance(pattern.chopControl, _DexterTimeVar) else '-',
+            pattern.spinControl.wire()
+            if isinstance(pattern.spinControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[8:]
+    elif name == 'cut':
+        pattern.cut, pattern.cutControl = _note_effect_control(
+            value, 'cut', 0.0, 1.0)
+        pattern.noteEffectControlVariables = pattern.noteEffectControlVariables[:8] + (
+            pattern.cutControl.wire()
+            if isinstance(pattern.cutControl, _DexterTimeVar) else '-',
+        ) + pattern.noteEffectControlVariables[9:]
+    else:
+        raise AttributeError('unsupported shared player control ' + name)
+
+class Player:
+    def __init__(self, number):
+        self.number = number
+        self._currentPattern = None
+        self._active = False
+        self._groupOverrides = {}
+        self._follows = None
+        self._followers = []
+        self._applyingFollow = False
+        self._baseUpdate = None
+        self._scheduledTransforms = []
+
+    def __getattr__(self, name):
+        if name == 'degree':
+            if self._currentPattern is None:
+                raise ValueError('Assign a pattern to this player before referencing its degree.')
+            return _PlayerDegreeReference(self)
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        if name == 'degree':
+            if not isinstance(value, _PlayerDegreeReference):
+                raise TypeError('Player degree references must use another player, e.g. p2.degree = p1.degree.')
+            self.follow(value.player)
+            return
+        self.__dict__[name] = value
+
+    def __rshift__(self, pattern):
+        global _dexter_events, _dexter_length, _dexter_slots
+        global _dexter_default_touched, _dexter_scale, _dexter_root
+        global _dexter_root_control
+        global _dexter_sample_controls
+        if not isinstance(pattern, PlayerPattern):
+            raise TypeError('assign sequence(...) to a player using >>')
+        if self._groupOverrides:
+            copiedPattern = PlayerPattern.__new__(PlayerPattern)
+            copiedPattern.__dict__ = dict(pattern.__dict__)
+            for controlName, controlValue in self._groupOverrides.items():
+                _set_group_pattern_control(
+                    copiedPattern, controlName, controlValue)
+            pattern = copiedPattern
+        saved = (_dexter_events, _dexter_length, _dexter_slots,
+                 _dexter_default_touched, _dexter_scale, _dexter_root,
+                 _dexter_root_control)
+        _dexter_events = []
+        _dexter_length = 1.0
+        _dexter_slots = 0
+        _dexter_default_touched = False
+        try:
+            if pattern.scaleName is not None:
+                _dexter_scale = _scale_intervals(pattern.scaleName)
+            if pattern.rootMidi is not None:
+                _dexter_root = pattern.rootMidi
+                _dexter_root_control = pattern.rootControl
+            play(pattern.notes, step=pattern.step, duration=pattern.duration,
+                 velocity=pattern.velocity, offset=pattern.offset,
+                 degrees=pattern.degrees, _octave_control=pattern.octaveControl,
+                 _base_octave=pattern.baseOctave,
+                 _degrees_per_octave=pattern.degreesPerOctave,
+                 _attack_control=pattern.attackControl,
+                 _release_control=pattern.releaseControl,
+                 _attack_default=pattern.attackSeconds,
+                  _release_default=pattern.releaseSeconds,
+                   _time_multipliers=pattern.timeMultipliers,
+                   _allow_repeated_notes=pattern.allowRepeatedNotes,
+                   _degree_control=pattern.degreeControl,
+                    _root_control=pattern.rootControl,
+                    _write_control_tokens=False,
+                  strum=pattern.strumControl if pattern.strumControl is not None else pattern.strumBeats,
+                   bits=pattern.bitsControl if pattern.bitsControl is not None else pattern.bits,
+                   crush=pattern.crushControl if pattern.crushControl is not None else pattern.crush,
+                  vibdepth=pattern.vibDepthControl if pattern.vibDepthControl is not None else pattern.vibDepth,
+                  slide=pattern.slideControl if pattern.slideControl is not None else pattern.slide,
+                  slidefrom=pattern.slideFromControl if pattern.slideFromControl is not None else pattern.slideFrom,
+                  slidedelay=pattern.slideDelayControl if pattern.slideDelayControl is not None else pattern.slideDelay,
+                  bend=pattern.bendControl if pattern.bendControl is not None else pattern.bend,
+                    benddelay=pattern.bendDelayControl if pattern.bendDelayControl is not None else pattern.bendDelay,
+                   pshift=pattern.pshiftControl if pattern.pshiftControl is not None else pattern.pshift,
+                   chop=pattern.chopControl if pattern.chopControl is not None else pattern.chop,
+                    spin=pattern.spinControl if pattern.spinControl is not None else pattern.spin,
+                    cut=pattern.cutControl if pattern.cutControl is not None else pattern.cut,
+                    coarse=pattern.coarseControl if pattern.coarseControl is not None else pattern.coarse,
+                    formant=pattern.formantControl if pattern.formantControl is not None else pattern.formant)
+            compiledLength = _dexter_length
+            delayPattern = isinstance(pattern.delayControl, _FoxDotFinitePattern)
+            if delayPattern:
+                delayValues = list(pattern.delayControl)
+                if len(_dexter_events) * len(delayValues) > 256:
+                    raise ValueError('PDelay is limited to 256 expanded note events per player')
+                compiledEvents = []
+                for event in _dexter_events:
+                    for delayValue in delayValues:
+                        compiledEvents.append(
+                            event[:6] + (event[6] + delayValue,) + event[7:])
+                serializedDelayControl = None
+            else:
+                compiledEvents = [
+                    event[:6] + (event[6] +
+                                 (0.0 if pattern.delayControl is not None else pattern.delayBeats),) +
+                    event[7:]
+                    for event in _dexter_events
+                ]
+                serializedDelayControl = pattern.delayControl
+        finally:
+            _dexter_events, _dexter_length, _dexter_slots, _dexter_default_touched = saved[:4]
+            _dexter_scale, _dexter_root = saved[4], saved[5]
+            _dexter_root_control = saved[6]
+        playerIndex = self.number - 1
+        if not 0 <= playerIndex < 8:
+            raise ValueError('player number must be 1..8')
+        synthIndex = (_DEXTER_BUILTIN_SYNTHS.index(pattern.synth)
+                      if pattern.synth in _DEXTER_BUILTIN_SYNTHS else
+                      len(_DEXTER_BUILTIN_SYNTHS) +
+                      _dexter_user_synth_names.index(pattern.synth))
+        if pattern.synth == 'sample':
+            requests = []
+            adjusted = []
+            assignedMidiIntervals = []
+            (selection, rates, gate, positions, sampleControl, rateControl,
+             symbolEvents, sampleStart, sampleEnd, sampleLoop) = pattern.sampleSpec
+            symbolsByPosition = {}
+            for symbolEvent in symbolEvents:
+                symbolsByPosition.setdefault(symbolEvent[1], []).append(symbolEvent)
+            for event in compiledEvents:
+                sourcePosition = event[8]
+                chordIndex = event[9]
+                symbol, position, sampleOverride = \
+                    symbolsByPosition[sourcePosition][chordIndex]
+                symbol = ord(symbol)
+                sampleIndex = (sampleOverride if sampleOverride is not None else
+                               _sample_timevar_value(sampleControl, event[0])
+                               if sampleControl is not None else
+                               _sample_value(selection, position, event[0], 'sample'))
+                playbackRate = float(_sample_value(rates, position, event[0], 'rate'))
+                if int(sampleIndex) != sampleIndex or not -1000000 <= sampleIndex <= 1000000:
+                    raise ValueError('sample selection must be an integer from -1000000 to 1000000')
+                if playbackRate != playbackRate or not 0.0625 <= abs(playbackRate) <= 8.0:
+                    raise ValueError('sample rate magnitude must be 0.0625 to 8; negative plays backwards')
+                sliceStart = float(_sample_value(sampleStart, position, event[0], 'start'))
+                sliceEnd = float(_sample_value(sampleEnd, position, event[0], 'end'))
+                if not 0.0 <= sliceStart < sliceEnd <= 1.0:
+                    raise ValueError(
+                        'sample start/end must satisfy 0 <= start < end <= 1 at every hit')
+                requests.append((symbol, int(sampleIndex), playbackRate, int(gate),
+                                 sliceStart, sliceEnd, int(sampleLoop)))
+                note = list(event)
+                baseMidiNote = {120: 36, 88: 36, 111: 38, 79: 38,
+                                45: 42, 61: 46, 42: 39}.get(symbol, symbol)
+                startBeat = event[0] + event[6]
+                endBeat = startBeat + event[1]
+                candidates = list(range(baseMidiNote, 128)) + list(range(baseMidiNote - 1, -1, -1))
+                midiNote = None
+                for candidate in candidates:
+                    if all(candidate != oldNote or startBeat >= oldEnd - 1e-9 or
+                           oldStart >= endBeat - 1e-9
+                           for oldNote, oldStart, oldEnd in assignedMidiIntervals):
+                        midiNote = candidate
+                        break
+                if midiNote is None:
+                    raise ValueError('sample layers exceed the available MIDI pitch range')
+                assignedMidiIntervals.append((midiNote, startBeat, endBeat))
+                note[2] = midiNote
+                adjusted.append(tuple(note))
+            compiledEvents = adjusted
+            _dexter_sample_events[playerIndex] = requests
+            _dexter_sample_base_events[playerIndex] = list(requests)
+            _dexter_sample_controls[playerIndex] = (
+                sampleControl.wire() if sampleControl is not None else '-',
+                rateControl.wire() if rateControl is not None else '-')
+        _dexter_synth_controls[playerIndex] = pattern.synthControls
+        _dexter_player_effect_chains[playerIndex] = tuple(pattern.playerEffects)
+        _dexter_player_effect_indices[playerIndex] = pattern.playerEffectUserIndex
+        _dexter_effect_control_values[playerIndex] = pattern.playerEffectControlValues
+        _dexter_effect_control_variables[playerIndex] = pattern.effectControlVariables
+        _dexter_note_effect_control_variables[playerIndex] = \
+            pattern.noteEffectControlVariables
+        _dexter_bitcrusher_controls[playerIndex] = (
+            pattern.bits, pattern.bitsControl.wire()
+            if isinstance(pattern.bitsControl, _DexterTimeVar) else '-',
+            pattern.crush, pattern.crushControl.wire()
+            if isinstance(pattern.crushControl, _DexterTimeVar) else '-')
+        _dexter_updates[playerIndex] = (False, _dexter_bpm, compiledLength,
+                                        compiledEvents, synthIndex, pattern.amp,
+                                        pattern.pan, pattern.cutoff, pattern.echoBeats,
+                                        pattern.delayTimeSeconds, pattern.mousePan, pattern.mouseCutoff,
+                                        pattern.attackSeconds, pattern.releaseSeconds, pattern.ampControl,
+                                        pattern.panControl, pattern.cutoffControl,
+                                        pattern.echoControl, pattern.delayTimeControl,
+                                        pattern.reverbIndex, pattern.mix, pattern.room, pattern.damp,
+                                        pattern.revtime, pattern.spread,
+                                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr,
+                                         pattern.bpfHz, pattern.bpr,
+                                         pattern.lpfControl, pattern.lprControl,
+                                         pattern.hpfControl, pattern.hprControl,
+                                         pattern.bpfControl, pattern.bprControl, pattern.echoDecayBeats, pattern.echoDecayControl,
+                                         pattern.echoMix, pattern.echoMixControl, pattern.feedback, pattern.feedbackControl, serializedDelayControl, pattern.synthRate,
+                                         pattern.bpnoise, pattern.bpnoiseControl, pattern.swell, pattern.swellControl,
+                                         pattern.shape, pattern.shapeControl, pattern.drive, pattern.driveControl,
+                                         _dexter_swing_seconds)
+        if playerIndex == 0:
+            _dexter_default_touched = False
+        self._currentPattern = pattern
+        self._baseUpdate = _dexter_updates[playerIndex]
+        if self._scheduledTransforms:
+            self._apply_scheduled_transform()
+        if self._follows is not None and not self._applyingFollow:
+            self._copy_followed_degree(self._follows)
+        self._refresh_followers()
+        self._active = True
+        return self
+
+    def _apply_sample_stutter(self, operations):
+        base = self._baseUpdate
+        pattern = self._currentPattern
+        playerIndex = self.number - 1
+        if any(operation[0] != 'stutter' for operation in operations):
+            raise ValueError('Sample players currently support scheduled stutter only.')
+        events = list(base[3])
+        requests = list(_dexter_sample_base_events.get(playerIndex, ()))
+        if not events or len(events) != len(requests):
+            raise ValueError('Sample stutter needs matching playable hits and sample requests.')
+        if (pattern.strumControl is not None or pattern.strumBeats != 0.0 or
+                pattern.delayControl is not None or pattern.delayBeats != 0.0):
+            raise ValueError('Sample stutter currently needs unstrummed hits without per-note delay.')
+        baseLength = float(base[2])
+        if not 0.0 < baseLength <= 4096.0:
+            raise ValueError('Sample stutter phrase length must be between 0 and 4096 beats.')
+        def hitsAt(beat):
+            phase = float(beat) % baseLength
+            hits = []
+            for event, request in zip(events, requests):
+                start = (float(event[0]) + float(event[6])) % baseLength
+                distance = ((start - phase + baseLength * 0.5) %
+                            baseLength) - baseLength * 0.5
+                if abs(distance) <= 1e-8:
+                    hits.append((event, request))
+            return hits
+
+        schedules = [
+            self._compile_scheduled_operation(
+                operation, baseLength, len(events))
+            for operation in operations
+        ]
+        longestPeriod = max(schedule['period'] for schedule in schedules)
+        commonLength = None
+        maxMultiplier = max(1, int(4096.0 / longestPeriod))
+        for multiplier in range(1, maxMultiplier + 1):
+            candidate = longestPeriod * multiplier
+            if all(abs(candidate / schedule['period'] -
+                       round(candidate / schedule['period'])) <= 1e-8
+                   for schedule in schedules):
+                commonLength = candidate
+                break
+        if commonLength is None:
+            raise ValueError('Combined sample stutters do not form a repeating phrase within 4096 beats.')
+        cycles = round(commonLength / baseLength)
+        if (cycles < 1 or
+                abs(commonLength - cycles * baseLength) > 1e-7):
+            raise ValueError('Combined sample stutters do not align with the drum pattern.')
+
+        scheduledBeats = []
+        for scheduleIndex, schedule in enumerate(schedules):
+            localCycles = round(commonLength / schedule['period'])
+            callLimit = (len(schedule['calls']) - 1
+                         if schedule['closureAtPeriod'] and
+                         schedule['method'] != 'stutter'
+                         else len(schedule['calls']))
+            for localCycle in range(localCycles):
+                cycleOffset = localCycle * schedule['period']
+                for callIndex in range(callLimit):
+                    beat = cycleOffset + schedule['calls'][callIndex]
+                    if beat >= commonLength - 1e-8:
+                        if (schedule['closureAtPeriod'] and
+                                schedule['method'] == 'stutter' and
+                                abs(beat - commonLength) <= 1e-8):
+                            beat = 0.0
+                        else:
+                            continue
+                    scheduledBeats.append((beat, scheduleIndex))
+                    if len(scheduledBeats) > 256:
+                        raise ValueError('Combined sample stutters exceed 256 scheduled calls.')
+        scheduledBeats.sort(key=lambda item: (item[0], item[1]))
+        stutterCalls = [
+            (beat, scheduleIndex, hitsAt(beat))
+            for beat, scheduleIndex in scheduledBeats
+        ]
+        extraCount = sum(
+            len(hits) * (schedules[scheduleIndex]['amount'] - 1)
+            for _, scheduleIndex, hits in stutterCalls)
+        if len(events) * cycles + extraCount > 256:
+            raise ValueError('Sample stutter expands beyond the 256-event limit; use fewer hits, fewer triggers, or a smaller stutter count.')
+
+        outputPairs = []
+        for cycleIndex in range(cycles):
+            cycleOffset = cycleIndex * baseLength
+            for event, request in zip(events, requests):
+                repeatedEvent = list(event)
+                repeatedEvent[0] = float(event[0]) + cycleOffset
+                outputPairs.append((tuple(repeatedEvent), request))
+
+        hitStarts = sorted(set(
+            (float(event[0]) + float(event[6])) % baseLength
+            for event in events))
+        for scheduledBeat, scheduleIndex, hits in stutterCalls:
+            if not hits:
+                continue
+            amount = schedules[scheduleIndex]['amount']
+            callBeat = scheduledBeat % commonLength
+            phase = callBeat % baseLength
+            nextStarts = [start for start in hitStarts
+                          if start > phase + 1e-8]
+            nextHit = (nextStarts[0] if nextStarts else
+                       hitStarts[0] + baseLength)
+            remaining = nextHit - phase
+            if remaining <= 1e-9:
+                continue
+            spacing = remaining / float(amount)
+            for event, request in hits:
+                for repeatIndex in range(1, amount):
+                    repeatedEvent = list(event)
+                    repeatedStart = (
+                        callBeat + spacing * repeatIndex) % commonLength
+                    repeatedEvent[0] = repeatedStart - float(event[6])
+                    repeatedEvent[1] = min(float(event[1]), spacing)
+                    outputPairs.append((tuple(repeatedEvent), request))
+
+        outputPairs.sort(
+            key=lambda item: float(item[0][0]) + float(item[0][6]))
+        expanded = list(base)
+        expanded[2] = commonLength
+        expanded[3] = [event for event, _ in outputPairs]
+        _dexter_updates[playerIndex] = tuple(expanded)
+        _dexter_sample_events[playerIndex] = [
+            request for _, request in outputPairs]
+
+    def _compile_scheduled_operation(self, operation, baseLength, eventCount):
+        (method, amount, intervals, intervalRange, phase, repeatCycle,
+         scheduleKey, explicitCycle) = operation
+        calls = []
+        elapsed = 0.0
+        cycles = 0
+        reverseState = False
+        rotation = 0
+        shuffleOrders = []
+        if explicitCycle:
+            for cycleIndex in range(1, 257):
+                callBeat = (
+                    float(phase[(cycleIndex - 1) % len(phase)]) +
+                    (cycleIndex - 1) * float(repeatCycle))
+                calls.append(callBeat)
+                if method == 'reverse':
+                    reverseState = not reverseState
+                elif method == 'rotate':
+                    rotation = (rotation + amount) % eventCount
+                elif method == 'shuffle':
+                    shuffleOrders.append(list(
+                        PShuf(_FoxDotFinitePattern(list(range(eventCount))))))
+                elapsed = cycleIndex * float(repeatCycle)
+                if elapsed > 4096.0:
+                    break
+                candidateCycles = round(elapsed / baseLength)
+                aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
+                reset = (
+                    not reverseState if method == 'reverse' else
+                    rotation == 0 if method == 'rotate' else
+                    True)
+                if (cycleIndex % len(phase) != 0 or
+                        candidateCycles < 1 or not aligned or not reset):
+                    continue
+                if (method == 'stutter' and
+                        eventCount * candidateCycles +
+                        len(calls) * (amount - 1) > 256):
+                    continue
+                elapsed = candidateCycles * baseLength
+                cycles = candidateCycles
+                return {
+                    'method': method,
+                    'amount': amount,
+                    'calls': tuple(calls),
+                    'period': elapsed,
+                    'shuffleOrders': tuple(shuffleOrders),
+                    'closureAtPeriod': False,
+                }
+            raise ValueError('Scheduled operation could not form a bounded repeating phrase; use a shorter cycle or another interval.')
+        for index in range(256):
+            elapsed += float(intervals[index % len(intervals)])
+            calls.append(elapsed)
+            if elapsed > 4096.0:
+                break
+            if method == 'reverse':
+                reverseState = not reverseState
+            elif method == 'rotate':
+                rotation = (rotation + amount) % eventCount
+            elif method == 'shuffle':
+                shuffleOrders.append(list(
+                    PShuf(_FoxDotFinitePattern(list(range(eventCount))))))
+            candidateCycles = round(elapsed / baseLength)
+            aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
+            reset = (
+                not reverseState if method == 'reverse' else
+                rotation == 0 if method == 'rotate' else
+                True)
+            if candidateCycles < 1 or not reset:
+                continue
+            if not aligned:
+                previousElapsed = (
+                    elapsed - float(intervals[index % len(intervals)]))
+                lowInterval, highInterval = intervalRange
+                lowCyclesValue = (
+                    previousElapsed + lowInterval) / baseLength
+                lowCycles = int(lowCyclesValue)
+                if lowCycles < lowCyclesValue - 1e-9:
+                    lowCycles += 1
+                highCycles = int(
+                    (previousElapsed + highInterval + 1e-9) / baseLength)
+                eventBudget = 256
+                if method == 'stutter':
+                    eventBudget -= len(calls) * (amount - 1)
+                maxCycles = min(
+                    int(4096.0 / baseLength),
+                    max(0, eventBudget // max(1, eventCount)))
+                highCycles = min(highCycles, maxCycles)
+                if lowCycles <= highCycles:
+                    targetCycles = max(
+                        lowCycles, min(highCycles, candidateCycles))
+                    adjustedInterval = (
+                        targetCycles * baseLength - previousElapsed)
+                    if (lowInterval - 1e-9 <= adjustedInterval <=
+                            highInterval + 1e-9):
+                        elapsed = targetCycles * baseLength
+                        calls[-1] = elapsed
+                        aligned = True
+                        candidateCycles = targetCycles
+            if aligned:
+                elapsed = candidateCycles * baseLength
+                calls[-1] = elapsed
+                cycles = candidateCycles
+                break
+        if not calls or elapsed > 4096.0 or cycles < 1:
+            raise ValueError('Scheduled operation could not form a bounded repeating phrase; use a shorter pattern or another interval.')
+        if (method == 'stutter' and
+                eventCount * cycles + len(calls) * (amount - 1) > 256):
+            raise ValueError('Scheduled stutter expands beyond the 256-event limit; use fewer notes, fewer triggers, or a smaller count.')
+        return {
+            'method': method,
+            'amount': amount,
+            'calls': tuple(calls),
+            'period': elapsed,
+            'shuffleOrders': tuple(shuffleOrders),
+            'closureAtPeriod': True,
+        }
+
+    def _apply_stacked_scheduled_transforms(self):
+        pattern = self._currentPattern
+        base = self._baseUpdate
+        if pattern is None or base is None:
+            raise ValueError('Assign a note pattern before scheduling player operations.')
+        if pattern.synth == 'sample':
+            raise ValueError('Sample players currently support scheduled stutter only.')
+        if (pattern.octaveControl is not None or
+                pattern.strumControl is not None or
+                pattern.strumBeats != 0.0 or
+                pattern.delayControl is not None or
+                pattern.delayBeats != 0.0):
+            raise ValueError('Scheduled player operations require fixed-octave, unstrummed notes without per-note delay.')
+
+        def noteItems(value):
+            if isinstance(value, _FoxDotChord):
+                return [value]
+            if isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+                return list(value)
+            return [value]
+
+        notes = noteItems(pattern.notes)
+        if (not notes or len(notes) > 256 or
+                any(isinstance(note, bool) or not isinstance(note, (int, float))
+                    for note in notes)):
+            raise ValueError('Scheduled player operations need a dense, monophonic numeric degree pattern.')
+        events = list(base[3])
+        if len(events) != len(notes):
+            raise ValueError('Scheduled player operations need exactly one note event per pattern step.')
+        byPosition = {}
+        for event in events:
+            position = event[8]
+            if (isinstance(position, bool) or not isinstance(position, int) or
+                    not 0 <= position < len(notes) or event[9] != 0 or
+                    position in byPosition):
+                raise ValueError('Scheduled player operations need one ungrouped note at each pattern step.')
+            byPosition[position] = event
+        if len(byPosition) != len(notes):
+            raise ValueError('Scheduled player operations cannot move notes into rests.')
+
+        baseLength = float(base[2])
+        if not 0.0 < baseLength <= 4096.0:
+            raise ValueError('Scheduled phrase length must be between 0 and 4096 beats.')
+        operations = [
+            self._compile_scheduled_operation(
+                operation, baseLength, len(events))
+            for operation in self._scheduledTransforms
+        ]
+        longestPeriod = max(operation['period'] for operation in operations)
+        commonLength = None
+        maxMultiplier = max(1, int(4096.0 / longestPeriod))
+        for multiplier in range(1, maxMultiplier + 1):
+            candidate = longestPeriod * multiplier
+            if all(abs(candidate / operation['period'] -
+                       round(candidate / operation['period'])) <= 1e-8
+                   for operation in operations):
+                commonLength = candidate
+                break
+        if commonLength is None:
+            raise ValueError('Combined schedules do not form a repeating phrase within 4096 beats.')
+        baseCycles = round(commonLength / baseLength)
+        if (baseCycles < 1 or
+                abs(commonLength - baseCycles * baseLength) > 1e-7):
+            raise ValueError('Combined schedules do not align with the player pattern.')
+
+        triggers = []
+        for operationIndex, operation in enumerate(operations):
+            localCycles = round(commonLength / operation['period'])
+            method = operation['method']
+            callLimit = (len(operation['calls']) - 1
+                         if operation['closureAtPeriod'] and
+                         method != 'stutter' else len(operation['calls']))
+            for localCycle in range(localCycles):
+                cycleOffset = localCycle * operation['period']
+                for callIndex in range(callLimit):
+                    beat = cycleOffset + operation['calls'][callIndex]
+                    if beat >= commonLength - 1e-8:
+                        if (operation['closureAtPeriod'] and
+                                method == 'stutter' and
+                                abs(beat - commonLength) <= 1e-8):
+                            beat = 0.0
+                        else:
+                            continue
+                    triggers.append((beat, operationIndex, callIndex))
+                    if len(triggers) > 256:
+                        raise ValueError('Combined schedules exceed 256 scheduled calls; lengthen intervals or use fewer operations.')
+        triggers.sort(key=lambda item: (item[0], item[1], item[2]))
+        stutterCalls = [
+            trigger for trigger in triggers
+            if operations[trigger[1]]['method'] == 'stutter'
+        ]
+        stutterExtraEvents = sum(
+            operations[operationIndex]['amount'] - 1
+            for _, operationIndex, _ in stutterCalls)
+        if len(events) * baseCycles + stutterExtraEvents > 256:
+            raise ValueError('Combined scheduled operations exceed the 256-event limit; use a shorter phrase, fewer calls, or smaller stutter counts.')
+
+        states = []
+        for operation in operations:
+            if operation['method'] == 'reverse':
+                states.append(False)
+            elif operation['method'] == 'rotate':
+                states.append(0)
+            elif operation['method'] == 'shuffle':
+                states.append(list(operation['shuffleOrders'][-1]))
+            else:
+                states.append(None)
+
+        outputEvents = []
+        triggerIndex = 0
+        for cycleIndex in range(baseCycles):
+            cycleOffset = cycleIndex * baseLength
+            for position in range(len(notes)):
+                event = byPosition[position]
+                eventBeat = (cycleOffset + float(event[0]) +
+                             float(event[6]))
+                while (triggerIndex < len(triggers) and
+                       triggers[triggerIndex][0] <= eventBeat + 1e-9):
+                    _, operationIndex, callIndex = triggers[triggerIndex]
+                    operation = operations[operationIndex]
+                    method = operation['method']
+                    if method == 'reverse':
+                        states[operationIndex] = not states[operationIndex]
+                    elif method == 'rotate':
+                        states[operationIndex] = (
+                            states[operationIndex] + operation['amount']
+                        ) % len(notes)
+                    elif method == 'shuffle':
+                        states[operationIndex] = list(
+                            operation['shuffleOrders'][callIndex])
+                    triggerIndex += 1
+
+                sourcePosition = position
+                for operationIndex, operation in enumerate(operations):
+                    method = operation['method']
+                    if method == 'reverse' and states[operationIndex]:
+                        sourcePosition = len(notes) - 1 - sourcePosition
+                    elif method == 'rotate':
+                        sourcePosition = (
+                            sourcePosition - states[operationIndex]
+                        ) % len(notes)
+                    elif method == 'shuffle':
+                        sourcePosition = states[operationIndex][sourcePosition]
+                repeatedEvent = list(event)
+                repeatedEvent[0] = float(event[0]) + cycleOffset
+                repeatedEvent[2] = byPosition[sourcePosition][2]
+                outputEvents.append(tuple(repeatedEvent))
+
+        stepStarts = sorted(set(
+            (float(event[0]) + float(event[6])) % baseLength
+            for event in events))
+        for beat, operationIndex, _ in stutterCalls:
+            amount = operations[operationIndex]['amount']
+            callBeat = beat % commonLength
+            phase = callBeat % baseLength
+            previousEvents = [
+                event for event in outputEvents
+                if float(event[0]) + float(event[6]) <= callBeat + 1e-9
+            ]
+            if previousEvents:
+                event = previousEvents[-1]
+            else:
+                event = outputEvents[-1]
+            nextStarts = [start for start in stepStarts
+                          if start > phase + 1e-8]
+            nextStart = (nextStarts[0] if nextStarts else
+                         stepStarts[0] + baseLength)
+            remaining = nextStart - phase
+            if remaining <= 1e-9:
+                continue
+            spacing = remaining / float(amount)
+            for repeatIndex in range(1, amount):
+                repeatedEvent = list(event)
+                repeatedStart = (
+                    callBeat + spacing * repeatIndex) % commonLength
+                repeatedEvent[0] = repeatedStart - float(event[6])
+                repeatedEvent[1] = min(float(event[1]), spacing)
+                outputEvents.append(tuple(repeatedEvent))
+        outputEvents.sort(
+            key=lambda event: float(event[0]) + float(event[6]))
+        if len(outputEvents) > 256:
+            raise ValueError('Combined scheduled operations exceed the 256-event limit.')
+        expanded = list(base)
+        expanded[2] = commonLength
+        expanded[3] = outputEvents
+        _dexter_updates[self.number - 1] = tuple(expanded)
+
+    def _apply_scheduled_transform(self):
+        pattern = self._currentPattern
+        base = self._baseUpdate
+        if pattern is None or base is None:
+            raise ValueError('Assign a note pattern before scheduling a player transform.')
+        if pattern.synth == 'sample':
+            self._apply_sample_stutter(self._scheduledTransforms)
+            return
+        if (len(self._scheduledTransforms) > 1 or
+                self._scheduledTransforms[0][5] is not None or
+                self._scheduledTransforms[0][6] is not None):
+            self._apply_stacked_scheduled_transforms()
+            return
+        if (pattern.octaveControl is not None or pattern.strumControl is not None or
+                pattern.strumBeats != 0.0 or pattern.delayControl is not None or
+                pattern.delayBeats != 0.0):
+            raise ValueError('Scheduled player operations currently require fixed-octave, unstrummed notes without per-note delay.')
+
+        def noteItems(value):
+            if isinstance(value, _FoxDotChord):
+                return [value]
+            if isinstance(value, (list, tuple, _FoxDotFinitePattern)):
+                return list(value)
+            return [value]
+
+        notes = noteItems(pattern.notes)
+        if (not notes or len(notes) > 256 or
+                any(isinstance(note, bool) or not isinstance(note, (int, float))
+                    for note in notes)):
+            raise ValueError('Scheduled player operations currently need a dense, monophonic numeric degree pattern (no rests or chords).')
+        events = list(base[3])
+        if len(events) != len(notes):
+            raise ValueError('Scheduled player operations need exactly one note event per pattern step.')
+        byPosition = {}
+        for event in events:
+            position = event[8]
+            if (isinstance(position, bool) or not isinstance(position, int) or
+                    not 0 <= position < len(notes) or event[9] != 0 or
+                    position in byPosition):
+                raise ValueError('Scheduled player operations currently need one ungrouped note at each pattern step.')
+            byPosition[position] = event
+        if len(byPosition) != len(notes):
+            raise ValueError('Scheduled player operations cannot move notes into rests; use a dense degree pattern.')
+
+        transform, amount, intervals, intervalRange = \
+            self._scheduledTransforms[0][:4]
+        baseLength = float(base[2])
+        if not 0.0 < baseLength <= 4096.0:
+            raise ValueError('Scheduled transform phrase length must be between 0 and 4096 beats.')
+        calls = []
+        elapsed = 0.0
+        cycles = 0
+        reverseState = False
+        rotation = 0
+        shuffleOrders = []
+        for index in range(256):
+            elapsed += float(intervals[index % len(intervals)])
+            calls.append(elapsed)
+            if elapsed > 4096.0:
+                break
+            if transform == 'reverse':
+                reverseState = not reverseState
+            elif transform == 'rotate':
+                rotation = (rotation + amount) % len(notes)
+            elif transform == 'shuffle':
+                shuffleOrders.append(list(
+                    PShuf(_FoxDotFinitePattern(list(range(len(notes)))))))
+            candidateCycles = round(elapsed / baseLength)
+            aligned = abs(elapsed - candidateCycles * baseLength) <= 1e-8
+            reset = (
+                not reverseState if transform == 'reverse' else
+                rotation == 0 if transform == 'rotate' else
+                True)
+            if candidateCycles >= 1 and reset:
+                if not aligned:
+                    previousElapsed = elapsed - float(intervals[index % len(intervals)])
+                    lowInterval, highInterval = intervalRange
+                    lowCyclesValue = (previousElapsed + lowInterval) / baseLength
+                    lowCycles = int(lowCyclesValue)
+                    if lowCycles < lowCyclesValue - 1e-9:
+                        lowCycles += 1
+                    highCycles = int(
+                        (previousElapsed + highInterval + 1e-9) / baseLength)
+                    eventBudget = 256
+                    if transform == 'stutter':
+                        eventBudget -= len(calls) * (amount - 1)
+                    maxCycles = min(
+                        int(4096.0 / baseLength),
+                        max(0, eventBudget // len(events)))
+                    highCycles = min(highCycles, maxCycles)
+                    if lowCycles <= highCycles:
+                        targetCycles = max(
+                            lowCycles, min(highCycles, candidateCycles))
+                        adjustedInterval = (
+                            targetCycles * baseLength - previousElapsed)
+                        if lowInterval - 1e-9 <= adjustedInterval <= highInterval + 1e-9:
+                            elapsed = targetCycles * baseLength
+                            calls[-1] = elapsed
+                            aligned = True
+                            candidateCycles = targetCycles
+                if aligned:
+                    cycles = candidateCycles
+                    break
+        if (not calls or elapsed > 4096.0 or cycles < 1):
+            raise ValueError('Scheduled transform could not form a bounded repeating phrase under the 256-event limit; use a shorter phrase or another interval.')
+        scheduledExtraEvents = (
+            len(calls) * (amount - 1) if transform == 'stutter' else 0)
+        if len(events) * cycles + scheduledExtraEvents > 256:
+            raise ValueError('Scheduled transform expands beyond the 256-event limit; use a shorter phrase or fewer note steps.')
+
+        outputEvents = []
+        callIndex = 0
+        reverseState = False
+        rotation = 0
+        shuffleOrder = shuffleOrders[-1] if shuffleOrders else None
+        for cycleIndex in range(cycles):
+            cycleOffset = cycleIndex * baseLength
+            for position in range(len(notes)):
+                event = byPosition[position]
+                eventBeat = cycleOffset + float(event[0])
+                while callIndex < len(calls) and calls[callIndex] <= eventBeat + 1e-9:
+                    if transform == 'reverse':
+                        reverseState = not reverseState
+                    elif transform == 'rotate':
+                        rotation = (rotation + amount) % len(notes)
+                    elif transform == 'shuffle':
+                        shuffleOrder = shuffleOrders[callIndex]
+                    callIndex += 1
+                sourcePosition = (
+                    len(notes) - 1 - position if reverseState else
+                    (position - rotation) % len(notes) if transform == 'rotate' else
+                    shuffleOrder[position] if transform == 'shuffle' else
+                    position)
+                repeatedEvent = list(event)
+                repeatedEvent[0] = float(event[0]) + cycleOffset
+                repeatedEvent[2] = byPosition[sourcePosition][2]
+                outputEvents.append(tuple(repeatedEvent))
+
+        if transform == 'stutter':
+            stepStarts = sorted(
+                ((float(event[0]), event) for event in byPosition.values()),
+                key=lambda item: item[0])
+            for scheduledBeat in calls:
+                callBeat = scheduledBeat % elapsed
+                phase = callBeat % baseLength
+                selectedIndex = len(stepStarts) - 1
+                for stepIndex, (stepBeat, _) in enumerate(stepStarts):
+                    if stepBeat <= phase + 1e-9:
+                        selectedIndex = stepIndex
+                    else:
+                        break
+                stepBeat, event = stepStarts[selectedIndex]
+                if phase + 1e-9 < stepBeat:
+                    nextStepBeat = stepStarts[0][0] + baseLength
+                    remaining = nextStepBeat - phase
+                elif selectedIndex + 1 < len(stepStarts):
+                    nextStepBeat = stepStarts[selectedIndex + 1][0]
+                    remaining = nextStepBeat - phase
+                else:
+                    nextStepBeat = stepStarts[0][0] + baseLength
+                    remaining = nextStepBeat - phase
+                if remaining <= 1e-9:
+                    remaining = baseLength / len(stepStarts)
+                spacing = remaining / float(amount)
+                for repeatIndex in range(1, amount):
+                    repeatedEvent = list(event)
+                    repeatedEvent[0] = (callBeat + spacing * repeatIndex) % elapsed
+                    repeatedEvent[1] = min(float(event[1]), spacing)
+                    outputEvents.append(tuple(repeatedEvent))
+                    if len(outputEvents) > 256:
+                        raise ValueError('Scheduled stutter expands beyond the 256-event limit; use fewer notes, fewer triggers, or a smaller stutter count.')
+            outputEvents.sort(key=lambda event: float(event[0]))
+
+        expanded = list(base)
+        expanded[2] = elapsed
+        expanded[3] = outputEvents
+        _dexter_updates[self.number - 1] = tuple(expanded)
+
+    def _set_scheduled_transform(self, method, amount, intervals,
+                                 intervalRange=None, phase=0.0,
+                                 repeatCycle=None, ident=None):
+        if self._currentPattern is None or self._baseUpdate is None:
+            raise ValueError('Assign a player pattern before scheduling a transform.')
+        if self._follows is not None or self._followers:
+            raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
+        if (method in {'reverse', 'shuffle'} and
+                (isinstance(amount, bool) or amount != 1)) or (
+                method == 'rotate' and
+                (isinstance(amount, bool) or not isinstance(amount, int) or
+                 not -256 <= amount <= 256)) or (
+                method == 'stutter' and
+                (isinstance(amount, bool) or not isinstance(amount, int) or
+                 not 1 <= amount <= 16)):
+            raise ValueError('Rotate amount must be -256 to 256, stutter count 1 to 16, and reverse/shuffle take no amount.')
+        if method not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError('Embedded scheduled transforms support reverse, rotate, shuffle, and stutter.')
+        if intervalRange is None:
+            intervalRange = (min(intervals), max(intervals))
+        if repeatCycle is not None:
+            if (isinstance(repeatCycle, bool) or
+                    not isinstance(repeatCycle, (int, float)) or
+                    repeatCycle != repeatCycle or
+                    repeatCycle in (float('inf'), float('-inf')) or
+                    not 0.05 <= repeatCycle <= 4096.0):
+                raise ValueError('Schedule cycle must be a finite interval from 0.05 to 4096 beats.')
+            repeatCycle = float(repeatCycle)
+        phaseValues = (tuple(phase) if isinstance(phase, (tuple, list))
+                       else (phase,))
+        if not phaseValues:
+            raise ValueError('A scheduled cycle needs at least one phase offset.')
+        for phaseValue in phaseValues:
+            if (isinstance(phaseValue, bool) or
+                    not isinstance(phaseValue, (int, float)) or
+                    phaseValue != phaseValue or
+                    phaseValue in (float('inf'), float('-inf')) or
+                    phaseValue < 0.0 or
+                    (repeatCycle is not None and
+                     phaseValue >= repeatCycle)):
+                raise ValueError('Scheduled cycle offsets must be finite and within their cycle.')
+        if ident is not None:
+            if isinstance(ident, bool) or not isinstance(ident, (str, int)):
+                raise ValueError('Schedule ident must be a short string or integer.')
+            ident = str(ident)
+            if (not ident or len(ident) > 64 or
+                    any(not (character.isalnum() or character in '_-')
+                        for character in ident)):
+                raise ValueError('Schedule ident may contain only letters, digits, underscore, and hyphen.')
+        existingIndex = None
+        for index in range(len(self._scheduledTransforms)):
+            if (self._scheduledTransforms[index][0] == method and
+                    self._scheduledTransforms[index][6] == ident):
+                existingIndex = index
+                break
+        operation = (method, amount, tuple(intervals), tuple(intervalRange),
+                     tuple(float(value) for value in phaseValues),
+                     repeatCycle, ident,
+                     repeatCycle is not None)
+        previous = (self._scheduledTransforms[existingIndex]
+                    if existingIndex is not None else None)
+        if existingIndex is None:
+            self._scheduledTransforms.append(operation)
+        else:
+            self._scheduledTransforms[existingIndex] = operation
+        try:
+            self._apply_scheduled_transform()
+        except Exception:
+            if existingIndex is None:
+                self._scheduledTransforms.pop()
+            else:
+                self._scheduledTransforms[existingIndex] = previous
+            raise
+
+    def every(self, occurrence, command, *args, **kwargs):
+        cycle = kwargs.pop('cycle', None)
+        ident = kwargs.pop('ident', None)
+        if kwargs or len(args) > 1:
+            raise ValueError('Embedded .every() accepts one transform amount and the optional cycle= and ident= arguments.')
+        if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError("Embedded .every() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        if (isinstance(occurrence, bool) or
+                not isinstance(occurrence, (int, float)) or
+                occurrence != occurrence or occurrence in (float('inf'), float('-inf'))):
+            raise ValueError('.every() occurrence must be a finite number.')
+        amount = args[0] if args else (2 if command == 'stutter' else 1)
+        if cycle is None:
+            if not 0.05 <= occurrence <= 4096.0:
+                raise ValueError('.every() interval must be from 0.05 to 4096 beats.')
+            intervals = [float(occurrence)]
+            intervalRange = (float(occurrence), float(occurrence))
+            phase = (0.0,)
+        else:
+            if (isinstance(cycle, bool) or
+                    not isinstance(cycle, (int, float)) or
+                    cycle != cycle or cycle in (float('inf'), float('-inf')) or
+                    not 0.05 <= cycle <= 4096.0):
+                raise ValueError('.every() cycle must be a finite interval from 0.05 to 4096 beats.')
+            if not 0.0 <= occurrence < cycle:
+                raise ValueError('.every() cycle offset must be at least zero and less than cycle.')
+            intervals = [float(cycle)]
+            intervalRange = (float(cycle), float(cycle))
+            phase = (float(occurrence),)
+        self._set_scheduled_transform(
+            command, amount, intervals, intervalRange,
+            phase=phase, repeatCycle=cycle, ident=ident)
+        return self
+
+    def _random_transform_seed(self, command, ident):
+        seed = (_dexter_shuffle_seed ^
+                ((self.number * 2654435761) & 0xffffffff)) & 0xffffffff
+        salt = str(command) + ':' + ('' if ident is None else str(ident))
+        for index in range(len(salt)):
+            seed = (seed ^ (
+                ord(salt[index]) * (index + 1) * 16777619)) & 0xffffffff
+        return seed
+
+    def _random_transform_intervals(self, low, high, command, ident):
+        seed = self._random_transform_seed(command, ident)
+        intervals = [value / 2.0 for value in
+                     PRand(low, high, length=256, seed=seed)]
+        return intervals, (low / 2.0, high / 2.0)
+
+    def _random_transform_phases(self, low, high, command, ident, cycle):
+        seed = self._random_transform_seed(command, ident)
+        return tuple((value / 2.0) % cycle for value in
+                     PRand(low, high, length=4, seed=seed))
+
+    def often(self, command, *args, **kwargs):
+        ident = kwargs.pop('ident', None)
+        cycle = kwargs.pop('cycle', None)
+        if kwargs or len(args) > 1:
+            raise ValueError('Embedded .often() accepts a transform, optional amount, ident=, and cycle=.')
+        if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError("Embedded .often() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        amount = args[0] if args else (2 if command == 'stutter' else 1)
+        if cycle is None:
+            intervals, intervalRange = self._random_transform_intervals(
+                1, 8, command, ident)
+            phase = (0.0,)
+        else:
+            intervals = [float(cycle)]
+            intervalRange = (float(cycle), float(cycle))
+            phase = self._random_transform_phases(
+                1, 8, command, ident, float(cycle))
+        self._set_scheduled_transform(
+            command, amount, intervals, intervalRange,
+            phase=phase, repeatCycle=cycle, ident=ident)
+        return self
+
+    def sometimes(self, command, *args, **kwargs):
+        ident = kwargs.pop('ident', None)
+        cycle = kwargs.pop('cycle', None)
+        if kwargs or len(args) > 1:
+            raise ValueError('Embedded .sometimes() accepts a transform, optional amount, ident=, and cycle=.')
+        if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError("Embedded .sometimes() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        amount = args[0] if args else (2 if command == 'stutter' else 1)
+        if cycle is None:
+            intervals, intervalRange = self._random_transform_intervals(
+                8, 32, command, ident)
+            phase = (0.0,)
+        else:
+            intervals = [float(cycle)]
+            intervalRange = (float(cycle), float(cycle))
+            phase = self._random_transform_phases(
+                8, 32, command, ident, float(cycle))
+        self._set_scheduled_transform(
+            command, amount, intervals, intervalRange,
+            phase=phase, repeatCycle=cycle, ident=ident)
+        return self
+
+    def rarely(self, command, *args, **kwargs):
+        ident = kwargs.pop('ident', None)
+        cycle = kwargs.pop('cycle', None)
+        if kwargs or len(args) > 1:
+            raise ValueError('Embedded .rarely() accepts a transform, optional amount, ident=, and cycle=.')
+        if command not in {'reverse', 'rotate', 'shuffle', 'stutter'}:
+            raise ValueError("Embedded .rarely() supports 'reverse', 'rotate', 'shuffle', and 'stutter'.")
+        amount = args[0] if args else (2 if command == 'stutter' else 1)
+        if cycle is None:
+            intervals, intervalRange = self._random_transform_intervals(
+                32, 64, command, ident)
+            phase = (0.0,)
+        else:
+            intervals = [float(cycle)]
+            intervalRange = (float(cycle), float(cycle))
+            phase = self._random_transform_phases(
+                32, 64, command, ident, float(cycle))
+        self._set_scheduled_transform(
+            command, amount, intervals, intervalRange,
+            phase=phase, repeatCycle=cycle, ident=ident)
+        return self
+
+    def _copy_followed_degree(self, source):
+        if source._currentPattern is None or self._currentPattern is None:
+            return
+        if (source._currentPattern.synth == 'sample' or
+                self._currentPattern.synth == 'sample'):
+            raise ValueError('Player degree following is for numeric note patterns, not sample players.')
+        if self._scheduledTransforms or source._scheduledTransforms:
+            raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
+        def noteItems(pattern):
+            notes = pattern.notes
+            if isinstance(notes, _FoxDotChord):
+                return [notes]
+            if isinstance(notes, (list, tuple, _FoxDotFinitePattern)):
+                return list(notes)
+            return [notes]
+
+        sourceNotes = noteItems(source._currentPattern)
+        targetNotes = noteItems(self._currentPattern)
+        if not sourceNotes or not targetNotes or len(sourceNotes) > 256:
+            raise ValueError('Player degree following needs non-empty patterns with at most 256 source steps.')
+        clone = PlayerPattern.__new__(PlayerPattern)
+        clone.__dict__ = dict(self._currentPattern.__dict__)
+        clone.notes = [sourceNotes[index % len(sourceNotes)]
+                       for index in range(len(targetNotes))]
+        clone.degrees = source._currentPattern.degrees
+        self._currentPattern = clone
+        self._applyingFollow = True
+        try:
+            self.__rshift__(clone)
+        finally:
+            self._applyingFollow = False
+
+    def _refresh_followers(self):
+        for follower in list(self._followers):
+            follower._copy_followed_degree(self)
+
+    def follow(self, other=False):
+        if not isinstance(other, Player) or not 1 <= other.number <= 8:
+            raise TypeError('Player.follow requires one player from p1 through p8.')
+        if other is self:
+            raise ValueError('A player cannot follow itself.')
+        if self._scheduledTransforms or other._scheduledTransforms:
+            raise ValueError('Scheduled transforms and degree-follow relationships cannot be combined on the same player yet.')
+        if (self._currentPattern is not None and
+                other._currentPattern is not None and
+                (self._currentPattern.synth == 'sample' or
+                 other._currentPattern.synth == 'sample')):
+            raise ValueError('Player degree following is for numeric note patterns, not sample players.')
+        cursor = other
+        while cursor is not None:
+            if cursor is self:
+                raise ValueError('Circular player degree reference.')
+            cursor = cursor._follows
+        previous = self._follows
+        if previous is not None and self in previous._followers:
+            previous._followers.remove(self)
+        self._follows = other
+        if self not in other._followers:
+            other._followers.append(self)
+        self._copy_followed_degree(other)
+        return self
+
+    def stop(self):
+        _dexter_player_effect_chains[self.number - 1] = ()
+        _dexter_player_effect_indices[self.number - 1] = -1
+        _dexter_effect_control_values[self.number - 1] = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
+        _dexter_effect_control_variables[self.number - 1] = ('-', '-', '-', '-', '-', '-', '-')
+        _dexter_note_effect_control_variables[self.number - 1] = \
+            ('-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-')
+        _dexter_bitcrusher_controls[self.number - 1] = (0.0, '-', 1.0, '-')
+        _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
+                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None, _dexter_swing_seconds)
+        self._active = False
+        return self
+
+    def mute(self):
+        _dexter_mutes[self.number - 1] = True
+        return self
+
+    def unmute(self):
+        _dexter_mutes[self.number - 1] = False
+        return self
+
+p1 = Player(1)
+p2 = Player(2)
+p3 = Player(3)
+p4 = Player(4)
+p5 = Player(5)
+p6 = Player(6)
+p7 = Player(7)
+p8 = Player(8)
+
+_DEXTER_PLAYERS = (p1, p2, p3, p4, p5, p6, p7, p8)
+
+class Group:
+    def __init__(self, *players):
+        if len(players) > 8:
+            raise ValueError('Group is limited to eight players.')
+        if any(not isinstance(player, Player) or
+               not 1 <= player.number <= 8 for player in players):
+            raise TypeError('Group accepts only players p1 through p8.')
+        if len(set(player.number for player in players)) != len(players):
+            raise ValueError('Group cannot contain the same player twice.')
+        self.__dict__['players'] = list(players)
+
+    def __len__(self):
+        return len(self.players)
+
+    def __iter__(self):
+        return iter(self.players)
+
+    def __getattr__(self, name):
+        if name in _GROUP_PATTERN_FIELDS:
+            fieldName = _GROUP_PATTERN_FIELDS[name]
+            values = []
+            for player in self.players:
+                pattern = player._currentPattern
+                if pattern is None:
+                    values.append(None)
+                elif name == 'degree':
+                    if pattern.degreeControl is not None:
+                        values.append(pattern.degreeControl)
+                    else:
+                        shift = ((pattern.baseOctave - 5) *
+                                 pattern.degreesPerOctave)
+                        values.append(_group_shift_notes(
+                            pattern.notes, -shift) if pattern.degrees else
+                            pattern.notes)
+                elif name == 'oct':
+                    values.append(pattern.octaveControl
+                                  if pattern.octaveControl is not None else
+                                  pattern.baseOctave)
+                elif name == 'root':
+                    values.append(pattern.rootControl
+                                  if pattern.rootControl is not None else
+                                  pattern.rootMidi)
+                else:
+                    values.append(pattern.__dict__.get(fieldName))
+            return values
+        raise AttributeError('unsupported Group attribute ' + name)
+
+    def __setattr__(self, name, value):
+        if name not in _GROUP_PATTERN_FIELDS:
+            raise AttributeError('Group assignments support shared sound/effect and pitch/timing controls.')
+        value = _normalize_group_control(name, value)
+        prepared = []
+        for player in self.players:
+            if player._currentPattern is not None:
+                copiedPattern = PlayerPattern.__new__(PlayerPattern)
+                copiedPattern.__dict__ = dict(player._currentPattern.__dict__)
+                _set_group_pattern_control(copiedPattern, name, value)
+                prepared.append((player, copiedPattern))
+        for player in self.players:
+            player._groupOverrides[name] = value
+        for player, pattern in prepared:
+            player.__rshift__(pattern)
+        return self
+
+    def add(self, player):
+        if not isinstance(player, Player) or not 1 <= player.number <= 8:
+            raise TypeError('Group.add accepts only a player from p1 through p8.')
+        if player.number in [item.number for item in self.players]:
+            raise ValueError('Group already contains that player.')
+        if len(self.players) >= 8:
+            raise ValueError('Group is limited to eight players.')
+        self.players.append(player)
+        return self
+
+    def stop(self):
+        for player in self.players:
+            player.stop()
+        return self
+
+    def mute(self):
+        for player in self.players:
+            player.mute()
+        return self
+
+    def unmute(self):
+        for player in self.players:
+            player.unmute()
+        return self
+
+    def solo(self, enabled=True):
+        if not isinstance(enabled, bool):
+            raise TypeError('Group.solo accepts a boolean.')
+        selected = set(player.number - 1 for player in self.players)
+        for index in range(8):
+            _dexter_mutes[index] = bool(enabled and index not in selected)
+        return self
+
+    def only(self):
+        selected = set(player.number for player in self.players)
+        for player in _DEXTER_PLAYERS:
+            if player.number not in selected and player._active:
+                player.stop()
+        return self
+
+    def _schedule(self, method, *args, **kwargs):
+        for player in self.players:
+            if method == 'every':
+                player.every(*args, **kwargs)
+            elif method == 'often':
+                player.often(*args, **kwargs)
+            elif method == 'sometimes':
+                player.sometimes(*args, **kwargs)
+            elif method == 'rarely':
+                player.rarely(*args, **kwargs)
+        return self
+
+    def every(self, *args, **kwargs):
+        return self._schedule('every', *args, **kwargs)
+
+    def often(self, *args, **kwargs):
+        return self._schedule('often', *args, **kwargs)
+
+    def sometimes(self, *args, **kwargs):
+        return self._schedule('sometimes', *args, **kwargs)
+
+    def rarely(self, *args, **kwargs):
+        return self._schedule('rarely', *args, **kwargs)
+
+def Master():
+    return Group(*(player for player in _DEXTER_PLAYERS if player._active))
+
+p_all = Group(*_DEXTER_PLAYERS)
+
+class _PlayerDegreeReference:
+    def __init__(self, player):
+        self.player = player
+
+# Explicit VST extensions, not claims of upstream FoxDot Buffer/sclang APIs.
+def _disk_number(value, name, lo, hi):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(name + ' requires a finite scalar number')
+    value = float(value)
+    if value != value or not lo <= value <= hi:
+        raise ValueError(name + ' is outside the supported range')
+    return value
+
+def _disk_slot(slot):
+    if isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot <= 8:
+        raise ValueError('Disk stream slot must be a whole number from 1 to 8')
+    return slot - 1
+
+def _disk_command(command):
+    if len(_dexter_disk_commands) >= 16:
+        raise ValueError('One Run may contain at most 16 disk lifecycle operations')
+    _dexter_disk_commands.append(command)
+
+class _DiskReader:
+    def __init__(self, mode):
+        self.mode = mode
+    def play(self, path, slot=1, loop=False, amp=0.5, pan=0.0, rate=1.0):
+        if not isinstance(path, str) or not 1 <= len(path) <= 512:
+            raise ValueError('Disk input needs a relative file path under Portable/Samples')
+        normalized = path.replace('\\', '/')
+        if (normalized.startswith('/') or ':' in normalized or
+                any(part in ('', '.', '..') for part in normalized.split('/')) or
+                any(ord(character) < 32 for character in normalized)):
+            raise ValueError('Disk input cannot be absolute, escape Portable/Samples, or contain control characters')
+        if not isinstance(loop, bool):
+            raise TypeError('Disk loop must be True or False')
+        rate = _disk_number(rate, 'Disk rate', 0.0625, 8.0)
+        if self.mode == 1 and rate != 1.0:
+            raise ValueError('DiskIn has no rate control; use VDiskIn.play(..., rate=...)')
+        _disk_command((self.mode, _disk_slot(slot), rate,
+                       _disk_number(amp, 'Disk amp', 0.0, 2.0),
+                       _disk_number(pan, 'Disk pan', -1.0, 1.0), 0.0,
+                       int(loop), normalized.encode('utf-8').hex()))
+    def stop(self, slot=1):
+        _disk_command((0, _disk_slot(slot), 1.0, 0.0, 0.0, 0.0, 0, '-'))
+
+class _DiskRecorder:
+    def record(self, seconds=30.0):
+        _disk_command((3, 0, 1.0, 0.0, 0.0,
+                       _disk_number(seconds, 'Recording seconds', 0.05, 3600.0), 0, '-'))
+    def stop(self):
+        _disk_command((4, 0, 1.0, 0.0, 0.0, 0.0, 0, '-'))
+
+DiskIn = _DiskReader(1)
+VDiskIn = _DiskReader(2)
+DiskOut = _DiskRecorder()
+)PY";
+
+    std::ostringstream script;
+    script << "import builtins, traceback, sys, time, dis, types, math\n"
+           << "_dexter_scope = globals().setdefault(" << pythonLiteral(namespaceName) << ", {})\n"
+           << "_dexter_scope['__name__'] = 'dexter'\n"
+           << "_dexter_scope.update({'_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_bpm_control': None, "
+           << "'_dexter_length': 1.0, '_dexter_slots': 0, '_dexter_updates': {}, '_dexter_default_touched': False, "
+             << "'_dexter_scale': (0, 2, 4, 5, 7, 9, 11), '_dexter_root': 60, "
+             << "'_dexter_root_control': None, '_dexter_mutes': {}, "
+            << "'_dexter_swing_seconds': 0.0, '_dexter_disk_commands': [], "
+           << "'_dexter_shuffle_seed': int(time.monotonic_ns() & 0xffffffff)})\n"
+           << "_dexter_scope['__builtins__'] = {name: getattr(builtins, name) for name in "
+            << "('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filter', 'float', "
+           << "'int', 'isinstance', 'len', 'list', 'map', 'max', 'min', 'range', 'ord', 'chr', "
+           << "'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum', 'tuple', "
+           << "'zip', 'ValueError', 'TypeError', 'ZeroDivisionError', "
+              << "'AttributeError', 'Exception', 'IndexError', 'OverflowError', "
+              << "'__build_class__')}\n"
+             << "_dexter_scope['_dexter_dis'] = dis\n"
+             << "_dexter_scope['_dexter_math'] = math\n"
+            << "_dexter_scope['_dexter_function_type'] = types.FunctionType\n"
+            << "_dexter_scope['_dexter_builtin_module'] = builtins\n"
+            << "_dexter_scope['_dexter_pure_map_builtins'] = {name: getattr(builtins, name) for name in "
+            << "('abs', 'bool', 'float', 'int', 'len', 'max', 'min', 'round', 'str')}\n"
+           << "exec(compile(" << pythonLiteral(api) << ", '<Dexter API>', 'exec'), "
+            << "_dexter_scope, _dexter_scope)\n"
+            << "_dexter_scope['_dexter_user_synth_names'] = "
+            << pythonStringTuple(userSynthNames) << "\n"
+           << "_dexter_deadline = time.monotonic() + 2.0\n"
+           << "def _dexter_time_limit(frame, event, arg):\n"
+           << "    if time.monotonic() > _dexter_deadline:\n"
+           << "        raise TimeoutError('live-code evaluation exceeded 2 seconds')\n"
+           << "    return _dexter_time_limit\n"
+           << "sys.settrace(_dexter_time_limit)\n"
+           << "try:\n"
+           << "    try:\n"
+           << "        with open(" << pythonLiteral(sourcePath) << ", 'r', encoding='utf-8') as _f:\n"
+           << "            _src = _f.read()\n"
+           << "        exec(compile(_src, '<Dexter live code>', 'exec'), _dexter_scope, _dexter_scope)\n"
+           << "    finally:\n"
+           << "        sys.settrace(None)\n"
+           << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
+            << "        if _dexter_scope['_dexter_default_touched']:\n"
+              << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None) + (_dexter_scope['_dexter_swing_seconds'],)\n"
+            << "        _updates = _dexter_scope['_dexter_updates']\n"
+            << "        _mutes = _dexter_scope['_dexter_mutes']\n"
+            << "        _f.write('OK\\t{}\\t{}\\t{}\\n'.format(len(_updates), len(_mutes), len(_dexter_scope['_dexter_disk_commands'])))\n"
+            << "        for _player in sorted(_updates):\n"
+              << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control, _shape, _shape_control, _drive, _drive_control, _swing_seconds = _updates[_player]\n"
+             << "            _bpm = _dexter_scope['_dexter_bpm']\n"
+             << "            _tempo_control = _dexter_scope['_dexter_bpm_control']\n"
+             << "            _p_values = (_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _synth_rate, _swing_seconds)\n"
+             << "            _f.write('P' + chr(9) + chr(9).join(map(str, _p_values)) + chr(10))\n"
+             << "            _f.write('T\\t{}\\t{}\\n'.format(_player, _tempo_control.wire() if _tempo_control is not None else '-'))\n"
+            << "            _f.write('R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _reverb, _mix, _room, _damp, _revtime, _spread))\n"
+             << "            _f.write('E\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _decay, _decay_control.wire() if _decay_control is not None else '-', _echo_mix, _echo_mix_control, _feedback, _feedback_control if _feedback_control is not None else '-', _note_delay_control.wire() if hasattr(_note_delay_control, 'wire') else (_note_delay_control if _note_delay_control is not None else '-')))\n"
+              << "            _controls = (_lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control)\n"
+             << "            _f.write('F\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, *[control.wire() if control is not None else '-' for control in _controls]))\n"
+            << "            _bits, _bits_control, _crush, _crush_control = _dexter_scope['_dexter_bitcrusher_controls'].get(_player, (0.0, '-', 1.0, '-'))\n"
+            << "            _modulation_values = (_player, _bpnoise, _swell, _shape, _drive, _bpnoise_control.wire() if _bpnoise_control is not None else '-', _swell_control.wire() if _swell_control is not None else '-', _shape_control.wire() if _shape_control is not None else '-', _drive_control.wire() if _drive_control is not None else '-', _bits, _bits_control, _crush, _crush_control)\n"
+            << "            _f.write('G' + chr(9) + chr(9).join(map(str, _modulation_values)) + chr(10))\n"
+            << "            _synth_controls = _dexter_scope['_dexter_synth_controls'].get(_player, (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0))\n"
+            << "            _f.write('S' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _synth_controls)) + chr(10))\n"
+              << "            _effect_chain = _dexter_scope['_dexter_player_effect_chains'].get(_player, ())\n"
+              << "            _effect_user_indices = tuple(item[0] for item in _effect_chain)\n"
+              << "            _chain_values = tuple(item[1] for item in _effect_chain)\n"
+              << "            _chain_variables = tuple(item[2] for item in _effect_chain)\n"
+              << "            _effect_user_index = _effect_user_indices[0] if _effect_user_indices else -1\n"
+              << "            _effect_control_values = _chain_values[0] if _chain_values else (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)\n"
+              << "            _effect_control_variables = _chain_variables[0] if _chain_variables else ('-', '-', '-', '-', '-', '-', '-')\n"
+              << "            _f.write('A' + chr(9) + str(_player) + chr(9) + str(_effect_user_index) + chr(10))\n"
+              << "            _f.write('W' + chr(9) + str(_player) + chr(9) + chr(9).join(map(str, _effect_control_values)) + chr(10))\n"
+              << "            _f.write('X' + chr(9) + str(_player) + chr(9) + chr(9).join(_effect_control_variables) + chr(10))\n"
+              << "            _extra_effects = [value for index, values, variables in zip(_effect_user_indices[1:], _chain_values[1:], _chain_variables[1:]) for value in (index,) + tuple(values) + tuple(variables)]\n"
+              << "            _f.write('J' + chr(9) + str(_player) + chr(9) + str(max(0, len(_effect_user_indices) - 1)) + ''.join(chr(9) + str(value) for value in _extra_effects) + chr(10))\n"
+              << "            _note_effect_control_variables = _dexter_scope['_dexter_note_effect_control_variables'].get(_player, ('-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-'))\n"
+             << "            _f.write('Y' + chr(9) + str(_player) + chr(9) + chr(9).join(_note_effect_control_variables) + chr(10))\n"
+             << "            if _synth == 57:\n"
              << "                _sample_control, _rate_control = _dexter_scope['_dexter_sample_controls'].get(_player, ('-', '-'))\n"
              << "                _f.write('Q' + chr(9) + str(_player) + chr(9) + _sample_control + chr(9) + _rate_control + chr(10))\n"
             << "            for _event_index, _e in enumerate(_events):\n"
