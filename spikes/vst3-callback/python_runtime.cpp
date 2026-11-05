@@ -177,7 +177,8 @@ _COMPAT_WAVE_KEYWORDS = {
     'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
     'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period',
     'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages',
-    'fx_drive'
+    'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold',
+    'fx_hold', 'fx_release'
 }
 _USER_SYNTH_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
@@ -192,7 +193,8 @@ _USER_SYNTH_KEYWORDS = {
     'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
     'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period',
     'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages',
-    'fx_drive'
+    'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold',
+    'fx_hold', 'fx_release'
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -204,9 +206,10 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff',
     'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center',
     'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack',
-    'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive'
+    'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio',
+    'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release'}
 _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'AirwindowsTapeDelay2': {
         'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'},
@@ -235,7 +238,13 @@ _COMPAT_PLAYER_EFFECT_CONTROLS = {
         'fx_mix', 'fx_period', 'fx_depth', 'fx_length', 'fx_attack'},
     'LimutDisperser': {
         'fx_mix', 'fx_frequency', 'fx_q', 'fx_stages'},
-    'LimutFuzz': {'fx_mix', 'fx_drive', 'fx_tone'}
+    'LimutFuzz': {'fx_mix', 'fx_drive', 'fx_tone'},
+    'LimutShifter': {'fx_mix', 'fx_ratio', 'fx_window'},
+    'LimutShimmer': {
+        'fx_mix', 'fx_ratio', 'fx_window', 'fx_room', 'fx_damp'},
+    'LimutGatedVerb': {
+        'fx_mix', 'fx_room', 'fx_damp', 'fx_threshold', 'fx_hold',
+        'fx_attack', 'fx_release'}
 }
 for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
                          _COMPAT_SEQUENCE_KEYWORDS, _COMPAT_NOTE_PLAY_KEYWORDS):
@@ -867,9 +876,15 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires a literal installed player-effect name.')
-                elif keyword.value.value not in {'AirwindowsTapeDelay2', 'AirwindowsEchojam', 'JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo', 'LimutPingPong', 'LimutDuck', 'LimutDisperser', 'LimutFuzz'}:
+                elif keyword.value.value not in {
+                        'AirwindowsTapeDelay2', 'AirwindowsEchojam', 'JPverb',
+                        'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo',
+                        'LimutPingPong', 'LimutDuck', 'LimutDisperser',
+                        'LimutFuzz', 'LimutShifter', 'LimutShimmer',
+                        'LimutGatedVerb'}:
                     self.add(keyword.lineno or node.lineno,
-                             'effect= supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser, Tremolo, LimutPingPong, LimutDuck, LimutDisperser or LimutFuzz.')
+                             'effect= supports the bundled Airwindows, reverb, '
+                             'modulation, and LimutFX player-effect SynthDefs.')
                 elif keyword.value.value not in _USER_SYNTH_NAMES:
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires the matching player-effect SynthDef in Portable/SynthDefs.')
@@ -911,7 +926,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                                     'JPverb', 'Greyhole', 'Chorus', 'Flanger',
                                     'Phaser', 'Tremolo', 'LimutPingPong',
                                     'LimutDuck', 'LimutDisperser',
-                                    'LimutFuzz'}):
+                                    'LimutFuzz', 'LimutShifter',
+                                    'LimutShimmer', 'LimutGatedVerb'}):
                             self.add(entry.lineno, 'Unsupported effect-chain name.')
                         elif effectName.value not in _USER_SYNTH_NAMES:
                             self.add(entry.lineno,
@@ -5552,7 +5568,8 @@ def userSynth(name, notes=0, **kwargs):
         raise ValueError('userSynth name is not a loaded Portable/SynthDefs entry')
     if name in ('JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser',
                 'Tremolo', 'LimutPingPong', 'LimutDuck', 'LimutDisperser',
-                'LimutFuzz'):
+                'LimutFuzz', 'LimutShifter', 'LimutShimmer',
+                'LimutGatedVerb'):
         raise ValueError(name + ' is an insert, not a note source; use effect="' +
                          name + '" on a synth or play() player')
     if (name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam') and
@@ -6046,7 +6063,25 @@ _PLAYER_EFFECT_SPECS = {
     'LimutFuzz': (
         ('fx_mix', 0, 0.0, 1.0, 0.35),
         ('fx_drive', 1, 0.0, 36.0, 18.0),
-        ('fx_tone', 2, 200.0, 16000.0, 9000.0))
+        ('fx_tone', 2, 200.0, 16000.0, 9000.0)),
+    'LimutShifter': (
+        ('fx_mix', 0, 0.0, 1.0, 0.5),
+        ('fx_ratio', 1, 0.5, 2.0, 1.5),
+        ('fx_window', 2, 0.02, 0.5, 0.12)),
+    'LimutShimmer': (
+        ('fx_mix', 0, 0.0, 1.0, 0.35),
+        ('fx_ratio', 1, 0.5, 2.0, 2.0),
+        ('fx_window', 2, 0.02, 0.5, 0.12),
+        ('fx_room', 3, 0.0, 1.0, 0.8),
+        ('fx_damp', 4, 0.0, 1.0, 0.35)),
+    'LimutGatedVerb': (
+        ('fx_mix', 0, 0.0, 1.0, 0.65),
+        ('fx_room', 1, 0.0, 1.0, 0.75),
+        ('fx_damp', 2, 0.0, 1.0, 0.5),
+        ('fx_threshold', 3, 0.001, 0.25, 0.02),
+        ('fx_hold', 4, 0.0, 2.0, 0.25),
+        ('fx_attack', 5, 0.001, 0.25, 0.015),
+        ('fx_release', 6, 0.01, 1.0, 0.15))
 }
 def _player_effect_control_values(effect, controls):
     provided = [key for key in controls if key.startswith('fx_')]

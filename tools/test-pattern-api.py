@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.157' not in cmake_source or
+if ('VERSION 0.4.158' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -59,7 +59,7 @@ for live_panel_fragment in (
         'effectControlRangeText(', 'effectControlUnit(',
         '"fx_frequency"', '"fx_drive"', '"fx_stages"',
         'fx_frequency fx_q fx_stages fx_drive',
-        'LimutDisperser LimutFuzz',
+        'LimutGatedVerb', 'LimutShifter', 'LimutShimmer',
         'TB_ENDTRACK', 'commitPlayerControlToSource(',
         'kSciPositionFromPointClose',
         'beginCatalogDrag(', 'finishCatalogDrag(', 'showCatalogAbout(',
@@ -141,7 +141,9 @@ for snapshot_fragment in (
 for airwindows_layout_fragment in (
     'isTapeDelay ? 8u : isEchojam ? 6u :',
     'isLimutPingPong ? 5u : isLimutDuck ? 7u :',
-    'isLimutDisperser ? 6u : isLimutFuzz ? 5u : 9u;',
+    'isLimutDisperser ? 6u : isLimutFuzz ? 5u :',
+    'isLimutShifter ? 5u : isLimutShimmer ? 7u :',
+    'isLimutGatedVerb ? 9u : 9u;',
     'userDefinition.outControl = 0;',
     'userDefinition.inputBusControl = 1;',
     'std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}',
@@ -150,6 +152,9 @@ for airwindows_layout_fragment in (
     'userDefinition.name == "LimutDuck"',
     'userDefinition.name == "LimutDisperser"',
     'userDefinition.name == "LimutFuzz"',
+    'userDefinition.name == "LimutShifter"',
+    'userDefinition.name == "LimutShimmer"',
+    'userDefinition.name == "LimutGatedVerb"',
         'std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}}',
         'std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}}',
         'std::array<float, 7>{{0.0f, 30.0f, 0.1f,',
@@ -3491,7 +3496,10 @@ for filename in os.listdir(sys.argv[2]):
             ('LimutPingPong', 'LimutDuck')
             if filename == '195-limut-pingpong-duck.py' else
             ('LimutDisperser', 'LimutFuzz')
-            if filename == '196-limut-disperser-fuzz.py' else ())
+            if filename == '196-limut-disperser-fuzz.py' else
+            ('LimutShifter', 'LimutShimmer', 'LimutGatedVerb')
+            if filename in ('197-limut-shifter-shimmer.py',
+                            '198-limut-gated-reverb.py') else ())
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
@@ -3889,7 +3897,24 @@ assert 'No unsupported constructs detected' in limutFuzzCompatibility
 assert 'fx_stages is not a control on LimutFuzz' in run_compatibility_check(
     'p1 >> play("x", effect="LimutFuzz", fx_stages=8)\n',
     ('LimutFuzz',))
-assert 'supports AirwindowsTapeDelay2, AirwindowsEchojam, JPverb, Greyhole, Chorus, Flanger, Phaser, Tremolo, LimutPingPong, LimutDuck, LimutDisperser or LimutFuzz' in run_compatibility_check(
+limutShifterCompatibility = run_compatibility_check(
+    'p1 >> pluck([0, 7], effect="LimutShifter", fx_ratio=1.5, '
+    'fx_window=0.12, fx_mix=0.8)\n', ('LimutShifter',))
+assert 'No unsupported constructs detected' in limutShifterCompatibility
+limutShimmerCompatibility = run_compatibility_check(
+    'p1 >> pluck([0, 7], effects=[("LimutShifter", {"fx_ratio": 1.5}), '
+    '("LimutShimmer", {"fx_ratio": 2, "fx_room": 0.8, "fx_damp": 0.3})])\n',
+    ('LimutShifter', 'LimutShimmer'))
+assert 'No unsupported constructs detected' in limutShimmerCompatibility
+limutGatedCompatibility = run_compatibility_check(
+    'p1 >> pluck([0, 7], effect="LimutGatedVerb", '
+    'fx_threshold=0.02, fx_hold=var([0.1, 0.2], 4), '
+    'fx_attack=0.01, fx_release=0.15)\n', ('LimutGatedVerb',))
+assert 'No unsupported constructs detected' in limutGatedCompatibility
+assert 'fx_time is not a control on LimutShifter' in run_compatibility_check(
+    'p1 >> pluck([0], effect="LimutShifter", fx_time=0.2)\n',
+    ('LimutShifter',))
+assert 'supports the bundled Airwindows, reverb, modulation, and LimutFX player-effect SynthDefs.' in run_compatibility_check(
     'p1 >> play("x-o-", effect="NotAnEffect")\n',
     ('NotAnEffect',))
 for name in ('Chorus', 'Flanger', 'Phaser', 'Tremolo'):

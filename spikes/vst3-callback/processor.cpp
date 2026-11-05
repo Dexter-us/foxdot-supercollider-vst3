@@ -3471,7 +3471,9 @@ private:
                name == "Chorus" || name == "Flanger" ||
                name == "Phaser" || name == "Tremolo" ||
                name == "LimutPingPong" || name == "LimutDuck" ||
-               name == "LimutDisperser" || name == "LimutFuzz";
+               name == "LimutDisperser" || name == "LimutFuzz" ||
+               name == "LimutShifter" || name == "LimutShimmer" ||
+               name == "LimutGatedVerb";
     }
 
     static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
@@ -3617,10 +3619,18 @@ private:
                 const bool isLimutDisperser =
                     userDefinition.name == "LimutDisperser";
                 const bool isLimutFuzz = userDefinition.name == "LimutFuzz";
+                const bool isLimutShifter =
+                    userDefinition.name == "LimutShifter";
+                const bool isLimutShimmer =
+                    userDefinition.name == "LimutShimmer";
+                const bool isLimutGatedVerb =
+                    userDefinition.name == "LimutGatedVerb";
                 const uint32 expectedControlCount =
                     isTapeDelay ? 8u : isEchojam ? 6u :
                     isLimutPingPong ? 5u : isLimutDuck ? 7u :
-                    isLimutDisperser ? 6u : isLimutFuzz ? 5u : 9u;
+                    isLimutDisperser ? 6u : isLimutFuzz ? 5u :
+                    isLimutShifter ? 5u : isLimutShimmer ? 7u :
+                    isLimutGatedVerb ? 9u : 9u;
                 if (loaded->mNumControls != expectedControlCount) {
                     error = synthFile.path.filename().string() +
                             " has an incompatible persistent-effect control layout (expected " +
@@ -3729,6 +3739,33 @@ private:
                     userDefinition.effectControlMaximum =
                         std::array<float, 7>{{1.0f, 36.0f, 16000.0f,
                                               1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutShifter) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.5f, 0.02f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 2.0f, 0.5f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutShimmer) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.5f, 0.02f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 2.0f, 0.5f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutGatedVerb) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f,
+                                              0.001f, 0.0f, 0.001f, 0.01f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 1.0f,
+                                              0.25f, 2.0f, 0.25f, 1.0f}};
                 }
                 const std::array<bool, 7> requiredEffectControls =
                     isTapeDelay
@@ -3743,6 +3780,10 @@ private:
                     ? std::array<bool, 7>{{true, true, true, true, false, false, false}}
                     : isLimutFuzz
                     ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
+                    : isLimutShifter
+                    ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
+                    : isLimutShimmer
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
                     : std::array<bool, 7>{{true, true, true, true, true, true, true}};
                 bool missingRequiredEffectControl = false;
                 for (std::size_t index = 0;

@@ -312,4 +312,285 @@ inline void fuzzSample(FuzzState& state, float inputLeft, float inputRight,
     outputRight = finiteOr(inputRight * (1.0f - mix) + wetRight * mix);
 }
 
+constexpr float kPitchBufferSeconds = 1.05f;
+constexpr std::size_t kReverbCombCount = 4;
+
+struct ShifterState {
+    float* left = nullptr;
+    float* right = nullptr;
+    uint32_t frames = 0;
+    uint32_t writeIndex = 0;
+    float sampleRate = 44100.0f;
+    float phase = 0.0f;
+    float currentMix = 1.0f;
+    float currentRatio = 2.0f;
+    float currentWindowSeconds = 0.12f;
+    bool initialized = false;
+};
+
+inline void preparePitchBuffer(ShifterState& state) {
+    state.frames = static_cast<uint32_t>(
+        std::ceil(state.sampleRate * kPitchBufferSeconds)) + 4u;
+    state.writeIndex = 0;
+    state.phase = 0.0f;
+    state.initialized = false;
+}
+
+inline void freePitchBuffer(ShifterState& state) {
+    state.left = nullptr;
+    state.right = nullptr;
+    state.frames = 0;
+    state.writeIndex = 0;
+}
+
+inline void shifterSample(ShifterState& state, float inputLeft,
+                          float inputRight, float mix, float ratio,
+                          float windowSeconds, float& outputLeft,
+                          float& outputRight) {
+    inputLeft = finiteOr(inputLeft);
+    inputRight = finiteOr(inputRight);
+    mix = clampFinite(mix, 0.0f, 1.0f, 1.0f);
+    ratio = clampFinite(ratio, 0.5f, 2.0f, 2.0f);
+    windowSeconds = clampFinite(windowSeconds, 0.02f, 0.5f, 0.12f);
+    if (!std::isfinite(state.sampleRate) || state.sampleRate < 1000.0f)
+        state.sampleRate = 44100.0f;
+    if (!state.left || !state.right || state.frames < 128) {
+        outputLeft = inputLeft;
+        outputRight = inputRight;
+        return;
+    }
+
+    if (!state.initialized) {
+        state.currentMix = mix;
+        state.currentRatio = ratio;
+        state.currentWindowSeconds = windowSeconds;
+        state.initialized = true;
+    } else {
+        const float smoothing = 1.0f - std::exp(
+            -1.0f / (0.02f * state.sampleRate));
+        state.currentMix += (mix - state.currentMix) * smoothing;
+        state.currentRatio += (ratio - state.currentRatio) * smoothing;
+        state.currentWindowSeconds +=
+            (windowSeconds - state.currentWindowSeconds) * smoothing;
+    }
+
+    state.left[state.writeIndex] = inputLeft;
+    state.right[state.writeIndex] = inputRight;
+    const float maxWindow = static_cast<float>(state.frames - 8u) * 0.5f;
+    const float windowFrames = std::clamp(
+        state.currentWindowSeconds * state.sampleRate, 64.0f, maxWindow);
+    const float depthFrames = std::clamp(
+        std::fabs(1.0f - state.currentRatio) * windowFrames, 0.0f,
+        windowFrames - 2.0f);
+    const auto delayAtPhase = [&](float phase) {
+        phase -= std::floor(phase);
+        return state.currentRatio >= 1.0f
+            ? 1.0f + (1.0f - phase) * depthFrames
+            : 1.0f + phase * depthFrames;
+    };
+    const float phaseA = state.phase;
+    float phaseB = phaseA + 0.5f;
+    if (phaseB >= 1.0f)
+        phaseB -= 1.0f;
+    const float windowA =
+        0.5f - 0.5f * std::cos(6.2831853071795864769f * phaseA);
+    const float windowB = 1.0f - windowA;
+    const float shiftedLeft =
+        readLinear(state.left, state.frames, state.writeIndex,
+                   delayAtPhase(phaseA)) * windowA +
+        readLinear(state.left, state.frames, state.writeIndex,
+                   delayAtPhase(phaseB)) * windowB;
+    const float shiftedRight =
+        readLinear(state.right, state.frames, state.writeIndex,
+                   delayAtPhase(phaseA)) * windowA +
+        readLinear(state.right, state.frames, state.writeIndex,
+                   delayAtPhase(phaseB)) * windowB;
+    outputLeft = finiteOr(inputLeft * (1.0f - state.currentMix) +
+                          shiftedLeft * state.currentMix);
+    outputRight = finiteOr(inputRight * (1.0f - state.currentMix) +
+                           shiftedRight * state.currentMix);
+
+    state.phase += 1.0f / windowFrames;
+    state.phase -= std::floor(state.phase);
+    state.writeIndex = (state.writeIndex + 1u) % state.frames;
+}
+
+struct ReverbState {
+    std::array<std::array<float*, kReverbCombCount>, 2> buffers{};
+    std::array<std::array<uint32_t, kReverbCombCount>, 2> lengths{};
+    std::array<std::array<uint32_t, kReverbCombCount>, 2> writeIndices{};
+    std::array<std::array<float, kReverbCombCount>, 2> dampingState{};
+    float sampleRate = 44100.0f;
+    float currentRoom = 0.65f;
+    float currentDamp = 0.5f;
+    bool initialized = false;
+};
+
+inline void prepareReverb(ReverbState& state) {
+    static constexpr std::array<float, kReverbCombCount> baseSeconds{
+        0.0297f, 0.0371f, 0.0411f, 0.0437f};
+    for (std::size_t channel = 0; channel < 2; ++channel) {
+        for (std::size_t comb = 0; comb < kReverbCombCount; ++comb) {
+            const float stereoOffset = channel == 0 ? 0.0f : 0.0017f;
+            const auto length = static_cast<uint32_t>(std::max(
+                64.0f, std::round((baseSeconds[comb] + stereoOffset) *
+                                  state.sampleRate)));
+            state.lengths[channel][comb] = length;
+            state.writeIndices[channel][comb] = 0;
+            state.dampingState[channel][comb] = 0.0f;
+        }
+    }
+    state.currentRoom = 0.65f;
+    state.currentDamp = 0.5f;
+    state.initialized = false;
+}
+
+inline void freeReverb(ReverbState& state) {
+    for (auto& channel : state.buffers)
+        for (auto& buffer : channel)
+            buffer = nullptr;
+    for (auto& channel : state.lengths)
+        channel.fill(0);
+    for (auto& channel : state.writeIndices)
+        channel.fill(0);
+}
+
+inline void reverbSample(ReverbState& state, float inputLeft, float inputRight,
+                         float room, float damp, float& outputLeft,
+                         float& outputRight) {
+    inputLeft = finiteOr(inputLeft);
+    inputRight = finiteOr(inputRight);
+    room = clampFinite(room, 0.0f, 1.0f, 0.65f);
+    damp = clampFinite(damp, 0.0f, 1.0f, 0.5f);
+    if (!std::isfinite(state.sampleRate) || state.sampleRate < 1000.0f)
+        state.sampleRate = 44100.0f;
+    for (std::size_t channel = 0; channel < 2; ++channel)
+        for (std::size_t comb = 0; comb < kReverbCombCount; ++comb)
+            if (!state.buffers[channel][comb] ||
+                state.lengths[channel][comb] < 2) {
+                outputLeft = inputLeft;
+                outputRight = inputRight;
+                return;
+            }
+
+    if (!state.initialized) {
+        state.currentRoom = room;
+        state.currentDamp = damp;
+        state.initialized = true;
+    } else {
+        const float smoothing = 1.0f - std::exp(
+            -1.0f / (0.03f * state.sampleRate));
+        state.currentRoom += (room - state.currentRoom) * smoothing;
+        state.currentDamp += (damp - state.currentDamp) * smoothing;
+    }
+    const float cutoff = 16000.0f * std::pow(
+        800.0f / 16000.0f, state.currentDamp);
+    const float dampingCoefficient = 1.0f - std::exp(
+        -6.2831853071795864769f * cutoff / state.sampleRate);
+    const float feedback = 0.45f + 0.45f * state.currentRoom;
+    std::array<std::array<float, kReverbCombCount>, 2> taps{};
+    for (std::size_t channel = 0; channel < 2; ++channel)
+        for (std::size_t comb = 0; comb < kReverbCombCount; ++comb)
+            taps[channel][comb] =
+                state.buffers[channel][comb][state.writeIndices[channel][comb]];
+
+    for (std::size_t channel = 0; channel < 2; ++channel) {
+        const float input = channel == 0 ? inputLeft : inputRight;
+        for (std::size_t comb = 0; comb < kReverbCombCount; ++comb) {
+            const auto opposite = 1u - channel;
+            auto& damping = state.dampingState[channel][comb];
+            damping += dampingCoefficient * (taps[channel][comb] - damping);
+            state.buffers[channel][comb][state.writeIndices[channel][comb]] =
+                finiteOr(input + (damping * 0.75f +
+                                  taps[opposite][comb] * 0.25f) * feedback);
+            auto& index = state.writeIndices[channel][comb];
+            index = (index + 1u) % state.lengths[channel][comb];
+        }
+    }
+    float wetLeft = 0.0f;
+    float wetRight = 0.0f;
+    for (std::size_t comb = 0; comb < kReverbCombCount; ++comb) {
+        wetLeft += state.dampingState[0][comb];
+        wetRight += state.dampingState[1][comb];
+    }
+    outputLeft = finiteOr(wetLeft * 0.25f);
+    outputRight = finiteOr(wetRight * 0.25f);
+}
+
+struct ShimmerState {
+    ShifterState pitch;
+    ReverbState reverb;
+    float sampleRate = 44100.0f;
+};
+
+inline void shimmerSample(ShimmerState& state, float inputLeft,
+                          float inputRight, float mix, float ratio,
+                          float windowSeconds, float room, float damp,
+                          float& outputLeft, float& outputRight) {
+    float shiftedLeft = 0.0f;
+    float shiftedRight = 0.0f;
+    float wetLeft = 0.0f;
+    float wetRight = 0.0f;
+    shifterSample(state.pitch, inputLeft, inputRight, 1.0f, ratio,
+                  windowSeconds, shiftedLeft, shiftedRight);
+    reverbSample(state.reverb, shiftedLeft, shiftedRight, room, damp,
+                 wetLeft, wetRight);
+    mix = clampFinite(mix, 0.0f, 1.0f, 0.35f);
+    outputLeft = finiteOr(inputLeft * (1.0f - mix) + wetLeft * mix);
+    outputRight = finiteOr(inputRight * (1.0f - mix) + wetRight * mix);
+}
+
+struct GatedVerbState {
+    ReverbState reverb;
+    float sampleRate = 44100.0f;
+    float detectorEnvelope = 0.0f;
+    float gateGain = 0.0f;
+    float holdRemaining = 0.0f;
+};
+
+inline void gatedVerbSample(GatedVerbState& state, float inputLeft,
+                            float inputRight, float mix, float room,
+                            float damp, float threshold, float holdSeconds,
+                            float attackSeconds, float releaseSeconds,
+                            float& outputLeft, float& outputRight) {
+    inputLeft = finiteOr(inputLeft);
+    inputRight = finiteOr(inputRight);
+    mix = clampFinite(mix, 0.0f, 1.0f, 0.35f);
+    threshold = clampFinite(threshold, 0.001f, 0.25f, 0.02f);
+    holdSeconds = clampFinite(holdSeconds, 0.0f, 2.0f, 0.25f);
+    attackSeconds = clampFinite(attackSeconds, 0.001f, 0.25f, 0.015f);
+    releaseSeconds = clampFinite(releaseSeconds, 0.01f, 1.0f, 0.15f);
+    if (!std::isfinite(state.sampleRate) || state.sampleRate < 1000.0f)
+        state.sampleRate = 44100.0f;
+
+    const float detector = 0.5f * (std::fabs(inputLeft) +
+                                   std::fabs(inputRight));
+    const float detectorSeconds = detector > state.detectorEnvelope
+        ? 0.003f : 0.05f;
+    const float detectorCoefficient = 1.0f - std::exp(
+        -1.0f / (detectorSeconds * state.sampleRate));
+    state.detectorEnvelope += detectorCoefficient *
+        (detector - state.detectorEnvelope);
+    if (state.detectorEnvelope >= threshold)
+        state.holdRemaining = holdSeconds;
+    const bool open = state.holdRemaining > 0.0f;
+    if (open)
+        state.holdRemaining = std::max(
+            0.0f, state.holdRemaining - 1.0f / state.sampleRate);
+    const float gateSeconds = open ? attackSeconds : releaseSeconds;
+    const float gateCoefficient = 1.0f - std::exp(
+        -1.0f / (gateSeconds * state.sampleRate));
+    state.gateGain += gateCoefficient *
+        ((open ? 1.0f : 0.0f) - state.gateGain);
+
+    float wetLeft = 0.0f;
+    float wetRight = 0.0f;
+    reverbSample(state.reverb, inputLeft, inputRight, room, damp,
+                 wetLeft, wetRight);
+    outputLeft = finiteOr(inputLeft * (1.0f - mix) +
+                          wetLeft * state.gateGain * mix);
+    outputRight = finiteOr(inputRight * (1.0f - mix) +
+                           wetRight * state.gateGain * mix);
+}
+
 } // namespace limutfx

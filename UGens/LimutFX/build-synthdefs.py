@@ -9,7 +9,10 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 SYNTHDEFS = HERE / "Portable" / "SynthDefs"
-NAMES = ("LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz")
+NAMES = (
+    "LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz",
+    "LimutShifter", "LimutShimmer", "LimutGatedVerb",
+)
 
 
 def main():

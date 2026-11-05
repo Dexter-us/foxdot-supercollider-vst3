@@ -10,6 +10,10 @@ using limutfx::DuckState;
 using limutfx::PingPongState;
 using limutfx::DisperserState;
 using limutfx::FuzzState;
+using limutfx::GatedVerbState;
+using limutfx::ReverbState;
+using limutfx::ShifterState;
+using limutfx::ShimmerState;
 
 static bool near(float left, float right, float epsilon = 1e-5f) {
     return std::fabs(left - right) <= epsilon;
@@ -154,5 +158,123 @@ int main() {
                 outLeft, outRight);
             assert(std::isfinite(outLeft) && std::isfinite(outRight));
         }
+    }
+    {
+        constexpr float sampleRate = 48000.0f;
+        const auto pitchFrames = static_cast<uint32_t>(
+            std::ceil(sampleRate * limutfx::kPitchBufferSeconds)) + 4u;
+        std::vector<float> pitchLeft(pitchFrames, 0.0f);
+        std::vector<float> pitchRight(pitchFrames, 0.0f);
+        ShifterState state;
+        state.left = pitchLeft.data();
+        state.right = pitchRight.data();
+        state.frames = pitchFrames;
+        state.sampleRate = sampleRate;
+        float outLeft = 0.0f;
+        float outRight = 0.0f;
+        limutfx::shifterSample(state, 0.25f, -0.25f, 0.0f, 2.0f,
+                               0.1f, outLeft, outRight);
+        assert(near(outLeft, 0.25f) && near(outRight, -0.25f));
+
+        state = ShifterState{};
+        state.left = pitchLeft.data();
+        state.right = pitchRight.data();
+        state.frames = pitchFrames;
+        state.sampleRate = sampleRate;
+        int positiveCrossings = 0;
+        float previous = 0.0f;
+        constexpr int firstFrame = 12000;
+        constexpr int lastFrame = 24000;
+        for (int frame = 0; frame < lastFrame; ++frame) {
+            const float input = 0.5f * std::sin(
+                6.2831853071795864769f * 220.0f * frame / sampleRate);
+            limutfx::shifterSample(state, input, input, 1.0f, 2.0f,
+                                   0.1f, outLeft, outRight);
+            assert(std::isfinite(outLeft) && std::isfinite(outRight));
+            assert(near(outLeft, outRight, 2e-5f));
+            if (frame >= firstFrame && previous <= 0.0f && outLeft > 0.0f)
+                ++positiveCrossings;
+            previous = outLeft;
+        }
+        const float measuredHz = positiveCrossings * sampleRate /
+                                 (lastFrame - firstFrame);
+        assert(measuredHz > 390.0f && measuredHz < 490.0f);
+    }
+    {
+        constexpr float sampleRate = 48000.0f;
+        const auto pitchFrames = static_cast<uint32_t>(
+            std::ceil(sampleRate * limutfx::kPitchBufferSeconds)) + 4u;
+        std::vector<float> pitchLeft(pitchFrames, 0.0f);
+        std::vector<float> pitchRight(pitchFrames, 0.0f);
+        ShimmerState shimmer;
+        shimmer.sampleRate = sampleRate;
+        shimmer.pitch.left = pitchLeft.data();
+        shimmer.pitch.right = pitchRight.data();
+        shimmer.pitch.frames = pitchFrames;
+        shimmer.pitch.sampleRate = sampleRate;
+        shimmer.reverb.sampleRate = sampleRate;
+        limutfx::prepareReverb(shimmer.reverb);
+        std::array<std::vector<float>, 8> reverbLines;
+        for (std::size_t channel = 0; channel < 2; ++channel)
+            for (std::size_t comb = 0; comb < limutfx::kReverbCombCount; ++comb) {
+                const std::size_t index = channel * limutfx::kReverbCombCount +
+                                          comb;
+                reverbLines[index].assign(
+                    shimmer.reverb.lengths[channel][comb], 0.0f);
+                shimmer.reverb.buffers[channel][comb] =
+                    reverbLines[index].data();
+            }
+        float outLeft = 0.0f;
+        float outRight = 0.0f;
+        float peak = 0.0f;
+        for (int frame = 0; frame < 48000; ++frame) {
+            const float input = frame < 6000
+                ? 0.4f * std::sin(
+                    6.2831853071795864769f * 220.0f * frame / sampleRate)
+                : 0.0f;
+            limutfx::shimmerSample(shimmer, input, -input, 1.0f, 2.0f,
+                                   0.1f, 0.75f, 0.45f, outLeft, outRight);
+            assert(std::isfinite(outLeft) && std::isfinite(outRight));
+            peak = std::max(peak, std::fabs(outLeft));
+        }
+        assert(peak > 0.05f);
+        assert(std::fabs(outLeft) < 0.02f);
+    }
+    {
+        constexpr float sampleRate = 48000.0f;
+        GatedVerbState state;
+        state.sampleRate = sampleRate;
+        state.reverb.sampleRate = sampleRate;
+        limutfx::prepareReverb(state.reverb);
+        std::array<std::vector<float>, 8> reverbLines;
+        for (std::size_t channel = 0; channel < 2; ++channel)
+            for (std::size_t comb = 0; comb < limutfx::kReverbCombCount; ++comb) {
+                const std::size_t index = channel * limutfx::kReverbCombCount +
+                                          comb;
+                reverbLines[index].assign(
+                    state.reverb.lengths[channel][comb], 0.0f);
+                state.reverb.buffers[channel][comb] =
+                    reverbLines[index].data();
+            }
+        float outLeft = 0.0f;
+        float outRight = 0.0f;
+        float earlyPeak = 0.0f;
+        float latePeak = 0.0f;
+        for (int frame = 0; frame < 72000; ++frame) {
+            const bool active = frame >= 4800 && frame < 7200;
+            const float input = active
+                ? 0.5f * std::sin(
+                    6.2831853071795864769f * 330.0f * frame / sampleRate)
+                : 0.0f;
+            limutfx::gatedVerbSample(state, input, input, 1.0f, 0.7f,
+                0.5f, 0.015f, 0.12f, 0.01f, 0.12f, outLeft, outRight);
+            assert(std::isfinite(outLeft) && std::isfinite(outRight));
+            if (frame >= 9000 && frame < 24000)
+                earlyPeak = std::max(earlyPeak, std::fabs(outLeft));
+            if (frame >= 60000)
+                latePeak = std::max(latePeak, std::fabs(outLeft));
+        }
+        assert(earlyPeak > 0.01f);
+        assert(latePeak < earlyPeak * 0.2f);
     }
 }

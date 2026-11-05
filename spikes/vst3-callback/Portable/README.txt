@@ -1,3 +1,12 @@
+0.4.158 adds three optional compiled LimutFX effect UGens: LimutShifter,
+LimutShimmer, and LimutGatedVerb, plus precompiled SynthDefs and Examples 197
+and 198. Install LimutFX.scx once under the host's SuperCollider SCPlugins
+folder, merge the three matching .scsyndef files into Portable/SynthDefs, then
+restart the DAW. Use the Players panel or effect="LimutShifter",
+effect="LimutShimmer", or effect="LimutGatedVerb". See
+UGens/LimutFX/Portable/LIMUT-FX-README.txt for ranges and the optional-pack
+license notes.
+
 0.4.157 adds Limut-inspired LimutDisperser and LimutFuzz effects. It also makes
 expanding any Players-panel effect chain select its first insert, so its
 effect-specific sliders appear immediately; selecting a later insert switches

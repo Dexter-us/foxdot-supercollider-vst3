@@ -1,5 +1,14 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.158 adds three compiled LimutFX player-effect UGens: `LimutShifter`,
+`LimutShimmer`, and `LimutGatedVerb`. They are optional members of
+`LimutFX.scx`, with matching precompiled SynthDefs, effect-chain controls, and
+Examples 197–198. The Shifter uses a two-head windowed delay; Shimmer feeds its
+pitch-shifted signal into the pack's stereo reverb; GatedVerb shapes the reverb
+tail with a smoothed input detector. See `UGens/LimutFX/README.md` for ranges,
+installation, and test details. Building this optional module does not rebuild
+SuperCollider itself.
+
 Version 0.4.157 adds optional Limut-inspired Disperser and Fuzz inserts, and
 fixes Players-panel chain selection so opening a chain selects its first insert.
 LimutDuck now appears in its own Duck category. See Example 196.

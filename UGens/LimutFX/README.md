@@ -1,6 +1,6 @@
 # Optional Limut-inspired effect UGen pack
 
-The pack contains four optional stereo inserts:
+The pack contains seven optional stereo inserts:
 
 - `LimutPingPong`: stereo cross-feedback delay with smoothly moving delay time.
 - `LimutDuck`: tempo-pump style gain envelope with bounded timing and smoothed
@@ -9,6 +9,13 @@ The pack contains four optional stereo inserts:
   frequency, Q, and stage-count changes.
 - `LimutFuzz`: a bounded soft-clipping drive stage with a smoothed post-drive
   tone cutoff.
+- `LimutShifter`: a windowed two-head pitch shifter, with ratio 0.5–2 and
+  window 0.02–0.5 seconds.
+- `LimutShimmer`: a pitch-shifted signal into a stereo feedback reverb; ratio
+  0.5–2, window 0.02–0.5 seconds, room and damping 0–1.
+- `LimutGatedVerb`: a stereo reverb with a smoothed threshold gate; threshold
+  0.001–0.25, hold 0–2 seconds, attack 0.001–0.25 seconds and release
+  0.01–1 second.
 
 They are separate SuperCollider plug-in UGens compiled as `LimutFX.scx` on
 Windows (or the platform's module suffix elsewhere). The VST3 itself does not
@@ -21,7 +28,10 @@ Frequency, Q, stage count, and tone are smoothed; values are clamped to safe
 ranges. The Disperser uses cascaded digital all-pass sections, while Fuzz uses
 normalized tanh saturation followed by a one-pole tone filter. These are
 standalone DSP implementations, not bit-identical SuperCollider or Limut
-graphs. Example 196 demonstrates both inserts and their order in a chain.
+graphs. Shifter, Shimmer and GatedVerb are also standalone bounded DSP
+implementations; they use no additional libraries or SuperCollider plugin
+modules beyond this `LimutFX.scx`. Examples 197–198 demonstrate the three
+effects, including a Shifter → Shimmer chain.
 
 The implementation is intentionally incremental. Limut also defines effects
 that already overlap this VST (chorus, flanger, phaser, echo, tape and reverb),
@@ -51,6 +61,7 @@ SuperCollider engine and existing VST/UGen packs are not rebuilt.
 ## License and attribution
 
 The PingPong and Duck adaptations are based on Limut's `effects.limut`
-definitions, licensed CC BY-SA 4.0. The Disperser and Fuzz DSP are separate
-implementations authored for this pack. Attribution and license details are in
-`ATTRIBUTION.txt`; the pack is distributed under CC BY-SA 4.0.
+definitions, licensed CC BY-SA 4.0. The Disperser, Fuzz, Shifter, Shimmer and
+GatedVerb DSP algorithms are independent implementations for this pack.
+Attribution and license details are in `ATTRIBUTION.txt`; the pack is
+distributed under CC BY-SA 4.0.

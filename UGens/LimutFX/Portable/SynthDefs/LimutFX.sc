@@ -55,3 +55,48 @@ LimutFuzz : MultiOutUGen {
 
     checkInputs { ^this.checkNInputs(2) }
 }
+
+LimutShifter : MultiOutUGen {
+    *ar { |inLeft, inRight, mix=0.5, ratio=1.5, window=0.12|
+        ^this.multiNew('audio', inLeft, inRight, mix, ratio, window)
+    }
+
+    init { |...theInputs|
+        inputs = theInputs;
+        channels = [OutputProxy(rate, this, 0), OutputProxy(rate, this, 1)];
+        ^channels
+    }
+
+    checkInputs { ^this.checkNInputs(2) }
+}
+
+LimutShimmer : MultiOutUGen {
+    *ar { |inLeft, inRight, mix=0.35, ratio=2, window=0.12, room=0.8, damp=0.35|
+        ^this.multiNew(
+            'audio', inLeft, inRight, mix, ratio, window, room, damp)
+    }
+
+    init { |...theInputs|
+        inputs = theInputs;
+        channels = [OutputProxy(rate, this, 0), OutputProxy(rate, this, 1)];
+        ^channels
+    }
+
+    checkInputs { ^this.checkNInputs(2) }
+}
+
+LimutGatedVerb : MultiOutUGen {
+    *ar { |inLeft, inRight, mix=0.65, room=0.75, damp=0.5, threshold=0.02, hold=0.25, attack=0.015, release=0.15|
+        ^this.multiNew(
+            'audio', inLeft, inRight, mix, room, damp, threshold, hold,
+            attack, release)
+    }
+
+    init { |...theInputs|
+        inputs = theInputs;
+        channels = [OutputProxy(rate, this, 0), OutputProxy(rate, this, 1)];
+        ^channels
+    }
+
+    checkInputs { ^this.checkNInputs(2) }
+}

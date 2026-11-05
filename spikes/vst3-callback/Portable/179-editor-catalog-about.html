@@ -123,7 +123,8 @@ selects algorithm; <code>room</code>, <code>mix</code>, <code>damp</code> 0–1;
 optional entries remain visible for information but cannot be inserted until
 the matching SynthDef/UGen pack is installed and the host restarted. Loaded
 player effects include Airwindows TapeDelay2 and Echojam, Chorus, Flanger,
-Phaser, Tremolo, JPverb and Greyhole. A chain may contain up to four inserts.
+Phaser, Tremolo, JPverb, Greyhole, and optional LimutFX inserts such as
+LimutShifter, LimutShimmer, and LimutGatedVerb. A chain may contain up to four inserts.
 Use <code>effects=[("Chorus", {"fx_mix": 0.4}), ...]</code> for a chain or the
 legacy <code>effect="Chorus", fx_mix=0.4</code> form for one insert when that
 effect exposes <code>fx_mix</code>. Airwindows Echojam and TapeDelay2 do not:
@@ -142,6 +143,16 @@ use their effect-specific controls instead.</p>
 <code>fx_damp</code>, <code>fx_diff</code>, <code>fx_moddepth</code>: 0–1;
 <code>fx_delay</code>: 0.001–1.45 seconds; <code>fx_size</code>: 0.5–3;
 <code>fx_feedback</code>: 0–0.98.</td></tr>
+<tr id="LimutShifter"><td>LimutShifter</td><td><code>fx_mix</code>: 0–1;
+<code>fx_ratio</code>: 0.5–2; <code>fx_window</code>: 0.02–0.5 seconds.</td></tr>
+<tr id="LimutShimmer"><td>LimutShimmer</td><td><code>fx_mix</code>,
+<code>fx_room</code>, <code>fx_damp</code>: 0–1; <code>fx_ratio</code>: 0.5–2;
+<code>fx_window</code>: 0.02–0.5 seconds.</td></tr>
+<tr id="LimutGatedVerb"><td>LimutGatedVerb</td><td><code>fx_mix</code>,
+<code>fx_room</code>, <code>fx_damp</code>: 0–1;
+<code>fx_threshold</code>: 0.001–0.25; <code>fx_hold</code>: 0–2 seconds;
+<code>fx_attack</code>: 0.001–0.25 seconds;
+<code>fx_release</code>: 0.01–1 second.</td></tr>
 <tr id="Chorus"><td>Chorus</td><td>mix 0–1, rate 0.05–5 Hz, depth 0–1,
 delay 0.005–0.04 seconds, spread 0–1, feedback 0–0.75, tone 200–16000 Hz.</td></tr>
 <tr id="Flanger"><td>Flanger</td><td>mix 0–1, rate 0.05–4 Hz, depth 0–1,

@@ -68,6 +68,16 @@ def rms(samples, rate, channel, start, end):
     return math.sqrt(sum(value * value for value in values) / len(values))
 
 
+def crossing_frequency(samples, rate, channel, start, end):
+    first = int(start * rate) * 4 + channel
+    last = int(end * rate) * 4 + channel
+    values = samples[first:last:4]
+    crossings = sum(
+        previous <= 0.0 < current
+        for previous, current in zip(values, values[1:]))
+    return crossings / max(1e-9, end - start)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("module_directory", type=Path)
@@ -156,6 +166,66 @@ SynthDef(\LimutFuzzInput, { |out=16|
         fuzz_wet, fuzz_dry)
     assert max(abs(value) for value in fuzz) < 1.0
     print(f"PASS LimutFuzz audible saturation; {rate} Hz")
+
+    shifter_source = r"""
+SynthDef(\LimutShifterInput, { |out=16|
+    var signal = (SinOsc.ar(220) * 0.25) ! 2;
+    Out.ar(out, signal);
+    Out.ar(2, signal);
+}).writeDefFile("{directory}");
+"""
+    shifter, rate = render(
+        args.module_directory, "LimutShifterInput", shifter_source,
+        "LimutShifter",
+        [0, 0.0, 1, 16.0, 2, 1.0, 3, 2.0, 4, 0.12], 1.2)
+    shifted_hz = crossing_frequency(shifter, rate, 0, .35, .85)
+    shifter_dry = rms(shifter, rate, 2, .35, .85)
+    assert 380.0 < shifted_hz < 500.0, shifted_hz
+    assert shifter_dry > 0.1
+    assert max(abs(value) for value in shifter) < 1.0
+    print(f"PASS LimutShifter octave-up pitch; measured {shifted_hz:.1f} Hz")
+
+    shimmer_source = r"""
+SynthDef(\LimutShimmerInput, { |out=16|
+    var trigger = Impulse.kr(2);
+    var env = EnvGen.kr(Env.perc(0.002, 0.08), trigger);
+    var signal = (SinOsc.ar(220) * env * 0.4) ! 2;
+    Out.ar(out, signal);
+    Out.ar(2, signal);
+}).writeDefFile("{directory}");
+"""
+    shimmer, rate = render(
+        args.module_directory, "LimutShimmerInput", shimmer_source,
+        "LimutShimmer",
+        [0, 0.0, 1, 16.0, 2, 0.65, 3, 2.0, 4, 0.12, 5, 0.8, 6, 0.35],
+        1.8)
+    shimmer_body = rms(shimmer, rate, 0, .12, .55)
+    shimmer_tail = rms(shimmer, rate, 0, .65, 1.3)
+    assert shimmer_body > 1e-4, shimmer_body
+    assert shimmer_tail > 1e-5, shimmer_tail
+    assert max(abs(value) for value in shimmer) < 1.0
+    print(f"PASS LimutShimmer audible pitch/reverb tail; {rate} Hz")
+
+    gated_source = r"""
+SynthDef(\LimutGatedVerbInput, { |out=16|
+    var trigger = Impulse.kr(0.5);
+    var env = EnvGen.kr(Env.perc(0.002, 0.08), trigger);
+    var signal = (SinOsc.ar(330) * env * 0.4) ! 2;
+    Out.ar(out, signal);
+    Out.ar(2, signal);
+}).writeDefFile("{directory}");
+"""
+    gated, rate = render(
+        args.module_directory, "LimutGatedVerbInput", gated_source,
+        "LimutGatedVerb",
+        [0, 0.0, 1, 16.0, 2, 1.0, 3, 0.75, 4, 0.5, 5, 0.02,
+         6, 0.12, 7, 0.01, 8, 0.12], 1.5)
+    gated_open = rms(gated, rate, 0, .12, .42)
+    gated_closed = rms(gated, rate, 0, .9, 1.3)
+    assert gated_open > 1e-4, gated_open
+    assert gated_closed < gated_open * 0.2, (gated_open, gated_closed)
+    assert max(abs(value) for value in gated) < 1.0
+    print(f"PASS LimutGatedVerb gated tail; {rate} Hz")
 
 
 if __name__ == "__main__":

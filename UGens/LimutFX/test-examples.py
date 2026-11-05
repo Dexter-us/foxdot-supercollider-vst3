@@ -11,7 +11,10 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 SOURCE = (ROOT / "spikes/vst3-callback/python_runtime.cpp").read_text(
     encoding="utf-8", errors="replace")
-NAMES = ("LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz")
+NAMES = (
+    "LimutPingPong", "LimutDuck", "LimutDisperser", "LimutFuzz",
+    "LimutShifter", "LimutShimmer", "LimutGatedVerb",
+)
 
 
 def embedded(name):
@@ -107,6 +110,13 @@ expected = {
         "out inbus mix frequency q stages", "LimutDisperser", 6),
     "LimutFuzz": (
         "out inbus mix driveDb toneHz", "LimutFuzz", 5),
+    "LimutShifter": (
+        "out inbus mix ratio window", "LimutShifter", 5),
+    "LimutShimmer": (
+        "out inbus mix ratio window room damp", "LimutShimmer", 7),
+    "LimutGatedVerb": (
+        "out inbus mix room damp threshold hold attack release",
+        "LimutGatedVerb", 9),
 }
 for name, (control_names, ugen_name, ugen_inputs) in expected.items():
     actual, controls, defaults, units = synthdef_info(
@@ -124,11 +134,12 @@ for path in HERE.glob("Portable/*.py"):
     assert "No unsupported constructs detected" in report, report
     output, scope = evaluate(text)
     assert output.count("W\t") >= 3, output
-    expected_indices = (
-        {0: 0, 1: 1, 2: 0}
-        if path.name == "195-limut-pingpong-duck.py"
-        else {0: 2, 1: 3, 2: 2}
-    )
+    expected_indices = {
+        "195-limut-pingpong-duck.py": {0: 0, 1: 1, 2: 0},
+        "196-limut-disperser-fuzz.py": {0: 2, 1: 3, 2: 2},
+        "197-limut-shifter-shimmer.py": {0: 4, 1: 5, 2: -1},
+        "198-limut-gated-reverb.py": {0: 6, 1: 4, 2: -1},
+    }[path.name]
     assert scope["_dexter_player_effect_indices"] == expected_indices
     for values in scope["_dexter_effect_control_values"].values():
         assert len(values) == 7 and all(
@@ -138,7 +149,10 @@ for path in HERE.glob("Portable/*.py"):
 for name, control in (("LimutPingPong", "fx_time"),
                       ("LimutDuck", "fx_period"),
                       ("LimutDisperser", "fx_frequency"),
-                      ("LimutFuzz", "fx_drive")):
+                      ("LimutFuzz", "fx_drive"),
+                      ("LimutShifter", "fx_ratio"),
+                      ("LimutShimmer", "fx_room"),
+                      ("LimutGatedVerb", "fx_hold")):
     text = f'p1 >> pluck([0], effect="{name}", {control}=var([0.25, 0.5], 4))'
     assert "No unsupported constructs detected" in check(text), check(text)
     assert "matching player-effect SynthDef" in check(text, ()), check(text, ())

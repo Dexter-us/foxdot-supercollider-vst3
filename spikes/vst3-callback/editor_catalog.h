@@ -80,7 +80,8 @@ inline std::string effectCategory(const CatalogEntry& entry) {
         name == "AirwindowsTapeDelay2" || name == "LimutPingPong")
         return "Delay";
     if (name == "Freeverb" || name == "Freeverb2" || name == "GVerb" ||
-        name == "Greyhole" || name == "JPverb")
+        name == "Greyhole" || name == "JPverb" ||
+        name == "LimutShimmer" || name == "LimutGatedVerb")
         return "Reverb";
     if (name == "Chorus" || name == "Flanger" || name == "Phaser" ||
         name == "Tremolo" || name == "Chop" || name == "Spin")
@@ -89,7 +90,8 @@ inline std::string effectCategory(const CatalogEntry& entry) {
         name == "Band-pass" || name == "LFO filter")
         return "Filters";
     if (name == "Vibrato" || name == "Slide" || name == "Bend" ||
-        name == "PShift" || name == "Coarse" || name == "Formant")
+        name == "PShift" || name == "Coarse" || name == "Formant" ||
+        name == "LimutShifter")
         return "Pitch and formant";
     if (name == "Bits / Crush" || name == "Shape" || name == "Drive")
         return "Distortion and reduction";
@@ -162,6 +164,18 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
     if (effectName == "LimutFuzz")
         return {{"fx_mix", 0, 1}, {"fx_drive", 0, 36},
                 {"fx_tone", 200, 16000}};
+    if (effectName == "LimutShifter")
+        return {{"fx_mix", 0, 1}, {"fx_ratio", 0.5f, 2},
+                {"fx_window", 0.02f, 0.5f}};
+    if (effectName == "LimutShimmer")
+        return {{"fx_mix", 0, 1}, {"fx_ratio", 0.5f, 2},
+                {"fx_window", 0.02f, 0.5f}, {"fx_room", 0, 1},
+                {"fx_damp", 0, 1}};
+    if (effectName == "LimutGatedVerb")
+        return {{"fx_mix", 0, 1}, {"fx_room", 0, 1},
+                {"fx_damp", 0, 1}, {"fx_threshold", 0.001f, 0.25f},
+                {"fx_hold", 0, 2}, {"fx_attack", 0.001f, 0.25f},
+                {"fx_release", 0.01f, 1}};
     return {};
 }
 
@@ -336,8 +350,9 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         {}, true});
     static const std::vector<std::string> bundledEffects{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
-        "Greyhole", "JPverb", "LimutDisperser", "LimutDuck", "LimutFuzz",
-        "LimutPingPong", "Phaser", "Tremolo"};
+        "Greyhole", "JPverb", "LimutDisperser", "LimutDuck",
+        "LimutFuzz", "LimutGatedVerb", "LimutPingPong", "LimutShifter",
+        "LimutShimmer", "Phaser", "Tremolo"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
                 bundledEffects.end() ||
@@ -462,7 +477,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
     static const std::vector<std::string> knownExternal{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
         "Greyhole", "JPverb", "LimutDisperser", "LimutDuck", "LimutFuzz",
-        "LimutPingPong", "Phaser", "Tremolo"};
+        "LimutGatedVerb", "LimutPingPong", "LimutShifter", "LimutShimmer",
+        "Phaser", "Tremolo"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
@@ -476,7 +492,9 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "fx_* parameters. Install its SynthDef/UGen pack "
                           "under Portable/SynthDefs and restart the DAW.";
         else if (name == "LimutPingPong" || name == "LimutDuck" ||
-                 name == "LimutDisperser" || name == "LimutFuzz")
+                 name == "LimutDisperser" || name == "LimutFuzz" ||
+                 name == "LimutShifter" || name == "LimutShimmer" ||
+                 name == "LimutGatedVerb")
             description = "Optional Limut-inspired insert UGen. Install its "
                           "SynthDef under Portable/SynthDefs and LimutFX.scx "
                           "under SCPlugins, then restart the DAW. Controls "
@@ -505,6 +523,18 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         } else if (name == "LimutFuzz") {
             defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_drive", "18"},
                         Arg{"fx_tone", "9000"}};
+        } else if (name == "LimutShifter") {
+            defaults = {Arg{"fx_mix", "0.5"}, Arg{"fx_ratio", "1.5"},
+                        Arg{"fx_window", "0.12"}};
+        } else if (name == "LimutShimmer") {
+            defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_ratio", "2"},
+                        Arg{"fx_window", "0.12"}, Arg{"fx_room", "0.8"},
+                        Arg{"fx_damp", "0.35"}};
+        } else if (name == "LimutGatedVerb") {
+            defaults = {Arg{"fx_mix", "0.65"}, Arg{"fx_room", "0.75"},
+                        Arg{"fx_damp", "0.5"}, Arg{"fx_threshold", "0.02"},
+                        Arg{"fx_hold", "0.25"}, Arg{"fx_attack", "0.015"},
+                        Arg{"fx_release", "0.15"}};
         } else if (hasMixControl) {
             defaults.push_back(Arg{"fx_mix", "0.25"});
         }

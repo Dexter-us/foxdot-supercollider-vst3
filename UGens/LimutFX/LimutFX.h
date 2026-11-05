@@ -22,3 +22,15 @@ struct LimutFuzz : public Unit {
     limutfx::FuzzState state;
 };
 
+struct LimutShifter : public Unit {
+    limutfx::ShifterState state;
+};
+
+struct LimutShimmer : public Unit {
+    limutfx::ShimmerState state;
+};
+
+struct LimutGatedVerb : public Unit {
+    limutfx::GatedVerbState state;
+};
+
