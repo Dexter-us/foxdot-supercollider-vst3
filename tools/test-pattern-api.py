@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.162' not in cmake_source or
+if ('VERSION 0.4.163' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2969,6 +2969,26 @@ assert len(timevarRows) == 2 and all(len(row) == 23 for row in timevarRows)
 assert timevarRows[0][16] == 'v:0.15,0.45:4.0,4.0'
 assert timevarRows[1][17] == 'l:-0.8,0.8:8.0,8.0'
 assert timevarRows[1][18] == 'l:400.0,5000.0:8.0,8.0'
+limutRiserRows = run_script(
+    'p1 >> saw([0, 2, 4], amp=riser(8, 0.05, 0.3), '
+    'cutoff=riser(8, 300, 9000))\n')
+assert len(limutRiserRows) == 1
+assert limutRiserRows[0][16] == 'r:0.05,0.3:8.0'
+assert limutRiserRows[0][18] == 'r:300.0,9000.0:8.0'
+limutRiserFxRows, limutRiserFxTokens = run_script(
+    'p1 >> saw([0, 2], effect="LimutPingPong", '
+    'fx_mix=riser(8, 0.1, 0.8))\n',
+    include_effect_control_vars=True, user_synth_names=('LimutPingPong',))
+assert len(limutRiserFxRows) == 1 and any(
+    'r:0.1,0.8:8.0' in row for row in limutRiserFxTokens)
+limutRiserExample = run_example('203-limut-riser-automation.py')
+assert len(limutRiserExample) == 2
+assert limutRiserExample[0][16] == 'r:0.04,0.28:16.0'
+assert limutRiserExample[0][18] == 'r:400.0,9000.0:16.0'
+assert 'riser' in run_error_script('Clock.bpm = riser(8)\n')
+assert 'riser' in run_error_script(
+    'p1 >> saw([0], slide=riser(8))\n')
+assert 'riser' in run_error_script('play("x", sample=riser(8))\n')
 timevarNoteRows, timevarNoteEvents = run_script('Scale.default.set("minor")\np1 >> triangle(P[0, 1, 2, 3, 4, 5, 6, 0, 0, 1, 2, 3, 4, 5, 6, 0], dur=var([0.25, 0.5], [2, 2]), oct=var([4, 5], [2, 2]), sus=var([0.2, 0.4], [2, 2]), velocity=var([60, 110], [2, 2]))\n', include_events=True)
 assert len(timevarNoteRows) == 1 and len(timevarNoteEvents) == 16
 assert float(timevarNoteEvents[0][1]) == 0.0 and abs(float(timevarNoteEvents[0][2]) - 0.2) < 1e-9
