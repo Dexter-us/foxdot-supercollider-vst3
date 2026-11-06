@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.163' not in cmake_source or
+if ('VERSION 0.4.164' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2981,7 +2981,7 @@ limutRiserFxRows, limutRiserFxTokens = run_script(
     include_effect_control_vars=True, user_synth_names=('LimutPingPong',))
 assert len(limutRiserFxRows) == 1 and any(
     'r:0.1,0.8:8.0' in row for row in limutRiserFxTokens)
-limutRiserExample = run_example('203-limut-riser-automation.py')
+limutRiserExample = run_example('209-limut-riser-automation.py')
 assert len(limutRiserExample) == 2
 assert limutRiserExample[0][16] == 'r:0.04,0.28:16.0'
 assert limutRiserExample[0][18] == 'r:400.0,9000.0:16.0'

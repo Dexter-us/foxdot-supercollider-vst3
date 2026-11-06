@@ -1,4 +1,4 @@
-# Example 203: Limut-inspired one-shot riser automation.
+# Example 209: Limut-inspired one-shot riser automation.
 # Each control rises linearly over the requested beat span, then holds its target.
 # Restart the transport from beat zero to hear the ramps from their starting values.
 Clock.bpm = 96

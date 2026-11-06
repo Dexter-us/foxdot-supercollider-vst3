@@ -599,7 +599,7 @@ assert abs(float(effectEvents[2][7])) < 1e-9
 assert abs(float(effectEvents[0][5]) - 0.01) < 1e-9 and abs(float(effectEvents[0][6]) - 0.02) < 1e-9
 assert abs(float(effectEvents[1][5]) - 0.01) < 1e-9 and abs(float(effectEvents[1][6]) - 0.06) < 1e-9
 assert abs(float(effectEvents[2][5]) - 0.03) < 1e-9 and abs(float(effectEvents[2][6]) - 0.1) < 1e-9
-riserExample = run_example('203-limut-riser-automation.py')
+riserExample = run_example('209-limut-riser-automation.py')
 assert len(riserExample) == 2 and all(len(row) == 23 for row in riserExample)
 assert riserExample[0][16] == 'r:0.04,0.28:16.0'
 assert riserExample[0][18] == 'r:400.0,9000.0:16.0'
