@@ -59,10 +59,23 @@ inline std::string catalogLower(std::string_view value) {
     return result;
 }
 
+inline std::pair<std::string, std::string> portableSynthGrouping(
+    std::string_view name) {
+    // Curated groups keep bundled user SynthDefs discoverable in the editor.
+    if (name == "CustomPluck")
+        return {"Plucked & Stringed", "Custom plucked voices"};
+    if (name == "CustomTone")
+        return {"Waveforms", "Custom oscillator voices"};
+    return {};
+}
+
 inline std::string instrumentCategory(const CatalogEntry& entry) {
     if (entry.kind == CatalogKind::SamplePlayer)
         return "Drums & Percussion";
     if (entry.kind == CatalogKind::UserSynth) {
+        const auto curated = portableSynthGrouping(entry.name);
+        if (!curated.first.empty())
+            return curated.first;
         const auto name = catalogLower(entry.name);
         if (name.find("kick") != std::string::npos ||
             name.find("snare") != std::string::npos ||
@@ -132,6 +145,9 @@ inline std::string instrumentSubcategory(const CatalogEntry& entry) {
     if (entry.kind == CatalogKind::SamplePlayer)
         return "WAV sample player";
     if (entry.kind == CatalogKind::UserSynth) {
+        const auto curated = portableSynthGrouping(name);
+        if (!curated.second.empty())
+            return curated.second;
         const auto lowered = catalogLower(name);
         if (lowered.find("kick") != std::string::npos ||
             lowered.find("snare") != std::string::npos ||

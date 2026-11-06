@@ -87,3 +87,17 @@ They use SuperCollider core UGens only; no additional SCPlugins module is
 needed. Restart the DAW after copying the .scsyndef files here.
 The required packaging/ABI check is tools/test-sclork-synthdefs.py; the
 optional native dry/wet audio render is tools/test-sclork-synthdefs-audio.py.
+
+
+Editor Synths index
+-------------------
+These SynthDef files remain in Portable/SynthDefs so installation and loading
+continue to work. The Players > Synths index groups bundled instruments as:
+
+  Category             Subcategory                 SynthDef
+  Plucked & Stringed   Custom plucked voices       CustomPluck
+  Waveforms            Custom oscillator voices    CustomTone
+
+Player-effect SynthDefs are listed separately in the Effects index. Newly added
+user SynthDefs are still discovered automatically and grouped by a best-effort
+filename match; these two bundled voices use explicit catalog entries.

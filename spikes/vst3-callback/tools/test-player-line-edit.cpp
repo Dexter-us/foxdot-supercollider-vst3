@@ -121,7 +121,8 @@ int main() {
         std::vector<std::string> embedded{
             "sine", "square", "pluck", "sample", "sawbass"};
         std::vector<std::string> external{
-            "CustomPluck", "Chorus", "LimutVocoder", "KickDrum"};
+            "CustomPluck", "CustomTone", "Chorus", "LimutVocoder",
+            "KickDrum"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
@@ -161,7 +162,15 @@ int main() {
         assert(custom != instruments.end() &&
                custom->kind == CatalogKind::UserSynth &&
                custom->category == "Plucked & Stringed" &&
-               custom->subcategory == "Precompiled plucked/stringed");
+               custom->subcategory == "Custom plucked voices");
+        const auto customTone = std::find_if(
+            instruments.begin(), instruments.end(), [](const auto& entry) {
+                return entry.name == "CustomTone";
+            });
+        assert(customTone != instruments.end() &&
+               customTone->kind == CatalogKind::UserSynth &&
+               customTone->category == "Waveforms" &&
+               customTone->subcategory == "Custom oscillator voices");
         const auto kickSynth = std::find_if(
             instruments.begin(), instruments.end(), [](const auto& entry) {
                 return entry.name == "KickDrum";
