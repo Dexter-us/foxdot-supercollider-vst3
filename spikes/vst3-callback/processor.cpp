@@ -1436,6 +1436,7 @@ private:
     struct TimeVarControl {
         bool active = false;
         bool linear = false;
+        bool oneShot = false;
         std::size_t count = 0;
         std::array<double, 8> values{};
         std::array<double, 8> durations{};
@@ -1883,7 +1884,7 @@ private:
         if (token == "-")
             return true;
         if (token.size() > 256 || token.size() < 5 || token[1] != ':' ||
-            (token[0] != 'v' && token[0] != 'l'))
+            (token[0] != 'v' && token[0] != 'l' && token[0] != 'r'))
             return false;
         const auto middle = token.find(':', 2);
         if (middle == std::string::npos || middle == 2 || middle + 1 >= token.size())
@@ -1914,14 +1915,17 @@ private:
         std::array<double, 8> durations{};
         std::size_t valueCount = 0;
         std::size_t durationCount = 0;
+        const bool oneShot = token[0] == 'r';
         if (!parseList(token.substr(2, middle - 2), values, valueCount,
                        minimum, maximum, false) ||
             !parseList(token.substr(middle + 1), durations, durationCount,
                        0.0, 4096.0, true) ||
-            (durationCount != 1 && durationCount != valueCount))
+            (durationCount != 1 && durationCount != valueCount) ||
+            (oneShot && (valueCount != 2 || durationCount != 1)))
             return false;
         result.active = true;
-        result.linear = token[0] == 'l';
+        result.linear = token[0] == 'l' || oneShot;
+        result.oneShot = oneShot;
         result.count = valueCount;
         result.values = values;
         for (std::size_t i = 0; i < valueCount; ++i)
@@ -1938,6 +1942,12 @@ private:
             cycle += control.durations[i];
         if (cycle <= 0.0)
             return fallback;
+        if (control.oneShot) {
+            const double duration = control.durations[0];
+            const double progress = std::clamp(std::max(0.0, beat) / duration, 0.0, 1.0);
+            return static_cast<float>(control.values[0] +
+                                      (control.values[1] - control.values[0]) * progress);
+        }
         double position = std::fmod(std::max(0.0, beat), cycle);
         for (std::size_t i = 0; i < control.count; ++i) {
             const double duration = control.durations[i];

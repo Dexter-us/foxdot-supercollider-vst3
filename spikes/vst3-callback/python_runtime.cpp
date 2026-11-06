@@ -128,7 +128,7 @@ _COMPAT_CALLS = {
     'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys', 'klank',
     'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
     'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
-    'var', 'linvar', 'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
+    'var', 'linvar', 'riser', 'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'Group', 'Master', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
     '__build_class__'
 }
@@ -1209,6 +1209,8 @@ _DEXTER_BUILTIN_SYNTHS = (
     'karp', 'sample')
 def tempo(bpm):
     global _dexter_bpm, _dexter_bpm_control
+    if isinstance(bpm, _DexterRiser):
+        raise TypeError('Clock.bpm does not accept a one-shot riser; use var/linvar')
     control = bpm if isinstance(bpm, _DexterTimeVar) else None
     values = control.values if control is not None else [float(bpm)]
     if any(value != value or value in (float('inf'), float('-inf')) or
@@ -1381,7 +1383,7 @@ _ROOT_NOTES = {
 
 def _root_midi(value):
     if isinstance(value, str):
-        name = value.strip().lower().replace('♯', '#').replace('♭', 'b')
+        name = value.strip().lower().replace('â¯', '#').replace('â­', 'b')
         if name not in _ROOT_NOTES:
             raise ValueError('root must be a pitch class from 0 to 11 or a note name such as C# or Eb')
         return 60 + _ROOT_NOTES[name]
@@ -5102,6 +5104,38 @@ def var(values, durations=4.0):
 def linvar(values, durations=4.0):
     return _DexterTimeVar(values, durations, True)
 
+class _DexterRiser(_DexterTimeVar):
+    """A bounded one-shot linear control ramp that holds its final value."""
+    def __init__(self, duration=32.0, start=0.0, end=1.0):
+        for value, label in ((duration, 'duration'), (start, 'start'), (end, 'end')):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError('riser ' + label + ' must be a finite number')
+        try:
+            duration, start, end = float(duration), float(start), float(end)
+        except (OverflowError, ValueError):
+            raise ValueError('riser values must be finite numbers')
+        if duration != duration or not 0.001 <= duration <= 4096.0:
+            raise ValueError('riser duration must be between 0.001 and 4096 beats')
+        if any(value != value or abs(value) > 1000000.0 for value in (start, end)):
+            raise ValueError('riser values must be finite and within +/-1000000')
+        _DexterTimeVar.__init__(self, [start, end], [duration], True)
+        self.riseDuration = duration
+
+    def wire(self):
+        token = 'r:' + str(self.values[0]) + ',' + str(self.values[1]) + ':' + str(self.riseDuration)
+        if len(token) > 256:
+            raise ValueError('riser control data exceeds the supported size')
+        return token
+
+    def at(self, beat):
+        position = max(0.0, float(beat))
+        progress = min(position / self.riseDuration, 1.0)
+        return self.values[0] + (self.values[1] - self.values[0]) * progress
+
+def riser(duration=32.0, start=0.0, end=1.0):
+    """Limut-inspired one-shot ramp; after duration beats it holds at end."""
+    return _DexterRiser(duration, start, end)
+
 class _DexterPVar:
     """A finite sequence of whole patterns selected over explicit beat spans."""
     def __init__(self, patterns, dur=4.0):
@@ -5273,6 +5307,8 @@ class _FoxDotNoteEffectPattern:
         return self.values[index % len(self.values)]
 
 def _note_effect_control(value, name, lower, upper):
+    if isinstance(value, _DexterRiser):
+        raise TypeError(name + ' note effects do not accept riser; use var/linvar')
     if isinstance(value, bool):
         raise TypeError(name + ' requires a number or var/linvar, not bool')
     if isinstance(value, _FoxDotNoteEffectPattern):
@@ -6168,7 +6204,13 @@ def _player_effect_control_values(effect, controls):
             if maximum == minimum:
                 return 0.0
             return (number - minimum) / (maximum - minimum)
-        if isinstance(raw, _DexterTimeVar):
+        if isinstance(raw, _DexterRiser):
+            normalizedValues = [normalized(value) for value in raw.values]
+            normalizedVar = _DexterRiser(
+                raw.riseDuration, normalizedValues[0], normalizedValues[1])
+            values[index] = normalizedValues[0]
+            variables[index] = normalizedVar.wire()
+        elif isinstance(raw, _DexterTimeVar):
             normalizedValues = [normalized(value) for value in raw.values]
             normalizedVar = _DexterTimeVar(
                 normalizedValues, raw.durations, raw.linear)
@@ -6260,6 +6302,8 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
         raise ValueError('sample pattern cannot be empty')
     if samplePatternValues is None and len(text) > 256:
         raise ValueError('sample pattern text is limited to 256 characters')
+    if isinstance(sample, _DexterRiser) or isinstance(rate, _DexterRiser):
+        raise TypeError('riser cannot be used for sample or rate selection')
     sampleControl = sample if isinstance(sample, _DexterTimeVar) else None
     rateControl = rate if isinstance(rate, _DexterTimeVar) else None
     selections = ([sample.values[0]] if sampleControl is not None else
