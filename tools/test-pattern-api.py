@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.164' not in cmake_source or
+if ('VERSION 0.4.165' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -76,7 +76,7 @@ for live_panel_fragment in (
         'collapsedCatalogCategories_.emplace(key, true)',
         'collapsedCatalogSubcategories_.emplace(key, true)',
         'sampleCategoryForFilename(', 'Drums & Percussion',
-        'Precompiled percussion',
+        'portableSynthGrouping(',
         'onPanelListSelectionChanged()', 'L"[+] "', 'L"[-] "',
         'firstConfiguredEffectSlot(', 'panelItemForEffect(headerPlayer, firstSlot)',
         'instrumentCategory(', 'effectCategory(',
@@ -92,10 +92,40 @@ for live_panel_fragment in (
     if live_panel_fragment not in (
             editor_source + editor_host_source + catalog_source):
         raise AssertionError('Live engine panel is missing: ' + live_panel_fragment)
+for catalog_grouping in (
+        'return {"Drums & Percussion", "Kick"};',
+        'return {"Drums & Percussion", "Snare"};',
+        'return {"Drums & Percussion", "Hi-hat"};',
+        'return {"Drums & Percussion", "Toms"};',
+        'return {"Drums & Percussion", "Cymbals"};',
+        'return {"Bass", "Acid bass"};',
+        'return {"Bass", "Sub bass"};',
+        'return {"Bass", "Synth bass"};'):
+    if catalog_grouping not in catalog_source:
+        raise AssertionError('Portable SynthDef catalog grouping is missing: ' +
+                             catalog_grouping)
+if ('Precompiled percussion' in catalog_source or
+        'Precompiled bass' in catalog_source):
+    raise AssertionError('Portable SynthDefs still use generic precompiled buckets.')
 if ('beginCatalogDrag' not in editor_source or
         'finishCatalogDrag' not in editor_source or
         'About this item' not in editor_source):
     raise AssertionError('Catalog drag/right-click About actions are missing.')
+for catalog_grouping in (
+        'return {"Drums & Percussion", "Kick"};',
+        'return {"Drums & Percussion", "Snare"};',
+        'return {"Drums & Percussion", "Hi-hat"};',
+        'return {"Drums & Percussion", "Toms"};',
+        'return {"Drums & Percussion", "Cymbals"};',
+        'return {"Bass", "Acid bass"};',
+        'return {"Bass", "Sub bass"};',
+        'return {"Bass", "Synth bass"};'):
+    if catalog_grouping not in catalog_source:
+        raise AssertionError('Portable SynthDef catalog grouping is missing: ' +
+                             catalog_grouping)
+if ('Precompiled percussion' in catalog_source or
+        'Precompiled bass' in catalog_source):
+    raise AssertionError('Portable SynthDefs still use generic precompiled buckets.')
 catalog_help = os.path.join(os.path.abspath(sys.argv[2]),
                             '179-editor-catalog-about.html')
 if not os.path.isfile(catalog_help):
@@ -2985,6 +3015,24 @@ limutRiserExample = run_example('209-limut-riser-automation.py')
 assert len(limutRiserExample) == 2
 assert limutRiserExample[0][16] == 'r:0.04,0.28:16.0'
 assert limutRiserExample[0][18] == 'r:400.0,9000.0:16.0'
+limutDropRows = run_script(
+    'p1 >> saw([0, 2, 4], amp=drop(30, 2, high=0.3, low=0.02), '
+    'cutoff=drop(30, 2, high=8000, low=500))\n')
+assert len(limutDropRows) == 1
+assert limutDropRows[0][16] == 'v:0.3,0.02:30.0,2.0'
+assert limutDropRows[0][18] == 'v:8000.0,500.0:30.0,2.0'
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw([0, 2], amp=drop(30, 2), fx_mix=drop(16, 16))\n')
+limutDropFxRows, limutDropFxTokens = run_script(
+    'p1 >> saw([0, 2], effect="LimutPingPong", fx_mix=drop(16, 16))\n',
+    include_effect_control_vars=True,
+    user_synth_names=('LimutPingPong',))
+assert len(limutDropFxRows) == 1 and any(
+    'v:1.0,0.0:16.0,16.0' in row for row in limutDropFxTokens)
+limutDropExample = run_example('210-limut-drop-patterns.py')
+assert len(limutDropExample) == 2
+assert limutDropExample[0][16] == 'v:0.3,0.02:30.0,2.0'
+assert limutDropExample[0][18] == 'v:8000.0,500.0:30.0,2.0'
 assert 'riser' in run_error_script('Clock.bpm = riser(8)\n')
 assert 'riser' in run_error_script(
     'p1 >> saw([0], slide=riser(8))\n')

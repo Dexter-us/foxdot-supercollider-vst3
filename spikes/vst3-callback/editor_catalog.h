@@ -61,55 +61,77 @@ inline std::string catalogLower(std::string_view value) {
 
 inline std::pair<std::string, std::string> portableSynthGrouping(
     std::string_view name) {
-    // Curated groups keep bundled user SynthDefs discoverable in the editor.
+    // Put precompiled voices beside comparable built-ins, with instrument-level
+    // subcategories instead of a generic "Precompiled ..." bucket.
     if (name == "CustomPluck")
         return {"Plucked & Stringed", "Custom plucked voices"};
     if (name == "CustomTone")
         return {"Waveforms", "Custom oscillator voices"};
-    return {};
+    const auto lowered = catalogLower(name);
+    const auto has = [&lowered](std::string_view token) {
+        return lowered.find(token) != std::string::npos;
+    };
+    if (has("kick") || has("bassdrum"))
+        return {"Drums & Percussion", "Kick"};
+    if (has("snare") || has("sidestick") || has("rimshot"))
+        return {"Drums & Percussion", "Snare"};
+    if (has("hihat") || has("hi-hat") || has("hat"))
+        return {"Drums & Percussion", "Hi-hat"};
+    if (has("tom"))
+        return {"Drums & Percussion", "Toms"};
+    if (has("cymbal") || has("crash") || has("ride"))
+        return {"Drums & Percussion", "Cymbals"};
+    if (has("clap"))
+        return {"Drums & Percussion", "Claps"};
+    if (has("shaker") || has("maraca"))
+        return {"Drums & Percussion", "Shakers"};
+    if (has("bongo") || has("conga") || has("woodblock") ||
+        has("clave") || has("cowbell") || has("percussion") ||
+        has("perc") || has("drum"))
+        return {"Drums & Percussion", "Hand percussion"};
+    if (has("bass")) {
+        if (has("acid"))
+            return {"Bass", "Acid bass"};
+        if (has("sub"))
+            return {"Bass", "Sub bass"};
+        if (has("upright") || has("doublebass") || has("dbass"))
+            return {"Bass", "Upright bass"};
+        if (has("electric") || has("jbass"))
+            return {"Bass", "Electric bass"};
+        if (has("saw"))
+            return {"Bass", "Saw bass"};
+        return {"Bass", "Synth bass"};
+    }
+    if (has("bell") || has("gong") || has("mallet") ||
+        has("piano") || has("keys") || has("marimba"))
+        return {"Keys & Mallets",
+                (has("bell") || has("gong") || has("glass"))
+                    ? "Bells and resonators"
+                    : (has("marimba") || has("mallet")) ? "Mallets"
+                                                         : "Keyboard"};
+    if (has("pluck") || has("harp") || has("guitar") ||
+        has("string") || has("viola"))
+        return {"Plucked & Stringed",
+                (has("guitar") || has("viola") || has("violin") ||
+                 has("string"))
+                    ? "String voices"
+                    : "Plucked voices"};
+    if (has("pad") || has("ambient"))
+        return {"Pads & Atmospheres", "Pads and sustained textures"};
+    if (has("noise") || has("texture"))
+        return {"Textures & Noise",
+                has("noise") ? "Noise" : "Sound-design textures"};
+    if (has("sine") || has("saw") || has("pulse") || has("wave") ||
+        has("osc") || has("triangle"))
+        return {"Waveforms", "Custom oscillators"};
+    return {"User Synths", "Custom SynthDefs"};
 }
 
 inline std::string instrumentCategory(const CatalogEntry& entry) {
     if (entry.kind == CatalogKind::SamplePlayer)
         return "Drums & Percussion";
-    if (entry.kind == CatalogKind::UserSynth) {
-        const auto curated = portableSynthGrouping(entry.name);
-        if (!curated.first.empty())
-            return curated.first;
-        const auto name = catalogLower(entry.name);
-        if (name.find("kick") != std::string::npos ||
-            name.find("snare") != std::string::npos ||
-            name.find("drum") != std::string::npos ||
-            name.find("perc") != std::string::npos)
-            return "Drums & Percussion";
-        if (name.find("bass") != std::string::npos)
-            return "Bass";
-        if (name.find("bell") != std::string::npos ||
-            name.find("gong") != std::string::npos ||
-            name.find("mallet") != std::string::npos ||
-            name.find("piano") != std::string::npos ||
-            name.find("keys") != std::string::npos)
-            return "Keys & Mallets";
-        if (name.find("pluck") != std::string::npos ||
-            name.find("harp") != std::string::npos ||
-            name.find("guitar") != std::string::npos ||
-            name.find("string") != std::string::npos ||
-            name.find("viola") != std::string::npos)
-            return "Plucked & Stringed";
-        if (name.find("pad") != std::string::npos ||
-            name.find("ambient") != std::string::npos)
-            return "Pads & Atmospheres";
-        if (name.find("noise") != std::string::npos ||
-            name.find("texture") != std::string::npos)
-            return "Textures & Noise";
-        if (name.find("sine") != std::string::npos ||
-            name.find("saw") != std::string::npos ||
-            name.find("pulse") != std::string::npos ||
-            name.find("wave") != std::string::npos ||
-            name.find("osc") != std::string::npos)
-            return "Waveforms";
-        return "User Synths";
-    }
+    if (entry.kind == CatalogKind::UserSynth)
+        return portableSynthGrouping(entry.name).first;
     static const std::vector<std::string> waveforms{
         "pulse", "saw", "sine", "triangle", "varsaw"};
     static const std::vector<std::string> bass{
@@ -144,44 +166,8 @@ inline std::string instrumentSubcategory(const CatalogEntry& entry) {
     const auto& name = entry.name;
     if (entry.kind == CatalogKind::SamplePlayer)
         return "WAV sample player";
-    if (entry.kind == CatalogKind::UserSynth) {
-        const auto curated = portableSynthGrouping(name);
-        if (!curated.second.empty())
-            return curated.second;
-        const auto lowered = catalogLower(name);
-        if (lowered.find("kick") != std::string::npos ||
-            lowered.find("snare") != std::string::npos ||
-            lowered.find("drum") != std::string::npos ||
-            lowered.find("perc") != std::string::npos)
-            return "Precompiled percussion";
-        if (lowered.find("bass") != std::string::npos)
-            return "Precompiled bass";
-        if (lowered.find("bell") != std::string::npos ||
-            lowered.find("gong") != std::string::npos ||
-            lowered.find("mallet") != std::string::npos ||
-            lowered.find("piano") != std::string::npos ||
-            lowered.find("keys") != std::string::npos)
-            return "Precompiled keys and mallets";
-        if (lowered.find("pluck") != std::string::npos ||
-            lowered.find("harp") != std::string::npos ||
-            lowered.find("guitar") != std::string::npos ||
-            lowered.find("string") != std::string::npos ||
-            lowered.find("viola") != std::string::npos)
-            return "Precompiled plucked/stringed";
-        if (lowered.find("pad") != std::string::npos ||
-            lowered.find("ambient") != std::string::npos)
-            return "Precompiled pads";
-        if (lowered.find("noise") != std::string::npos ||
-            lowered.find("texture") != std::string::npos)
-            return "Precompiled textures";
-        if (lowered.find("sine") != std::string::npos ||
-            lowered.find("saw") != std::string::npos ||
-            lowered.find("pulse") != std::string::npos ||
-            lowered.find("wave") != std::string::npos ||
-            lowered.find("osc") != std::string::npos)
-            return "Precompiled oscillators";
-        return "Other precompiled SynthDefs";
-    }
+    if (entry.kind == CatalogKind::UserSynth)
+        return portableSynthGrouping(name).second;
     if (entry.category == "Drums & Percussion")
         return "Sample player";
     if (entry.category == "Bass") {

@@ -106,6 +106,13 @@ assert oneShot.wire() == 'r:0.1,0.9:8.0'
 assert oneShot.at(-1) == 0.1 and oneShot.at(0) == 0.1
 assert abs(oneShot.at(4) - 0.5) < 1e-9
 assert oneShot.at(8) == 0.9 and oneShot.at(1000) == 0.9
+dropPattern = namespace['drop'](30, 2)
+assert dropPattern.wire() == 'v:1.0,0.0:30.0,2.0'
+assert dropPattern.at(0) == 1.0 and dropPattern.at(29.99) == 1.0
+assert dropPattern.at(30) == 0.0 and dropPattern.at(31.99) == 0.0
+assert dropPattern.at(32) == 1.0 and dropPattern.at(64) == 1.0
+customDrop = namespace['drop'](8, 1, high=8000, low=400)
+assert customDrop.wire() == 'v:8000.0,400.0:8.0,1.0'
 for badDuration in (0, -1, 4096.001, True, float('inf')):
     try:
         namespace['riser'](badDuration)
@@ -119,6 +126,14 @@ except (TypeError, ValueError):
     pass
 else:
     raise AssertionError('riser must reject non-finite endpoints')
+for badDrop in ((0, 2), (30, 0), (4097, 2), (30, float('inf')),
+                (True, 2), (30, 2, float('nan'), 0)):
+    try:
+        namespace['drop'](*badDrop)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('drop must reject invalid durations and levels')
 fox_literal = namespace['P'][0, 2, None, (3, 5), 7]
 assert fox_literal == [0, 2, None, (3, 5), 7]
 assert fox_literal + 2 == [2, 4, None, (5, 7), 9]
@@ -583,11 +598,23 @@ _, varDecayRows = run_script('p1 >> saw([0, 2], echo=0.5, decay=var([0.5, 1.5], 
 riserRows = run_script('p1 >> saw([0, 2, 4, 7], dur=0.5, amp=riser(8, 0.05, 0.3), cutoff=riser(8, 300, 9000))\n')
 assert len(riserRows) == 1 and riserRows[0][16] == 'r:0.05,0.3:8.0'
 assert riserRows[0][18] == 'r:300.0,9000.0:8.0'
+dropRows = run_script(
+    'p1 >> saw([0, 2, 4, 7], amp=drop(30, 2, high=0.4, low=0.02), '
+    'cutoff=drop(30, 2, high=8000, low=400))\n')
+assert len(dropRows) == 1 and dropRows[0][16] == 'v:0.4,0.02:30.0,2.0'
+assert dropRows[0][18] == 'v:8000.0,400.0:30.0,2.0'
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw([0, 2], amp=drop(30, 2), fx_mix=drop(16, 16))\n')
 riserEffectPlayers, riserEffectTokens = run_script(
     'p1 >> saw([0, 2], effect="LimutPingPong", fx_mix=riser(8, 0.1, 0.8))\n',
     include_effect_modulations=True, user_synth_names=example_synth_names)
 assert len(riserEffectPlayers) == 1 and any(
     'r:0.1,0.8:8.0' in row for row in riserEffectTokens)
+dropEffectPlayers, dropEffectTokens = run_script(
+    'p1 >> saw([0, 2], effect="LimutPingPong", fx_mix=drop(16, 16))\n',
+    include_effect_modulations=True, user_synth_names=example_synth_names)
+assert len(dropEffectPlayers) == 1 and any(
+    'v:1.0,0.0:16.0,16.0' in row for row in dropEffectTokens)
 assert varDecayRows[0][3] == 'v:0.5,1.5:1.0,1.0' and len(varDecayRows[0]) == 9
 assert varDecayRows[0][8] == 'l:0.1,0.4:1.0,1.0'
 assert len(effectRows) == 1 and len(effectRows[0]) == 23 and len(effectEvents) == 4
@@ -603,6 +630,10 @@ riserExample = run_example('209-limut-riser-automation.py')
 assert len(riserExample) == 2 and all(len(row) == 23 for row in riserExample)
 assert riserExample[0][16] == 'r:0.04,0.28:16.0'
 assert riserExample[0][18] == 'r:400.0,9000.0:16.0'
+dropExample = run_example('210-limut-drop-patterns.py')
+assert len(dropExample) == 2 and all(len(row) == 23 for row in dropExample)
+assert dropExample[0][16] == 'v:0.3,0.02:30.0,2.0'
+assert dropExample[0][18] == 'v:8000.0,500.0:30.0,2.0'
 effectExample = run_example('22-timevar-effects-envelopes.py')
 assert len(effectExample) == 2 and all(len(row) == 23 for row in effectExample)
 reverbRows, reverbEffects = run_script(open(os.path.join(sys.argv[2], '23-reverb-algorithms.py'), encoding='utf-8').read(), include_effects=True)
@@ -670,7 +701,7 @@ assert 'bool oneShot = false;' in processor_source
 assert "const bool oneShot = token[0] == 'r';" in processor_source
 assert 'if (control.oneShot)' in processor_source
 assert 'valueCount != 2 || durationCount != 1' in processor_source
-assert "token[0] != 'r' || (valueCount == 2 && durationCount == 1)" in source
+assert "(oneShot && (valueCount != 2 || durationCount != 1))" in processor_source
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
 muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
 assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]

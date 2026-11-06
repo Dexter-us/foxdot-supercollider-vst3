@@ -128,7 +128,7 @@ _COMPAT_CALLS = {
     'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys', 'klank',
     'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
     'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
-    'var', 'linvar', 'riser', 'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
+    'var', 'linvar', 'riser', 'drop', 'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'Group', 'Master', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
     '__build_class__'
 }
@@ -5135,6 +5135,28 @@ class _DexterRiser(_DexterTimeVar):
 def riser(duration=32.0, start=0.0, end=1.0):
     """Limut-inspired one-shot ramp; after duration beats it holds at end."""
     return _DexterRiser(duration, start, end)
+
+def drop(on_beats=30.0, off_beats=2.0, high=1.0, low=0.0):
+    """Repeat a Limut-style high/low step pattern, e.g. drop(30, 2)."""
+    raw_values = (on_beats, off_beats, high, low)
+    names = ('on_beats', 'off_beats', 'high', 'low')
+    values = []
+    for raw, label in zip(raw_values, names):
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise TypeError('drop ' + label + ' must be a finite number')
+        try:
+            value = float(raw)
+        except (OverflowError, ValueError):
+            raise ValueError('drop values must be finite numbers')
+        if value != value or value in (float('inf'), float('-inf')):
+            raise ValueError('drop values must be finite numbers')
+        values.append(value)
+    on_beats, off_beats, high, low = values
+    if not 0.001 <= on_beats <= 4096.0 or not 0.001 <= off_beats <= 4096.0:
+        raise ValueError('drop on/off durations must be between 0.001 and 4096 beats')
+    if any(abs(value) > 1000000.0 for value in (high, low)):
+        raise ValueError('drop levels must be within +/-1000000')
+    return _DexterTimeVar([high, low], [on_beats, off_beats], False)
 
 class _DexterPVar:
     """A finite sequence of whole patterns selected over explicit beat spans."""
