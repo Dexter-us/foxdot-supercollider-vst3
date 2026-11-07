@@ -737,6 +737,18 @@ jazzDemoSource = ''.join(
                      '218-jazz-kit-kick-compare.py'))
 assert all('userSynth("' + jazz_name + '"' in jazzDemoSource
            for jazz_name in jazzSynthNames)
+swimRows = run_example('219-sardine-swim-finite-cycles.py', example_synth_names)
+assert len(swimRows) == 2 and [int(row[5]) for row in swimRows] == [32, 32]
+assert [int(row[-1]) for row in swimRows] == [1, 1]
+for swim_fragment in (
+        'def again(function, p=None, i=None):',
+        'def _dexter_compile_swim(function, cycles=8, period=None):',
+        '@swim may assign each player only once per cycle',
+        '@swim is limited to 256 expanded events per player',
+        'update[-5] = 1'):
+    if swim_fragment not in source:
+        raise SystemExit('Bounded Sardine @swim support is missing: ' +
+                         swim_fragment)
 jazzCatalogSource = open(
     os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
                  'editor_catalog.h'),

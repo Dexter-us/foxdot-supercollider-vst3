@@ -821,3 +821,13 @@ repeats, and seeded PwRand weighted choices. Inputs and output patterns are
 bounded to 256 items; weights must be whole numbers in the supported range.
 Example 183 demonstrates numeric and sample-symbol choices. Synth and Effect
 catalog family headings now start collapsed; click a heading to expand it.
+
+0.4.173 keeps custom user-SynthDef slider overrides when Run recompiles the
+same player and synth; choosing another synth restores that synth's controls
+sidecar defaults. This is session-only and does not rewrite the script.
+
+0.4.174 adds a bounded Sardine-style `@swim` subset. The editor expands at most
+32 cycles and 256 events per player into a finite pattern, with a 4096-beat
+timeline limit. `again()` may advance `p` and `i`; loops, nested decorators,
+and dynamic synth/effect changes are not supported. Example 219 demonstrates
+cycle-by-cycle note/sample variation.

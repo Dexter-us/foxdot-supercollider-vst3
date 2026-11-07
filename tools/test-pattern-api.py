@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.173' not in cmake_source or
+if ('VERSION 0.4.174' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3330,6 +3330,89 @@ if 'dexterAutoFree=2' not in open(
     raise AssertionError('Jazz Kit must retain its standalone self-free default.')
 sardineGateExample = run_example('216-sardine-chance-loaf-on.py')
 assert len(sardineGateExample) == 2
+sardineSwimPath = os.path.join(
+    os.path.abspath(sys.argv[2]), '219-sardine-swim-finite-cycles.py')
+sardineSwimSource = open(sardineSwimPath, encoding='utf-8').read()
+sardineSwimRows, sardineSwimSamples, sardineSwimEvents = run_script(
+    sardineSwimSource, include_samples=True, include_events=True)
+assert [int(row[5]) for row in sardineSwimRows] == [32, 32], (
+    'Each @swim player should contain all eight expanded cycles: ' +
+    repr(sardineSwimRows))
+assert [int(row[-1]) for row in sardineSwimRows] == [1, 1], (
+    '@swim output must play once, not loop the expanded arrangement.')
+assert [float(row[4]) for row in sardineSwimRows] == [16.0, 16.0]
+assert len(sardineSwimSamples) == 32 and len(sardineSwimEvents) == 64
+assert [int(row[2]) for row in sardineSwimSamples[:16]] == [
+    0, 0, 0, 0, 1, 1, 1, 1,
+    0, 0, 0, 0, 1, 1, 1, 1]
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    sardineSwimSource)
+bassSwimEvents = sardineSwimEvents[32:]
+assert len(bassSwimEvents) == 32
+assert float(bassSwimEvents[0][1]) == 0.0
+assert float(bassSwimEvents[4][1]) == 2.0
+assert bassSwimEvents[0][3] != bassSwimEvents[4][3], (
+    'The next @swim cycle should use its updated iteration value.')
+variableSwimRows, variableSwimEvents = run_script(
+    '@swim(cycles=3, period=1)\n'
+    'def variable(p=1, i=0):\n'
+    '    p1 >> saw([0], dur=1)\n'
+    '    again(variable, p=p+0.5, i=i+1)\n',
+    include_events=True)
+assert len(variableSwimRows) == 1
+assert [float(event[1]) for event in variableSwimEvents] == [0.0, 1.0, 2.5]
+assert float(variableSwimRows[0][4]) == 4.5
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    '@swim(cycles=4, period=2)\n'
+    'def groove(p=2, i=0):\n'
+    '    p1 >> saw(P[0, 2].rotate(i), dur=1)\n'
+    '    again(groove, p=p, i=i+1)\n')
+for invalid_swim, expected_swim_error in (
+        ('@swim(cycles=33)\ndef groove(p=1, i=0):\n'
+         '    p1 >> saw([0])\n', 'cycles must be a literal integer'),
+        ('@swim\n'
+         'def groove(p=1, i=0):\n'
+         '    for n in range(2):\n'
+         '        p1 >> saw([0])\n', 'Loops are not supported'),
+        ('def groove(p=1, i=0):\n'
+         '    again(groove)\n', 'again() is supported only')):
+    swim_report = run_compatibility_check(invalid_swim)
+    if expected_swim_error not in swim_report:
+        raise AssertionError('The @swim compatibility checker must reject: ' +
+                             invalid_swim + '\n' + swim_report)
+for invalid_swim_runtime, expected_swim_runtime_error in (
+        ('@swim(cycles=33)\n'
+         'def groove(p=1, i=0):\n'
+         '    p1 >> saw([0])\n', 'cycles must be from 1 to 32'),
+        ('@swim(cycles=2, period=4096)\n'
+         'def groove(p=4096, i=0):\n'
+         '    p1 >> saw([0])\n'
+         '    again(groove, p=4096, i=i+1)\n',
+         'timeline is limited to 4096 beats'),
+        ('@swim(cycles=2)\n'
+         'def groove(p=1, i=0):\n'
+         '    p1 >> saw([0])\n'
+         '    p1 >> saw([2])\n'
+         '    again(groove, p=p, i=i+1)\n',
+         'only once per cycle')):
+    swim_error = run_error_script(invalid_swim_runtime)
+    if 'ERROR' not in swim_error or expected_swim_runtime_error not in swim_error:
+        raise AssertionError('@swim runtime bounds must reject invalid input: ' +
+                             invalid_swim_runtime + ' -> ' + swim_error)
+maxSwimRows, maxSwimEvents = run_script(
+    '@swim(cycles=32, period=1)\n'
+    'def capped(p=1, i=0):\n'
+    '    p1 >> saw(P[0, 1, 2, 3, 4, 5, 6, 7], dur=0.125)\n'
+    '    again(capped, p=p, i=i+1)\n',
+    include_events=True)
+assert len(maxSwimRows) == 1 and len(maxSwimEvents) == 256
+assert int(maxSwimRows[0][-1]) == 1
+overLimitSwim = run_error_script(
+    '@swim(cycles=32, period=1)\n'
+    'def crowded(p=1, i=0):\n'
+    '    p1 >> saw(P[0, 1, 2, 3, 4, 5, 6, 7, 0], dur=0.1)\n'
+    '    again(crowded, p=p, i=i+1)\n')
+assert '256 expanded events' in overLimitSwim
 assert len(run_example('214-jazz-brush-kit.py',
                        user_synth_names=jazz_synth_names)) == 8
 for invalid_timing, expected_error in (

@@ -121,6 +121,7 @@ _COMPAT_CALLS = {
     'PZ12', 'PFibMod',
     'PSquare', 'PSq', 'PRange', 'PStep', 'PEuclid', 'PEuclid2',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
+    'swim', 'again',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
     'charm', 'spark', 'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
@@ -336,6 +337,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.group_names = {'p_all'}
         self.pattern_names = set()
         self.pvar_names = set()
+        self._current_swim = None
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 self.defined.add(node.name)
@@ -513,6 +515,171 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self.add(node.lineno, function_name + ' requires ' +
                      ', '.join(missing) + '.')
 
+    def _swim_decorator(self, node):
+        decorators = [
+            decorator for decorator in node.decorator_list
+            if (isinstance(decorator, ast.Name) and decorator.id == 'swim') or
+            (isinstance(decorator, ast.Call) and
+             isinstance(decorator.func, ast.Name) and
+             decorator.func.id == 'swim')
+        ]
+        if not decorators:
+            return False
+        if len(decorators) != 1 or len(node.decorator_list) != 1:
+            self.add(node.lineno, '@swim must be the function’s only decorator.')
+        decorator = decorators[0]
+        if isinstance(decorator, ast.Call):
+            if decorator.args:
+                self.add(node.lineno, '@swim accepts cycles and period as keywords.')
+            seen = set()
+            for keyword in decorator.keywords:
+                if keyword.arg not in {'cycles', 'period'} or keyword.arg in seen:
+                    self.add(keyword.lineno or node.lineno,
+                             '@swim supports only cycles and period once each.')
+                    continue
+                seen.add(keyword.arg)
+                value = keyword.value
+                if keyword.arg == 'cycles':
+                    valid = (
+                        isinstance(value, ast.Constant) and
+                        isinstance(value.value, int) and
+                        not isinstance(value.value, bool) and
+                        1 <= value.value <= 32)
+                    if not valid:
+                        self.add(value.lineno or node.lineno,
+                                 '@swim cycles must be a literal integer from 1 to 32.')
+                else:
+                    valid = (
+                        isinstance(value, ast.Constant) and
+                        isinstance(value.value, (int, float)) and
+                        not isinstance(value.value, bool) and
+                        0.001 <= value.value <= 4096.0)
+                    if not valid:
+                        self.add(value.lineno or node.lineno,
+                                 '@swim period must be a literal from 0.001 to 4096 beats.')
+        return True
+
+    def visit_FunctionDef(self, node):
+        if not self._swim_decorator(node):
+            self.generic_visit(node)
+            return
+        if self._current_swim is not None:
+            self.add(node.lineno, 'Nested @swim functions are not supported.')
+        if node.col_offset != 0:
+            self.add(node.lineno, '@swim functions must be defined at the top level.')
+        arguments = node.args
+        valid_signature = (
+            not arguments.posonlyargs and
+            [argument.arg for argument in arguments.args] == ['p', 'i'] and
+            len(arguments.defaults) == 2 and
+            not arguments.vararg and not arguments.kwarg and
+            not arguments.kwonlyargs and not arguments.kw_defaults)
+        if not valid_signature:
+            self.add(node.lineno,
+                     '@swim functions must use def name(p=1, i=0).')
+        else:
+            period_default, iteration_default = arguments.defaults
+            if not (
+                    isinstance(period_default, ast.Constant) and
+                    isinstance(period_default.value, (int, float)) and
+                    not isinstance(period_default.value, bool) and
+                    0.001 <= period_default.value <= 4096.0):
+                self.add(period_default.lineno or node.lineno,
+                         '@swim default p must be a literal from 0.001 to 4096 beats.')
+            if not (
+                    isinstance(iteration_default, ast.Constant) and
+                    isinstance(iteration_default.value, int) and
+                    not isinstance(iteration_default.value, bool) and
+                    -1000000 <= iteration_default.value <= 1000000):
+                self.add(iteration_default.lineno or node.lineno,
+                         '@swim default i must be an integer from -1000000 to 1000000.')
+        if not node.body:
+            self.add(node.lineno, '@swim needs at least one player send.')
+        player_sends = 0
+        for statement in node.body:
+            valid_statement = False
+            if isinstance(statement, ast.Expr):
+                value = statement.value
+                valid_statement = (
+                    isinstance(value, ast.BinOp) and
+                    isinstance(value.op, ast.RShift) and
+                    isinstance(value.left, ast.Name) and
+                    re.fullmatch(r'p[1-8]', value.left.id) is not None and
+                    isinstance(value.right, ast.Call))
+                if valid_statement:
+                    player_sends += 1
+                elif (isinstance(value, ast.Call) and
+                      isinstance(value.func, ast.Name) and
+                      value.func.id == 'again'):
+                    valid_statement = True
+            elif isinstance(statement, ast.Assign):
+                valid_statement = (
+                    bool(statement.targets) and
+                    all(
+                        isinstance(target, ast.Name) and
+                        target.id not in {
+                            'p', 'i', node.name, 'p1', 'p2', 'p3', 'p4',
+                            'p5', 'p6', 'p7', 'p8'}
+                        for target in statement.targets))
+            if not valid_statement:
+                self.add(statement.lineno,
+                         '@swim bodies allow local assignments, player sends, and again() only.')
+        if player_sends == 0:
+            self.add(node.lineno, '@swim must contain at least one player send.')
+        again_calls = [
+            call for call in ast.walk(node)
+            if isinstance(call, ast.Call) and
+            isinstance(call.func, ast.Name) and call.func.id == 'again'
+        ]
+        if len(again_calls) > 1:
+            self.add(node.lineno, '@swim may call again() at most once per cycle.')
+        previous = self._current_swim
+        self._current_swim = node.name
+        for default in arguments.defaults:
+            self.visit(default)
+        for statement in node.body:
+            self.visit(statement)
+        self._current_swim = previous
+
+    def visit_AsyncFunctionDef(self, node):
+        if self._swim_decorator(node):
+            self.add(node.lineno, 'Async @swim functions are not supported.')
+        self.generic_visit(node)
+
+    def visit_For(self, node):
+        if self._current_swim is not None:
+            self.add(node.lineno, 'Loops are not supported inside bounded @swim functions.')
+        self.generic_visit(node)
+
+    def visit_While(self, node):
+        if self._current_swim is not None:
+            self.add(node.lineno, 'Loops are not supported inside bounded @swim functions.')
+        self.generic_visit(node)
+
+    def visit_ListComp(self, node):
+        if self._current_swim is not None:
+            self.add(node.lineno,
+                     'Comprehensions are not supported inside bounded @swim functions.')
+        self.generic_visit(node)
+
+    def visit_SetComp(self, node):
+        if self._current_swim is not None:
+            self.add(node.lineno,
+                     'Comprehensions are not supported inside bounded @swim functions.')
+        self.generic_visit(node)
+
+    def visit_DictComp(self, node):
+        if self._current_swim is not None:
+            self.add(node.lineno,
+                     'Comprehensions are not supported inside bounded @swim functions.')
+        self.generic_visit(node)
+
+    def visit_GeneratorExp(self, node):
+        if self._current_swim is not None:
+            self.add(node.lineno,
+                     'Comprehensions are not supported inside bounded @swim functions.')
+        self.generic_visit(node)
+
     def visit_Import(self, node):
         self.add(node.lineno, 'Python imports are disabled in the portable editor; use the built-in API.')
 
@@ -521,6 +688,23 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = node.func.id if isinstance(node.func, ast.Name) else None
+        if name == 'again':
+            if self._current_swim is None:
+                self.add(node.lineno, 'again() is supported only inside an @swim function.')
+            if (len(node.args) != 1 or
+                    not isinstance(node.args[0], ast.Name) or
+                    node.args[0].id != self._current_swim):
+                self.add(node.lineno,
+                         'again() must name the current @swim function.')
+            seen_keywords = set()
+            for keyword in node.keywords:
+                if keyword.arg not in {'p', 'i'} or keyword.arg in seen_keywords:
+                    self.add(keyword.lineno or node.lineno,
+                             'again() supports only p and i once each.')
+                if keyword.arg is not None:
+                    seen_keywords.add(keyword.arg)
+        if name == 'swim' and self._current_swim is not None:
+            self.add(node.lineno, 'Nested @swim evaluation is not supported.')
         if (isinstance(node.func, ast.Attribute) and
                 self._finite_pattern_expression(node.func.value) and
                 node.func.attr not in _COMPAT_PATTERN_METHODS and
@@ -1197,6 +1381,7 @@ _dexter_shuffle_counter = 0
 _dexter_random_counter = 0
 _dexter_default_seed = None
 _dexter_swing_seconds = 0.0
+_dexter_swim_context = None
 _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
                'klank', 'feel', 'glass', 'soft', 'quin', 'space',
@@ -7234,6 +7419,8 @@ class Player:
                                           pattern.chanceSeed,
                                           pattern.barLoaf,
                                           pattern.barOnMask)
+        if _dexter_swim_context is not None:
+            _dexter_record_swim_update(playerIndex)
         if playerIndex == 0:
             _dexter_default_touched = False
         self._currentPattern = pattern
@@ -8139,6 +8326,179 @@ p7 = Player(7)
 p8 = Player(8)
 
 _DEXTER_PLAYERS = (p1, p2, p3, p4, p5, p6, p7, p8)
+
+_DEXTER_SWIM_SIDE_MAPS = (
+    _dexter_synth_controls,
+    _dexter_player_effect_chains,
+    _dexter_player_effect_indices,
+    _dexter_effect_control_values,
+    _dexter_effect_control_variables,
+    _dexter_note_effect_control_variables,
+    _dexter_bitcrusher_controls,
+    _dexter_sample_controls,
+)
+
+def _dexter_swim_number(value, name):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError('@swim ' + name + ' must be a finite number')
+    result = float(value)
+    if result != result or result in (float('inf'), float('-inf')):
+        raise ValueError('@swim ' + name + ' must be finite')
+    return result
+
+def _dexter_record_swim_update(player_index):
+    context = _dexter_swim_context
+    if context is None:
+        return
+    if player_index in context['written']:
+        raise ValueError('@swim may assign each player only once per cycle')
+    context['written'].add(player_index)
+    update = _dexter_updates[player_index]
+    config = update[:2] + update[4:]
+    side_state = tuple(
+        (player_index in values, values.get(player_index))
+        for values in _DEXTER_SWIM_SIDE_MAPS
+    )
+    record = context['players'].get(player_index)
+    if record is None:
+        record = {
+            'base': update,
+            'config': config,
+            'side_state': side_state,
+            'events': [],
+            'sample_requests': [],
+        }
+        context['players'][player_index] = record
+    elif config != record['config'] or side_state != record['side_state']:
+        raise ValueError(
+            '@swim keeps each player on the same synth/effect controls; '
+            'vary notes and sample hits across cycles')
+    events = update[3]
+    if len(record['events']) + len(events) > 256:
+        raise ValueError('@swim is limited to 256 expanded events per player')
+    for event in events:
+        shifted = list(event)
+        shifted[0] = float(shifted[0]) + context['offset']
+        record['events'].append(tuple(shifted))
+    if update[4] == 57:
+        requests = list(_dexter_sample_events.get(player_index, ()))
+        if len(requests) != len(events):
+            raise ValueError('@swim sample hits need matching sample requests')
+        record['sample_requests'].extend(requests)
+
+def again(function, p=None, i=None):
+    context = _dexter_swim_context
+    if context is None:
+        raise ValueError('again() is available only inside an active @swim function')
+    if function is not context['function']:
+        raise ValueError('again() must schedule the current @swim function')
+    if context['next'] is not None:
+        raise ValueError('an @swim cycle may call again() only once')
+    period = context['period'] if p is None else _dexter_swim_number(p, 'period')
+    if not 0.001 <= period <= 4096.0:
+        raise ValueError('@swim period must be between 0.001 and 4096 beats')
+    iteration = context['iteration'] + 1 if i is None else i
+    if isinstance(iteration, bool) or not isinstance(iteration, int):
+        raise TypeError('@swim iterator i must be an integer')
+    if not -1000000 <= iteration <= 1000000:
+        raise ValueError('@swim iterator i must be between -1000000 and 1000000')
+    context['next'] = (period, iteration)
+
+def _dexter_compile_swim(function, cycles=8, period=None):
+    if not isinstance(function, _dexter_function_type):
+        raise TypeError('@swim decorates a function')
+    if isinstance(cycles, bool) or not isinstance(cycles, int) or not 1 <= cycles <= 32:
+        raise ValueError('@swim cycles must be from 1 to 32')
+    code = function.__code__
+    if (code.co_varnames[:code.co_argcount] != ('p', 'i') or
+            code.co_kwonlyargcount or code.co_flags & 0x0c):
+        raise TypeError('@swim functions must accept only p and i')
+    defaults = function.__defaults__ or ()
+    if len(defaults) != 2:
+        raise TypeError('@swim functions need p and i defaults, e.g. (p=1, i=0)')
+    initial_period = _dexter_swim_number(
+        defaults[0] if period is None else period, 'period')
+    initial_iteration = defaults[1]
+    if not 0.001 <= initial_period <= 4096.0:
+        raise ValueError('@swim period must be between 0.001 and 4096 beats')
+    if (isinstance(initial_iteration, bool) or
+            not isinstance(initial_iteration, int) or
+            not -1000000 <= initial_iteration <= 1000000):
+        raise ValueError('@swim default i must be an integer from -1000000 to 1000000')
+
+    global _dexter_swim_context
+    if _dexter_swim_context is not None:
+        raise ValueError('nested @swim evaluation is not supported')
+    context = {
+        'function': function,
+        'period': initial_period,
+        'iteration': initial_iteration,
+        'offset': 0.0,
+        'next': None,
+        'written': set(),
+        'players': {},
+    }
+    function_globals = function.__globals__
+    function_had_global = function.__name__ in function_globals
+    previous_function_global = function_globals.get(function.__name__)
+    function_globals[function.__name__] = function
+    _dexter_swim_context = context
+    total_beats = 0.0
+    try:
+        for cycle in range(cycles):
+            context['written'] = set()
+            context['next'] = None
+            function(p=context['period'], i=context['iteration'])
+            cycle_end = context['offset'] + context['period']
+            if cycle_end > 4096.0:
+                raise ValueError('@swim timeline is limited to 4096 beats')
+            total_beats = cycle_end
+            next_state = context['next']
+            if next_state is None or cycle + 1 == cycles:
+                break
+            context['offset'] = cycle_end
+            context['period'], context['iteration'] = next_state
+    finally:
+        _dexter_swim_context = None
+        if function_had_global:
+            function_globals[function.__name__] = previous_function_global
+        else:
+            function_globals.pop(function.__name__, None)
+
+    if not context['players']:
+        raise ValueError('@swim must assign at least one supported player')
+    for player_index, record in context['players'].items():
+        if not record['events']:
+            raise ValueError('@swim player assignments must produce at least one event')
+        update = list(record['base'])
+        latest_start = max(
+            (event[0] + (event[6] if len(event) > 6 else 0.0)
+             for event in record['events']),
+            default=0.0)
+        update[2] = max(total_beats, latest_start + 0.001)
+        if update[2] > 4096.0:
+            raise ValueError('@swim expanded timeline exceeds 4096 beats')
+        update[3] = record['events']
+        update[-5] = 1
+        _dexter_updates[player_index] = tuple(update)
+        for values, state in zip(_DEXTER_SWIM_SIDE_MAPS, record['side_state']):
+            present, value = state
+            if present:
+                values[player_index] = value
+            else:
+                values.pop(player_index, None)
+        if update[4] == 57:
+            if len(record['sample_requests']) != len(record['events']):
+                raise ValueError('@swim sample event expansion is inconsistent')
+            _dexter_sample_events[player_index] = list(record['sample_requests'])
+            _dexter_sample_base_events[player_index] = list(record['sample_requests'])
+        _DEXTER_PLAYERS[player_index]._baseUpdate = _dexter_updates[player_index]
+    return function
+
+def swim(function=None, *, cycles=8, period=None):
+    if function is None:
+        return lambda target: _dexter_compile_swim(target, cycles, period)
+    return _dexter_compile_swim(function, cycles, period)
 
 class Group:
     def __init__(self, *players):
