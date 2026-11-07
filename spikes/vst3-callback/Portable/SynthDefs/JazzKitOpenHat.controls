@@ -1,0 +1,4 @@
+# Jazz Kit: longer open brush/hat wash.
+tone 3000.0 12000.0 7600.0 log
+decay 0.12 3.0 0.92 log
+metal 0.0 0.6 0.12

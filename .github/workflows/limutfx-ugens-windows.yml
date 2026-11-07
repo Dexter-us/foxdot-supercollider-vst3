@@ -1,0 +1,100 @@
+name: Windows optional LimutFX UGen pack
+
+on:
+  pull_request:
+    paths:
+      - "UGens/LimutFX/**"
+      - "spikes/vst3-callback/python_runtime.cpp"
+      - "spikes/vst3-callback/processor.cpp"
+      - "spikes/vst3-callback/editor_catalog.h"
+      - "spikes/vst3-callback/win32_code_editor.cpp"
+      - "spikes/vst3-callback/tools/test-player-line-edit.cpp"
+      - ".github/workflows/limutfx-ugens-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-limutfx:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out pinned SuperCollider headers only
+        uses: actions/checkout@v4
+        with:
+          repository: supercollider/supercollider
+          ref: ef5771bce3d1c9c780cafd58cf032ec4a3f36d10
+          path: sc-source
+          submodules: false
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate embedded API, examples, and SynthDef ABI
+        run: python UGens/LimutFX/test-examples.py
+
+      - name: Configure only the LimutFX module
+        shell: pwsh
+        run: |
+          cmake -S .\UGens\LimutFX -B "$env:RUNNER_TEMP\limutfx-build" `
+            -DSC_SOURCE_DIR="$env:GITHUB_WORKSPACE\sc-source"
+
+      - name: Build and test the optional module
+        shell: pwsh
+        run: |
+          cmake --build "$env:RUNNER_TEMP\limutfx-build" --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "LimutFX module compilation failed." }
+          ctest --test-dir "$env:RUNNER_TEMP\limutfx-build" -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "LimutFX DSP regression tests failed." }
+          $module = Get-ChildItem "$env:RUNNER_TEMP\limutfx-build" `
+            -Filter "LimutFX.scx" -File -Recurse | Select-Object -First 1
+          if (-not $module) { throw "Missing LimutFX.scx" }
+          $pack = "$env:RUNNER_TEMP\dexter-limutfx-win-x64"
+          New-Item -ItemType Directory -Force `
+            "$pack\Portable\SCPlugins", "$pack\Portable\SynthDefs", `
+            "$pack\Portable\Sidechain\SynthDefs", `
+            "$pack\Sources\LimutFX", "$pack\Licenses" | Out-Null
+          Copy-Item $module.FullName "$pack\Portable\SCPlugins\LimutFX.scx"
+          Copy-Item ".\UGens\LimutFX\Portable\SynthDefs\*.scsyndef" `
+            "$pack\Portable\SynthDefs"
+          # The vocoder uses stereo carrier/modulator buses and is not a
+          # single-input VST insert. Never ship it in the auto-scanned folder.
+          Remove-Item "$pack\Portable\SynthDefs\LimutVocoder.scsyndef" `
+            -Force -ErrorAction SilentlyContinue
+          Copy-Item ".\UGens\LimutFX\Portable\*.py" "$pack\Portable"
+          Copy-Item ".\UGens\LimutFX\Portable\*.txt" "$pack\Portable"
+          Copy-Item ".\UGens\LimutFX\Portable\Sidechain\*.scd" `
+            "$pack\Portable\Sidechain"
+          Copy-Item ".\UGens\LimutFX\Portable\Sidechain\*.txt" `
+            "$pack\Portable\Sidechain"
+          Copy-Item ".\UGens\LimutFX\Portable\Sidechain\SynthDefs\*.scsyndef" `
+            "$pack\Portable\Sidechain\SynthDefs"
+          Copy-Item ".\UGens\LimutFX\ATTRIBUTION.txt" "$pack\Licenses"
+          Copy-Item ".\UGens\LimutFX\README.md" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\CMakeLists.txt" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\LimutFX.cpp" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\LimutFX.h" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\LimutFXDSP.hpp" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\tests.cpp" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\ATTRIBUTION.txt" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\build-synthdefs.py" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\test-examples.py" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\test-audio.py" "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\Portable\SynthDefs\*.sc" `
+            "$pack\Sources\LimutFX"
+          Copy-Item ".\UGens\LimutFX\Portable\SynthDefs\*.scd" `
+            "$pack\Sources\LimutFX"
+          Compress-Archive -Path "$pack\*" `
+            -DestinationPath "$env:RUNNER_TEMP\dexter-limutfx-win-x64.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dexter-limutfx-win-x64
+          path: ${{ runner.temp }}/dexter-limutfx-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14

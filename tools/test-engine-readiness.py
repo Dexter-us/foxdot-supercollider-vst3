@@ -32,6 +32,7 @@ struct Engine {
     std::string worldInitializationError_, status;
     int initializations = 0, resets = 0;
     bool backendFails = false;
+    bool diskCleanupFailed_ = false;
     void setEditorStatus(std::string text) { status = std::move(text); }
     void stopWorldLocked() { world_ = nullptr; ++resets; }
 """
@@ -73,6 +74,10 @@ int main() {
     host.join();
     worker.join();
     assert(engine.world_ && engine.worldInitializationError_.empty());
+    engine.world_ = nullptr;
+    engine.diskCleanupFailed_ = true;
+    assert(!engine.initializeWorld());
+    assert(engine.status.find("teardown") != std::string::npos);
 }
 """
 with tempfile.TemporaryDirectory() as directory:

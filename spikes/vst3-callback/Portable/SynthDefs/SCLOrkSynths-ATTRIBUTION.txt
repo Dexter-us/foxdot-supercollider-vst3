@@ -1,0 +1,18 @@
+SCLOrk-derived player effects
+=============================
+
+These three stereo insert adaptations are based on SCLOrkSynths by Josh
+Mitchell, licensed under the GNU General Public License, version 3.0:
+
+  SCLOrkSynths/SynthDefs/misc/phazer.scd
+  SCLOrkSynths/SynthDefs/misc/decimator.scd
+  SCLOrkSynths/SynthDefs/misc/crossoverDistortion.scd
+
+Upstream project: https://github.com/SCLOrkHub/SCLOrkSynths
+The corresponding full GPL-3.0 license text is in
+Licenses/SCLOrkSynths-GPL-3.0.txt.
+
+The adaptations replace each voice's oscillator/envelope with the VST's
+stereo player-effect input bus. The three effects are named
+SCLOrkPhazerFX, SCLOrkDecimatorFX, and SCLOrkCrossoverDistortionFX. They use
+SuperCollider core UGens and do not require an additional UGen DLL.

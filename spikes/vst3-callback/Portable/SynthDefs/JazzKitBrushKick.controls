@@ -1,0 +1,6 @@
+# Jazz Kit: deliberately gritty, noise-forward brush/knock kick.
+tune 35.0 82.0 48.0 log
+decay 0.12 0.9 0.34 log
+body 0.0 1.0 0.82
+knock 0.0 0.35 0.08
+shell 0.0 0.5 0.12
