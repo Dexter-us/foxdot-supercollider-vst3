@@ -122,7 +122,7 @@ int main() {
             "sine", "square", "pluck", "sample", "sawbass"};
         std::vector<std::string> external{
             "CustomPluck", "CustomTone", "Chorus", "LimutVocoder",
-            "KickDrum"};
+            "KickDrum", "JazzKitBrushKick"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
@@ -177,6 +177,14 @@ int main() {
             });
         assert(kickSynth != instruments.end() &&
                kickSynth->category == "Drums & Percussion");
+        const auto brushKick = std::find_if(
+            instruments.begin(), instruments.end(), [](const auto& entry) {
+                return entry.name == "JazzKitBrushKick";
+            });
+        assert(brushKick != instruments.end() &&
+               brushKick->category == "Drums & Percussion" &&
+               brushKick->subcategory == "Jazz Kit" &&
+               brushKick->label == "Brush kick");
         const auto effects = makeEffectCatalog(external);
         assert(effects.size() >= 28);
         assert(std::is_sorted(effects.begin(), effects.end(),

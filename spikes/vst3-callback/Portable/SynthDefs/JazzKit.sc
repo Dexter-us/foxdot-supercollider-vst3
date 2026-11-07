@@ -5,7 +5,23 @@
 var targetDir = thisProcess.nowExecutingPath.dirname;
 
 SynthDef(\JazzKitKick, {
-    arg out=0, amp=0.34, pan=0, tune=48, decay=0.34,
+    arg out=0, amp=0.34, pan=0, tune=46, decay=0.38,
+        body=0.92, beater=0.015, pitchDrop=2.0, dexterAutoFree=2;
+    var env, pitch, bodySig, beaterSig, sig;
+    env = EnvGen.kr(Env.perc(0.002, decay, curve: -4),
+        doneAction: dexterAutoFree);
+    pitch = XLine.kr(tune * pitchDrop, tune, 0.075);
+    bodySig = SinOsc.ar(pitch) * body;
+    beaterSig = HPF.ar(WhiteNoise.ar(1), 2400) *
+        EnvGen.kr(Env.perc(0.001, 0.003, curve: -8)) * beater;
+    sig = LeakDC.ar(bodySig + beaterSig) * env * amp;
+    Out.ar(out, Pan2.ar(sig, pan));
+}).writeDefFile(targetDir);
+
+// The original noise-forward kick remains available, now named for its
+// intentionally gritty brush/knock texture rather than the standard kick.
+SynthDef(\JazzKitBrushKick, {
+    arg out=0, amp=0.28, pan=0, tune=48, decay=0.34,
         body=0.82, knock=0.08, shell=0.12, dexterAutoFree=2;
     var env, pitch, bodySig, knockSig, shellSig, sig;
     env = EnvGen.kr(Env.perc(0.003, decay, curve: -5),

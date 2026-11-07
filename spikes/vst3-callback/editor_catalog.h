@@ -131,8 +131,9 @@ inline std::pair<std::string, std::string> portableSynthGrouping(
 
 inline std::string portableSynthDisplayLabel(std::string_view name) {
     static constexpr std::array<
-        std::pair<std::string_view, std::string_view>, 9> jazzLabels{{
+        std::pair<std::string_view, std::string_view>, 10> jazzLabels{{
         {"JazzKitKick", "Kick"},
+        {"JazzKitBrushKick", "Brush kick"},
         {"JazzKitBrushTap", "Brush snare tap"},
         {"JazzKitBrushSweep", "Brush sweep"},
         {"JazzKitClosedHat", "Closed brush hat"},

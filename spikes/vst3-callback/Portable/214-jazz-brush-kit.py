@@ -4,7 +4,7 @@
 Clock.bpm = 112
 Scale.default = Scale.minor
 
-# Feathered kick and quiet brush-hat pulse establish a light swing bed.
+# Warm low kick and quiet brush-hat pulse establish a light swing bed.
 p1 >> userSynth("JazzKitKick", P[0, 0, 0, 0], dur=1, sus=0.9,
                amp=0.24)
 p2 >> userSynth("JazzKitClosedHat", P[0], dur=0.5, sus=0.45,

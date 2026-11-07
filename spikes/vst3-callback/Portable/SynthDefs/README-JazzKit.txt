@@ -1,7 +1,7 @@
 Jazz brush kit for the Dexter FoxDot VST
 ========================================
 
-The nine compiled JazzKit*.scsyndef voices are intended to live directly in
+The ten compiled JazzKit*.scsyndef voices are intended to live directly in
 Portable/SynthDefs beside the existing SynthDefs. The VST scans this folder
 non-recursively, so do not place the .scsyndef files in a nested subfolder.
 The editor groups the JazzKit* names under:
@@ -12,6 +12,15 @@ Each matching .controls file exposes bounded, smoothed controls in the Players
 panel. Restart the DAW after copying the files; the current engine scans
 SynthDefs at startup. This kit uses stock bundled SuperCollider UGens only:
 there is no sample library, no additional SCPlugins module, and no OSC server.
+
+JazzKitKick is a low, mostly sinusoidal kick with a soft optional beater tick.
+The earlier noise-forward JazzKitKick design is retained as JazzKitBrushKick,
+so its scraped/brushy character is explicit and still available.
+
+Examples 217 and 218 demonstrate every JazzKit voice across two playable
+eight-player arrangements. Example 217 focuses on the standard kick and core
+brush/ride voices; Example 218 contrasts the standard and brush kicks and adds
+the floor tom. Example 214 remains a compact starter groove.
 
 The supplied jazz_brush_kit.sclang had no license notice and referenced
 brushScrape, brushHat, and brushTap without defining them; it also contained

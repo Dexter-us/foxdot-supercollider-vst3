@@ -1,3 +1,7 @@
+0.4.172 replaces the noise-forward JazzKitKick with a warmer low kick and
+retains the earlier texture as JazzKitBrushKick. Examples 217–218 demonstrate
+all ten JazzKit voices across two arrangements that fit the eight-player limit.
+
 0.4.159 adds LimutCompressor as an insert under Dynamics and adds a separate
 Waveforms category for sine, saw, pulse and triangle. The LimutFX UGen pack also
 contains a true two-input LimutVocoder. It requires separate carrier and
