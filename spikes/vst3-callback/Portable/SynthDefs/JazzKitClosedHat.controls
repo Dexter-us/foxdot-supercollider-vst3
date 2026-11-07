@@ -1,0 +1,4 @@
+# Jazz Kit: short, soft brush/hat accent.
+tone 3500.0 13000.0 8200.0 log
+decay 0.015 0.45 0.085 log
+metal 0.0 0.6 0.08

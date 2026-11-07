@@ -29,6 +29,22 @@ checker_end = source.find(')PY";', checker_start)
 if checker_end < 0:
     raise SystemExit('Could not find the end of the compatibility checker')
 compatibility_checker = source[checker_start:checker_end]
+processor_source = open(
+    os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
+                 'processor.cpp'),
+    encoding='utf-8', errors='replace').read()
+for wow_fragment in (
+        'bool smoothNoise = false;',
+        'double noisePeriod = 0.0;',
+        "token[0] != 'w'",
+        "const bool smoothNoise = token[0] == 'w';",
+        'result.smoothNoise = smoothNoise;',
+        'if (control.smoothNoise)',
+        '951.135664',
+        'bnoise(position * 2.3)'):
+    if wow_fragment not in processor_source:
+        raise SystemExit('Native smooth-noise wow control is missing: ' +
+                         wow_fragment)
 
 # Reconstruct and compile the exact streamed Python wrapper used by C++.
 wrapper_start = source.find('std::string makeEvaluationScript(')
@@ -59,10 +75,25 @@ safe_names = ('abs', 'all', 'any', 'bool', 'dict', 'divmod', 'enumerate', 'filte
               'range', 'reversed', 'round', 'set', 'slice', 'sorted', 'str',
               'sum', 'tuple', 'zip', 'ValueError', 'TypeError',
               'ZeroDivisionError', '__build_class__')
+example_synth_names = (
+    'CustomPluck', 'CustomTone', 'AirwindowsTapeDelay2', 'AirwindowsEchojam',
+    'JPverb', 'Greyhole', 'Chorus', 'Flanger', 'Phaser', 'Tremolo',
+    'LimutPingPong', 'LimutDuck', 'LimutDisperser', 'LimutFuzz',
+    'LimutShifter', 'LimutShimmer', 'LimutGatedVerb', 'LimutCompressor',
+    'SCL_bass_acidOto3091', 'SCL_bass_bassWarsaw', 'SCL_bass_moogBass',
+    'SCL_bass_subBass1', 'SCL_bells_glockenspiel', 'SCL_bells_prayerBell',
+    'SCL_drums_hihat1', 'SCL_drums_kick808', 'SCL_drums_snare909',
+    'SCL_guitar_modalElectricGuitar', 'SCL_guitar_pluck',
+    'SCL_keyboards_FMRhodes1', 'SCL_keyboards_harpsichord1',
+    'SCL_organ_organTonewheel0', 'SCL_pads_sawSynth',
+    'SCL_percussion_kalimba', 'SCL_percussion_marimba1',
+    'SCL_strings_violin', 'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
+    'SCLOrkCrossoverDistortionFX')
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
-    '_dexter_root': 60, '_dexter_updates': {}, '_dexter_mutes': {},
+    '_dexter_root': 60, '_dexter_root_control': None,
+    '_dexter_updates': {}, '_dexter_mutes': {},
     '_dexter_default_touched': False, '__name__': 'dexter_test',
     '__builtins__': {name: getattr(builtins, name) for name in safe_names},
 }
@@ -86,6 +117,82 @@ defaultVar = namespace['var']([1, 0])
 assert defaultVar.durations == [4.0, 4.0]
 assert stepVar.at(0) == 0.2 and stepVar.at(2) == 0.8
 assert abs(linearVar.at(2)) < 1e-9 and linearVar.at(4) == 1.0
+oneShot = namespace['riser'](8, 0.1, 0.9)
+assert oneShot.wire() == 'r:0.1,0.9:8.0'
+assert oneShot.at(-1) == 0.1 and oneShot.at(0) == 0.1
+assert abs(oneShot.at(4) - 0.5) < 1e-9
+assert oneShot.at(8) == 0.9 and oneShot.at(1000) == 0.9
+dropPattern = namespace['drop'](30, 2)
+assert dropPattern.wire() == 'v:1.0,0.0:30.0,2.0'
+assert dropPattern.at(0) == 1.0 and dropPattern.at(29.99) == 1.0
+assert dropPattern.at(30) == 0.0 and dropPattern.at(31.99) == 0.0
+assert dropPattern.at(32) == 1.0 and dropPattern.at(64) == 1.0
+customDrop = namespace['drop'](8, 1, high=8000, low=400)
+assert customDrop.wire() == 'v:8000.0,400.0:8.0,1.0'
+wowDefault = namespace['wow']()
+wowSameSeed = namespace['wow'](seed=0)
+wowOtherSeed = namespace['wow'](seed=1)
+assert len(wowDefault.values) == 2 and wowDefault.values == [-0.3, 0.3]
+assert wowDefault.wire() == 'w:-0.3,0.3:2.0:0'
+assert wowDefault.wire() == wowSameSeed.wire()
+assert wowDefault.wire() != wowOtherSeed.wire()
+assert abs(wowDefault.at(0.0) - (-0.1)) < 1e-12
+assert all(-0.3 <= wowDefault.at(beat) <= 0.3
+           for beat in (0.0, 0.125, 0.5, 1.0, 2.0, 12.0))
+assert wowDefault.at(0.75) == wowSameSeed.at(0.75)
+assert wowDefault.at(0.75) != wowOtherSeed.at(0.75)
+assert namespace['wow'](amount=0.2, center=0.5).values == [0.3, 0.7]
+tgDefault = namespace['tg']()
+assert tgDefault.wire() == 'v:1.0,0.0:0.125,0.125'
+assert tgDefault.at(0) == 1.0 and tgDefault.at(0.124) == 1.0
+assert tgDefault.at(0.125) == 0.0 and tgDefault.at(0.25) == 1.0
+assert namespace['tg'](0.5, high=0.8, low=0.1).wire() == 'v:0.8,0.1:0.5,0.5'
+for badWow in ((-0.1, 2), (0.3, 0), (0.3, 0.1), (0.3, 4097),
+               (True, 2), (float('inf'), 2), (0.3, 2, True)):
+    try:
+        if len(badWow) == 2:
+            namespace['wow'](badWow[0], badWow[1])
+        elif len(badWow) == 3:
+            namespace['wow'](badWow[0], badWow[1], badWow[2])
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('wow must reject invalid or unbounded arguments')
+for badTg in (0, -1, 4097, True, float('nan')):
+    try:
+        namespace['tg'](badTg)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('tg must reject invalid or unbounded step durations')
+for badSeed in (True, 1.5, 2147483648):
+    try:
+        namespace['wow'](seed=badSeed)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('wow must reject invalid seeds')
+for badDuration in (0, -1, 4096.001, True, float('inf')):
+    try:
+        namespace['riser'](badDuration)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('riser must reject invalid or unbounded durations')
+try:
+    namespace['riser'](8, 0, float('inf'))
+except (TypeError, ValueError):
+    pass
+else:
+    raise AssertionError('riser must reject non-finite endpoints')
+for badDrop in ((0, 2), (30, 0), (4097, 2), (30, float('inf')),
+                (True, 2), (30, 2, float('nan'), 0)):
+    try:
+        namespace['drop'](*badDrop)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('drop must reject invalid durations and levels')
 fox_literal = namespace['P'][0, 2, None, (3, 5), 7]
 assert fox_literal == [0, 2, None, (3, 5), 7]
 assert fox_literal + 2 == [2, 4, None, (5, 7), 9]
@@ -205,7 +312,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, user_synth_names=()):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_effect_modulations=False, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -223,6 +330,7 @@ def run_script(script_text, include_events=False, include_effects=False, include
         player_rows = [line.split('\t') for line in lines if line.startswith('P\t')]
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
+        effect_modulation_rows = [line.split('\t') for line in lines if line.startswith('X\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
@@ -231,6 +339,8 @@ def run_script(script_text, include_events=False, include_effects=False, include
             return player_rows, mute_rows
         if include_filters:
             return player_rows, filter_rows
+        if include_effect_modulations:
+            return player_rows, effect_modulation_rows
         if include_modulations:
             return player_rows, modulation_rows
         if include_decay:
@@ -265,6 +375,10 @@ def run_example(name, user_synth_names=()):
     return run_script(open(example_path, encoding='utf-8').read(),
                       user_synth_names=user_synth_names)
 
+assert 'one-shot riser' in run_error_script('Clock.bpm = riser(8)\n')
+assert 'riser' in run_error_script('p1 >> saw([0], slide=riser(8))\n')
+assert 'riser' in run_error_script('play("x", sample=riser(8))\n')
+
 userSynthDir = os.path.join(sys.argv[2], 'SynthDefs')
 userSynthBinary = open(os.path.join(userSynthDir, 'CustomPluck.scsyndef'), 'rb').read()
 assert b'CustomPluck' in userSynthBinary
@@ -272,6 +386,15 @@ assert b'DexterPluck' not in userSynthBinary
 assert not os.path.exists(os.path.join(userSynthDir, 'DexterPluck.scsyndef'))
 userSynthRows = run_example('94-user-synthdef-loader.py', ('CustomPluck',))
 assert [int(row[6]) for row in userSynthRows] == [58, 58]
+for filename, expected_players in (
+        ('200-sclork-melodic-starter.py', 3),
+        ('201-sclork-drum-kit.py', 3),
+        ('202-sclork-guitar-and-pad.py', 3)):
+    example_path = os.path.join(sys.argv[2], filename)
+    if os.path.isfile(example_path):
+        rows = run_example(filename, example_synth_names)
+        assert len(rows) == expected_players, (filename, rows)
+        assert all(int(row[6]) >= 58 for row in rows), (filename, rows)
 missingUserSynth = run_error_script(
     'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
 assert 'not a loaded Portable/SynthDefs entry' in missingUserSynth
@@ -531,6 +654,41 @@ assert foxdotDecayRows[0][0] == 'E' and float(foxdotDecayRows[0][2]) == 0.75 and
 assert abs(float(foxdotEchoRows[0][10]) - 0.5) < 1e-9
 assert abs(float(foxdotDecayRows[0][4]) - 0.4) < 1e-9 and float(foxdotDecayRows[0][6]) == 0.5 and foxdotDecayRows[0][8] == '-'
 _, varDecayRows = run_script('p1 >> saw([0, 2], echo=0.5, decay=var([0.5, 1.5], [1, 1]), delay=linvar([0.1, 0.4], [1, 1]))\n', include_decay=True)
+riserRows = run_script('p1 >> saw([0, 2, 4, 7], dur=0.5, amp=riser(8, 0.05, 0.3), cutoff=riser(8, 300, 9000))\n')
+assert len(riserRows) == 1 and riserRows[0][16] == 'r:0.05,0.3:8.0'
+assert riserRows[0][18] == 'r:300.0,9000.0:8.0'
+dropRows = run_script(
+    'p1 >> saw([0, 2, 4, 7], amp=drop(30, 2, high=0.4, low=0.02), '
+    'cutoff=drop(30, 2, high=8000, low=400))\n')
+assert len(dropRows) == 1 and dropRows[0][16] == 'v:0.4,0.02:30.0,2.0'
+assert dropRows[0][18] == 'v:8000.0,400.0:30.0,2.0'
+wowRows = run_script(
+    'p1 >> saw([0, 2, 4], amp=wow(amount=0.18, center=0.32, period=4, seed=7), '
+    'pan=wow(amount=0.65, seed=9))\n')
+assert len(wowRows) == 1 and wowRows[0][16].startswith('w:')
+assert wowRows[0][17].startswith('w:')
+tgRows = run_script(
+    'p1 >> play("x-o-", dur=0.25, amp=tg(0.125, high=0.7, low=0.08))\n')
+assert len(tgRows) == 1 and tgRows[0][16] == 'v:0.7,0.08:0.125,0.125'
+wowEffectPlayers, wowEffectTokens = run_script(
+    'p1 >> saw([0, 2], effect="LimutPingPong", '
+    'fx_mix=wow(amount=0.2, center=0.5, seed=3))\n',
+    include_effect_modulations=True, user_synth_names=example_synth_names)
+assert len(wowEffectPlayers) == 1 and any(
+    any('w:' in token for token in row) for row in wowEffectTokens)
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw([0, 2], amp=drop(30, 2), fx_mix=drop(16, 16), '
+    'pan=wow(seed=1), cutoff=tg())\n')
+riserEffectPlayers, riserEffectTokens = run_script(
+    'p1 >> saw([0, 2], effect="LimutPingPong", fx_mix=riser(8, 0.1, 0.8))\n',
+    include_effect_modulations=True, user_synth_names=example_synth_names)
+assert len(riserEffectPlayers) == 1 and any(
+    'r:0.1,0.8:8.0' in row for row in riserEffectTokens)
+dropEffectPlayers, dropEffectTokens = run_script(
+    'p1 >> saw([0, 2], effect="LimutPingPong", fx_mix=drop(16, 16))\n',
+    include_effect_modulations=True, user_synth_names=example_synth_names)
+assert len(dropEffectPlayers) == 1 and any(
+    'v:1.0,0.0:16.0,16.0' in row for row in dropEffectTokens)
 assert varDecayRows[0][3] == 'v:0.5,1.5:1.0,1.0' and len(varDecayRows[0]) == 9
 assert varDecayRows[0][8] == 'l:0.1,0.4:1.0,1.0'
 assert len(effectRows) == 1 and len(effectRows[0]) == 23 and len(effectEvents) == 4
@@ -542,6 +700,18 @@ assert abs(float(effectEvents[2][7])) < 1e-9
 assert abs(float(effectEvents[0][5]) - 0.01) < 1e-9 and abs(float(effectEvents[0][6]) - 0.02) < 1e-9
 assert abs(float(effectEvents[1][5]) - 0.01) < 1e-9 and abs(float(effectEvents[1][6]) - 0.06) < 1e-9
 assert abs(float(effectEvents[2][5]) - 0.03) < 1e-9 and abs(float(effectEvents[2][6]) - 0.1) < 1e-9
+riserExample = run_example('209-limut-riser-automation.py')
+assert len(riserExample) == 2 and all(len(row) == 23 for row in riserExample)
+assert riserExample[0][16] == 'r:0.04,0.28:16.0'
+assert riserExample[0][18] == 'r:400.0,9000.0:16.0'
+dropExample = run_example('210-limut-drop-patterns.py')
+assert len(dropExample) == 2 and all(len(row) == 23 for row in dropExample)
+assert dropExample[0][16] == 'v:0.3,0.02:30.0,2.0'
+assert dropExample[0][18] == 'v:8000.0,500.0:30.0,2.0'
+wowTgExample = run_example('211-limut-wow-tg-patterns.py')
+assert len(wowTgExample) == 2 and all(len(row) == 23 for row in wowTgExample)
+assert wowTgExample[0][16].startswith('w:')
+assert wowTgExample[1][16] == 'v:0.7,0.08:0.125,0.125'
 effectExample = run_example('22-timevar-effects-envelopes.py')
 assert len(effectExample) == 2 and all(len(row) == 23 for row in effectExample)
 reverbRows, reverbEffects = run_script(open(os.path.join(sys.argv[2], '23-reverb-algorithms.py'), encoding='utf-8').read(), include_effects=True)
@@ -571,7 +741,7 @@ rootRows, rootEvents = run_script(open(os.path.join(sys.argv[2], '27-root-and-sc
 assert len(rootRows) == 3 and [row[1] for row in rootRows] == ['0', '1', '2']
 assert [int(event[3]) for event in rootEvents] == [62, 65, 69, 72, 55, 58, 62, 57, 60, 63, 63, 67, 70, 74]
 assert 'No unsupported constructs detected' in run_compatibility_check('Scale.default = "minor"\nRoot.default.set("Eb")\np1 >> saw([0, 2, 4], root=7)\n')
-assert 'Root.default only supports .set(note)' in run_compatibility_check('Root.default.notes\n')
+assert 'Root.default only supports .set(root)' in run_compatibility_check('Root.default.notes\n')
 chordRows, chordEvents = run_script(open(os.path.join(sys.argv[2], '28-roman-numeral-chords.py'), encoding='utf-8').read(), include_events=True)
 assert len(chordRows) == 2 and [row[1] for row in chordRows] == ['0', '1']
 assert [int(event[3]) for event in chordEvents[:14]] == [48, 52, 55, 53, 57, 48, 55, 47, 50, 65, 48, 52, 55, 59]
@@ -605,6 +775,11 @@ assert 'kReverbSendReleaseSeconds' in processor_source and 'beginReverbTail' in 
 assert '(voice.midiNote < 0 && !voice.releasing)' in processor_source
 assert 'foxDotEnvelopeDurationSeconds' in processor_source and 'safeSynthFrequency' in processor_source
 assert 'synthIndex == 5 || synthIndex == 22' in processor_source
+assert 'bool oneShot = false;' in processor_source
+assert "const bool oneShot = token[0] == 'r';" in processor_source
+assert 'if (control.oneShot)' in processor_source
+assert 'valueCount != 2 || durationCount != 1' in processor_source
+assert "(oneShot && (valueCount != 2 || durationCount != 1))" in processor_source
 assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw(P[I, V7], strum=0.06)\np2 >> saw(P[I7, V7], strum=var([0.02, 0.05], 2))\np1.mute()\np1.unmute()\n')
 muteRows, muteCommands = run_script('p1.mute()\np2.unmute()\n', include_mutes=True)
 assert muteRows == [] and muteCommands == [['M', '0', '1'], ['M', '1', '0']]
@@ -662,7 +837,7 @@ assert len(example37Rows) == 3 and len(example37Modulations) == 3
 assert [row[0] for row in example37Modulations] == ['G', 'G', 'G']
 assert [round(float(row[2]), 2) for row in example37Modulations] == [0.18, 0.0, 0.22]
 assert [round(float(row[3]), 2) for row in example37Modulations] == [0.0, 1.2, 0.2]
-assert example37Modulations[2][4].startswith('v:') and example37Modulations[2][5].startswith('l:')
+assert example37Modulations[2][6].startswith('v:') and example37Modulations[2][7].startswith('l:')
 example38Rows = run_example('38-bass-varsaw-release-check.py')
 assert len(example38Rows) == 2 and [int(row[6]) for row in example38Rows] == [4, 5]
 assert [float(row[14]) for row in example38Rows] == [0.04, 0.04]
@@ -681,6 +856,7 @@ example42Rows = run_example('42-self-contained-ugens.py')
 assert [int(row[6]) for row in example42Rows] == [25, 26, 27, 28, 29, 30]
 assert namespace['bug']([0]).synthRate == 1.0
 supported_report = run_compatibility_check('Clock.bpm = 120\nScale.default.set("minor")\np1 >> saw([0, 2, 4], dur=0.5, oct=5, sus=0.4, amp=0.7, pan=-0.2, echo=0.5, decay=0.75)\np2 >> pulse([0, None, 3], dur=1, cutoff=3000)\np3 >> saw(P[0, None, 2], dur=0.5)\np4 >> triangle([0, 2], pan=MouseX(), cutoff=MouseY(), atk=0.02, rel=0.15)\np5 >> saw([0, 2], amp=var([0.2, 0.6], [4, 4]), pan=linvar([-0.8, 0.8], 8), cutoff=linvar([400, 5000], 8))\np1 >> saw(P[0:8:2], dur=0.5)\np6 >> saw([0, 2], lpf=var([400, 5000], 4), lpr=0.45, hpf=300, hpr=0.8, bpf=1200, bpr=0.35, bpnoise=0.3, swell=1.0)\np1.stop()\n')
+assert 'No unsupported constructs detected' in run_compatibility_check('p1 >> saw([0, 2], amp=riser(8, 0.05, 0.4), cutoff=riser(8, 300, 5000))\n')
 assert 'No unsupported constructs detected' in supported_report, supported_report
 assert 'script was not executed' in supported_report, supported_report
 loadedUserSynthReport = run_compatibility_check(
@@ -697,12 +873,31 @@ syntax_report = run_compatibility_check('p1 >> saw([0])\nif :\n')
 assert 'Python syntax error at column' in syntax_report and 'Line 2:' in syntax_report, syntax_report
 for filename in os.listdir(sys.argv[2]):
     if filename.endswith('.py'):
-        example_names = ('CustomPluck',) if filename == '94-user-synthdef-loader.py' else ()
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
-            example_names)
+            example_synth_names)
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name
-print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, Examples 01-42, and user SynthDef Example 94.')
+
+# Keep the custom-SynthDef mono/stereo routing contract tied to the engine
+# implementation. The small C++ unit test exercises the width/bus/pan helpers;
+# these checks ensure the processor uses both channel layouts end-to-end.
+processor_path = os.path.join(os.path.dirname(__file__), '..', 'processor.cpp')
+processor_source = open(processor_path, encoding='utf-8').read()
+routing_header_path = os.path.join(os.path.dirname(__file__), '..',
+                                   'user_synth_routing.h')
+routing_header = open(routing_header_path, encoding='utf-8').read()
+assert 'synthOutputChannels(loaded)' in processor_source
+assert 'mergeSynthOutputChannels' in processor_source
+assert 'userDefinition.outputChannels = synthOutputChannels(loaded)' in processor_source
+assert 'userDefinition.outputChannels = 2' in processor_source
+assert 'kStereoSynthOutputBaseBus' in processor_source
+assert 'sourceRight = world_->mAudioBus' in processor_source
+assert 'voice.lpfRightState' in processor_source
+assert 'stereoBalanceGains(voice.pan)' in processor_source
+assert 'synthOutputChannelsFromOutInputCount' in routing_header
+assert 'mergeSynthOutputChannels' in routing_header
+assert 'userSynthOutputBus' in routing_header
+print('Smoke tests passed: embedded runtime, pattern API, static FoxDot compatibility checks, line diagnostics, all Portable examples, user SynthDef mono/stereo routing, and Example 94.')

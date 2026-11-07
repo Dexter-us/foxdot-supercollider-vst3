@@ -2,6 +2,38 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.146 keeps the full player-control row visible and disabled until a
+player is selected, so PShift is discoverable. Clicking a `pN >>` assignment
+in the editor selects that player in the Players panel. Example 184 demonstrates
+the PShift and bitcrusher controls together.
+
+Version 0.4.145 adds bounded `PIndex`, seeded `PxRand` (no adjacent
+repeats), and seeded weighted `PwRand`, with Portable Example 183. Synth and
+Effect family categories now start collapsed, and their first click expands
+them.
+
+Version 0.4.144 adds the FoxDot finite generators `P10`, `PBern`, `PSine`,
+`PTri`, and `PSum`; corrects the compatibility checker so `.expand()` is
+accepted on `Pvar` but not ordinary finite `P` patterns; adds a live PShift
+semitone slider for any selected player; and makes the Synths/Effects category
+headings collapsible. Examples 181 and 182 demonstrate the generators and
+PShift slider.
+
+Version 0.4.143 groups the Synths and Effects catalogs by family and adds
+player-specific Bits and Crush sliders. See Example 180.
+
+Version 0.4.142 expands the editor catalog: sorted instruments, a fuller native
+Effects list, right-click Insert/About actions, and drag-and-drop onto player
+lines—including a blank `p3 >>` starter. About opens a bundled HTML reference
+with effect ranges and optional-pack notes. Example 179 demonstrates the workflow.
+Catalog actions edit the script; click Run to apply. Audio remains in the VST's
+local engine, with no OSC/server change.
+
+Version 0.4.79 adds beat-synced `var()`/`linvar()` modulation for the
+per-player Airwindows TapeDelay2 and Echojam controls, with 15 ms smoothing for
+changes and Portable Example 105. The current sample pack and UGen requirements
+are unchanged.
+
 Version 0.4.68 adds `Clock.swing(amount=0.1)`, matching FoxDot's alternating
 half-beat clock nudge in the plugin's sample-accurate scheduler; zero disables
 it. The shift is safety-bounded to less than half a beat; its phase starts when
@@ -69,7 +101,7 @@ build-time graph compilation, and the explicit host/safety adaptations.
 
 ## Current prototype
 
-- Windows native editor with Run, Stop, Open, Save, and Save As. Ninety-two starter patterns are separate `.py` files in the `Portable` folder.
+- Windows native editor with Run, Stop, Open, Save, and Save As. Starter patterns are separate `.py` files in the `Portable` folder.
 - Open and Save As explicitly start in the `Portable` folder beside the VST3 bundle; ordinary Save writes back to the currently opened or saved script.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
 - `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independently editable players (`p1`–`p8`) using `p1 >> sequence(...)`; `.stop()` stops one player without stopping the others. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and `euclid`; finite FoxDot-style `P[...]` note/rest/chord literals and numeric `+`/`-` transposition are supported. Players can choose the four basic oscillator modes plus twenty-one embedded FoxDot-derived synths: bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, and blip. These controls affect plugin audio; MIDI output remains note events.

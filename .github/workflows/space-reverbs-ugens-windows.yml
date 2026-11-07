@@ -1,0 +1,76 @@
+name: Windows optional JPverb and Greyhole pack
+
+on:
+  pull_request:
+    paths:
+      - "UGens/SpaceReverbs/**"
+      - ".github/workflows/space-reverbs-ugens-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-space-reverbs:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out pinned SuperCollider headers only
+        uses: actions/checkout@v4
+        with:
+          repository: supercollider/supercollider
+          ref: ef5771bce3d1c9c780cafd58cf032ec4a3f36d10
+          path: sc-source
+          submodules: false
+          fetch-depth: 1
+      - name: Check out pinned sc3-plugins DSP source only
+        uses: actions/checkout@v4
+        with:
+          repository: supercollider/sc3-plugins
+          ref: fa926d6b554acef35b2fd9deb2f996085fa86bd7
+          path: sc3-source
+          submodules: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test embedded API, examples and precompiled SynthDef ABI
+        run: python UGens/SpaceReverbs/test-examples.py
+      - name: Configure only the two optional modules
+        shell: pwsh
+        run: |
+          cmake -S .\UGens\SpaceReverbs -B "$env:RUNNER_TEMP\space-reverbs-build" `
+            -DSC_SOURCE_DIR="$env:GITHUB_WORKSPACE\sc-source" `
+            -DSC3_PLUGINS_SOURCE_DIR="$env:GITHUB_WORKSPACE\sc3-source"
+      - name: Build and package modules with corresponding source and licenses
+        shell: pwsh
+        run: |
+          cmake --build "$env:RUNNER_TEMP\space-reverbs-build" --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Reverb module compilation failed." }
+          $pack = "$env:RUNNER_TEMP\dexter-space-reverbs"
+          New-Item -ItemType Directory -Force `
+            "$pack\Portable\SCPlugins", "$pack\Sources\sc3-plugins\source\DEINDUGens", "$pack\Licenses" | Out-Null
+          $sourcePack = "$pack\Sources\sc3-plugins\source\DEINDUGens"
+          foreach ($name in @("JPverb", "Greyhole")) {
+            $module = Get-ChildItem "$env:RUNNER_TEMP\space-reverbs-build" `
+              -Filter "$name.scx" -File -Recurse | Select-Object -First 1
+            if (-not $module) { throw "Missing $name.scx" }
+            Copy-Item $module.FullName "$pack\Portable\SCPlugins"
+            New-Item -ItemType Directory -Force "$sourcePack\sc\HelpSource\Classes" | Out-Null
+            Copy-Item ".\sc3-source\source\DEINDUGens\${name}Raw.cpp" "$sourcePack"
+            Copy-Item ".\sc3-source\source\DEINDUGens\sc\$name.sc" "$sourcePack\sc"
+            Copy-Item ".\sc3-source\source\DEINDUGens\sc\HelpSource\Classes\$name.schelp" "$sourcePack\sc\HelpSource\Classes"
+          }
+          Copy-Item ".\sc3-source\source\DEINDUGens\include" "$sourcePack" -Recurse
+          Copy-Item ".\sc3-source\license.txt" "$pack\Licenses\GPL-2.0.txt"
+          Copy-Item ".\UGens\SpaceReverbs\Portable\*" "$pack\Portable" -Recurse -Force
+          Copy-Item ".\UGens\SpaceReverbs" "$pack\Sources" -Recurse
+          Compress-Archive -Path "$pack\*" `
+            -DestinationPath "$env:RUNNER_TEMP\dexter-space-reverbs-win-x64.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dexter-space-reverbs-win-x64
+          path: ${{ runner.temp }}/dexter-space-reverbs-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14

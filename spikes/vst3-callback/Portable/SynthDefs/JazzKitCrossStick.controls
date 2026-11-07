@@ -1,0 +1,4 @@
+# Jazz Kit: dry cross-stick / rim click.
+tone 700.0 4200.0 2100.0 log
+decay 0.006 0.2 0.045 log
+body 0.0 1.0 0.18

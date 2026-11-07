@@ -4,6 +4,23 @@ This plugin includes an initial compatibility layer based on the FoxDot live-cod
 
 This release also adapts FoxDot's band-pass `bpnoise` modulation and envelope-driven `swell` effect behavior from `FoxDot/lib/Effects/Util.py`, `FoxDot/osc/sceffects/bandPassFilter.scd`, and `FoxDot/osc/sceffects/filterSwell.scd`. The implementations here are translated for the plugin's embedded renderer and do not use OSC or an external SuperCollider server.
 
+Version 0.4.133 adapts the `chop` and `spinPan` behaviors from
+`FoxDot/osc/sceffects/chop.scd` and `FoxDot/osc/sceffects/spinPan.scd`.
+The per-sample VST implementation preserves their control meanings and bounded
+note timing without starting a SuperCollider server.
+
+Version 0.4.139 adapts the `coarse` pulse gate and the control mapping for
+FoxDot's Formlet-based `formant` effect from
+`FoxDot/osc/sceffects/coarse.scd` and
+`FoxDot/osc/sceffects/formantFilter.scd`. The plugin uses native bounded DSP;
+the resonant formant implementation is an approximation, not a bit-exact copy
+of SuperCollider's Formlet UGen.
+
+Version 0.4.140 adds bounded `pshift` semitone transposition following FoxDot's
+note-control model. The plugin implements this directly in its local renderer;
+the `bits`/`crush` bitcrusher is a native plugin extension, not a bundled
+FoxDot or SuperCollider UGen.
+
 FoxDot-derived adaptation in this plugin is distributed under the Creative Commons Attribution-ShareAlike 4.0 International license (CC BY-SA 4.0). The complete license text is included as FoxDot-CC-BY-SA-4.0.txt.
 
 This plugin does not bundle FoxDot's OSC server, external clock thread, or sample library. The compatibility layer translates supported player/tempo expressions to the plugin's embedded SuperCollider engine.

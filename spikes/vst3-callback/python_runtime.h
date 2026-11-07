@@ -1,6 +1,10 @@
 #pragma once
 
+#include "player_effect_chain.h"
+
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <type_traits>
@@ -14,6 +18,18 @@ struct PythonNoteEvent {
     double attackSeconds = 0.01;
     double releaseSeconds = 0.04;
     double delayBeats = 0.0;
+    double vibDepth = 0.5;
+    double slide = 0.0;
+    double slideFrom = 0.0;
+    double slideDelay = 0.0;
+    double bend = 0.0;
+    double bendDelay = 0.0;
+    double chop = 0.0;
+    double spin = 0.0;
+    double cut = 1.0;
+    double coarse = 0.0;
+    double formant = -1.0;
+    double pshift = 0.0;
     int sampleSymbol = 0;
     int sampleIndex = 0;
     double sampleRate = 1.0;
@@ -31,6 +47,14 @@ struct PythonNoteEvent {
 
 static_assert(std::is_trivially_copyable<PythonNoteEvent>::value,
               "Audio event handoff must not allocate or copy strings on the audio thread");
+
+struct PythonPlayerEffect {
+    int userSynthIndex = -1;
+    std::array<double, 7> controlValues{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
+    std::array<std::string, 7> controlTokens{
+        "-", "-", "-", "-", "-", "-", "-"
+    };
+};
 
 struct PythonPlayerUpdate {
     std::string ampControlToken = "-";
@@ -50,18 +74,37 @@ struct PythonPlayerUpdate {
     std::string bprControlToken = "-";
     std::string bpnoiseControlToken = "-";
     std::string swellControlToken = "-";
+    std::string shapeControlToken = "-";
+    std::string driveControlToken = "-";
+    std::string bitsControlToken = "-";
+    std::string crushControlToken = "-";
+    std::string bpmControlToken = "-";
     std::string sampleControlToken = "-";
     std::string sampleRateControlToken = "-";
+    std::array<std::string, 7> effectControlTokens{
+        "-", "-", "-", "-", "-", "-", "-"
+    };
+    std::array<std::string, 12> noteEffectControlTokens{
+        "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"
+    };
+    std::vector<PythonPlayerEffect> playerEffects;
     int playerIndex = 0;
     bool stopped = false;
     double bpm = 120.0;
     double lengthBeats = 1.0;
+    int untilCycles = 0;
+    double chanceProbability = 1.0;
+    std::uint32_t chanceSeed = 0;
+    std::uint16_t barLoaf = 0;
+    std::uint32_t barOnMask = 0;
     int synthIndex = 0;
     int playerEffectUserIndex = -1;
     double synthRate = 0.0;
     double swingSeconds = 0.0;
     // vib, depth, lforate, lfowidth, rq, fmod, blur
     std::array<double, 7> synthControls{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
+    // Normalized to 0..1; the selected SynthDef maps these to its control ranges.
+    std::array<double, 7> playerEffectControlValues{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
     double amplitude = 1.0;
     double pan = 0.0;
     double cutoffHz = 20000.0;
@@ -84,6 +127,10 @@ struct PythonPlayerUpdate {
     double bpr = 1.0;
     double bpnoise = 0.0;
     double swell = 0.0;
+    double shape = 0.0;
+    double drive = 0.0;
+    double bits = 0.0;
+    double crush = 1.0;
     bool mousePan = false;
     bool mouseCutoff = false;
     double attackSeconds = 0.01;
@@ -96,9 +143,18 @@ struct PythonPlayerMute {
     bool muted = false;
 };
 
+struct PythonDiskCommand {
+    int mode = 0; // stop reader, DiskIn, VDiskIn, DiskOut record, stop recording
+    int slot = 0;
+    std::string path;
+    double rate = 1, amp = 0.5, pan = 0, seconds = 0;
+    bool loop = false;
+};
+
 struct PythonPattern {
     std::vector<PythonPlayerUpdate> players;
     std::vector<PythonPlayerMute> mutes;
+    std::vector<PythonDiskCommand> diskCommands;
 };
 
 class PortablePython {

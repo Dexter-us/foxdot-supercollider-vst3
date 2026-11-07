@@ -1,0 +1,5 @@
+# Jazz Kit: one-shot moving-noise brush sweep.
+startTone 350.0 3000.0 850.0 log
+endTone 1200.0 11000.0 4700.0 log
+sweep 0.12 2.8 0.85 log
+grit 0.0 1.0 0.55
