@@ -37,6 +37,7 @@
 #include "sc_pool_capacity.h"
 #include "user_synth_routing.h"
 #include "user_synth_controls.h"
+#include "user_synth_control_state.h"
 #include "sardine_pattern_gates.h"
 
 #include <algorithm>
@@ -453,7 +454,21 @@ public:
                     stopPlayerMidiNotes(data.outputEvents, 0, static_cast<int>(player));
                     stopAudioVoices(static_cast<int>(player));
                     const auto previous = activePatterns_[player];
-                    activePatterns_[player] = pendingPatterns_[player];
+                    auto next = pendingPatterns_[player];
+                    const auto pendingUserSynthControls =
+                        pendingEditorUserSynthControls_[player];
+                    dexter::preserveUserSynthControlOverrides(
+                        previous.synthIndex, next.synthIndex,
+                        static_cast<int>(kSynthIndexToGraphIndex.size()),
+                        previous.userSynthControlDefinitionIndex,
+                        previous.userSynthControlOverrideMask,
+                        previous.userSynthControlValues,
+                        pendingUserSynthControls.mask,
+                        pendingUserSynthControls.values,
+                        next.userSynthControlDefinitionIndex,
+                        next.userSynthControlOverrideMask,
+                        next.userSynthControlValues);
+                    activePatterns_[player] = next;
                     activePatterns_[player].editorAmpOverride = false;
                     editorAmplitudeCurrent_[player] =
                         activePatterns_[player].amplitude;

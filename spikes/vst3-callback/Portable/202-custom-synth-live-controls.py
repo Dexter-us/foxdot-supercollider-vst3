@@ -4,7 +4,9 @@ Clock.bpm = 96
 Scale.default = Scale.minor
 
 # Select this player in the Players panel. The three sliders change this
-# running SynthDef smoothly; edits are temporary until the script is rerun.
+# running SynthDef smoothly. The plugin keeps these values if you rerun the
+# same player with the same SynthDef; selecting another SynthDef uses its own
+# .controls defaults.
 p1 >> userSynth("CustomTone", P[0, 2, 4, 7], dur=1, oct=4,
                 amp=0.28, pan=-0.15)
 

@@ -2,6 +2,7 @@
 #include "../live_player_controls.h"
 #include "../editor_catalog.h"
 #include "../user_synth_controls.h"
+#include "../user_synth_control_state.h"
 #include "../airwindows_control_smoothing.h"
 
 #include <algorithm>
@@ -12,6 +13,44 @@
 using namespace dexter::editor;
 
 int main() {
+    {
+        std::array<float, 8> previousValues{};
+        previousValues[1] = 0.73f;
+        previousValues[4] = 0.21f;
+        std::array<float, 8> pendingValues{};
+        pendingValues[4] = 0.84f;
+        std::array<float, 8> nextValues{};
+        int nextDefinition = -1;
+        std::uint8_t nextMask = 0;
+
+        // A rerun of the same external SynthDef keeps its live values and
+        // folds in a slider move that was still queued when Run was pressed.
+        dexter::preserveUserSynthControlOverrides(
+            60, 60, 58, 2, 0x12, previousValues, 0x10, pendingValues,
+            nextDefinition, nextMask, nextValues);
+        assert(nextDefinition == 2);
+        assert(nextMask == 0x12);
+        assert(std::abs(nextValues[1] - 0.73f) < 1e-6f);
+        assert(std::abs(nextValues[4] - 0.84f) < 1e-6f);
+
+        // Different SynthDefs and built-in synths use their own defaults.
+        nextDefinition = -1;
+        nextMask = 0;
+        nextValues.fill(0.0f);
+        dexter::preserveUserSynthControlOverrides(
+            60, 61, 58, 2, 0x12, previousValues, 0x10, pendingValues,
+            nextDefinition, nextMask, nextValues);
+        assert(nextDefinition == -1);
+        assert(nextMask == 0);
+        assert(std::all_of(nextValues.begin(), nextValues.end(),
+                           [](float value) { return value == 0.0f; }));
+
+        dexter::preserveUserSynthControlOverrides(
+            20, 20, 58, -1, 0xff, previousValues, 0xff, pendingValues,
+            nextDefinition, nextMask, nextValues);
+        assert(nextDefinition == -1);
+        assert(nextMask == 0);
+    }
     assert(isSimpleIdentifier("CustomPluck"));
     assert(!isSimpleIdentifier("Airwindows-Echojam"));
     assert(clampEditorPlayerControl(EditorPlayerControl::Amplitude, 1.5f) ==

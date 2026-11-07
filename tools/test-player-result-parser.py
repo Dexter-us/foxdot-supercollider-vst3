@@ -15,6 +15,10 @@ root = Path(__file__).resolve().parents[1]
 plugin = root / "spikes/vst3-callback"
 source_path = plugin / "python_runtime.cpp"
 source = source_path.read_text(encoding="utf-8", errors="replace")
+processor_source = (plugin / "processor.cpp").read_text(
+    encoding="utf-8", errors="replace")
+assert '#include "user_synth_control_state.h"' in processor_source
+assert "dexter::preserveUserSynthControlOverrides(" in processor_source
 sys.argv = ["test-pattern-api.py", str(source_path), str(plugin / "Portable")]
 api_tests = runpy.run_path(str(root / "tools/test-pattern-api.py"))
 parse_start = source.index("bool parseResult(")
@@ -274,6 +278,18 @@ with tempfile.TemporaryDirectory() as directory:
              if example.name == "201-sclork-insert-effects.py" else
              ("CustomTone",)
              if example.name == "202-custom-synth-live-controls.py" else
+             ("JazzKitKick", "JazzKitClosedHat", "JazzKitBrushTap",
+              "JazzKitBrushSweep", "JazzKitRide", "JazzKitCrossStick",
+              "JazzKitRackTom", "JazzKitFloorTom")
+             if example.name == "214-jazz-brush-kit.py" else
+             ("JazzKitKick", "JazzKitBrushTap", "JazzKitBrushSweep",
+              "JazzKitClosedHat", "JazzKitOpenHat", "JazzKitRide",
+              "JazzKitCrossStick", "JazzKitRackTom")
+             if example.name == "217-jazz-kit-core-groove.py" else
+             ("JazzKitKick", "JazzKitBrushKick", "JazzKitBrushTap",
+              "JazzKitBrushSweep", "JazzKitClosedHat", "JazzKitOpenHat",
+              "JazzKitRide", "JazzKitCrossStick")
+             if example.name == "218-jazz-kit-kick-compare.py" else
             ("CustomPluck",) if example.name == "94-user-synthdef-loader.py" else
             ("AirwindowsTapeDelay2",)
             if example.name == "103-sample-player-airwindows-delay.py" else
