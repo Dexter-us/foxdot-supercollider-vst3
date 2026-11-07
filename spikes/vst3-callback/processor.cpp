@@ -762,6 +762,8 @@ public:
                             }
                         }
                         next.lengthBeats = player.lengthBeats;
+                        next.untilCycles = static_cast<std::uint16_t>(
+                            player.untilCycles);
                         next.synthIndex = player.synthIndex;
                         next.playerEffectUserIndex = player.playerEffectUserIndex;
                         next.synthRate = static_cast<float>(player.synthRate);
@@ -1488,6 +1490,7 @@ private:
         double bpm = 120.0;
         double swingSeconds = 0.0;
         double lengthBeats = 1.0;
+        std::uint16_t untilCycles = 0;
         int synthIndex = 0;
         int playerEffectUserIndex = -1;
         float synthRate = 0.0f;
@@ -2973,8 +2976,12 @@ private:
                            (startBeat - note.beat -
                             (15.0 + note.durationBeats) * tempoRatio) /
                            pattern.lengthBeats)) - 1);
-                const auto lastCycle = static_cast<std::int64_t>(
+                auto lastCycle = static_cast<std::int64_t>(
                     std::ceil((endBeat - note.beat) / pattern.lengthBeats)) + 1;
+                if (pattern.untilCycles > 0)
+                    lastCycle = std::min(
+                        lastCycle,
+                        static_cast<std::int64_t>(pattern.untilCycles) - 1);
                 for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
                     const double baseEventBeat =
                         static_cast<double>(cycle) * pattern.lengthBeats + note.beat;
@@ -3123,8 +3130,12 @@ private:
                     0, static_cast<std::int64_t>(std::floor(
                            (beat - event.beat - 15.0 * tempoRatio - lookback) /
                            pattern.lengthBeats)) - 1);
-                const auto lastCycle = static_cast<std::int64_t>(
+                auto lastCycle = static_cast<std::int64_t>(
                     std::floor((beat - event.beat) / pattern.lengthBeats));
+                if (pattern.untilCycles > 0)
+                    lastCycle = std::min(
+                        lastCycle,
+                        static_cast<std::int64_t>(pattern.untilCycles) - 1);
                 for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
                     const double baseEventBeat =
                         static_cast<double>(cycle) * pattern.lengthBeats + event.beat;

@@ -68,6 +68,8 @@ inline std::pair<std::string, std::string> portableSynthGrouping(
     if (name == "CustomTone")
         return {"Waveforms", "Custom oscillator voices"};
     const auto lowered = catalogLower(name);
+    if (lowered.rfind("jazzkit", 0) == 0)
+        return {"Drums & Percussion", "Jazz Kit"};
     const auto has = [&lowered](std::string_view token) {
         return lowered.find(token) != std::string::npos;
     };
@@ -125,6 +127,26 @@ inline std::pair<std::string, std::string> portableSynthGrouping(
         has("osc") || has("triangle"))
         return {"Waveforms", "Custom oscillators"};
     return {"User Synths", "Custom SynthDefs"};
+}
+
+inline std::string portableSynthDisplayLabel(std::string_view name) {
+    static constexpr std::array<
+        std::pair<std::string_view, std::string_view>, 9> jazzLabels{{
+        {"JazzKitKick", "Kick"},
+        {"JazzKitBrushTap", "Brush snare tap"},
+        {"JazzKitBrushSweep", "Brush sweep"},
+        {"JazzKitClosedHat", "Closed brush hat"},
+        {"JazzKitOpenHat", "Open brush hat"},
+        {"JazzKitRide", "Ride cymbal"},
+        {"JazzKitCrossStick", "Cross-stick"},
+        {"JazzKitRackTom", "Rack tom"},
+        {"JazzKitFloorTom", "Floor tom"}
+    }};
+    for (const auto& item : jazzLabels) {
+        if (name == item.first)
+            return std::string(item.second);
+    }
+    return std::string(name) + " [Portable SynthDef]";
 }
 
 inline std::string instrumentCategory(const CatalogEntry& entry) {
@@ -624,7 +646,7 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
             }))
             continue;
         result.push_back({CatalogKind::UserSynth, name,
-            name + " [Portable SynthDef]",
+            portableSynthDisplayLabel(name),
             "A precompiled user SynthDef loaded from Portable/SynthDefs/" +
                 name +
                 ".scsyndef. It does not load new UGen binaries; those require "

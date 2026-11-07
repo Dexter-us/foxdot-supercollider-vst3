@@ -1,0 +1,4 @@
+# Jazz Kit: low, round floor tom.
+tune 45.0 150.0 86.0 log
+decay 0.15 2.2 0.72 log
+body 0.0 1.0 0.95

@@ -1,0 +1,4 @@
+# Jazz Kit: mid/high rack tom.
+tune 85.0 260.0 148.0 log
+decay 0.1 1.6 0.48 log
+body 0.0 1.0 0.9

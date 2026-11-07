@@ -25,6 +25,9 @@ def read_cpp_source(path):
 source = read_cpp_source(sys.argv[1])
 processor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), 'processor.cpp')
 processor_source = read_cpp_source(processor_path)
+runtime_header_path = os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[1])), 'python_runtime.h')
+runtime_header_source = read_cpp_source(runtime_header_path)
 editor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
                            'win32_code_editor.cpp')
 editor_source = read_cpp_source(editor_path)
@@ -40,7 +43,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.168' not in cmake_source or
+if ('VERSION 0.4.170' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -112,6 +115,7 @@ for catalog_grouping in (
         'return {"Drums & Percussion", "Snare"};',
         'return {"Drums & Percussion", "Hi-hat"};',
         'return {"Drums & Percussion", "Toms"};',
+        'return {"Drums & Percussion", "Jazz Kit"};',
         'return {"Drums & Percussion", "Cymbals"};',
         'return {"Bass", "Acid bass"};',
         'return {"Bass", "Sub bass"};',
@@ -131,6 +135,7 @@ for catalog_grouping in (
         'return {"Drums & Percussion", "Snare"};',
         'return {"Drums & Percussion", "Hi-hat"};',
         'return {"Drums & Percussion", "Toms"};',
+        'return {"Drums & Percussion", "Jazz Kit"};',
         'return {"Drums & Percussion", "Cymbals"};',
         'return {"Bass", "Acid bass"};',
         'return {"Bass", "Sub bass"};',
@@ -141,6 +146,51 @@ for catalog_grouping in (
 if ('Precompiled percussion' in catalog_source or
         'Precompiled bass' in catalog_source):
     raise AssertionError('Portable SynthDefs still use generic precompiled buckets.')
+if 'portableSynthDisplayLabel(name)' not in catalog_source:
+    raise AssertionError('Portable SynthDef catalog display labels are missing.')
+jazz_synth_names = (
+    'JazzKitKick', 'JazzKitBrushTap', 'JazzKitBrushSweep',
+    'JazzKitClosedHat', 'JazzKitOpenHat', 'JazzKitRide',
+    'JazzKitCrossStick', 'JazzKitRackTom', 'JazzKitFloorTom')
+for jazz_synth_name in jazz_synth_names:
+    jazz_binary_path = os.path.join(
+        os.path.abspath(sys.argv[2]), 'SynthDefs',
+        jazz_synth_name + '.scsyndef')
+    jazz_controls_path = os.path.join(
+        os.path.abspath(sys.argv[2]), 'SynthDefs',
+        jazz_synth_name + '.controls')
+    if not os.path.isfile(jazz_binary_path) or not os.path.isfile(
+            jazz_controls_path):
+        raise AssertionError('Jazz Kit SynthDef or control sidecar is missing: ' +
+                             jazz_synth_name)
+    jazz_binary = open(jazz_binary_path, 'rb').read()
+    if not jazz_binary.startswith(b'SCgf') or jazz_synth_name.encode(
+            'ascii') not in jazz_binary:
+        raise AssertionError('Jazz Kit SynthDef is not a compiled named SC graph: ' +
+                             jazz_synth_name)
+    jazz_control_text = open(
+        jazz_controls_path, encoding='utf-8').read()
+    if len(jazz_control_text.encode('utf-8')) > 8192:
+        raise AssertionError('Jazz Kit controls sidecar exceeds the loader limit: ' +
+                             jazz_synth_name)
+    for control_line in jazz_control_text.splitlines():
+        control_line = control_line.split('#', 1)[0].strip()
+        if not control_line:
+            continue
+        control_fields = control_line.split()
+        if len(control_fields) not in (4, 5):
+            raise AssertionError('Malformed Jazz Kit control sidecar line: ' +
+                                 jazz_synth_name + ': ' + control_line)
+        control_name = control_fields[0]
+        control_min, control_max, control_default = map(
+            float, control_fields[1:4])
+        if not (control_min < control_max and
+                control_min <= control_default <= control_max):
+            raise AssertionError('Out-of-range Jazz Kit control: ' +
+                                 jazz_synth_name + ': ' + control_name)
+        if control_name.encode('ascii') not in jazz_binary:
+            raise AssertionError('Jazz Kit control missing from SynthDef: ' +
+                                 jazz_synth_name + ': ' + control_name)
 catalog_help = os.path.join(os.path.abspath(sys.argv[2]),
                             '179-editor-catalog-about.html')
 if not os.path.isfile(catalog_help):
@@ -167,10 +217,24 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                                   '196-limut-disperser-fuzz.py',
                          '201-sclork-insert-effects.py',
                          '211-limut-wow-tg-patterns.py',
-                         '212-unit-aware-time-patterns.py'):
+                         '212-unit-aware-time-patterns.py',
+                          '213-triangle-click-check.py',
+                          '214-jazz-brush-kit.py',
+                          '215-sardine-span-until.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
+for sardine_fragment in (
+        'int untilCycles = 0;',
+        'next.untilCycles = static_cast<std::uint16_t>(',
+        'if (pattern.untilCycles > 0)',
+        'lastCycle = std::min(',
+        'update.swingSeconds >> update.untilCycles',
+        '_until_cycles = _updates[_player]',
+        '_swing_seconds, _until_cycles)'):
+    if sardine_fragment not in source + runtime_header_source + processor_source:
+        raise AssertionError('Sardine finite-until scheduling is missing: ' +
+                             sardine_fragment)
 for snapshot_fragment in (
         'editorPlayerState_[player].store',
         'editorPlayerState_[player].load',
@@ -2574,6 +2638,9 @@ customToneRows = run_example(
 assert len(customToneRows) == 2
 assert customToneRows[0][0][0] == 'P'
 assert customToneRows[1][0][0] == 'S'
+jazzKitRows = run_example('214-jazz-brush-kit.py', jazz_synth_names)
+assert len(jazzKitRows) == 8
+assert [int(row[1]) for row in jazzKitRows] == list(range(8))
 missingUserSynth = run_error_script(
     'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
 assert 'not a loaded Portable/SynthDefs entry' in missingUserSynth
@@ -2950,7 +3017,7 @@ def test_embedded_synthdef():
 test_embedded_synthdef()
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
-assert len(legacy) == 1 and len(legacy[0]) == 23
+assert len(legacy) == 1 and len(legacy[0]) == 24
 namespace['tempo'](10000)
 assert namespace['_dexter_bpm'] == 10000.0
 namespace['tempo'](0.001)
@@ -2973,51 +3040,51 @@ assert legacy[0][14] == '0.01' and legacy[0][15] == '0.04'
 assert legacy[0][16] == '-' and legacy[0][17] == '-' and legacy[0][18] == '-'
 assert legacy[0][19] == '-' and legacy[0][20] == '-'
 example7 = run_example('07-independent-players.py')
-assert len(example7) == 2 and all(len(row) == 23 for row in example7)
+assert len(example7) == 2 and all(len(row) == 24 for row in example7)
 assert example7[0][5] == '6' and example7[1][5] == '2'
 assert example7[0][6] == '0' and example7[1][6] == '0'
 assert example7[0][10] == '0.0' and example7[0][11] == '0.0'
 example9 = run_example('09-foxdot-core.py')
-assert len(example9) == 2 and all(len(row) == 23 for row in example9)
+assert len(example9) == 2 and all(len(row) == 24 for row in example9)
 foxSaw, foxPulse = example9
 assert foxSaw[1] == '0' and foxSaw[3] == '96.0' and foxSaw[6] == '2'
 assert abs(float(foxSaw[7]) - 0.7) < 1e-6 and abs(float(foxSaw[8]) + 0.35) < 1e-6
 assert foxPulse[1] == '1' and foxPulse[3] == '96.0' and foxPulse[6] == '3'
 assert abs(float(foxPulse[7]) - 0.25) < 1e-6 and abs(float(foxPulse[8]) - 0.35) < 1e-6
 example10Rows = run_example('10-pattern-transformations.py')
-assert len(example10Rows) == 2 and all(len(row) == 23 for row in example10Rows)
+assert len(example10Rows) == 2 and all(len(row) == 24 for row in example10Rows)
 assert example10Rows[0][5] == '7' and example10Rows[0][6] == '2'
 assert example10Rows[1][5] == '4' and example10Rows[1][6] == '3'
 example11Rows = run_example('11-foxdot-pattern-literals.py')
-assert len(example11Rows) == 2 and all(len(row) == 23 for row in example11Rows)
+assert len(example11Rows) == 2 and all(len(row) == 24 for row in example11Rows)
 assert example11Rows[0][5] == '7' and example11Rows[1][5] == '2'
 example12Rows = run_example('12-pattern-arithmetic.py')
-assert len(example12Rows) == 2 and all(len(row) == 23 for row in example12Rows)
+assert len(example12Rows) == 2 and all(len(row) == 24 for row in example12Rows)
 assert example12Rows[0][5] == '5' and example12Rows[1][5] == '5'
 example13Rows = run_example('13-pattern-methods.py')
-assert len(example13Rows) == 5 and all(len(row) == 23 for row in example13Rows)
+assert len(example13Rows) == 5 and all(len(row) == 24 for row in example13Rows)
 assert [row[5] for row in example13Rows] == ['8', '5', '4', '4', '4']
 example14Rows = run_example('14-pattern-composition.py')
-assert len(example14Rows) == 2 and all(len(row) == 23 for row in example14Rows)
+assert len(example14Rows) == 2 and all(len(row) == 24 for row in example14Rows)
 assert [row[5] for row in example14Rows] == ['5', '7']
 example15Rows = run_example('15-pattern-arithmetic-operators.py')
-assert len(example15Rows) == 4 and all(len(row) == 23 for row in example15Rows)
+assert len(example15Rows) == 4 and all(len(row) == 24 for row in example15Rows)
 assert [row[5] for row in example15Rows] == ['4', '2', '4', '4']
 example16Rows = run_example('16-bounded-pattern-slices.py')
-assert len(example16Rows) == 3 and all(len(row) == 23 for row in example16Rows)
+assert len(example16Rows) == 3 and all(len(row) == 24 for row in example16Rows)
 assert [row[5] for row in example16Rows] == ['8', '4', '2']
 example17Rows = run_example('17-live-player-edits.py')
 assert len(example17Rows) == 2 and [row[1] for row in example17Rows] == ['0', '1']
 example18Rows = run_example('18-ui-mouse-controls.py')
-assert len(example18Rows) == 2 and all(len(row) == 23 for row in example18Rows)
+assert len(example18Rows) == 2 and all(len(row) == 24 for row in example18Rows)
 assert example18Rows[0][12] == '1' and example18Rows[0][13] == '0'
 assert example18Rows[1][12] == '0' and example18Rows[1][13] == '1'
 envelopeRows = run_example('19-envelope-controls.py')
-assert len(envelopeRows) == 2 and all(len(row) == 23 for row in envelopeRows)
+assert len(envelopeRows) == 2 and all(len(row) == 24 for row in envelopeRows)
 assert float(envelopeRows[0][14]) == 0.005 and float(envelopeRows[0][15]) == 0.2
 assert float(envelopeRows[1][14]) == 0.04 and float(envelopeRows[1][15]) == 0.1
 timevarRows = run_example('20-timevar-controls.py')
-assert len(timevarRows) == 2 and all(len(row) == 23 for row in timevarRows)
+assert len(timevarRows) == 2 and all(len(row) == 24 for row in timevarRows)
 assert timevarRows[0][16] == 'v:0.15,0.45:4.0,4.0'
 assert timevarRows[1][17] == 'l:-0.8,0.8:8.0,8.0'
 assert timevarRows[1][18] == 'l:400.0,5000.0:8.0,8.0'
@@ -3150,6 +3217,47 @@ assert 'No unsupported constructs detected' in run_compatibility_check(
     'sus=seconds(linvar([0.2, 0.3], [4, 4])))\n'
     'p2 >> play("x-o-", dur=bars(P[0.25, 0.5]), '
     'pan=beats(var([-0.2, 0.2], [4, 4])))\n')
+sardineSpanRows, sardineSpanEvents = run_script(
+    'p1 >> saw([0, 2], dur=[0.5, 1.0], sus=[0.25, 0.75], '
+    'span=2, until=3)\n',
+    include_events=True)
+assert len(sardineSpanRows) == 1 and len(sardineSpanEvents) == 2
+assert abs(float(sardineSpanRows[0][4]) - 3.0) < 1e-9
+assert int(sardineSpanRows[0][-1]) == 3
+assert abs(float(sardineSpanEvents[0][1])) < 1e-9
+assert abs(float(sardineSpanEvents[0][2]) - 0.5) < 1e-9
+assert abs(float(sardineSpanEvents[1][1]) - 1.0) < 1e-9
+assert abs(float(sardineSpanEvents[1][2]) - 1.5) < 1e-9
+sardineSwingRows = run_script(
+    'p1 >> saw([0, 2], span=1.5, until=4)\nClock.swing(0.1)\n')
+assert int(sardineSwingRows[0][-1]) == 4
+assert abs(float(sardineSwingRows[0][22]) - 0.1) < 1e-9
+sardineSampleRows, _, sardineSampleEvents = run_script(
+    'p1 >> play("x o", dur=0.25, span=0.5, until=8)\n',
+    include_samples=True, include_events=True)
+assert len(sardineSampleRows) == 1 and len(sardineSampleEvents) == 2, (
+    repr(sardineSampleRows) + ' / ' + repr(sardineSampleEvents))
+assert abs(float(sardineSampleRows[0][4]) - 0.5) < 1e-9
+assert int(sardineSampleRows[0][-1]) == 8
+assert abs(float(sardineSampleEvents[1][1]) - 0.25) < 1e-9
+assert abs(float(sardineSampleEvents[1][2]) - 0.125) < 1e-9
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> pluck([0, 2, 4], dur=0.25, span=1.5, until=4)\n'
+    'p2 >> play("x o", dur=0.25, span=0.5, until=8)\n')
+for invalid_timing, expected_error in (
+        ('p1 >> saw([0], span=0)\n', 'span must be from 0.125 to 8'),
+        ('p1 >> saw([0], span=9)\n', 'span must be from 0.125 to 8'),
+        ('p1 >> saw([0], span=True)\n', 'span must be a finite number'),
+        ('p1 >> saw([0], until=0)\n', 'until must be from 1 to 256'),
+        ('p1 >> saw([0], until=257)\n', 'until must be from 1 to 256'),
+        ('p1 >> saw([0], until=1.5)\n', 'until must be a whole number'),
+        ('p1 >> saw([0, 2, 4], span=8, until=256)\n',
+         'span times until is limited to 4096 total beats')):
+    invalid_output = run_error_script(invalid_timing)
+    if 'ERROR' not in invalid_output or expected_error not in invalid_output:
+        raise AssertionError('Sardine span/until must reject invalid values: ' +
+                             invalid_timing.strip() + ' -> ' + invalid_output)
+assert int(run_script('p1 >> saw([0])\n')[0][-1]) == 0
 assert 'riser' in run_error_script('Clock.bpm = riser(8)\n')
 assert 'riser' in run_error_script(
     'p1 >> saw([0], slide=riser(8))\n')
@@ -3195,7 +3303,7 @@ assert abs(float(foxdotDecayRows[0][4]) - 0.4) < 1e-9 and float(foxdotDecayRows[
 _, varDecayRows = run_script('p1 >> saw([0, 2], echo=0.5, decay=var([0.5, 1.5], [1, 1]), delay=linvar([0.1, 0.4], [1, 1]))\n', include_decay=True)
 assert varDecayRows[0][3] == 'v:0.5,1.5:1.0,1.0' and len(varDecayRows[0]) == 9
 assert varDecayRows[0][8] == 'l:0.1,0.4:1.0,1.0'
-assert len(effectRows) == 1 and len(effectRows[0]) == 23 and len(effectEvents) == 4
+assert len(effectRows) == 1 and len(effectRows[0]) == 24 and len(effectEvents) == 4
 assert effectRows[0][19] == 'v:0.1,0.5:1.0,1.0'
 assert effectRows[0][20] == 'l:0.1,0.5:1.0,1.0'
 assert abs(float(effectEvents[0][7]) - 0.0) < 1e-9
@@ -3205,7 +3313,7 @@ assert abs(float(effectEvents[0][5]) - 0.01) < 1e-9 and abs(float(effectEvents[0
 assert abs(float(effectEvents[1][5]) - 0.01) < 1e-9 and abs(float(effectEvents[1][6]) - 0.06) < 1e-9
 assert abs(float(effectEvents[2][5]) - 0.03) < 1e-9 and abs(float(effectEvents[2][6]) - 0.1) < 1e-9
 effectExample = run_example('22-timevar-effects-envelopes.py')
-assert len(effectExample) == 2 and all(len(row) == 23 for row in effectExample)
+assert len(effectExample) == 2 and all(len(row) == 24 for row in effectExample)
 reverbRows, reverbEffects = run_script(open(os.path.join(sys.argv[2], '23-reverb-algorithms.py'), encoding='utf-8').read(), include_effects=True)
 assert len(reverbRows) == 3 and len(reverbEffects) == 3
 assert [int(row[2]) for row in reverbEffects] == [1, 2, 3]
@@ -3213,7 +3321,7 @@ assert [float(row[4]) for row in reverbEffects] == [0.65, 0.75, 0.8]
 assert [float(row[7]) for row in reverbEffects] == [15.0, 15.0, 25.0]
 assert all(abs(float(row[3]) - expected) < 1e-6 for row, expected in zip(reverbEffects, [0.2, 0.3, 0.25]))
 filterRows, filterControls = run_script('p1 >> saw([0, 2, 4, 6], lpf=linvar([300, 3000], [2, 2]), lpr=var([0.35, 0.7], [2, 2]), hpf=var([0, 150], [2, 2]), hpr=0.8, bpf=linvar([500, 1200], [2, 2]), bpr=0.5)\n', include_filters=True)
-assert len(filterRows) == 1 and len(filterRows[0]) == 23
+assert len(filterRows) == 1 and len(filterRows[0]) == 24
 assert len(filterControls) == 1 and len(filterControls[0]) == 14
 assert filterControls[0][0:2] == ['F', '0']
 assert filterControls[0][8] == 'l:300.0,3000.0:2.0,2.0'
@@ -3288,7 +3396,7 @@ assert '0.49 beats or more' in run_error_script(
 assert '0.49 beats or more' in run_error_script(
     'Clock.swing(0.1)\nClock.bpm = linvar([80, 400], 8)\np1 >> sine([0])\n')
 swingRows = run_script('Clock.bpm = 120\nClock.swing()\np1 >> triangle([0, 2], dur=0.5)\n')
-assert len(swingRows[0]) == 23 and abs(float(swingRows[0][22]) - 0.1) < 1e-9
+assert len(swingRows[0]) == 24 and abs(float(swingRows[0][22]) - 0.1) < 1e-9
 swingAfterPlayerRows = run_script(
     'p1 >> triangle([0, 2], dur=0.5)\nClock.swing(0.05)\n')
 assert abs(float(swingAfterPlayerRows[0][22]) - 0.05) < 1e-9
@@ -3413,7 +3521,7 @@ assert 'No unsupported constructs detected' in run_compatibility_check(example30
 mutedExampleRows, mutedExampleCommands = run_script(example30Muted, include_mutes=True)
 assert len(mutedExampleRows) == 2 and mutedExampleCommands == [['M', '1', '1']]
 example8 = run_example('08-synths-and-controls.py')
-assert len(example8) == 2 and all(len(row) == 23 for row in example8)
+assert len(example8) == 2 and all(len(row) == 24 for row in example8)
 p1, p2 = example8
 assert p1[1] == '0' and p1[6] == '1' and abs(float(p1[7]) - 0.7) < 1e-6
 assert abs(float(p1[8]) + 0.4) < 1e-6 and p1[9] == '5000.0'
@@ -3743,6 +3851,8 @@ for filename in os.listdir(sys.argv[2]):
                 'SCLOrkCrossoverDistortionFX')
         if filename == '199-limut-compressor.py':
             example_names = ('LimutCompressor',)
+        if filename == '214-jazz-brush-kit.py':
+            example_names = jazz_synth_names
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)

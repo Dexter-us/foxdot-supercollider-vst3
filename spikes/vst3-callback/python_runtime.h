@@ -91,6 +91,7 @@ struct PythonPlayerUpdate {
     bool stopped = false;
     double bpm = 120.0;
     double lengthBeats = 1.0;
+    int untilCycles = 0;
     int synthIndex = 0;
     int playerEffectUserIndex = -1;
     double synthRate = 0.0;

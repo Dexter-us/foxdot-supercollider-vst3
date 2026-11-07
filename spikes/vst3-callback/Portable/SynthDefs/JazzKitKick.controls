@@ -1,0 +1,6 @@
+# Jazz Kit: soft, tuned kick; native amp/pan are also available.
+tune 35.0 82.0 48.0 log
+decay 0.12 0.9 0.34 log
+body 0.0 1.0 0.82
+knock 0.0 0.35 0.08
+shell 0.0 0.5 0.12
