@@ -1,6 +1,8 @@
 0.4.172 replaces the noise-forward JazzKitKick with a warmer low kick and
-retains the earlier texture as JazzKitBrushKick. Examples 217–218 demonstrate
-all ten JazzKit voices across two arrangements that fit the eight-player limit.
+retains the earlier texture as JazzKitBrushKick. Find the two complete-kit demos
+at Portable/217-jazz-kit-core-groove.py and Portable/218-jazz-kit-kick-compare.py.
+Together they demonstrate all ten JazzKit voices across two arrangements that
+fit the eight-player limit.
 
 0.4.159 adds LimutCompressor as an insert under Dynamics and adds a separate
 Waveforms category for sine, saw, pulse and triangle. The LimutFX UGen pack also
