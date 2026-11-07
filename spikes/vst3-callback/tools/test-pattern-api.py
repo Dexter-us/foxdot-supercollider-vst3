@@ -29,6 +29,22 @@ checker_end = source.find(')PY";', checker_start)
 if checker_end < 0:
     raise SystemExit('Could not find the end of the compatibility checker')
 compatibility_checker = source[checker_start:checker_end]
+processor_source = open(
+    os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
+                 'processor.cpp'),
+    encoding='utf-8', errors='replace').read()
+for wow_fragment in (
+        'bool smoothNoise = false;',
+        'double noisePeriod = 0.0;',
+        "token[0] != 'w'",
+        "const bool smoothNoise = token[0] == 'w';",
+        'result.smoothNoise = smoothNoise;',
+        'if (control.smoothNoise)',
+        '951.135664',
+        'bnoise(position * 2.3)'):
+    if wow_fragment not in processor_source:
+        raise SystemExit('Native smooth-noise wow control is missing: ' +
+                         wow_fragment)
 
 # Reconstruct and compile the exact streamed Python wrapper used by C++.
 wrapper_start = source.find('std::string makeEvaluationScript(')
@@ -113,6 +129,49 @@ assert dropPattern.at(30) == 0.0 and dropPattern.at(31.99) == 0.0
 assert dropPattern.at(32) == 1.0 and dropPattern.at(64) == 1.0
 customDrop = namespace['drop'](8, 1, high=8000, low=400)
 assert customDrop.wire() == 'v:8000.0,400.0:8.0,1.0'
+wowDefault = namespace['wow']()
+wowSameSeed = namespace['wow'](seed=0)
+wowOtherSeed = namespace['wow'](seed=1)
+assert len(wowDefault.values) == 2 and wowDefault.values == [-0.3, 0.3]
+assert wowDefault.wire() == 'w:-0.3,0.3:2.0:0'
+assert wowDefault.wire() == wowSameSeed.wire()
+assert wowDefault.wire() != wowOtherSeed.wire()
+assert abs(wowDefault.at(0.0) - (-0.1)) < 1e-12
+assert all(-0.3 <= wowDefault.at(beat) <= 0.3
+           for beat in (0.0, 0.125, 0.5, 1.0, 2.0, 12.0))
+assert wowDefault.at(0.75) == wowSameSeed.at(0.75)
+assert wowDefault.at(0.75) != wowOtherSeed.at(0.75)
+assert namespace['wow'](amount=0.2, center=0.5).values == [0.3, 0.7]
+tgDefault = namespace['tg']()
+assert tgDefault.wire() == 'v:1.0,0.0:0.125,0.125'
+assert tgDefault.at(0) == 1.0 and tgDefault.at(0.124) == 1.0
+assert tgDefault.at(0.125) == 0.0 and tgDefault.at(0.25) == 1.0
+assert namespace['tg'](0.5, high=0.8, low=0.1).wire() == 'v:0.8,0.1:0.5,0.5'
+for badWow in ((-0.1, 2), (0.3, 0), (0.3, 0.1), (0.3, 4097),
+               (True, 2), (float('inf'), 2), (0.3, 2, True)):
+    try:
+        if len(badWow) == 2:
+            namespace['wow'](badWow[0], badWow[1])
+        elif len(badWow) == 3:
+            namespace['wow'](badWow[0], badWow[1], badWow[2])
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('wow must reject invalid or unbounded arguments')
+for badTg in (0, -1, 4097, True, float('nan')):
+    try:
+        namespace['tg'](badTg)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('tg must reject invalid or unbounded step durations')
+for badSeed in (True, 1.5, 2147483648):
+    try:
+        namespace['wow'](seed=badSeed)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('wow must reject invalid seeds')
 for badDuration in (0, -1, 4096.001, True, float('inf')):
     try:
         namespace['riser'](badDuration)
@@ -603,8 +662,23 @@ dropRows = run_script(
     'cutoff=drop(30, 2, high=8000, low=400))\n')
 assert len(dropRows) == 1 and dropRows[0][16] == 'v:0.4,0.02:30.0,2.0'
 assert dropRows[0][18] == 'v:8000.0,400.0:30.0,2.0'
+wowRows = run_script(
+    'p1 >> saw([0, 2, 4], amp=wow(amount=0.18, center=0.32, period=4, seed=7), '
+    'pan=wow(amount=0.65, seed=9))\n')
+assert len(wowRows) == 1 and wowRows[0][16].startswith('w:')
+assert wowRows[0][17].startswith('w:')
+tgRows = run_script(
+    'p1 >> play("x-o-", dur=0.25, amp=tg(0.125, high=0.7, low=0.08))\n')
+assert len(tgRows) == 1 and tgRows[0][16] == 'v:0.7,0.08:0.125,0.125'
+wowEffectPlayers, wowEffectTokens = run_script(
+    'p1 >> saw([0, 2], effect="LimutPingPong", '
+    'fx_mix=wow(amount=0.2, center=0.5, seed=3))\n',
+    include_effect_modulations=True, user_synth_names=example_synth_names)
+assert len(wowEffectPlayers) == 1 and any(
+    any('w:' in token for token in row) for row in wowEffectTokens)
 assert 'No unsupported constructs detected' in run_compatibility_check(
-    'p1 >> saw([0, 2], amp=drop(30, 2), fx_mix=drop(16, 16))\n')
+    'p1 >> saw([0, 2], amp=drop(30, 2), fx_mix=drop(16, 16), '
+    'pan=wow(seed=1), cutoff=tg())\n')
 riserEffectPlayers, riserEffectTokens = run_script(
     'p1 >> saw([0, 2], effect="LimutPingPong", fx_mix=riser(8, 0.1, 0.8))\n',
     include_effect_modulations=True, user_synth_names=example_synth_names)
@@ -634,6 +708,10 @@ dropExample = run_example('210-limut-drop-patterns.py')
 assert len(dropExample) == 2 and all(len(row) == 23 for row in dropExample)
 assert dropExample[0][16] == 'v:0.3,0.02:30.0,2.0'
 assert dropExample[0][18] == 'v:8000.0,500.0:30.0,2.0'
+wowTgExample = run_example('211-limut-wow-tg-patterns.py')
+assert len(wowTgExample) == 2 and all(len(row) == 23 for row in wowTgExample)
+assert wowTgExample[0][16].startswith('w:')
+assert wowTgExample[1][16] == 'v:0.7,0.08:0.125,0.125'
 effectExample = run_example('22-timevar-effects-envelopes.py')
 assert len(effectExample) == 2 and all(len(row) == 23 for row in effectExample)
 reverbRows, reverbEffects = run_script(open(os.path.join(sys.argv[2], '23-reverb-algorithms.py'), encoding='utf-8').read(), include_effects=True)

@@ -40,11 +40,23 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.165' not in cmake_source or
+if ('VERSION 0.4.166' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
     raise AssertionError('Plugin, panel, and generated module versions are not unified.')
+for wow_fragment in (
+        'bool smoothNoise = false;',
+        'double noisePeriod = 0.0;',
+        "token[0] != 'w'",
+        "const bool smoothNoise = token[0] == 'w';",
+        'result.smoothNoise = smoothNoise;',
+        'if (control.smoothNoise)',
+        '951.135664',
+        'bnoise(position * 2.3)'):
+    if wow_fragment not in processor_source:
+        raise AssertionError('Native smooth-noise wow control is missing: ' +
+                             wow_fragment)
 for live_panel_fragment in (
         'L"Players"', 'L"Synths"', 'L"Effects"', 'L"Samples"',
         'refreshPlayersPanel()', 'renderLiveEffectsPanel()',
@@ -3033,6 +3045,26 @@ limutDropExample = run_example('210-limut-drop-patterns.py')
 assert len(limutDropExample) == 2
 assert limutDropExample[0][16] == 'v:0.3,0.02:30.0,2.0'
 assert limutDropExample[0][18] == 'v:8000.0,500.0:30.0,2.0'
+wowRows = run_script(
+    'p1 >> saw([0, 2, 4], amp=wow(amount=0.18, center=0.32, period=4, seed=7), '
+    'pan=wow(amount=0.65, seed=9))\n')
+assert len(wowRows) == 1 and wowRows[0][16].startswith('w:')
+assert wowRows[0][17].startswith('w:')
+tgRows = run_script(
+    'p1 >> play("x-o-", dur=0.25, amp=tg(0.125, high=0.7, low=0.08))\n')
+assert len(tgRows) == 1 and tgRows[0][16] == 'v:0.7,0.08:0.125,0.125'
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> saw([0, 2], amp=wow(seed=1), pan=tg())\n')
+wowEffectRows, wowEffectTokens = run_script(
+    'p1 >> saw([0, 2], effect="LimutPingPong", '
+    'fx_mix=wow(amount=0.2, center=0.5, seed=3))\n',
+    include_effect_control_vars=True, user_synth_names=('LimutPingPong',))
+assert len(wowEffectRows) == 1 and any(
+    any(token.startswith('w:') for token in row) for row in wowEffectTokens)
+limutWowTgExample = run_example('211-limut-wow-tg-patterns.py')
+assert len(limutWowTgExample) == 2
+assert limutWowTgExample[0][16].startswith('w:')
+assert limutWowTgExample[1][16] == 'v:0.7,0.08:0.125,0.125'
 assert 'riser' in run_error_script('Clock.bpm = riser(8)\n')
 assert 'riser' in run_error_script(
     'p1 >> saw([0], slide=riser(8))\n')

@@ -128,7 +128,7 @@ _COMPAT_CALLS = {
     'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys', 'klank',
     'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
     'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
-    'var', 'linvar', 'riser', 'drop', 'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
+    'var', 'linvar', 'riser', 'drop', 'wow', 'tg', 'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'Group', 'Master', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
     '__build_class__'
 }
@@ -5158,6 +5158,83 @@ def drop(on_beats=30.0, off_beats=2.0, high=1.0, low=0.0):
         raise ValueError('drop levels must be within +/-1000000')
     return _DexterTimeVar([high, low], [on_beats, off_beats], False)
 
+class _DexterWow(_DexterTimeVar):
+    """Seeded Limut-style smooth noise in a bounded control range."""
+    def __init__(self, low, high, period, seed):
+        _DexterTimeVar.__init__(self, [low, high], [period, period], False)
+        self.wowPeriod = period
+        self.wowSeed = seed
+
+    def wire(self):
+        token = ('w:' + str(self.values[0]) + ',' + str(self.values[1]) + ':' +
+                 str(self.wowPeriod) + ':' + str(self.wowSeed))
+        if len(token) > 256:
+            raise ValueError('wow control data exceeds the supported size')
+        return token
+
+    def _hash(self, value):
+        value = (value + 213.43254) ** 2
+        return ((value ** 4) % 951.135664) / 951.135664
+
+    def _bnoise(self, value):
+        integer = int(value)
+        fraction = value - integer
+        key = self._hash(integer)
+        return (fraction * (fraction - 1.0) *
+                ((16.0 * key - 4.0) * fraction * (fraction - 1.0) - 1.0))
+
+    def at(self, beat):
+        value = max(0.0, float(beat)) + self.wowSeed
+        noise = (self._bnoise(value / self.wowPeriod) * 2.0 +
+                 (1.0 - self._bnoise(value * 2.3 / self.wowPeriod))) / 3.0
+        return self.values[0] + (self.values[1] - self.values[0]) * noise
+
+def wow(amount=0.3, period=2.0, seed=0, center=0.0):
+    """Deterministic Limut-style smooth noise; seed defaults to repeatable zero."""
+    for raw, label in ((amount, 'amount'), (period, 'period'), (center, 'center')):
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise TypeError('wow ' + label + ' must be a finite number')
+    try:
+        amount, period, center = float(amount), float(period), float(center)
+    except (OverflowError, ValueError):
+        raise ValueError('wow values must be finite numbers')
+    if any(value != value or value in (float('inf'), float('-inf'))
+           for value in (amount, period, center)):
+        raise ValueError('wow values must be finite numbers')
+    if not 0.0 <= amount <= 1000000.0:
+        raise ValueError('wow amount must be between 0 and 1000000')
+    if not 0.125 <= period <= 4096.0:
+        raise ValueError('wow period must be between 0.125 and 4096 beats')
+    if abs(center) + amount > 1000000.0:
+        raise ValueError('wow output must stay within +/-1000000')
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError('wow seed must be a bounded integer')
+    if abs(seed) > 2147483647:
+        raise ValueError('wow seed must be within +/-2147483647')
+    return _DexterWow(center - amount, center + amount, period, seed)
+
+def tg(step_beats=0.125, high=1.0, low=0.0):
+    """Limut-style alternating trigger gate; each state lasts step_beats."""
+    raw_values = (step_beats, high, low)
+    names = ('step_beats', 'high', 'low')
+    values = []
+    for raw, label in zip(raw_values, names):
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise TypeError('tg ' + label + ' must be a finite number')
+        try:
+            value = float(raw)
+        except (OverflowError, ValueError):
+            raise ValueError('tg values must be finite numbers')
+        if value != value or value in (float('inf'), float('-inf')):
+            raise ValueError('tg values must be finite numbers')
+        values.append(value)
+    step_beats, high, low = values
+    if not 0.015625 <= step_beats <= 4096.0:
+        raise ValueError('tg step_beats must be between 1/64 and 4096 beats')
+    if abs(high) > 1000000.0 or abs(low) > 1000000.0:
+        raise ValueError('tg levels must be within +/-1000000')
+    return _DexterTimeVar([high, low], [step_beats, step_beats], False)
+
 class _DexterPVar:
     """A finite sequence of whole patterns selected over explicit beat spans."""
     def __init__(self, patterns, dur=4.0):
@@ -6230,6 +6307,13 @@ def _player_effect_control_values(effect, controls):
             normalizedValues = [normalized(value) for value in raw.values]
             normalizedVar = _DexterRiser(
                 raw.riseDuration, normalizedValues[0], normalizedValues[1])
+            values[index] = normalizedValues[0]
+            variables[index] = normalizedVar.wire()
+        elif isinstance(raw, _DexterWow):
+            normalizedValues = [normalized(value) for value in raw.values]
+            normalizedVar = _DexterWow(
+                normalizedValues[0], normalizedValues[1],
+                raw.wowPeriod, raw.wowSeed)
             values[index] = normalizedValues[0]
             variables[index] = normalizedVar.wire()
         elif isinstance(raw, _DexterTimeVar):

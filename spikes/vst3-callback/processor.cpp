@@ -1437,9 +1437,12 @@ private:
         bool active = false;
         bool linear = false;
         bool oneShot = false;
+        bool smoothNoise = false;
         std::size_t count = 0;
         std::array<double, 8> values{};
         std::array<double, 8> durations{};
+        double noisePeriod = 0.0;
+        double noiseSeed = 0.0;
     };
 
     struct PlayerEffectState {
@@ -1884,7 +1887,8 @@ private:
         if (token == "-")
             return true;
         if (token.size() > 256 || token.size() < 5 || token[1] != ':' ||
-            (token[0] != 'v' && token[0] != 'l' && token[0] != 'r'))
+            (token[0] != 'v' && token[0] != 'l' && token[0] != 'r' &&
+             token[0] != 'w'))
             return false;
         const auto middle = token.find(':', 2);
         if (middle == std::string::npos || middle == 2 || middle + 1 >= token.size())
@@ -1916,18 +1920,56 @@ private:
         std::size_t valueCount = 0;
         std::size_t durationCount = 0;
         const bool oneShot = token[0] == 'r';
-        if (!parseList(token.substr(2, middle - 2), values, valueCount,
-                       minimum, maximum, false) ||
-            !parseList(token.substr(middle + 1), durations, durationCount,
-                       0.0, 4096.0, true) ||
-            (durationCount != 1 && durationCount != valueCount) ||
+        const bool smoothNoise = token[0] == 'w';
+        double noisePeriod = 0.0;
+        double noiseSeed = 0.0;
+        if (smoothNoise) {
+            const auto seedSeparator = token.find(':', middle + 1);
+            if (seedSeparator == std::string::npos ||
+                seedSeparator + 1 >= token.size() ||
+                !parseList(token.substr(2, middle - 2), values, valueCount,
+                           minimum, maximum, false) ||
+                valueCount != 2)
+                return false;
+            try {
+                std::size_t usedPeriod = 0;
+                std::size_t usedSeed = 0;
+                noisePeriod = std::stod(
+                    token.substr(middle + 1, seedSeparator - middle - 1),
+                    &usedPeriod);
+                const auto periodText =
+                    token.substr(middle + 1, seedSeparator - middle - 1);
+                const auto seedText = token.substr(seedSeparator + 1);
+                noiseSeed = std::stod(seedText, &usedSeed);
+                if (usedPeriod != periodText.size() ||
+                    usedSeed != seedText.size() ||
+                    !std::isfinite(noisePeriod) || noisePeriod < 0.125 ||
+                    noisePeriod > 4096.0 || !std::isfinite(noiseSeed) ||
+                    std::abs(noiseSeed) > 2147483647.0 ||
+                    std::trunc(noiseSeed) != noiseSeed)
+                    return false;
+            } catch (...) {
+                return false;
+            }
+            durations[0] = noisePeriod;
+            durationCount = 1;
+        } else if (!parseList(token.substr(2, middle - 2), values, valueCount,
+                              minimum, maximum, false) ||
+                   !parseList(token.substr(middle + 1), durations, durationCount,
+                              0.0, 4096.0, true)) {
+            return false;
+        }
+        if ((durationCount != 1 && durationCount != valueCount) ||
             (oneShot && (valueCount != 2 || durationCount != 1)))
             return false;
         result.active = true;
-        result.linear = token[0] == 'l' || oneShot;
+        result.linear = token[0] == 'l' || oneShot || smoothNoise;
         result.oneShot = oneShot;
+        result.smoothNoise = smoothNoise;
         result.count = valueCount;
         result.values = values;
+        result.noisePeriod = noisePeriod;
+        result.noiseSeed = noiseSeed;
         for (std::size_t i = 0; i < valueCount; ++i)
             result.durations[i] = durations[durationCount == 1 ? 0 : i];
         return true;
@@ -1937,6 +1979,34 @@ private:
                                  float fallback) {
         if (!control.active || control.count == 0)
             return fallback;
+        if (control.smoothNoise) {
+            if (control.count != 2 || control.noisePeriod <= 0.0)
+                return fallback;
+            const double value = std::max(0.0, beat) + control.noiseSeed;
+            const auto hash = [](double index) {
+                double shifted = index + 213.43254;
+                shifted *= shifted;
+                return std::fmod(shifted * shifted * shifted * shifted,
+                                 951.135664) /
+                       951.135664;
+            };
+            const auto bnoise = [&hash](double input) {
+                const double integer = std::trunc(input);
+                const double fraction = std::fmod(input, 1.0);
+                const double key = hash(integer);
+                return fraction * (fraction - 1.0) *
+                       ((16.0 * key - 4.0) * fraction * (fraction - 1.0) -
+                        1.0);
+            };
+            const double position = value / control.noisePeriod;
+            const double noise =
+                (bnoise(position) * 2.0 +
+                 (1.0 - bnoise(position * 2.3))) /
+                3.0;
+            return static_cast<float>(
+                control.values[0] +
+                (control.values[1] - control.values[0]) * noise);
+        }
         double cycle = 0.0;
         for (std::size_t i = 0; i < control.count; ++i)
             cycle += control.durations[i];
