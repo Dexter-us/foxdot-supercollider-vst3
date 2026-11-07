@@ -67,6 +67,7 @@ constexpr int kPlayerControlLabelBaseId = 128;
 constexpr int kPlayerControlValueBaseId = 135;
 constexpr int kEffectChainItemDataBase = 100;
 constexpr int kEffectChainHeaderDataBase = 200;
+constexpr int kActiveEffectSummaryHeaderData = 3000;
 constexpr int kContextCatalogSynthBaseId = 2400;
 constexpr int kContextCatalogEffectBaseId = 2500;
 constexpr int kContextPanelInsertId = 2600;
@@ -1064,6 +1065,73 @@ private:
             SendMessageW(panelList_, LB_SETITEMDATA, index, itemData);
     }
 
+    struct PanelScrollAnchor {
+        int topIndex = 0;
+        int matchingLabelOccurrence = 0;
+        std::wstring label;
+        bool hasLabel = false;
+    };
+
+    std::wstring panelRowText(int row) const {
+        if (!panelList_ || row < 0)
+            return {};
+        const auto length = static_cast<int>(
+            SendMessageW(panelList_, LB_GETTEXTLEN, row, 0));
+        if (length == LB_ERR || length <= 0)
+            return {};
+        std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
+        const auto copied = static_cast<int>(SendMessageW(
+            panelList_, LB_GETTEXT, row,
+            reinterpret_cast<LPARAM>(text.data())));
+        if (copied == LB_ERR)
+            return {};
+        text.resize(static_cast<std::size_t>(copied));
+        return text;
+    }
+
+    PanelScrollAnchor capturePanelScrollAnchor() const {
+        PanelScrollAnchor anchor;
+        if (!panelList_)
+            return anchor;
+        anchor.topIndex = static_cast<int>(
+            SendMessageW(panelList_, LB_GETTOPINDEX, 0, 0));
+        if (anchor.topIndex == LB_ERR || anchor.topIndex < 0)
+            anchor.topIndex = 0;
+        anchor.label = panelRowText(anchor.topIndex);
+        if (anchor.label.empty())
+            return anchor;
+        anchor.hasLabel = true;
+        const int count = static_cast<int>(
+            SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+        for (int row = 0; row <= anchor.topIndex && row < count; ++row)
+            if (panelRowText(row) == anchor.label)
+                ++anchor.matchingLabelOccurrence;
+        --anchor.matchingLabelOccurrence;
+        return anchor;
+    }
+
+    void restorePanelScrollAnchor(const PanelScrollAnchor& anchor) const {
+        if (!panelList_)
+            return;
+        const int count = static_cast<int>(
+            SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+        if (count <= 0 || count == LB_ERR)
+            return;
+        int target = std::clamp(anchor.topIndex, 0, count - 1);
+        if (anchor.hasLabel) {
+            int occurrence = 0;
+            for (int row = 0; row < count; ++row) {
+                if (panelRowText(row) != anchor.label)
+                    continue;
+                if (occurrence++ == anchor.matchingLabelOccurrence) {
+                    target = row;
+                    break;
+                }
+            }
+        }
+        SendMessageW(panelList_, LB_SETTOPINDEX, target, 0);
+    }
+
     std::string catalogCategoryKey(const std::string& category) const {
         return std::to_string(selectedPanelTab()) + ":" + category;
     }
@@ -1100,11 +1168,32 @@ private:
         if (selected != LB_ERR) {
             const auto itemData = static_cast<int>(
                 SendMessageW(panelList_, LB_GETITEMDATA, selected, 0));
+            if (selectedPanelTab() == 2 &&
+                itemData == kActiveEffectSummaryHeaderData) {
+                const auto scrollAnchor = capturePanelScrollAnchor();
+                activeEffectSummaryExpanded_ =
+                    !activeEffectSummaryExpanded_;
+                renderPanelTab();
+                const int count = static_cast<int>(
+                    SendMessageW(panelList_, LB_GETCOUNT, 0, 0));
+                for (int row = 0; row < count; ++row) {
+                    if (static_cast<int>(SendMessageW(
+                            panelList_, LB_GETITEMDATA, row, 0)) !=
+                        kActiveEffectSummaryHeaderData)
+                        continue;
+                    SendMessageW(panelList_, LB_SETCURSEL, row, 0);
+                    break;
+                }
+                restorePanelScrollAnchor(scrollAnchor);
+                updatePlayerActionButtons();
+                return;
+            }
             const int headerPlayer =
                 itemData >= kEffectChainHeaderDataBase &&
                         itemData < kEffectChainHeaderDataBase + 8
                     ? itemData - kEffectChainHeaderDataBase : -1;
             if (headerPlayer >= 0) {
+                const auto scrollAnchor = capturePanelScrollAnchor();
                 const bool expanding =
                     !expandedEffectChains_[static_cast<std::size_t>(
                         headerPlayer)];
@@ -1132,6 +1221,7 @@ private:
                     SendMessageW(panelList_, LB_SETCURSEL, row, 0);
                     break;
                 }
+                restorePanelScrollAnchor(scrollAnchor);
                 updatePlayerActionButtons();
                 return;
             }
@@ -1144,6 +1234,7 @@ private:
             const auto key = catalogSubcategoryKey(group.first, group.second);
             const bool collapsed =
                 catalogSubcategoryCollapsed(group.first, group.second);
+            const auto scrollAnchor = capturePanelScrollAnchor();
             collapsedCatalogSubcategories_[key] = !collapsed;
             renderPanelTab();
             for (const auto& row : catalogSubcategoryHeaderRows_) {
@@ -1152,6 +1243,7 @@ private:
                     break;
                 }
             }
+            restorePanelScrollAnchor(scrollAnchor);
             updatePlayerActionButtons();
             return;
         }
@@ -1160,6 +1252,7 @@ private:
             const auto category = header->second;
             const auto key = catalogCategoryKey(category);
             const bool collapsed = catalogCategoryCollapsed(category);
+            const auto scrollAnchor = capturePanelScrollAnchor();
             collapsedCatalogCategories_[key] = !collapsed;
             renderPanelTab();
             for (const auto& row : catalogCategoryHeaderRows_) {
@@ -1168,6 +1261,7 @@ private:
                     break;
                 }
             }
+            restorePanelScrollAnchor(scrollAnchor);
         }
         updatePlayerActionButtons();
     }
@@ -1365,10 +1459,12 @@ private:
     void renderPanelTab() {
         if (!panelList_)
             return;
+        const int tab = selectedPanelTab();
+        const auto scrollAnchor = renderedPanelTab_ == tab
+            ? capturePanelScrollAnchor() : PanelScrollAnchor{};
         SendMessageW(panelList_, LB_RESETCONTENT, 0, 0);
         catalogCategoryHeaderRows_.clear();
         catalogSubcategoryHeaderRows_.clear();
-        const int tab = selectedPanelTab();
         ShowWindow(panelMuteButton_, tab == 0 ? SW_SHOW : SW_HIDE);
         ShowWindow(panelStopButton_, tab == 0 ? SW_SHOW : SW_HIDE);
         ShowWindow(panelSamplesButton_, tab == 3 ? SW_SHOW : SW_HIDE);
@@ -1408,6 +1504,8 @@ private:
             panelCatalog_.clear();
             renderSamplePanel();
         }
+        renderedPanelTab_ = tab;
+        restorePanelScrollAnchor(scrollAnchor);
         updatePlayerActionButtons();
     }
 
@@ -1461,7 +1559,8 @@ private:
         const auto externalNames = host_->editorExternalSynthNames();
         static constexpr std::array<const wchar_t*, 4> reverbs{
             L"none", L"Freeverb", L"Freeverb2", L"GVerb"};
-        bool foundAssignment = false;
+        std::array<std::wstring, 8> activeRows{};
+        std::size_t activeCount = 0;
         for (std::size_t index = 0; index < states.size(); ++index) {
             const auto& state = states[index];
             if (state.effectIndex < 0 && !state.echoEnabled &&
@@ -1471,7 +1570,6 @@ private:
                 !state.formantEnabled && !state.pshiftEnabled &&
                 !state.bitcrusherEnabled)
                 continue;
-            foundAssignment = true;
             std::wstring row = L"p" + std::to_wstring(index + 1) + L":";
             bool firstInsert = true;
             for (const auto effectIndex : state.effectIndices) {
@@ -1507,10 +1605,19 @@ private:
                     reverbs[static_cast<std::size_t>(state.reverbIndex)]);
             if (!state.active)
                 row += L" [tail/idle]";
-            addPanelRow(row);
+            activeRows[activeCount++] = std::move(row);
         }
-        if (!foundAssignment)
-            addPanelRow(L"No player effects are active.");
+        if (activeCount == 0)
+            return;
+        addPanelRow(std::wstring(activeEffectSummaryExpanded_
+                                     ? L"[-] Active player effect status ("
+                                     : L"[+] Active player effect status (") +
+                    std::to_wstring(activeCount) + L")",
+                    kActiveEffectSummaryHeaderData);
+        if (!activeEffectSummaryExpanded_)
+            return;
+        for (std::size_t index = 0; index < activeCount; ++index)
+            addPanelRow(std::wstring(L"    ") + activeRows[index]);
     }
 
     void refreshEffectsPanel() {
@@ -1656,6 +1763,7 @@ private:
             updatePlayerControlSliders(states);
             return;
         }
+        const auto scrollAnchor = capturePanelScrollAnchor();
         int selectedItemData = -1;
         const int selectedItem = static_cast<int>(
             SendMessageW(panelList_, LB_GETCURSEL, 0, 0));
@@ -1755,6 +1863,7 @@ private:
                 break;
             }
         }
+        restorePanelScrollAnchor(scrollAnchor);
         updatePlayerActionButtons();
     }
 
@@ -2938,6 +3047,8 @@ private:
     bool panelPlayersInitialized_ = false;
     bool panelEffectsInitialized_ = false;
     bool panelSynthsInitialized_ = false;
+    bool activeEffectSummaryExpanded_ = false;
+    int renderedPanelTab_ = -1;
     std::vector<std::string> lastPanelSynthNames_;
     dexter::editor::CatalogEntry dragCatalogEntry_{};
     POINT catalogDragOrigin_{};

@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.167' not in cmake_source or
+if ('VERSION 0.4.168' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -95,6 +95,9 @@ for live_panel_fragment in (
         '179-editor-catalog-about.html',
         'L"Bits"', 'L"Crush"', 'EditorPlayerControl::BitDepth',
         'EditorPlayerControl::CrushRate', 'editorPlayerControlAvailable(',
+        'capturePanelScrollAnchor()', 'restorePanelScrollAnchor(',
+        'LB_GETTOPINDEX', 'LB_SETTOPINDEX',
+        'Active player effect status', 'activeEffectSummaryExpanded_',
         'L"PShift"', 'EditorPlayerControl::PShift', '"pshift";',
         'index == 4 ? "bits"', 'index == 5 ? "crush"',
         'if (state.coarseEnabled)', 'if (state.formantEnabled)',
@@ -2802,6 +2805,10 @@ def test_embedded_synthdef():
         assert not any(name in ('MdaPiano', 'Decimator', 'PlayBuf') for name, _, _ in ugens), graph
     graphs.update(core_graphs)
     graphs.update(sample_graphs)
+    assert ('VarSaw', 3, 2) in graphs['DexterTone'], (
+        'the base triangle must use the band-limited symmetric VarSaw')
+    assert ('LFTri', 2, 2) not in graphs['DexterTone'], (
+        'the base triangle must not use the non-band-limited LFTri')
     graph_names_match = re.search(
         r'static constexpr auto kSynthGraphNames = std::array\{(.*?)\};',
         processor_source, re.S)
@@ -2920,6 +2927,7 @@ def test_embedded_synthdef():
                       b'DexterRipple'):
         assert ugen_name in generated_bytes, 'missing SuperCollider oscillator/send UGen ' + repr(ugen_name)
     generator_text = open(generator, encoding='utf-8').read()
+    assert 'ugen("VarSaw", 2, [(0, 1), (-1, 0), (-1, 3)], [2])' in generator_text
     assert 'ugen("LFSaw", 2, [(1, 0), (-1, 0)], [2])' in generator_text
     assert 'ugen("BinaryOpUGen", 2, [(11, 0), (10, 0)], [2], 0)' in generator_text
     assert 'ugen("BinaryOpUGen", 2, [(12, 0), (9, 0)], [2], 0)' in generator_text
@@ -3133,6 +3141,8 @@ assert abs(float(unitTimeEvents[1][1]) - 0.5) < 1e-9
 assert abs(float(unitTimeEvents[1][2]) - 0.425) < 1e-9
 unitTimeExample = run_example('212-unit-aware-time-patterns.py')
 assert len(unitTimeExample) == 2
+triangleClickExample = run_example('213-triangle-click-check.py')
+assert len(triangleClickExample) == 2
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'Clock.bpm = 120\n'
     'p1 >> saw(PRand([0, 2], length=4, seed=1), '
