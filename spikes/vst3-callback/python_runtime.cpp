@@ -128,7 +128,8 @@ _COMPAT_CALLS = {
     'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys', 'klank',
     'feel', 'glass', 'soft', 'quin', 'space', 'scratch', 'creep',
     'snick', 'swell', 'razz', 'sitar', 'star', 'karp',
-    'var', 'linvar', 'riser', 'drop', 'wow', 'tg', 'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
+    'var', 'linvar', 'beats', 'seconds', 'bars', 'riser', 'drop', 'wow', 'tg',
+    'Clock', 'Seed', 'Scale', 'Root', 'PGroup',
     'Player', 'PlayerPattern', 'Group', 'Master', 'MouseX', 'MouseY', 'userSynth', 'DiskIn', 'VDiskIn', 'DiskOut',
     '__build_class__'
 }
@@ -5361,6 +5362,97 @@ class _DexterPVar:
 def Pvar(patterns, dur=4.0):
     """Switch between finite note or sample phrases after bounded beat spans."""
     return _DexterPVar(patterns, dur)
+
+def _time_unit_number(value, factor, name):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(name + ' expects finite numeric values')
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        raise ValueError(name + ' values must be finite')
+    if (number != number or number in (float('inf'), float('-inf')) or
+            abs(number) > 1000000.0):
+        raise ValueError(name + ' values must be finite and within +/-1000000')
+    converted = number * factor
+    if (converted != converted or
+            converted in (float('inf'), float('-inf')) or
+            abs(converted) > 4096.0):
+        raise ValueError(name + ' conversion must stay within +/-4096 beats')
+    return converted
+
+def _time_unit_transform(value, factor, name):
+    budget = [0]
+    def convert(item, depth):
+        if depth > 16:
+            raise ValueError(name + ' patterns are limited to 16 nested levels')
+        if isinstance(item, _DexterWow):
+            low = convert(item.values[0], depth + 1)
+            high = convert(item.values[1], depth + 1)
+            return _DexterWow(low, high, item.wowPeriod, item.wowSeed)
+        if isinstance(item, _DexterRiser):
+            start = convert(item.values[0], depth + 1)
+            end = convert(item.values[1], depth + 1)
+            return _DexterRiser(item.riseDuration, start, end)
+        if isinstance(item, _DexterTimeVar):
+            values = [convert(number, depth + 1) for number in item.values]
+            return _DexterTimeVar(values, item.durations, item.linear)
+        if isinstance(item, _FoxDotDurationGroup):
+            if len(item) > 256:
+                raise ValueError(name + ' duration groups are limited to 256 items')
+            return _FoxDotDurationGroup(
+                [convert(number, depth + 1) for number in item])
+        if isinstance(item, _FoxDotChord):
+            raise TypeError(name + ' does not accept chord groups as durations')
+        if isinstance(item, (list, tuple, _FoxDotFinitePattern)):
+            if len(item) > 256:
+                raise ValueError(name + ' patterns are limited to 256 items')
+            result = []
+            for child in item:
+                result.append(convert(child, depth + 1))
+            if isinstance(item, _FoxDotFinitePattern):
+                return _FoxDotFinitePattern(result)
+            return tuple(result) if isinstance(item, tuple) else result
+        budget[0] += 1
+        if budget[0] > 256:
+            raise ValueError(name + ' is limited to 256 total pattern values')
+        return _time_unit_number(item, factor, name)
+    return convert(value, 0)
+
+def beats(value):
+    """Mark a scalar, finite pattern, or var/linvar as beat-based."""
+    return _time_unit_transform(value, 1.0, 'beats')
+
+def seconds(value, bpm=None):
+    """Convert seconds to beats at a fixed BPM; use bpm= explicitly with a variable Clock."""
+    if bpm is None:
+        if _dexter_bpm_control is not None:
+            raise ValueError(
+                'seconds requires bpm= when Clock.bpm is time-varying')
+        bpm = _dexter_bpm
+    if isinstance(bpm, bool) or not isinstance(bpm, (int, float)):
+        raise TypeError('seconds bpm must be a fixed finite number')
+    try:
+        bpm = float(bpm)
+    except (OverflowError, ValueError):
+        raise ValueError('seconds bpm must be finite')
+    if (bpm != bpm or bpm in (float('inf'), float('-inf')) or
+            not 0.001 <= bpm <= 1000000.0):
+        raise ValueError('seconds bpm must be between 0.001 and 1000000')
+    return _time_unit_transform(value, bpm / 60.0, 'seconds')
+
+def bars(value, beats_per_bar=4.0):
+    """Convert bars to beats; the embedded Clock uses fixed 4/4 by default."""
+    if isinstance(beats_per_bar, bool) or not isinstance(beats_per_bar, (int, float)):
+        raise TypeError('bars beats_per_bar must be a finite number')
+    try:
+        beats_per_bar = float(beats_per_bar)
+    except (OverflowError, ValueError):
+        raise ValueError('bars beats_per_bar must be finite')
+    if (beats_per_bar != beats_per_bar or
+            beats_per_bar in (float('inf'), float('-inf')) or
+            not 0.25 <= beats_per_bar <= 64.0):
+        raise ValueError('bars beats_per_bar must be between 0.25 and 64')
+    return _time_unit_transform(value, beats_per_bar, 'bars')
 
 def _normalize_root_control(value):
     if not isinstance(value, _DexterTimeVar):

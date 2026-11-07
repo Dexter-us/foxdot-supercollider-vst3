@@ -40,7 +40,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.166' not in cmake_source or
+if ('VERSION 0.4.167' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -162,7 +162,9 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                                '194-pattern-metadata-helpers.py',
                                  '195-limut-pingpong-duck.py',
                                   '196-limut-disperser-fuzz.py',
-                                  '201-sclork-insert-effects.py'):
+                         '201-sclork-insert-effects.py',
+                         '211-limut-wow-tg-patterns.py',
+                         '212-unit-aware-time-patterns.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -3065,6 +3067,79 @@ limutWowTgExample = run_example('211-limut-wow-tg-patterns.py')
 assert len(limutWowTgExample) == 2
 assert limutWowTgExample[0][16].startswith('w:')
 assert limutWowTgExample[1][16] == 'v:0.7,0.08:0.125,0.125'
+unit_time_ns = namespace
+unit_time_ns['Clock'].bpm = 120
+assert unit_time_ns['beats'](0.25) == 0.25
+assert unit_time_ns['seconds'](0.25) == 0.5
+assert unit_time_ns['bars'](0.25) == 1.0
+assert unit_time_ns['bars'](0.5, beats_per_bar=3) == 1.5
+secondsPattern = unit_time_ns['seconds'](
+    unit_time_ns['P'][0.25, 0.5], bpm=120)
+assert list(secondsPattern) == [0.5, 1.0]
+secondsRandom = unit_time_ns['seconds'](
+    unit_time_ns['PWhite'](0.25, 0.5, length=16, seed=33), bpm=120)
+assert len(secondsRandom) == 16 and all(0.5 <= value <= 1.0
+                                       for value in secondsRandom)
+secondsLinvar = unit_time_ns['seconds'](
+    unit_time_ns['linvar']([0.25, 0.75], [4, 4]), bpm=120)
+assert secondsLinvar.linear and secondsLinvar.values == [0.5, 1.5]
+assert secondsLinvar.durations == [4.0, 4.0]
+secondsWow = unit_time_ns['seconds'](
+    unit_time_ns['wow'](amount=0.1, center=0.3), bpm=120)
+assert all(abs(actual - expected) < 1e-9
+           for actual, expected in zip(secondsWow.values, [0.4, 0.8]))
+try:
+    unit_time_ns['seconds'](0.25, bpm=unit_time_ns['var']([90, 120], [4, 4]))
+except TypeError:
+    pass
+else:
+    raise AssertionError('seconds must require a fixed conversion BPM')
+unit_time_ns['Clock'].bpm = unit_time_ns['var']([90, 120], [4, 4])
+try:
+    unit_time_ns['seconds'](0.25)
+except ValueError as error:
+    assert 'bpm=' in str(error)
+else:
+    raise AssertionError('seconds without bpm must reject time-varying tempo')
+assert unit_time_ns['seconds'](0.25, bpm=120) == 0.5
+unit_time_ns['Clock'].bpm = 120
+for bad_time in (True, float('inf'), 1e9):
+    try:
+        unit_time_ns['beats'](bad_time)
+    except (TypeError, ValueError):
+        pass
+    else:
+        raise AssertionError('unit helpers must reject invalid/unbounded values')
+try:
+    unit_time_ns['bars'](1, beats_per_bar=0)
+except ValueError:
+    pass
+else:
+    raise AssertionError('bars must reject a nonpositive meter length')
+try:
+    unit_time_ns['beats']([[0.25] * 128, [0.5] * 129])
+except ValueError:
+    pass
+else:
+    raise AssertionError('unit helpers must enforce the 256-item total cap')
+unitTimeRows, unitTimeEvents = run_script(
+    'Clock.bpm = 120\n'
+    'p1 >> pluck([0, 2], dur=seconds(P[0.25, 0.5]), '
+    'sus=seconds(linvar([0.2, 0.3], [4, 4])))\n',
+    include_events=True)
+assert len(unitTimeRows) == 1 and len(unitTimeEvents) == 2
+assert abs(float(unitTimeEvents[0][2]) - 0.4) < 1e-9
+assert abs(float(unitTimeEvents[1][1]) - 0.5) < 1e-9
+assert abs(float(unitTimeEvents[1][2]) - 0.425) < 1e-9
+unitTimeExample = run_example('212-unit-aware-time-patterns.py')
+assert len(unitTimeExample) == 2
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'Clock.bpm = 120\n'
+    'p1 >> saw(PRand([0, 2], length=4, seed=1), '
+    'dur=seconds(PWhite(0.25, 0.5, length=4, seed=2)), '
+    'sus=seconds(linvar([0.2, 0.3], [4, 4])))\n'
+    'p2 >> play("x-o-", dur=bars(P[0.25, 0.5]), '
+    'pan=beats(var([-0.2, 0.2], [4, 4])))\n')
 assert 'riser' in run_error_script('Clock.bpm = riser(8)\n')
 assert 'riser' in run_error_script(
     'p1 >> saw([0], slide=riser(8))\n')
