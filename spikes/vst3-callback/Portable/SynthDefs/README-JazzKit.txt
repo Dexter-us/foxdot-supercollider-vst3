@@ -26,3 +26,9 @@ Compile the source once with sclang from this folder:
 
 The source writes one .scsyndef per voice next to itself. Example 214 uses the
 embedded FoxDot-style userSynth() API and the .controls ranges.
+
+Each SynthDef defaults dexterAutoFree to 2, preserving normal one-shot
+SynthDef behavior in SuperCollider/FoxDot. The VST recognizes this optional
+control and sets it to 0 because the plugin owns graph lifetime; this prevents
+one-shot envelopes from freeing a graph while the VST still holds its pointer.
+Recompile JazzKit.sc after changing this lifecycle control.

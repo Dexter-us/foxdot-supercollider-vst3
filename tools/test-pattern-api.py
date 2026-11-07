@@ -28,6 +28,9 @@ processor_source = read_cpp_source(processor_path)
 runtime_header_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'python_runtime.h')
 runtime_header_source = read_cpp_source(runtime_header_path)
+sardine_gate_header_path = os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[1])), 'sardine_pattern_gates.h')
+sardine_gate_header_source = read_cpp_source(sardine_gate_header_path)
 editor_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),
                            'win32_code_editor.cpp')
 editor_source = read_cpp_source(editor_path)
@@ -43,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.170' not in cmake_source or
+if ('VERSION 0.4.171' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -168,6 +171,9 @@ for jazz_synth_name in jazz_synth_names:
             'ascii') not in jazz_binary:
         raise AssertionError('Jazz Kit SynthDef is not a compiled named SC graph: ' +
                              jazz_synth_name)
+    if b'dexterAutoFree' not in jazz_binary:
+        raise AssertionError('Jazz Kit SynthDef lacks the host lifecycle control: ' +
+                             jazz_synth_name)
     jazz_control_text = open(
         jazz_controls_path, encoding='utf-8').read()
     if len(jazz_control_text.encode('utf-8')) > 8192:
@@ -220,7 +226,8 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                          '212-unit-aware-time-patterns.py',
                           '213-triangle-click-check.py',
                           '214-jazz-brush-kit.py',
-                          '215-sardine-span-until.py'):
+                      '215-sardine-span-until.py',
+                      '216-sardine-chance-loaf-on.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -230,8 +237,8 @@ for sardine_fragment in (
         'if (pattern.untilCycles > 0)',
         'lastCycle = std::min(',
         'update.swingSeconds >> update.untilCycles',
-        '_until_cycles = _updates[_player]',
-        '_swing_seconds, _until_cycles)'):
+        '_until_cycles, _chance_probability',
+        '_swing_seconds, _until_cycles, _chance_probability'):
     if sardine_fragment not in source + runtime_header_source + processor_source:
         raise AssertionError('Sardine finite-until scheduling is missing: ' +
                              sardine_fragment)
@@ -2485,7 +2492,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, include_tempo=False, user_synth_names=(), include_player_effect_values=False, include_effect_chains=False):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_samples=False, include_sample_controls=False, include_player_effects=False, include_synth_controls=False, include_effect_control_vars=False, include_group_controls=False, include_tempo=False, user_synth_names=(), include_player_effect_values=False, include_effect_chains=False, include_gates=False):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -2508,6 +2515,9 @@ def run_script(script_text, include_events=False, include_effects=False, include
         player_effect_values = [line.split('\t') for line in lines if line.startswith('W\t')]
         synth_control_rows = [line.split('\t') for line in lines if line.startswith('S\t')]
         effect_control_var_rows = [line.split('\t') for line in lines if line.startswith('X\t')]
+        gate_rows = [line.split('\t') for line in lines if line.startswith('C\t')]
+        if include_gates:
+            return player_rows, gate_rows
         if include_effect_chains:
             return player_rows, [line.split('\t') for line in lines if line.startswith('J\t')]
         filter_rows = [line.split('\t') for line in lines if line.startswith('F\t')]
@@ -3244,6 +3254,71 @@ assert abs(float(sardineSampleEvents[1][2]) - 0.125) < 1e-9
 assert 'No unsupported constructs detected' in run_compatibility_check(
     'p1 >> pluck([0, 2, 4], dur=0.25, span=1.5, until=4)\n'
     'p2 >> play("x o", dur=0.25, span=0.5, until=8)\n')
+sardineGateRows, sardineGateControls = run_script(
+    'Seed.default = 77\n'
+    'p1 >> saw([0, 2], chance="sometimes", loaf=4, on=(1, 3))\n',
+    include_gates=True)
+assert len(sardineGateRows) == 1 and len(sardineGateControls) == 1
+assert float(sardineGateControls[0][2]) == 0.5
+assert int(sardineGateControls[0][3]) == 77
+assert int(sardineGateControls[0][4]) == 4
+assert int(sardineGateControls[0][5]) == 5
+alwaysGateRows, alwaysGateControls = run_script(
+    'p1 >> play("x-o", chance="always", on=4)\n',
+    include_gates=True)
+assert float(alwaysGateControls[0][2]) == 1.0
+assert int(alwaysGateControls[0][4]) == 4
+assert int(alwaysGateControls[0][5]) == 1
+neverGateRows, neverGateControls = run_script(
+    'p1 >> saw([0], chance="never", loaf=2)\n',
+    include_gates=True)
+assert float(neverGateControls[0][2]) == 0.0
+assert int(neverGateControls[0][4]) == 2
+assert int(neverGateControls[0][5]) == 3
+for invalid_gate, expected_gate_error in (
+        ('p1 >> saw([0], chance=1.1)\n', 'chance probability must be from 0 to 1'),
+        ('p1 >> saw([0], chance="sometimesish")\n', 'chance must be a Sardine preset'),
+        ('p1 >> saw([0], loaf=33)\n', 'loaf must be from 1 to 32 bars'),
+        ('p1 >> saw([0], loaf=4, on=5)\n', 'on bar positions must be within the loaf'),
+        ('p1 >> saw([0], on=0)\n', 'on without loaf must be from 1 to 32 bars')):
+    invalid_gate_output = run_error_script(invalid_gate)
+    if 'ERROR' not in invalid_gate_output or expected_gate_error not in invalid_gate_output:
+        raise AssertionError('Sardine chance/loaf/on must reject invalid inputs: ' +
+                             invalid_gate.strip() + ' -> ' + invalid_gate_output)
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'Seed.default = 21\n'
+    'p1 >> play("x-o-", chance="often", loaf=4, on=(1, 3))\n'
+    'p2 >> pluck([0, 4, 7], chance=0.25, loaf=2, on=1)\n')
+for sardine_gate_fragment in (
+        'double chanceProbability = 1.0;',
+        'std::uint32_t chanceSeed = 0;',
+        "chanceRecord != 'C'",
+        'sardineEventPasses(double probability',
+        'pattern.chanceProbability',
+        'pattern.barOnMask',
+        "chance=None, loaf=None, on=None",
+        "'chance', 'loaf', 'on'"):
+    if sardine_gate_fragment not in (
+            source + runtime_header_source + processor_source +
+            sardine_gate_header_source):
+        raise AssertionError('Sardine chance/loaf/on scheduling is missing: ' +
+                             sardine_gate_fragment)
+for jazz_lifecycle_fragment in (
+        'hostManagedFreeControl',
+        'Graph_SetControl(created, userDefinition.hostManagedFreeControl, 0.0f)',
+        'synthControlIndex(loaded, "dexterAutoFree")'):
+    if jazz_lifecycle_fragment not in processor_source:
+        raise AssertionError('Jazz Kit graph lifecycle fix is missing: ' +
+                             jazz_lifecycle_fragment)
+if 'dexterAutoFree=2' not in open(
+        os.path.join(os.path.abspath(sys.argv[2]),
+                     'SynthDefs', 'JazzKit.sc'),
+        encoding='utf-8').read():
+    raise AssertionError('Jazz Kit must retain its standalone self-free default.')
+sardineGateExample = run_example('216-sardine-chance-loaf-on.py')
+assert len(sardineGateExample) == 2
+assert len(run_example('214-jazz-brush-kit.py',
+                       user_synth_names=jazz_synth_names)) == 8
 for invalid_timing, expected_error in (
         ('p1 >> saw([0], span=0)\n', 'span must be from 0.125 to 8'),
         ('p1 >> saw([0], span=9)\n', 'span must be from 0.125 to 8'),

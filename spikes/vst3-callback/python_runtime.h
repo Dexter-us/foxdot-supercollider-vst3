@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <type_traits>
@@ -92,6 +93,10 @@ struct PythonPlayerUpdate {
     double bpm = 120.0;
     double lengthBeats = 1.0;
     int untilCycles = 0;
+    double chanceProbability = 1.0;
+    std::uint32_t chanceSeed = 0;
+    std::uint16_t barLoaf = 0;
+    std::uint32_t barOnMask = 0;
     int synthIndex = 0;
     int playerEffectUserIndex = -1;
     double synthRate = 0.0;

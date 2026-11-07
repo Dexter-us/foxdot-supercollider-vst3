@@ -37,6 +37,7 @@
 #include "sc_pool_capacity.h"
 #include "user_synth_routing.h"
 #include "user_synth_controls.h"
+#include "sardine_pattern_gates.h"
 
 #include <algorithm>
 #include <array>
@@ -764,6 +765,10 @@ public:
                         next.lengthBeats = player.lengthBeats;
                         next.untilCycles = static_cast<std::uint16_t>(
                             player.untilCycles);
+                        next.chanceProbability = player.chanceProbability;
+                        next.chanceSeed = player.chanceSeed;
+                        next.barLoaf = player.barLoaf;
+                        next.barOnMask = player.barOnMask;
                         next.synthIndex = player.synthIndex;
                         next.playerEffectUserIndex = player.playerEffectUserIndex;
                         next.synthRate = static_cast<float>(player.synthRate);
@@ -1491,6 +1496,10 @@ private:
         double swingSeconds = 0.0;
         double lengthBeats = 1.0;
         std::uint16_t untilCycles = 0;
+        double chanceProbability = 1.0;
+        std::uint32_t chanceSeed = 0;
+        std::uint16_t barLoaf = 0;
+        std::uint32_t barOnMask = 0;
         int synthIndex = 0;
         int playerEffectUserIndex = -1;
         float synthRate = 0.0f;
@@ -1723,6 +1732,7 @@ private:
         int attackControl = -1;
         int releaseControl = -1;
         int sustainControl = -1;
+        int hostManagedFreeControl = -1;
         std::array<int, 7> effectControlIndices{};
         std::array<float, 7> effectControlMinimum{};
         std::array<float, 7> effectControlMaximum{{1, 1, 1, 1, 1, 1, 1}};
@@ -2518,6 +2528,12 @@ private:
             kAudioBusStride, kStereoSynthOutputBaseBus);
         Graph_SetControl(created, userDefinition.outControl,
                          static_cast<float>(outputBus));
+        // Jazz Kit definitions retain normal SynthDef self-free behavior for
+        // sclang/FoxDot, but the VST owns graph lifetime. Disable doneAction
+        // self-free when the SynthDef exposes this opt-in control so cached
+        // graph pointers never outlive a node that freed itself.
+        if (userDefinition.hostManagedFreeControl >= 0)
+            Graph_SetControl(created, userDefinition.hostManagedFreeControl, 0.0f);
         if (userDefinition.frequencyControl >= 0)
             Graph_SetControl(created, userDefinition.frequencyControl, 440.0f);
         if (userDefinition.amplitudeControl >= 0)
@@ -2985,6 +3001,11 @@ private:
                 for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
                     const double baseEventBeat =
                         static_cast<double>(cycle) * pattern.lengthBeats + note.beat;
+                    if (!dexter::sardineEventPasses(
+                            pattern.chanceProbability, pattern.chanceSeed,
+                            player, cycle, i, baseEventBeat, pattern.barLoaf,
+                            pattern.barOnMask))
+                        continue;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
                     const auto timing = clockNoteTiming(
@@ -3139,6 +3160,11 @@ private:
                 for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
                     const double baseEventBeat =
                         static_cast<double>(cycle) * pattern.lengthBeats + event.beat;
+                    if (!dexter::sardineEventPasses(
+                            pattern.chanceProbability, pattern.chanceSeed,
+                            player, cycle, i, baseEventBeat, pattern.barLoaf,
+                            pattern.barOnMask))
+                        continue;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
                     const auto timing = clockNoteTiming(
@@ -3955,6 +3981,8 @@ private:
             userDefinition.sustainControl = synthControlIndex(loaded, "sustain");
             if (userDefinition.sustainControl < 0)
                 userDefinition.sustainControl = synthControlIndex(loaded, "sus");
+            userDefinition.hostManagedFreeControl =
+                synthControlIndex(loaded, "dexterAutoFree");
             constexpr std::array<std::string_view, 7> effectControlNames{{
                 "vib", "depth", "lforate", "lfowidth", "rq", "fmod", "blur"}};
             for (std::size_t index = 0; index < effectControlNames.size(); ++index)

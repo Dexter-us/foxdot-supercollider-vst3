@@ -169,7 +169,7 @@ _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
                  'sitar', 'star', 'karp'}
 _COMPAT_WAVE_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff', 'echo', 'decay',
-    'span', 'until',
+    'span', 'until', 'chance', 'loaf', 'on',
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum',
     'vib', 'depth', 'vibdepth', 'slide', 'slidefrom', 'slidedelay',
     'bend', 'benddelay', 'pshift', 'bits', 'crush', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
@@ -184,7 +184,7 @@ _COMPAT_WAVE_KEYWORDS = {
 }
 _USER_SYNTH_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
-    'span', 'until',
+    'span', 'until', 'chance', 'loaf', 'on',
     'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'velocity',
     'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime',
     'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell',
@@ -201,7 +201,7 @@ _USER_SYNTH_KEYWORDS = {
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
-    'span', 'until',
+    'span', 'until', 'chance', 'loaf', 'on',
     'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate',
     'shape', 'drive', 'vib', 'depth', 'vibdepth', 'slide', 'slidefrom',
     'slidedelay', 'bend', 'benddelay', 'pshift', 'bits', 'crush', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect',
@@ -214,7 +214,7 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release',
     'fx_knee', 'fx_bits'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'span', 'until', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee', 'fx_bits'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'span', 'until', 'chance', 'loaf', 'on', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee', 'fx_bits'}
 _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'AirwindowsTapeDelay2': {
         'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'},
@@ -1246,8 +1246,8 @@ class _FoxDotClock:
         for _player in _dexter_updates:
             _update = _dexter_updates[_player]
             _dexter_updates[_player] = (
-                _update[:-2] + (_dexter_swing_seconds, _update[-1])
-                if len(_update) >= 2 else _update)
+                _update[:-6] + (_dexter_swing_seconds,) + _update[-5:]
+                if len(_update) >= 6 else _update)
     def clear(self):
         for _player in (p1, p2, p3, p4, p5, p6, p7, p8):
             _player.stop()
@@ -5571,6 +5571,69 @@ def _sardine_until(value):
         raise ValueError('until must be from 1 to 256 cycles')
     return value
 
+def _sardine_chance(value):
+    presets = {
+        'always': 1.0,
+        'almostalways': 0.9,
+        'often': 0.75,
+        'sometimes': 0.5,
+        'rarely': 0.25,
+        'almostnever': 0.1,
+        'never': 0.0,
+    }
+    if value is None:
+        return 1.0, 0
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key not in presets:
+            raise ValueError(
+                'chance must be a Sardine preset or a probability from 0 to 1')
+        probability = presets[key]
+    else:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError('chance must be a preset name or a number from 0 to 1')
+        probability = float(value)
+        if (probability != probability or
+                probability in (float('inf'), float('-inf')) or
+                not 0.0 <= probability <= 1.0):
+            raise ValueError('chance probability must be from 0 to 1')
+    seed = (_random_pattern_seed(None, 'chance')
+            if 0.0 < probability < 1.0 else 0)
+    return probability, seed
+
+def _sardine_bar_gate(loaf, on):
+    if loaf is None and on is None:
+        return 0, 0
+    if loaf is None:
+        # Sardine's on-only form repeats on every Nth bar. Upstream uses
+        # the first tuple item as N when a tuple is supplied without loaf.
+        values = on if isinstance(on, (tuple, list)) else (on,)
+        if not values:
+            raise ValueError('on must contain at least one bar number')
+        period = values[0]
+        if isinstance(period, bool) or not isinstance(period, int):
+            raise TypeError('on without loaf must be a whole-number period')
+        if not 1 <= period <= 32:
+            raise ValueError('on without loaf must be from 1 to 32 bars')
+        return period, 1
+    if isinstance(loaf, bool) or not isinstance(loaf, int):
+        raise TypeError('loaf must be a whole number of bars')
+    if not 1 <= loaf <= 32:
+        raise ValueError('loaf must be from 1 to 32 bars')
+    if on is None:
+        return loaf, (1 << loaf) - 1
+    values = on if isinstance(on, (tuple, list)) else (on,)
+    if not values or len(values) > 32:
+        raise ValueError('on must select 1 to 32 bars')
+    mask = 0
+    for bar in values:
+        if isinstance(bar, bool) or not isinstance(bar, int):
+            raise TypeError('on bar positions must be whole numbers')
+        if not 1 <= bar <= loaf:
+            raise ValueError('on bar positions must be within the loaf')
+        mask |= 1 << (bar - 1)
+    return loaf, mask
+
 class PlayerPattern:
     def __init__(self, notes, step=1.0, duration=None, velocity=100,
                  offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
@@ -5584,11 +5647,14 @@ class PlayerPattern:
                       vib=0.0, depth=None,
                       vibdepth=None, slide=0.0, slidefrom=0.0,
                       slidedelay=0.0, bend=0.0, benddelay=0.0,
-                      effect=None, span=1.0, until=None, **effectControls):
+                      effect=None, span=1.0, until=None, chance=None,
+                      loaf=None, on=None, **effectControls):
         self.notes = notes
         self.step = step
         self.spanFactor = _sardine_span(span)
         self.untilCycles = _sardine_until(until)
+        self.chanceProbability, self.chanceSeed = _sardine_chance(chance)
+        self.barLoaf, self.barOnMask = _sardine_bar_gate(loaf, on)
         self.timeMultipliers = timeMultipliers
         self.allowRepeatedNotes = bool(allowRepeatedNotes)
         self.duration = duration
@@ -5755,7 +5821,7 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
              offset=0.0, degrees=False, synth='sine', amp=1.0, pan=0.0,
              cutoff=20000.0, echo=0.0, delay=0.0, atk=0.01, rel=0.04,
              reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-             lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, rate=None, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, span=1.0, until=None, _time_multipliers=None, _allow_repeated_notes=False, **effectControls):
+             lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, rate=None, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, span=1.0, until=None, chance=None, loaf=None, on=None, _time_multipliers=None, _allow_repeated_notes=False, **effectControls):
     if isinstance(notes, _FoxDotChord):
         notes = [notes]
     if rate is None:
@@ -5763,13 +5829,13 @@ def sequence(notes, step=1.0, duration=None, velocity=100,
     return PlayerPattern(notes, step, duration, velocity, offset, degrees,
                         synth, amp, pan, cutoff, echo, delay, atk=atk, rel=rel,
                         reverb=reverb, room=room, mix=mix, damp=damp,
-                             revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, timeMultipliers=_time_multipliers, allowRepeatedNotes=_allow_repeated_notes, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, span=span, until=until, **effectControls)
+                              revtime=revtime, spread=spread, lpf=lpf, lpr=lpr, hpf=hpf, hpr=hpr, bpf=bpf, bpr=bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, timeMultipliers=_time_multipliers, allowRepeatedNotes=_allow_repeated_notes, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, span=span, until=until, chance=chance, loaf=loaf, on=on, **effectControls)
 
 def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
               amp=1.0, pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0,
               velocity=100, rate=0.0, atk=0.01, rel=0.04,
               reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
-                      lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, span=1.0, until=None, **effectControls):
+                       lpf=0.0, lpr=1.0, hpf=0.0, hpr=1.0, bpf=0.0, bpr=1.0, decay=1.0, delaytime=None, echomix=0.35, feedback=None, root=None, strum=0.0, bpnoise=0.0, swell=0.0, shape=0.0, drive=0.0, chop=0.0, spin=0.0, vib=0.0, depth=None, vibdepth=None, slide=0.0, slidefrom=0.0, slidedelay=0.0, bend=0.0, benddelay=0.0, effect=None, span=1.0, until=None, chance=None, loaf=None, on=None, **effectControls):
     octaveControl = oct if isinstance(oct, _DexterTimeVar) else None
     if octaveControl is not None:
         if any(value < 0.0 or value > 10.0 for value in octaveControl.values):
@@ -5802,7 +5868,7 @@ def _fox_wave(synthName, notes=0, dur=1.0, oct=5, sus=None, scale=None,
     return PlayerPattern(notes, dur, sus, velocity,
                          0.0, True, synthName, amp, pan, cutoff, echo, delay,
                          scaleName, atk, rel, octaveControl, baseOctave, degreesPerOctave,
-                              reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, span=span, until=until, **effectControls)
+                               reverb, room, mix, damp, revtime, spread, lpf, lpr, hpf, hpr, bpf, bpr, decay=decay, delaytime=delaytime, echomix=echomix, feedback=feedback, root=root, strum=strum, synthRate=rate, bpnoise=bpnoise, swell=swell, shape=shape, drive=drive, chop=chop, spin=spin, vib=vib, depth=depth, vibdepth=vibdepth, slide=slide, slidefrom=slidefrom, slidedelay=slidedelay, bend=bend, benddelay=benddelay, effect=effect, span=span, until=until, chance=chance, loaf=loaf, on=on, **effectControls)
 def saw(notes=0, dur=1.0, oct=5, sus=None, scale=None, amp=1.0,
         pan=0.0, cutoff=20000.0, echo=0.0, delay=0.0, velocity=100, rate=0.0, atk=0.01, rel=0.04,
         reverb='freeverb', room=0.0, mix=0.1, damp=0.5, revtime=3.0, spread=15.0,
@@ -6500,7 +6566,8 @@ def _player_effect_chain(effect, effects, controls):
 
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                     start=0.0, end=1.0, loop=False, effect=None,
-                    span=1.0, until=None, **controls):
+                    span=1.0, until=None, chance=None, loaf=None, on=None,
+                    **controls):
     playerEffectUserIndex = -1
     if isinstance(text, _DexterPVar):
         text = text.expand(dur)
@@ -6581,7 +6648,7 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
     controls.setdefault('rel', 0.005)
     controls.setdefault('reverb', 'none')
     pattern = sequence(notes, step=dur, duration=sus,
-                       span=span, until=until,
+                       span=span, until=until, chance=chance, loaf=loaf, on=on,
                        _time_multipliers=multipliers,
                        _allow_repeated_notes=True, **controls)
     pattern.synth = 'sample'
@@ -7162,7 +7229,11 @@ class Player:
                                          pattern.bpnoise, pattern.bpnoiseControl, pattern.swell, pattern.swellControl,
                                          pattern.shape, pattern.shapeControl, pattern.drive, pattern.driveControl,
                                          _dexter_swing_seconds,
-                                         pattern.untilCycles)
+                                          pattern.untilCycles,
+                                          pattern.chanceProbability,
+                                          pattern.chanceSeed,
+                                          pattern.barLoaf,
+                                          pattern.barOnMask)
         if playerIndex == 0:
             _dexter_default_touched = False
         self._currentPattern = pattern
@@ -8046,7 +8117,7 @@ class Player:
             ('-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-')
         _dexter_bitcrusher_controls[self.number - 1] = (0.0, '-', 1.0, '-')
         _dexter_updates[self.number - 1] = (True, _dexter_bpm, 1.0, [], 0, 1.0,
-                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None, _dexter_swing_seconds, 0)
+                                             0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None, _dexter_swing_seconds, 0, 1.0, 0, 0, 0)
         self._active = False
         return self
 
@@ -8302,16 +8373,17 @@ DiskOut = _DiskRecorder()
            << "        sys.settrace(None)\n"
            << "    with open(" << pythonLiteral(resultPath) << ", 'w', encoding='utf-8') as _f:\n"
             << "        if _dexter_scope['_dexter_default_touched']:\n"
-              << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None) + (_dexter_scope['_dexter_swing_seconds'], 0)\n"
+             << "            _dexter_scope['_dexter_updates'][0] = (False, _dexter_scope['_dexter_bpm'], _dexter_scope['_dexter_length'], list(_dexter_scope['_dexter_events']), 0, 1.0, 0.0, 20000.0, 0.0, 0.0, False, False, 0.01, 0.04, '-', '-', '-', '-', '-', 1, 0.1, 0.0, 0.5, 3.0, 15.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, None, None, None, None, None, None, 1.0, None, 0.35, '-', -1.0, '-', '-', 0.0, 0.0, None, 0.0, None, 0.0, None, 0.0, None) + (_dexter_scope['_dexter_swing_seconds'], 0, 1.0, 0, 0, 0)\n"
             << "        _updates = _dexter_scope['_dexter_updates']\n"
             << "        _mutes = _dexter_scope['_dexter_mutes']\n"
             << "        _f.write('OK\\t{}\\t{}\\t{}\\n'.format(len(_updates), len(_mutes), len(_dexter_scope['_dexter_disk_commands'])))\n"
             << "        for _player in sorted(_updates):\n"
-              << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control, _shape, _shape_control, _drive, _drive_control, _swing_seconds, _until_cycles = _updates[_player]\n"
+              << "            _stopped, _bpm, _length, _events, _synth, _amp, _pan, _cutoff, _echo, _delay, _mouse_pan, _mouse_cutoff, _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _reverb, _mix, _room, _damp, _revtime, _spread, _lpf, _lpr, _hpf, _hpr, _bpf, _bpr, _lpf_control, _lpr_control, _hpf_control, _hpr_control, _bpf_control, _bpr_control, _decay, _decay_control, _echo_mix, _echo_mix_control, _feedback, _feedback_control, _note_delay_control, _synth_rate, _bpnoise, _bpnoise_control, _swell, _swell_control, _shape, _shape_control, _drive, _drive_control, _swing_seconds, _until_cycles, _chance_probability, _chance_seed, _bar_loaf, _bar_on_mask = _updates[_player]\n"
              << "            _bpm = _dexter_scope['_dexter_bpm']\n"
              << "            _tempo_control = _dexter_scope['_dexter_bpm_control']\n"
              << "            _p_values = (_player, int(_stopped), _bpm, _length, len(_events), _synth, _amp, _pan, _cutoff, _echo, _delay, int(_mouse_pan), int(_mouse_cutoff), _attack, _release, _amp_control, _pan_control, _cutoff_control, _echo_control, _delay_control, _synth_rate, _swing_seconds, _until_cycles)\n"
              << "            _f.write('P' + chr(9) + chr(9).join(map(str, _p_values)) + chr(10))\n"
+              << "            _f.write('C\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(_player, _chance_probability, _chance_seed, _bar_loaf, _bar_on_mask))\n"
              << "            _f.write('T\\t{}\\t{}\\n'.format(_player, _tempo_control.wire() if _tempo_control is not None else '-'))\n"
             << "            _f.write('R\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _reverb, _mix, _room, _damp, _revtime, _spread))\n"
              << "            _f.write('E\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\\n'.format(_player, _decay, _decay_control.wire() if _decay_control is not None else '-', _echo_mix, _echo_mix_control, _feedback, _feedback_control if _feedback_control is not None else '-', _note_delay_control.wire() if hasattr(_note_delay_control, 'wire') else (_note_delay_control if _note_delay_control is not None else '-')))\n"
@@ -8446,6 +8518,29 @@ bool parseResult(const std::filesystem::path& resultPath,
             error = detail.str();
             return false;
         }
+        char chanceRecord = 0;
+        int chancePlayer = -1;
+        long long chanceSeed = -1;
+        long long barLoaf = -1;
+        long long barOnMask = -1;
+        if (!(input >> chanceRecord >> chancePlayer >> update.chanceProbability >>
+              chanceSeed >> barLoaf >> barOnMask) ||
+            chanceRecord != 'C' || chancePlayer != update.playerIndex ||
+            !std::isfinite(update.chanceProbability) ||
+            update.chanceProbability < 0.0 || update.chanceProbability > 1.0 ||
+            chanceSeed < 0 || chanceSeed > 4294967295LL ||
+            barLoaf < 0 || barLoaf > 32 || barOnMask < 0 ||
+            (barLoaf == 0 && barOnMask != 0) ||
+            (barLoaf > 0 &&
+             (barOnMask == 0 ||
+              (static_cast<std::uint64_t>(barOnMask) >>
+                   static_cast<unsigned>(barLoaf)) != 0))) {
+            error = "Python returned malformed Sardine chance/loaf/on controls.";
+            return false;
+        }
+        update.chanceSeed = static_cast<std::uint32_t>(chanceSeed);
+        update.barLoaf = static_cast<std::uint16_t>(barLoaf);
+        update.barOnMask = static_cast<std::uint32_t>(barOnMask);
         char tempoRecord = 0;
         int tempoPlayer = -1;
         if (!(input >> tempoRecord >> tempoPlayer >> update.bpmControlToken) ||
