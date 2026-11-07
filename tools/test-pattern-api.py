@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.171' not in cmake_source or
+if ('VERSION 0.4.172' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -152,7 +152,7 @@ if ('Precompiled percussion' in catalog_source or
 if 'portableSynthDisplayLabel(name)' not in catalog_source:
     raise AssertionError('Portable SynthDef catalog display labels are missing.')
 jazz_synth_names = (
-    'JazzKitKick', 'JazzKitBrushTap', 'JazzKitBrushSweep',
+    'JazzKitKick', 'JazzKitBrushKick', 'JazzKitBrushTap', 'JazzKitBrushSweep',
     'JazzKitClosedHat', 'JazzKitOpenHat', 'JazzKitRide',
     'JazzKitCrossStick', 'JazzKitRackTom', 'JazzKitFloorTom')
 for jazz_synth_name in jazz_synth_names:
@@ -2651,6 +2651,19 @@ assert customToneRows[1][0][0] == 'S'
 jazzKitRows = run_example('214-jazz-brush-kit.py', jazz_synth_names)
 assert len(jazzKitRows) == 8
 assert [int(row[1]) for row in jazzKitRows] == list(range(8))
+jazzKitCoreRows = run_example('217-jazz-kit-core-groove.py',
+                              jazz_synth_names)
+jazzKitCompareRows = run_example('218-jazz-kit-kick-compare.py',
+                                 jazz_synth_names)
+assert len(jazzKitCoreRows) == 8 and len(jazzKitCompareRows) == 8
+jazz_demo_sources = ''.join(
+    open(os.path.join(sys.argv[2], filename), encoding='utf-8').read()
+    for filename in ('214-jazz-brush-kit.py',
+                     '217-jazz-kit-core-groove.py',
+                     '218-jazz-kit-kick-compare.py'))
+assert all('userSynth("' + name + '"' in jazz_demo_sources
+           for name in jazz_synth_names)
+assert '{"JazzKitBrushKick", "Brush kick"}' in catalog_source
 missingUserSynth = run_error_script(
     'p1 >> userSynth("NotInstalled", [0, 2], dur=0.5)\n')
 assert 'not a loaded Portable/SynthDefs entry' in missingUserSynth
@@ -3926,7 +3939,9 @@ for filename in os.listdir(sys.argv[2]):
                 'SCLOrkCrossoverDistortionFX')
         if filename == '199-limut-compressor.py':
             example_names = ('LimutCompressor',)
-        if filename == '214-jazz-brush-kit.py':
+        if filename in ('214-jazz-brush-kit.py',
+                        '217-jazz-kit-core-groove.py',
+                        '218-jazz-kit-kick-compare.py'):
             example_names = jazz_synth_names
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
