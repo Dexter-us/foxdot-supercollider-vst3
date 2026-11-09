@@ -35,8 +35,28 @@ file(GET_RUNTIME_DEPENDENCIES
     "^(AzureAttestManager|AzureAttestNormal|HvsiFileTrust|PdmUtilities|WTDSENSOR|wpaxholder|wtdccm)\\.dll$"
 )
 
-if(_unresolved)
-  message(FATAL_ERROR "Unresolved sclang runtime dependencies: ${_unresolved}")
+set(_required_unresolved)
+set(_ignored_optional_imports)
+foreach(_dependency IN LISTS _unresolved)
+  get_filename_component(_dependency_name "${_dependency}" NAME)
+  string(TOLOWER "${_dependency_name}" _dependency_name_lower)
+  if(_dependency_name_lower MATCHES
+      "^(azureattestmanager|azureattestnormal|hvsifiletrust|pdmutilities|wtdsensor|wpaxholder|wtdccm)\\.dll$")
+    # Some Windows system DLLs import these optional inbox components, which
+    # are absent on certain runner images and are not shipped with sclang.
+    list(APPEND _ignored_optional_imports "${_dependency_name}")
+  else()
+    list(APPEND _required_unresolved "${_dependency}")
+  endif()
+endforeach()
+if(_ignored_optional_imports)
+  list(REMOVE_DUPLICATES _ignored_optional_imports)
+  message(STATUS
+    "Ignoring unavailable optional Windows inbox imports: ${_ignored_optional_imports}")
+endif()
+if(_required_unresolved)
+  message(FATAL_ERROR
+    "Unresolved sclang runtime dependencies: ${_required_unresolved}")
 endif()
 
 file(TO_CMAKE_PATH "$ENV{SystemRoot}" _system_root)

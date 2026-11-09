@@ -2875,6 +2875,10 @@ def test_embedded_synthdef():
         encoding='utf-8').read()
     assert 'file(TO_CMAKE_PATH "${_dependency}" _dependency_path)' in sclang_packager, (
         'The sclang packager must normalize Windows paths before filtering system DLLs.')
+    assert 'string(TOLOWER "${_dependency_name}" _dependency_name_lower)' in sclang_packager, (
+        'The sclang packager must classify optional Windows imports case-insensitively.')
+    assert 'if(_required_unresolved)' in sclang_packager, (
+        'The sclang packager must still fail on dependencies outside the explicit OS allowlist.')
     for optional_windows_dll in (
             'AzureAttestManager', 'AzureAttestNormal', 'HvsiFileTrust',
             'PdmUtilities', 'WTDSENSOR', 'wpaxholder', 'wtdccm'):
