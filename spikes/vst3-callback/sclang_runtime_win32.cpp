@@ -413,10 +413,11 @@ bool Runtime::startProcess(const std::filesystem::path& runtimeRoot,
         "opts.numAudioBusChannels = 1024;\n"
         "opts.sampleRate = " + std::to_string(sampleRate) + ";\n"
         "opts.protocol = \\tcp;\n"
-        "s = Server.remote(\\DexterVST, NetAddr(\"127.0.0.1\", " +
+        "s = Server.new(\\DexterVST, NetAddr(\"127.0.0.1\", " +
         std::to_string(serverPort) +
         "), opts);\n"
         "Server.default = s;\n"
+        "s.connectToServerAddr({ s.startAliveThread });\n"
         "OSCdef(\\DexterVSTRun, { |msg, time, addr| "
         "if(addr.ip == \"127.0.0.1\") { msg[1].asString.load; }; }, "
         "\"/dexter/evalFile\");\n"

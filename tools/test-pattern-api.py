@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.177' not in cmake_source or
+if ('VERSION 0.4.178' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2898,8 +2898,14 @@ def test_embedded_synthdef():
         encoding='utf-8').read()
     assert 'opts.reservedNumAudioBusChannels' in sclang_runtime, (
         'The sclang bus allocator must skip the plugin-owned private audio buses.')
-    assert 'Server.remote' in sclang_runtime, (
-        'sclang must connect to the existing VST World rather than booting another audio server.')
+    assert 's = Server.new(\\\\DexterVST, NetAddr' in sclang_runtime, (
+        'The sclang bootstrap must retain the Server instance for the embedded VST World.')
+    assert 's.connectToServerAddr({ s.startAliveThread });' in sclang_runtime, (
+        'The sclang bootstrap must connect its Server instance to the existing VST TCP endpoint.')
+    assert 'Server.remote' not in sclang_runtime, (
+        'Do not assign Server.remote’s asynchronous TCP task as if it were the Server object.')
+    assert 's.doWhenBooted' in sclang_runtime and 'DEXTER_SCLANG_READY' in sclang_runtime, (
+        'The sclang bootstrap must acknowledge readiness only after the embedded server responds.')
     assert 'SuperCollider .scd' in editor_text and 'switchEditorTab(1)' in editor_text, (
         'The editor must expose a separate SuperCollider source tab.')
     assert 'host_->submitSuperColliderCode(source)' in editor_text, (

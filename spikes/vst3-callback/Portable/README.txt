@@ -855,3 +855,7 @@ with SCLANG_SERVER=OFF. Portable/SCPlugins contains only modules built for the
 same pinned SuperCollider 3.15/API-7 engine; the former SC3.14.1/API-3
 AntiAliasingOscillators probe was removed because it was incompatible with
 this VST.
+
+0.4.178 fixes the headless sclang TCP bootstrap: the script keeps a Server
+instance and starts the asynchronous connection separately, then reports ready
+only after the existing VST engine responds. No second audio server is started.
