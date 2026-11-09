@@ -839,3 +839,6 @@ fills and early endings without exposing arbitrary Python execution. Branch
 expressions are limited to 32 AST nodes and 8 levels; the function is limited
 to 32 conditional statements, four nested levels, and the existing cycle,
 event, and timeline caps. Example 220 demonstrates a four-beat fill.
+
+
+0.4.176 adds a test-only external UGen probe (Example 221) using the precompiled SC3plugins AntiAliasingOscillators module. See Portable/SCPlugins/AntiAliasingOscillators-TEST.txt; no UGen rebuild is performed.

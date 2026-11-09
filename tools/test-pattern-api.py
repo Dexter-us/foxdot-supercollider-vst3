@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.175' not in cmake_source or
+if ('VERSION 0.4.176' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2837,6 +2837,38 @@ def read_synthdef_manifest(data, validate_builtin_controls=True, return_controls
     return (version, graphs, controls) if return_controls else (version, graphs)
 
 
+blitModulePath = os.path.join(
+    sys.argv[2], 'SCPlugins', 'AntiAliasingOscillators.scx')
+blitModule = open(blitModulePath, 'rb').read()
+assert blitModule[:2] == b'MZ'
+blitPeOffset = struct.unpack_from('<I', blitModule, 0x3c)[0]
+assert blitModule[blitPeOffset:blitPeOffset + 4] == b'PE\0\0'
+assert struct.unpack_from('<H', blitModule, blitPeOffset + 4)[0] == 0x8664, (
+    'The isolated UGen probe must use the precompiled Windows x64 module.')
+blitSynthDefPath = os.path.join(
+    sys.argv[2], 'SynthDefs', 'BlitB3SawProbe.scsyndef')
+blitSynthDef = open(blitSynthDefPath, 'rb').read()
+_, blitGraphs, blitControls = read_synthdef_manifest(
+    blitSynthDef, validate_builtin_controls=False, return_controls=True)
+assert set(blitGraphs) == {'BlitB3SawProbe'}, blitGraphs
+assert blitControls['BlitB3SawProbe'] == {
+    'out': 0, 'freq': 1, 'gate': 2, 'amp': 3, 'leak': 4
+}, blitControls
+assert ('BlitB3Saw', 2, 2) in blitGraphs['BlitB3SawProbe'], (
+    'The test SynthDef must instantiate the precompiled BlitB3Saw UGen.')
+blitOutUnits = [unit for unit in blitGraphs['BlitB3SawProbe']
+                if unit[0] == 'Out']
+assert len(blitOutUnits) == 1 and blitOutUnits[0][1] == 3, (
+    'Example 221 must exercise the VST stereo user-SynthDef path.')
+blitControlsSidecar = open(
+    os.path.join(sys.argv[2], 'SynthDefs', 'BlitB3SawProbe.controls'),
+    encoding='utf-8').read()
+assert 'leak 0.90 0.999 0.99' in blitControlsSidecar
+blitProbeRows = run_example(
+    '221-antialiasing-oscillator-probe.py', ('BlitB3SawProbe',))
+assert len(blitProbeRows) == 1 and int(blitProbeRows[0][1]) == 0
+
+
 def test_embedded_synthdef():
     plugin_dir = os.path.dirname(os.path.abspath(sys.argv[1]))
     repo_root = os.path.abspath(os.path.join(plugin_dir, '..', '..'))
@@ -4082,6 +4114,8 @@ for filename in os.listdir(sys.argv[2]):
                 'SCLOrkCrossoverDistortionFX')
         if filename == '199-limut-compressor.py':
             example_names = ('LimutCompressor',)
+        if filename == '221-antialiasing-oscillator-probe.py':
+            example_names = ('BlitB3SawProbe',)
         if filename in ('214-jazz-brush-kit.py',
                         '217-jazz-kit-core-groove.py',
                         '218-jazz-kit-kick-compare.py'):
