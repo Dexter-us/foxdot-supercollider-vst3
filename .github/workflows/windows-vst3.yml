@@ -111,7 +111,6 @@ jobs:
           & .\tools\install-sclang-runtime-windows.ps1 `
             -RuntimeRoot "$env:RUNNER_TEMP\dexter-sclang-runtime" `
             -Bundle "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3"
-          if ($LASTEXITCODE -ne 0) { throw "Installing the sclang runtime failed ($LASTEXITCODE)." }
 
       - name: Verify bundled headless sclang is pinned and runnable
         id: verify_sclang

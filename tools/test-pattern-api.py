@@ -2879,6 +2879,14 @@ def test_embedded_synthdef():
         'The sclang packager must classify optional Windows imports case-insensitively.')
     assert 'if(_required_unresolved)' in sclang_packager, (
         'The sclang packager must still fail on dependencies outside the explicit OS allowlist.')
+    sclang_workflow = open(
+        os.path.join(repo_root, '.github', 'workflows', 'windows-vst3.yml'),
+        encoding='utf-8').read()
+    install_step = sclang_workflow.split(
+        '- name: Install headless sclang into the VST3 resources', 1)[1].split(
+            '\n      - name: ', 1)[0]
+    assert '$LASTEXITCODE' not in install_step, (
+        'A successful PowerShell installer must not be rejected by an unset native-command exit code.')
     for optional_windows_dll in (
             'AzureAttestManager', 'AzureAttestNormal', 'HvsiFileTrust',
             'PdmUtilities', 'WTDSENSOR', 'wpaxholder', 'wtdccm'):
