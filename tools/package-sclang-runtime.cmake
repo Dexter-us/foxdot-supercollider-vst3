@@ -18,6 +18,10 @@ foreach(_dll IN LISTS _runtime_dlls)
 endforeach()
 list(REMOVE_DUPLICATES _runtime_directories)
 
+if(POLICY CMP0207)
+  cmake_policy(SET CMP0207 NEW)
+endif()
+
 file(GET_RUNTIME_DEPENDENCIES
   RESOLVED_DEPENDENCIES_VAR _resolved
   UNRESOLVED_DEPENDENCIES_VAR _unresolved
@@ -26,6 +30,9 @@ file(GET_RUNTIME_DEPENDENCIES
   PRE_EXCLUDE_REGEXES
     "^api-ms-.*"
     "^ext-ms-.*"
+    # Optional Windows inbox components can appear as delay-loaded imports of
+    # system DLLs even though they are not installed on the GitHub runner.
+    "^(AzureAttestManager|AzureAttestNormal|HvsiFileTrust|PdmUtilities|WTDSENSOR|wpaxholder|wtdccm)\\.dll$"
 )
 
 if(_unresolved)
@@ -35,7 +42,8 @@ endif()
 file(TO_CMAKE_PATH "$ENV{SystemRoot}" _system_root)
 string(TOLOWER "${_system_root}/" _system_root_prefix)
 foreach(_dependency IN LISTS _resolved)
-  string(TOLOWER "${_dependency}" _dependency_lower)
+  file(TO_CMAKE_PATH "${_dependency}" _dependency_path)
+  string(TOLOWER "${_dependency_path}" _dependency_lower)
   string(FIND "${_dependency_lower}" "${_system_root_prefix}" _system_index)
   if(_system_index EQUAL 0)
     continue()

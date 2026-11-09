@@ -2870,6 +2870,17 @@ def test_embedded_synthdef():
         os.path.join(repo_root, 'tools', 'build-sclang-runtime-windows.ps1'),
         encoding='utf-8').read(), (
             'The bundled sclang helper must be built without a second internal server.')
+    sclang_packager = open(
+        os.path.join(repo_root, 'tools', 'package-sclang-runtime.cmake'),
+        encoding='utf-8').read()
+    assert 'file(TO_CMAKE_PATH "${_dependency}" _dependency_path)' in sclang_packager, (
+        'The sclang packager must normalize Windows paths before filtering system DLLs.')
+    for optional_windows_dll in (
+            'AzureAttestManager', 'AzureAttestNormal', 'HvsiFileTrust',
+            'PdmUtilities', 'WTDSENSOR', 'wpaxholder', 'wtdccm'):
+        assert optional_windows_dll in sclang_packager, (
+            'Missing Windows optional-component dependency filter: ' +
+            optional_windows_dll)
     sclang_runtime = open(
         os.path.join(plugin_dir, 'sclang_runtime_win32.cpp'),
         encoding='utf-8').read()
