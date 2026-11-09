@@ -89,7 +89,7 @@ jobs:
           $required = @("SCPlugins\AirwindowsFX.scx", "SCPlugins\LimutFX.scx", "Classes\AirwindowsUGens.sc", "Classes\LimutFX.sc", "SynthDefs\Airwindows\AirwindowsEchojam.scsyndef", "SynthDefs\Airwindows\AirwindowsTapeDelay2.scsyndef", "SynthDefs\LimutFX\LimutShifter.scsyndef", "Sidechain\SynthDefs\LimutVocoder.scsyndef", "Licenses\SuperCollider-GPL.txt", "Licenses\Airwindows.txt", "Licenses\LimutFX-Attribution.txt")
           foreach ($file in $required) { if (-not (Test-Path (Join-Path $pack $file))) { throw "Package missing required file: $file" } }
           if (Get-ChildItem $pack -Recurse -File | Where-Object { $_.Name -match "JPverb|Greyhole|DiskIO" }) { throw "Reverb or duplicate DiskIO files must not be included." }
-          Get-ChildItem "$pack\SCPlugins" -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path.Substring($pack.Length + 1))" } | Set-Content "$pack\SHA256SUMS.txt" -Encoding ASCII
+          Get-ChildItem "$pack\SCPlugins" -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { $relative = $_.Path.Substring($pack.Length + 1).Replace("\", "/"); "$($_.Hash.ToLowerInvariant())  $relative" } | Set-Content "$pack\SHA256SUMS.txt" -Encoding ASCII
           Compress-Archive -Path "$pack\*" -DestinationPath "$env:RUNNER_TEMP\dexter-sc3141-addon-ugens-win-x64.zip" -Force
 
       - name: Upload standalone SC 3.14.1 add-on pack
