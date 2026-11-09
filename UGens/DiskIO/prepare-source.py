@@ -9,14 +9,18 @@ import hashlib
 import pathlib
 import sys
 
-EXPECTED = "37b5f27a58f48950a6ccdd8ce6c1ec6cbaa32aa36eea71ad90a3cecfe655ffe1"
+EXPECTED_SOURCES = {
+    "37b5f27a58f48950a6ccdd8ce6c1ec6cbaa32aa36eea71ad90a3cecfe655ffe1": "pinned SuperCollider source",
+    "cc6db2f13ca81350c04ff33bbaab3430e29388ee5e3c29a6469b90e6127fd6bb": "SuperCollider 3.14.1 source",
+}
 
 
 def adapt(source):
     # Windows Git may check out CRLF; guard the canonical LF source, not EOLs.
     source = source.replace(b"\r\n", b"\n")
-    if hashlib.sha256(source).hexdigest() != EXPECTED:
-        raise ValueError("DiskIO source hash differs from the pinned SuperCollider revision")
+    source_hash = hashlib.sha256(source).hexdigest()
+    if source_hash not in EXPECTED_SOURCES:
+        raise ValueError("DiskIO source hash is not on the supported SuperCollider revision allowlist")
     text = source.decode("utf-8")
 
     def replace(old, new, count=1):
