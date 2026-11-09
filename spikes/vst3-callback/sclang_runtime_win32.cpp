@@ -425,6 +425,8 @@ bool Runtime::startProcess(const std::filesystem::path& runtimeRoot,
     const auto config = std::string(
         "includePaths:\n  - ") + yamlQuotedPath(classLibrary) +
         "\nexcludePaths: []\nexcludeDefaultPaths: true\n";
+    // Only our private editor responders survive CmdPeriod; otherwise pressing
+    // SC Stop also disables subsequent Run/Stop/Quit commands.
     const auto bootstrap =
         "(\n"
         "var opts = ServerOptions.new;\n"
@@ -446,13 +448,13 @@ bool Runtime::startProcess(const std::filesystem::path& runtimeRoot,
         "s.startAliveThread;\n"
         "OSCdef(\\DexterVSTRun, { |msg, time, addr| "
         "if(addr.ip == \"127.0.0.1\") { msg[1].asString.load; }; }, "
-        "\"/dexter/evalFile\");\n"
+        "\"/dexter/evalFile\").permanent_(true);\n"
         "OSCdef(\\DexterVSTStop, { |msg, time, addr| "
         "if(addr.ip == \"127.0.0.1\") { CmdPeriod.run; s.freeMyDefaultGroup; }; }, "
-        "\"/dexter/stop\");\n"
+        "\"/dexter/stop\").permanent_(true);\n"
         "OSCdef(\\DexterVSTQuit, { |msg, time, addr| "
         "if(addr.ip == \"127.0.0.1\") { 0.exit; }; }, "
-        "\"/dexter/quit\");\n"
+        "\"/dexter/quit\").permanent_(true);\n"
         "s.doWhenBooted({ \"DEXTER_SCLANG_READY\".postln; });\n"
         ")\n";
     if (!writeTextFile(configPath, config) ||

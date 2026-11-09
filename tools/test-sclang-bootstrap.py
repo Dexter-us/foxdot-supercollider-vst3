@@ -119,10 +119,32 @@ Routine({
                 "Example 223 did not compile and send its synth")
             wait_for(lambda: fixture_log.read_text().count("COMMAND /n_set ") >= 3, 5,
                      "Example 223 did not send frequency changes and gate release")
+            # CmdPeriod normally frees non-permanent OSC responders. The
+            # editor's private control channel must survive its own Stop.
+            for iteration in range(2):
+                before_stop = fixture_log.read_text().count("COMMAND /g_freeAll ")
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                    sender.sendto(osc_string("/dexter/stop") + osc_string(","),
+                                  ("127.0.0.1", language_port))
+                wait_for(lambda: fixture_log.read_text().count(
+                    "COMMAND /g_freeAll ") > before_stop, 5,
+                    "Stop did not reach the server")
+                marker = f"DEXTER_AFTER_STOP_{iteration}"
+                source.write_text(f'"{marker}".postln;\n')
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                    sender.sendto(osc_string("/dexter/evalFile") + osc_string(",s") +
+                                  osc_string(str(source)), ("127.0.0.1", language_port))
+                wait_for(lambda: marker in language_log.read_text(), 5,
+                         "Editor evaluation handler disappeared after CmdPeriod/Stop")
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                sender.sendto(osc_string("/dexter/quit") + osc_string(","),
+                              ("127.0.0.1", language_port))
+            assert language.wait(timeout=5) == 0, "Quit failed after repeated Stop"
             assert "ERROR:" not in language_log.read_text()
             print("PASS: installed sclang + actual generated bootstrap + actual UDP transport: "
                   "status/notify, SynthDef bytecode, sync, allocated synth request; "
-                  "Example 223 compilation and control/release messages")
+                  "Example 223 compilation and control/release messages; "
+                  "evaluation/Stop/Quit responders survive repeated CmdPeriod")
             print("Scope: protocol test with a mock engine; not a DSP/Windows validation.")
         except Exception:
             print("Language log tail:\n" +
