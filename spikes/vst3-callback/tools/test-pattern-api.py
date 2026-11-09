@@ -740,11 +740,16 @@ assert all('userSynth("' + jazz_name + '"' in jazzDemoSource
 swimRows = run_example('219-sardine-swim-finite-cycles.py', example_synth_names)
 assert len(swimRows) == 2 and [int(row[5]) for row in swimRows] == [32, 32]
 assert [int(row[-1]) for row in swimRows] == [1, 1]
+branchRows = run_example('220-sardine-swim-cycle-branches.py',
+                         example_synth_names)
+assert len(branchRows) == 2 and [int(row[-1]) for row in branchRows] == [1, 1]
 for swim_fragment in (
         'def again(function, p=None, i=None):',
         'def _dexter_compile_swim(function, cycles=8, period=None):',
+        'def _swim_condition_test(self, node, depth=0, budget=None):',
         '@swim may assign each player only once per cycle',
         '@swim is limited to 256 expanded events per player',
+        '@swim conditions may use only bounded integer expressions based on i.',
         'update[-5] = 1'):
     if swim_fragment not in source:
         raise SystemExit('Bounded Sardine @swim support is missing: ' +

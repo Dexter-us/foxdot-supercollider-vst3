@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.174' not in cmake_source or
+if ('VERSION 0.4.175' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3413,6 +3413,66 @@ overLimitSwim = run_error_script(
     '    p1 >> saw(P[0, 1, 2, 3, 4, 5, 6, 7, 0], dur=0.1)\n'
     '    again(crowded, p=p, i=i+1)\n')
 assert '256 expanded events' in overLimitSwim
+conditionalSwimRows, conditionalSwimEvents = run_script(
+    '@swim(cycles=8, period=1)\n'
+    'def fills(p=1, i=0):\n'
+    '    if i % 4 == 3:\n'
+    '        p1 >> saw([7], dur=1)\n'
+    '    else:\n'
+    '        p1 >> saw([0, 2], dur=0.5)\n'
+    '    again(fills, p=p, i=i+1)\n',
+    include_events=True)
+assert len(conditionalSwimRows) == 1
+assert int(conditionalSwimRows[0][5]) == 14
+assert [float(event[3]) for event in conditionalSwimEvents] == [
+    60, 64, 60, 64, 60, 64, 72, 60, 64, 60, 64, 60, 64, 72]
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    '@swim(cycles=4, period=1)\n'
+    'def fills(p=1, i=0):\n'
+    '    if i % 4 == 3:\n'
+    '        p1 >> saw([7], dur=1)\n'
+    '    else:\n'
+    '        p1 >> saw([0], dur=1)\n'
+    '    again(fills, p=p, i=i+1)\n')
+earlyStopRows, earlyStopEvents = run_script(
+    '@swim(cycles=8, period=1)\n'
+    'def ending(p=1, i=0):\n'
+    '    if i < 2:\n'
+    '        p1 >> saw([i], dur=1)\n'
+    '        again(ending, p=p, i=i+1)\n'
+    '    else:\n'
+    '        p1 >> saw([7], dur=1)\n',
+    include_events=True)
+assert len(earlyStopRows) == 1 and int(earlyStopRows[0][5]) == 3
+assert [float(event[3]) for event in earlyStopEvents] == [60, 62, 72]
+for invalid_swim_condition in (
+        'p > 2',
+        'i ** 2 > 4',
+        'i % 0 == 0',
+        'abs(i) > 2'):
+    invalid_conditional = (
+        '@swim(cycles=2, period=1)\n'
+        'def unsafe(p=1, i=0):\n'
+        '    if ' + invalid_swim_condition + ':\n'
+        '        p1 >> saw([0], dur=1)\n'
+        '    else:\n'
+        '        p1 >> saw([1], dur=1)\n')
+    conditional_error = run_compatibility_check(invalid_conditional)
+    if '@swim conditions may use only bounded integer expressions based on i' not in conditional_error:
+        raise AssertionError('Unsafe @swim conditional should be rejected: ' +
+                             invalid_swim_condition + '\n' + conditional_error)
+if '@swim conditionals are limited to four nested levels' not in run_compatibility_check(
+        '@swim(cycles=1, period=1)\n'
+        'def deep(p=1, i=0):\n'
+        '    if i > 0:\n'
+        '        if i > 1:\n'
+        '            if i > 2:\n'
+        '                if i > 3:\n'
+        '                    if i > 4:\n'
+        '                        p1 >> saw([0], dur=1)\n'
+        '    else:\n'
+        '        p1 >> saw([1], dur=1)\n'):
+    raise AssertionError('@swim must enforce its conditional nesting cap.')
 assert len(run_example('214-jazz-brush-kit.py',
                        user_synth_names=jazz_synth_names)) == 8
 for invalid_timing, expected_error in (

@@ -831,3 +831,11 @@ sidecar defaults. This is session-only and does not rewrite the script.
 timeline limit. `again()` may advance `p` and `i`; loops, nested decorators,
 and dynamic synth/effect changes are not supported. Example 219 demonstrates
 cycle-by-cycle note/sample variation.
+
+0.4.175 adds bounded `if`/`else` branches inside `@swim`, driven only by
+integer expressions based on the cycle index `i`. Comparisons, `and`/`or`,
+`not`, and bounded integer arithmetic are supported. This enables cycle-based
+fills and early endings without exposing arbitrary Python execution. Branch
+expressions are limited to 32 AST nodes and 8 levels; the function is limited
+to 32 conditional statements, four nested levels, and the existing cycle,
+event, and timeline caps. Example 220 demonstrates a four-beat fill.

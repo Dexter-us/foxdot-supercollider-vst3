@@ -559,6 +559,111 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                                  '@swim period must be a literal from 0.001 to 4096 beats.')
         return True
 
+    def _swim_condition_literal(self, node):
+        if (isinstance(node, ast.Constant) and
+                isinstance(node.value, int) and
+                not isinstance(node.value, bool) and
+                abs(node.value) <= 1000000):
+            return node.value
+        if (isinstance(node, ast.UnaryOp) and
+                isinstance(node.op, (ast.UAdd, ast.USub)) and
+                isinstance(node.operand, ast.Constant) and
+                isinstance(node.operand.value, int) and
+                not isinstance(node.operand.value, bool) and
+                abs(node.operand.value) <= 1000000):
+            value = node.operand.value
+            return -value if isinstance(node.op, ast.USub) else value
+        return None
+
+    def _swim_condition_value(self, node, depth=0, budget=None):
+        if budget is None:
+            budget = [0]
+        budget[0] += 1
+        if budget[0] > 32 or depth > 8:
+            return False
+        if isinstance(node, ast.Name):
+            return node.id == 'i' and isinstance(node.ctx, ast.Load)
+        if self._swim_condition_literal(node) is not None:
+            return True
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            return self._swim_condition_value(node.operand, depth + 1, budget)
+        if isinstance(node, ast.BinOp):
+            if not isinstance(node.op, (ast.Add, ast.Sub, ast.Mult,
+                                        ast.FloorDiv, ast.Mod)):
+                return False
+            if isinstance(node.op, (ast.FloorDiv, ast.Mod)):
+                divisor = self._swim_condition_literal(node.right)
+                if divisor in (None, 0):
+                    return False
+            return (
+                self._swim_condition_value(node.left, depth + 1, budget) and
+                self._swim_condition_value(node.right, depth + 1, budget))
+        return False
+
+    def _swim_condition_test(self, node, depth=0, budget=None):
+        if budget is None:
+            budget = [0]
+        budget[0] += 1
+        if budget[0] > 32 or depth > 8:
+            return False
+        if isinstance(node, ast.Compare):
+            comparisons = (ast.Eq, ast.NotEq, ast.Lt, ast.LtE,
+                           ast.Gt, ast.GtE)
+            return (
+                1 <= len(node.ops) <= 4 and
+                len(node.comparators) == len(node.ops) and
+                all(isinstance(op, comparisons) for op in node.ops) and
+                self._swim_condition_value(node.left, depth + 1, budget) and
+                all(self._swim_condition_value(value, depth + 1, budget)
+                    for value in node.comparators))
+        if isinstance(node, ast.BoolOp):
+            return (
+                isinstance(node.op, (ast.And, ast.Or)) and
+                2 <= len(node.values) <= 4 and
+                all(self._swim_condition_test(value, depth + 1, budget)
+                    for value in node.values))
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return self._swim_condition_test(node.operand, depth + 1, budget)
+        return self._swim_condition_value(node, depth + 1, budget)
+
+    def _swim_statement(self, statement, nesting=0, function_name=None):
+        if isinstance(statement, ast.Expr):
+            value = statement.value
+            if (isinstance(value, ast.BinOp) and
+                    isinstance(value.op, ast.RShift) and
+                    isinstance(value.left, ast.Name) and
+                    re.fullmatch(r'p[1-8]', value.left.id) is not None and
+                    isinstance(value.right, ast.Call)):
+                return 1
+            if (isinstance(value, ast.Call) and
+                    isinstance(value.func, ast.Name) and
+                    value.func.id == 'again'):
+                return 0
+        elif isinstance(statement, ast.Assign):
+            if (statement.targets and
+                    all(isinstance(target, ast.Name) and
+                        target.id not in {
+                            'p', 'i', function_name, 'p1', 'p2', 'p3',
+                            'p4', 'p5', 'p6', 'p7', 'p8'}
+                        for target in statement.targets)):
+                return 0
+        elif isinstance(statement, ast.If):
+            if nesting >= 4:
+                self.add(statement.lineno,
+                         '@swim conditionals are limited to four nested levels.')
+            if not self._swim_condition_test(statement.test):
+                self.add(
+                    statement.lineno,
+                    '@swim conditions may use only bounded integer expressions based on i.')
+            sends = 0
+            for child in statement.body + statement.orelse:
+                sends += self._swim_statement(
+                    child, nesting + 1, function_name)
+            return sends
+        self.add(statement.lineno,
+                 '@swim bodies allow local assignments, player sends, bounded if/else, and again() only.')
+        return 0
+
     def visit_FunctionDef(self, node):
         if not self._swim_decorator(node):
             self.generic_visit(node)
@@ -595,35 +700,13 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                          '@swim default i must be an integer from -1000000 to 1000000.')
         if not node.body:
             self.add(node.lineno, '@swim needs at least one player send.')
+        swim_ifs = [item for item in ast.walk(node) if isinstance(item, ast.If)]
+        if len(swim_ifs) > 32:
+            self.add(node.lineno, '@swim supports at most 32 conditional statements.')
         player_sends = 0
         for statement in node.body:
-            valid_statement = False
-            if isinstance(statement, ast.Expr):
-                value = statement.value
-                valid_statement = (
-                    isinstance(value, ast.BinOp) and
-                    isinstance(value.op, ast.RShift) and
-                    isinstance(value.left, ast.Name) and
-                    re.fullmatch(r'p[1-8]', value.left.id) is not None and
-                    isinstance(value.right, ast.Call))
-                if valid_statement:
-                    player_sends += 1
-                elif (isinstance(value, ast.Call) and
-                      isinstance(value.func, ast.Name) and
-                      value.func.id == 'again'):
-                    valid_statement = True
-            elif isinstance(statement, ast.Assign):
-                valid_statement = (
-                    bool(statement.targets) and
-                    all(
-                        isinstance(target, ast.Name) and
-                        target.id not in {
-                            'p', 'i', node.name, 'p1', 'p2', 'p3', 'p4',
-                            'p5', 'p6', 'p7', 'p8'}
-                        for target in statement.targets))
-            if not valid_statement:
-                self.add(statement.lineno,
-                         '@swim bodies allow local assignments, player sends, and again() only.')
+            player_sends += self._swim_statement(
+                statement, function_name=node.name)
         if player_sends == 0:
             self.add(node.lineno, '@swim must contain at least one player send.')
         again_calls = [
