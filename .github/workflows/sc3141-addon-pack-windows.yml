@@ -13,7 +13,7 @@ permissions:
 jobs:
   sc3141-addon-pack:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Check out add-on sources
         uses: actions/checkout@v4
@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Validate examples and source adaptation
+      - name: Validate examples and SynthDef ABI
         shell: pwsh
         run: |
           $tag = (git -C "$env:GITHUB_WORKSPACE\sc-source" describe --tags --exact-match).Trim()
@@ -40,10 +40,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Airwindows example checks failed." }
           python UGens/LimutFX/test-examples.py
           if ($LASTEXITCODE -ne 0) { throw "LimutFX example checks failed." }
-          python UGens/DiskIO/prepare-source.py --self-test "$env:GITHUB_WORKSPACE\sc-source\server\plugins\DiskIO_UGens.cpp"
-          if ($LASTEXITCODE -ne 0) { throw "DiskIO 3.14.1 source adaptation failed." }
 
-      - name: Build Airwindows, LimutFX, and DiskIO modules only
+      - name: Build and test API-3 modules only
         shell: pwsh
         run: |
           $sc = "$env:GITHUB_WORKSPACE\sc-source"
@@ -58,57 +56,39 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "LimutFX API-3 build failed." }
           ctest --test-dir "$build\limutfx" -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw "LimutFX DSP regression tests failed." }
-          cmake -S UGens/DiskIO -B "$build\diskio" -DSC_SOURCE_DIR="$sc" -DDEXTER_DISKIO_TESTS=ON
-          if ($LASTEXITCODE -ne 0) { throw "DiskIO configure failed." }
-          cmake --build "$build\diskio" --config Release --parallel 2 --target DiskIO_UGens diskio-tests
-          if ($LASTEXITCODE -ne 0) { throw "DiskIO API-3 build failed." }
-          $diskTest = Get-ChildItem "$build\diskio" -Filter "diskio-tests.exe" -File -Recurse | Select-Object -First 1
-          $diskModule = Get-ChildItem "$build\diskio" -Filter "DiskIO_UGens.scx" -File -Recurse | Select-Object -First 1
-          if (-not $diskTest -or -not $diskModule) { throw "DiskIO test executable or module is missing." }
-          & $diskTest.FullName $diskModule.FullName "$env:RUNNER_TEMP\diskio-tests"
-          if ($LASTEXITCODE -ne 0) { throw "DiskIO lifecycle/audio tests failed." }
 
-      - name: Package API-3 modules, classes, sources, and licenses
+      - name: Package API-3 modules, classes, source, and licenses
         shell: pwsh
         run: |
           $sc = "$env:GITHUB_WORKSPACE\sc-source"
           $build = "$env:RUNNER_TEMP\sc3141-build"
           $pack = "$env:RUNNER_TEMP\dexter-sc3141-addon-pack"
-          New-Item -ItemType Directory -Force -Path "$pack\SCPlugins", "$pack\Classes", "$pack\SynthDefSource\Airwindows", "$pack\SynthDefSource\LimutFX", "$pack\SynthDefSource\Sidechain", "$pack\Sources\project\UGens\Airwindows", "$pack\Sources\project\UGens\LimutFX", "$pack\Sources\project\UGens\DiskIO", "$pack\Sources\Airwindows", "$pack\Sources\libsndfile", "$pack\Sources\SuperCollider", "$pack\Licenses" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$pack\SCPlugins", "$pack\Classes", "$pack\SynthDefs\Airwindows", "$pack\SynthDefs\LimutFX", "$pack\Sidechain\SynthDefs", "$pack\Sources\project\UGens\Airwindows", "$pack\Sources\project\UGens\LimutFX", "$pack\Sources\Airwindows", "$pack\Licenses" | Out-Null
           $air = Get-ChildItem "$build\airwindows" -Filter "AirwindowsFX.scx" -File -Recurse | Select-Object -First 1
           $limut = Get-ChildItem "$build\limutfx" -Filter "LimutFX.scx" -File -Recurse | Select-Object -First 1
-          $disk = Get-ChildItem "$build\diskio" -Filter "DiskIO_UGens.scx" -File -Recurse | Select-Object -First 1
-          $snd = Get-ChildItem "$build\diskio" -Filter "sndfile.dll" -File -Recurse | Select-Object -First 1
-          if (-not $air -or -not $limut -or -not $disk -or -not $snd) { throw "One or more compiled module dependencies are missing." }
+          if (-not $air -or -not $limut) { throw "A compiled API-3 module is missing." }
           Copy-Item $air.FullName "$pack\SCPlugins\AirwindowsFX.scx"
           Copy-Item $limut.FullName "$pack\SCPlugins\LimutFX.scx"
-          Copy-Item $disk.FullName "$pack\SCPlugins\DiskIO_UGens.scx"
-          Copy-Item $snd.FullName "$pack\SCPlugins\sndfile.dll"
           Copy-Item "UGens\Airwindows\Portable\SynthDefs\AirwindowsUGens.sc" "$pack\Classes\AirwindowsUGens.sc"
           Copy-Item "UGens\LimutFX\Portable\SynthDefs\LimutFX.sc" "$pack\Classes\LimutFX.sc"
-          Copy-Item "UGens\Airwindows\Portable\SynthDefs\*.scd" "$pack\SynthDefSource\Airwindows"
-          Copy-Item "UGens\LimutFX\Portable\SynthDefs\*.scd" "$pack\SynthDefSource\LimutFX"
-          Copy-Item "UGens\LimutFX\Portable\Sidechain\*.scd" "$pack\SynthDefSource\Sidechain"
+          Copy-Item "UGens\Airwindows\Portable\SynthDefs\*.scd" "$pack\SynthDefs\Airwindows"
+          Copy-Item "UGens\Airwindows\Portable\SynthDefs\*.scsyndef" "$pack\SynthDefs\Airwindows"
+          Copy-Item "UGens\LimutFX\Portable\SynthDefs\*.scd" "$pack\SynthDefs\LimutFX"
+          Copy-Item "UGens\LimutFX\Portable\SynthDefs\*.scsyndef" "$pack\SynthDefs\LimutFX"
+          Copy-Item "UGens\LimutFX\Portable\Sidechain\SynthDefs\LimutVocoder.scsyndef" "$pack\Sidechain\SynthDefs\LimutVocoder.scsyndef"
+          Copy-Item "UGens\LimutFX\Portable\Sidechain\*.scd" "$pack\Sidechain"
           Copy-Item "UGens\Airwindows\*" "$pack\Sources\project\UGens\Airwindows" -Recurse -Force
           Copy-Item "UGens\LimutFX\*" "$pack\Sources\project\UGens\LimutFX" -Recurse -Force
-          Copy-Item "UGens\DiskIO\*" "$pack\Sources\project\UGens\DiskIO" -Recurse -Force
           Copy-Item "$build\airwindows\Sources\*" "$pack\Sources\Airwindows" -Recurse -Force
-          Copy-Item "$sc\server\plugins\DiskIO_UGens.cpp" "$pack\Sources\SuperCollider\DiskIO_UGens.cpp"
           Copy-Item "$sc\COPYING" "$pack\Licenses\SuperCollider-GPL.txt"
           Copy-Item "UGens\Airwindows\LICENSE-Airwindows.txt" "$pack\Licenses\Airwindows.txt"
           Copy-Item "UGens\LimutFX\ATTRIBUTION.txt" "$pack\Licenses\LimutFX-Attribution.txt"
-          Copy-Item "spikes\vst3-callback\Licenses\Boost-1.0.txt" "$pack\Licenses\Boost-1.0.txt"
-          Copy-Item "$build\diskio\_deps\sndfile-src\COPYING" "$pack\Licenses\libsndfile-LGPL.txt"
-          Copy-Item "$build\diskio\_deps\sndfile-src\*" "$pack\Sources\libsndfile" -Recurse -Force
-          $scArchive = "$pack\Sources\SuperCollider\supercollider-3.14.1-source.tar.gz"
-          git -C $sc archive --format=tar.gz --output=$scArchive Version-3.14.1
-          if ($LASTEXITCODE -ne 0) { throw "Could not package matching SuperCollider source." }
           Copy-Item "UGens\SC3141Addons\README.txt" "$pack\README.txt"
           $scCommit = (git -C $sc rev-parse HEAD).Trim()
-          @("SuperCollider tag: Version-3.14.1", "SuperCollider commit: $scCommit", "Target: Windows x64 UGen modules, API 3", "The embedded VST engine was not rebuilt or changed.") | Set-Content "$pack\BUILD-INFO.txt" -Encoding UTF8
-          $required = @("SCPlugins\AirwindowsFX.scx", "SCPlugins\LimutFX.scx", "SCPlugins\DiskIO_UGens.scx", "SCPlugins\sndfile.dll", "Classes\AirwindowsUGens.sc", "Classes\LimutFX.sc", "Licenses\SuperCollider-GPL.txt", "Licenses\libsndfile-LGPL.txt")
+          @("SuperCollider tag: Version-3.14.1", "SuperCollider commit: $scCommit", "Target: Windows x64 UGen modules, API 3", "No SuperCollider engine or VST rebuild.") | Set-Content "$pack\BUILD-INFO.txt" -Encoding UTF8
+          $required = @("SCPlugins\AirwindowsFX.scx", "SCPlugins\LimutFX.scx", "Classes\AirwindowsUGens.sc", "Classes\LimutFX.sc", "SynthDefs\Airwindows\AirwindowsEchojam.scsyndef", "SynthDefs\Airwindows\AirwindowsTapeDelay2.scsyndef", "SynthDefs\LimutFX\LimutShifter.scsyndef", "Sidechain\SynthDefs\LimutVocoder.scsyndef", "Licenses\SuperCollider-GPL.txt", "Licenses\Airwindows.txt", "Licenses\LimutFX-Attribution.txt")
           foreach ($file in $required) { if (-not (Test-Path (Join-Path $pack $file))) { throw "Package missing required file: $file" } }
-          if (Get-ChildItem $pack -Recurse -File | Where-Object { $_.Name -match "JPverb|Greyhole" }) { throw "Reverb files must not be included in this add-on pack." }
+          if (Get-ChildItem $pack -Recurse -File | Where-Object { $_.Name -match "JPverb|Greyhole|DiskIO" }) { throw "Reverb or duplicate DiskIO files must not be included." }
           Get-ChildItem "$pack\SCPlugins" -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path.Substring($pack.Length + 1))" } | Set-Content "$pack\SHA256SUMS.txt" -Encoding ASCII
           Compress-Archive -Path "$pack\*" -DestinationPath "$env:RUNNER_TEMP\dexter-sc3141-addon-ugens-win-x64.zip" -Force
 

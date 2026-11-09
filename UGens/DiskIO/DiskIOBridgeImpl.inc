@@ -326,7 +326,7 @@ static void* createUnit(World* world, unsigned buffer, int mode, float playbackR
         host->rate.mSampleDur = 1.0 / world->mSampleRate;
         host->rate.mBufLength = 64;
         host->rate.mSlopeFactor = 1.0 / 64;
-        // Per-unit mRate is wired below; this Graph field is absent in SC 3.14.1 and unused by DiskIO.
+        host->graph.mFullRate = &host->rate;
         host->graph.localBufNum = -1;
         unit->mWorld = world; unit->mParent = &host->graph; unit->mRate = &host->rate;
         unit->mBufLength = 64;

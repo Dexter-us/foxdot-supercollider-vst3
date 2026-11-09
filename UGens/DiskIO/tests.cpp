@@ -23,7 +23,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <utility>
 #ifdef _WIN32
 #include <Windows.h>
 #else
@@ -38,10 +37,8 @@ static std::map<std::string, Definition> definitions;
 static void check(bool ok, const std::string& message) {
     if (!ok) throw std::runtime_error(message);
 }
-using DefineUnitResult = decltype(std::declval<InterfaceTable&>().fDefineUnit(
-    nullptr, std::size_t{}, UnitCtorFunc{}, UnitDtorFunc{}, uint32{}));
-static DefineUnitResult defineUnit(const char* name, std::size_t size, UnitCtorFunc ctor,
-                                   UnitDtorFunc dtor, uint32) {
+static SCBool defineUnit(const char* name, std::size_t size, UnitCtorFunc ctor,
+                         UnitDtorFunc dtor, uint32) {
     definitions.emplace(name, Definition{size, ctor, dtor}); return true;
 }
 static void clearUnit(Unit* unit, int32 frames) {
@@ -100,7 +97,7 @@ struct TestUnit {
         rate.mSampleDur = 1.0 / 48000;
         rate.mBufLength = 64;
         rate.mSlopeFactor = 1.0 / 64;
-        // Per-unit mRate is set below; Graph has no full-rate pointer in SC 3.14.1.
+        graph.mFullRate = &rate;
         graph.localBufNum = -1;
         unit->mWorld = &fake.world;
         unit->mParent = &graph;
