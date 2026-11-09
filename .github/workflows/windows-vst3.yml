@@ -5,6 +5,10 @@ on:
     paths:
       - "spikes/vst3-callback/**"
       - "tools/build-windows-vst3.ps1"
+      - "tools/build-sclang-runtime-windows.ps1"
+      - "tools/package-sclang-runtime.cmake"
+      - "tools/install-sclang-runtime-windows.ps1"
+      - "tools/test-sclang-osc.cpp"
       - ".github/workflows/windows-vst3.yml"
   workflow_dispatch:
 
@@ -38,6 +42,14 @@ jobs:
           key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
           restore-keys: |
             windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
+
+      - name: Restore pinned headless sclang runtime cache
+        id: sclang_cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\dexter-sclang-runtime
+          key: windows-sclang-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-server-off-${{ hashFiles('tools/build-sclang-runtime-windows.ps1', 'tools/package-sclang-runtime.cmake') }}
+
       - name: Build VST3 only (requires existing SuperCollider cache)
         id: build_vst3
         shell: pwsh
@@ -69,8 +81,77 @@ jobs:
             throw
           }
 
+      - name: Build and test loopback OSC packet helper
+        if: steps.build_vst3.outcome == 'success'
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          & cmake --build $pluginBuild --config Release --target dexter_sclang_osc_test
+          if ($LASTEXITCODE -ne 0) { throw "OSC helper test target build failed ($LASTEXITCODE)." }
+          $test = Join-Path $pluginBuild "Release\dexter_sclang_osc_test.exe"
+          if (-not (Test-Path $test)) { throw "OSC helper test executable not found: $test" }
+          & $test
+          if ($LASTEXITCODE -ne 0) { throw "OSC helper tests failed ($LASTEXITCODE)." }
+
+      - name: Build headless sclang from the pinned cached SC 3.15 source
+        id: build_sclang
+        if: steps.build_vst3.outcome == 'success' && steps.sclang_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          & .\tools\build-sclang-runtime-windows.ps1 `
+            -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" `
+            -RuntimeRoot "$env:RUNNER_TEMP\dexter-sclang-runtime"
+          if ($LASTEXITCODE -ne 0) { throw "Headless sclang package build failed ($LASTEXITCODE)." }
+
+      - name: Install headless sclang into the VST3 resources
+        id: install_sclang
+        if: steps.build_vst3.outcome == 'success'
+        shell: pwsh
+        run: |
+          & .\tools\install-sclang-runtime-windows.ps1 `
+            -RuntimeRoot "$env:RUNNER_TEMP\dexter-sclang-runtime" `
+            -Bundle "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3"
+          if ($LASTEXITCODE -ne 0) { throw "Installing the sclang runtime failed ($LASTEXITCODE)." }
+
+      - name: Verify bundled headless sclang is pinned and runnable
+        id: verify_sclang
+        if: steps.install_sclang.outcome == 'success'
+        shell: pwsh
+        run: |
+          $runtime = Join-Path "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3" "Contents\Resources\SuperCollider"
+          $manifestPath = Join-Path $runtime "SC_RUNTIME_VERSION.txt"
+          $manifest = Get-Content $manifestPath -Raw
+          if ($manifest -notmatch 'Version: 3\.15' -or
+              $manifest -notmatch 'Source commit: ef5771bce3d1c9c780cafd58cf032ec4a3f36d10' -or
+              $manifest -notmatch 'API generation: 7' -or
+              $manifest -notmatch 'SCLANG_SERVER=OFF') {
+            throw "Bundled language runtime is not the pinned SC 3.15/API-7 no-server build."
+          }
+          if (-not (Test-Path (Join-Path $runtime "SCClassLibrary"))) {
+            throw "Bundled sclang class library is missing."
+          }
+          if (Get-ChildItem -Path $runtime -Filter "*scsynth*" -File -Recurse) {
+            throw "A second SuperCollider audio server must not be shipped in the language helper folder."
+          }
+          $stdout = Join-Path $env:RUNNER_TEMP "sclang-version.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "sclang-version.stderr.log"
+          $process = Start-Process -FilePath (Join-Path $runtime "sclang.exe") `
+            -ArgumentList "-v" -WorkingDirectory $runtime -NoNewWindow `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          if (-not $process.WaitForExit(30000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "Bundled sclang -v did not exit within 30 seconds."
+          }
+          $versionOutput = ''
+          if (Test-Path $stdout) { $versionOutput += Get-Content $stdout -Raw }
+          if (Test-Path $stderr) { $versionOutput += Get-Content $stderr -Raw }
+          Write-Host $versionOutput
+          if ($process.ExitCode -ne 0 -or $versionOutput -notmatch '3\.15') {
+            throw "Bundled sclang did not report version 3.15 successfully."
+          }
+
       - name: Required VST3 validator (five-minute limit)
-        if: always() && steps.build_vst3.outcome == 'success'
+        if: always() && steps.build_vst3.outcome == 'success' && steps.install_sclang.outcome == 'success' && steps.verify_sclang.outcome == 'success'
         shell: pwsh
         run: |
           $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
@@ -110,7 +191,7 @@ jobs:
 
       - name: Upload Windows VST3 diagnostic bundle
         uses: actions/upload-artifact@v4
-        if: always() && steps.build_vst3.outcome == 'success'
+        if: always() && steps.build_vst3.outcome == 'success' && steps.install_sclang.outcome == 'success'
         with:
           name: dexter-foxdot-live-vst3-windows-x64
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3

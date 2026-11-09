@@ -39,6 +39,7 @@
 #include "user_synth_controls.h"
 #include "user_synth_control_state.h"
 #include "sardine_pattern_gates.h"
+#include "sclang_runtime_win32.h"
 
 #include <algorithm>
 #include <array>
@@ -268,6 +269,29 @@ std::filesystem::path bundledPythonPath() {
         return {};
     return binaryPath.parent_path().parent_path() / "Resources" / "Python";
 }
+
+std::filesystem::path bundledSuperColliderLanguagePath() {
+    const auto binaryPath = pluginBinaryPath();
+    if (binaryPath.empty())
+        return {};
+    return binaryPath.parent_path().parent_path() / "Resources" / "SuperCollider";
+}
+
+std::string defaultSuperColliderSource() {
+    return
+        "// Full SuperCollider language tab; sclang talks to the VST's embedded engine.\r\n"
+        "// Run the code only if you recognize and trust it. It can execute system commands.\r\n"
+        "(\r\n"
+        "Routine({\r\n"
+        "    SynthDef(\\dexterSclangDemo, { |out=0, freq=440, amp=0.12, gate=1|\r\n"
+        "        var env = EnvGen.kr(Env.asr(0.01, 1, 0.15), gate, doneAction: 2);\r\n"
+        "        Out.ar(out, (SinOsc.ar(freq) * amp * env) ! 2);\r\n"
+        "    }).add;\r\n"
+        "    s.sync;\r\n"
+        "    x = Synth(\\dexterSclangDemo);\r\n"
+        "}).play(SystemClock);\r\n"
+        ")\r\n";
+}
 }
 
 namespace Steinberg::Vst {
@@ -313,16 +337,22 @@ public:
             return kInvalidArgument;
 
         std::string source;
+        std::string superColliderSource;
         {
             std::lock_guard<std::mutex> lock(editorStateMutex_);
             source = editorSource_;
+            superColliderSource = superColliderSource_;
         }
-        if (source.size() > kMaxEditorSourceBytes)
+        if (source.size() > kMaxEditorSourceBytes ||
+            superColliderSource.size() > kMaxEditorSourceBytes)
             return kResultFalse;
 
-        std::array<char, 4> magic{'D', 'X', 'C', '2'};
+        std::array<char, 4> magic{'D', 'X', 'C', '3'};
         std::array<char, 4> length{};
+        std::array<char, 4> superColliderLength{};
         encodeUint32(static_cast<std::uint32_t>(source.size()), length);
+        encodeUint32(static_cast<std::uint32_t>(superColliderSource.size()),
+                     superColliderLength);
         std::array<char, 4> gainBytes{};
         const float gain = masterGainTarget_.load(std::memory_order_acquire);
         std::uint32_t gainBits = 0;
@@ -333,6 +363,11 @@ public:
             !writeStreamBytes(stream, length.data(), static_cast<int32>(length.size())) ||
             (!source.empty() &&
              !writeStreamBytes(stream, source.data(), static_cast<int32>(source.size()))) ||
+            !writeStreamBytes(stream, superColliderLength.data(),
+                              static_cast<int32>(superColliderLength.size())) ||
+            (!superColliderSource.empty() &&
+             !writeStreamBytes(stream, superColliderSource.data(),
+                               static_cast<int32>(superColliderSource.size()))) ||
             !writeStreamBytes(stream, gainBytes.data(),
                               static_cast<int32>(gainBytes.size())))
             return kResultFalse;
@@ -356,8 +391,10 @@ public:
             bytesRead += chunkRead;
         }
         const bool oldState = magic == std::array<char, 4>{'D', 'X', 'C', '1'};
-        const bool hasGain = magic == std::array<char, 4>{'D', 'X', 'C', '2'};
-        if (!oldState && !hasGain)
+        const bool stateV2 = magic == std::array<char, 4>{'D', 'X', 'C', '2'};
+        const bool stateV3 = magic == std::array<char, 4>{'D', 'X', 'C', '3'};
+        const bool hasGain = stateV2 || stateV3;
+        if (!oldState && !stateV2 && !stateV3)
             return kResultFalse;
 
         std::array<char, 4> length{};
@@ -373,6 +410,24 @@ public:
             return kResultFalse;
         if (source.find('\0') != std::string::npos)
             return kResultFalse;
+
+        std::string superColliderSource = defaultSuperColliderSource();
+        if (stateV3) {
+            std::array<char, 4> superColliderLengthBytes{};
+            if (!readStreamBytes(stream, superColliderLengthBytes.data(),
+                                 static_cast<int32>(superColliderLengthBytes.size())))
+                return kResultFalse;
+            const auto superColliderLength = decodeUint32(superColliderLengthBytes);
+            if (superColliderLength > kMaxEditorSourceBytes)
+                return kResultFalse;
+            superColliderSource.assign(superColliderLength, '\0');
+            if (!superColliderSource.empty() &&
+                !readStreamBytes(stream, superColliderSource.data(),
+                                 static_cast<int32>(superColliderSource.size())))
+                return kResultFalse;
+            if (superColliderSource.find('\0') != std::string::npos)
+                return kResultFalse;
+        }
 
         float restoredGain = 1.0f;
         if (hasGain) {
@@ -390,10 +445,13 @@ public:
         {
             std::lock_guard<std::mutex> lock(editorStateMutex_);
             editorSource_ = std::move(source);
+            superColliderSource_ = std::move(superColliderSource);
             hasEditorSource_ = true;
+            hasSuperColliderSource_ = true;
         }
         masterGainTarget_.store(restoredGain, std::memory_order_release);
         stopPattern();
+        stopSuperCollider();
         return kResultOk;
     }
 
@@ -1045,9 +1103,61 @@ public:
         hasEditorSource_ = true;
     }
 
+    std::string superColliderSource() override {
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        return superColliderSource_;
+    }
+
+    bool hasSuperColliderSource() override {
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        return hasSuperColliderSource_;
+    }
+
+    void setSuperColliderSource(const std::string& source) override {
+        if (source.size() > kMaxEditorSourceBytes)
+            return;
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        superColliderSource_ = source;
+        hasSuperColliderSource_ = true;
+    }
+
     std::string editorStatus() override {
         std::lock_guard<std::mutex> lock(statusMutex_);
         return editorStatus_;
+    }
+
+    void submitSuperColliderCode(const std::string& source) override {
+        if (source.size() > kMaxEditorSourceBytes ||
+            source.find('\0') != std::string::npos) {
+            setEditorStatus("SuperCollider source is invalid or exceeds 256 KB.");
+            return;
+        }
+        if (!initializeWorld()) {
+            setEditorStatus("The embedded SuperCollider engine is not ready. See the host status for its startup error.");
+            return;
+        }
+        int serverPort = 0;
+        double currentSampleRate = 0.0;
+        {
+            std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+            serverPort = scLanguageServerPort_;
+            currentSampleRate = sampleRate_;
+        }
+        if (serverPort <= 0) {
+            setEditorStatus("The embedded engine is running, but its private SuperCollider TCP endpoint could not be opened.");
+            return;
+        }
+        scLanguageRuntime_.submit(
+            bundledSuperColliderLanguagePath(), serverPort,
+            kSclangFirstAllocatableAudioBus, currentSampleRate, source);
+    }
+
+    void stopSuperCollider() override {
+        scLanguageRuntime_.stop();
+    }
+
+    std::string superColliderStatus() override {
+        return scLanguageRuntime_.status();
     }
 
     float masterOutputGain() override {
@@ -1374,6 +1484,12 @@ private:
     static constexpr int kAirwindowsOutputBusBase =
         kAirwindowsInputBusBase + static_cast<int>(kPlayerCount) * 2;
     static constexpr int kNumAudioBusChannels = 1024;
+    // Present plugin-reserved buses as the ServerOptions output prefix to
+    // sclang's client-side Bus allocator. User Bus.audio allocations then begin
+    // after the VST's voice/reverb/effect-chain buses instead of overlapping.
+    static constexpr int kSclangFirstAllocatableAudioBus =
+        kAirwindowsOutputBusBase +
+        static_cast<int>(kPlayerCount * kMaxPlayerEffectChain * 2);
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kReverbSendReleaseSeconds = 0.015;
@@ -1405,6 +1521,8 @@ private:
                       kPlayerCount * kMaxPlayerEffectChain * 2 <=
                       kNumAudioBusChannels,
                   "The SuperCollider world needs private stereo buses for each player effect-chain stage.");
+    static_assert(kSclangFirstAllocatableAudioBus < kNumAudioBusChannels,
+                  "The sclang bus allocator must have some free audio buses.");
     static_assert(kWorldNodeCapacity <= 0xffffffffu,
                   "The SuperCollider world node capacity must fit WorldOptions.");
     static_assert(kWorldNodeCapacity >= 2048,
@@ -4398,6 +4516,13 @@ private:
         }
         moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
         World_SetSampleRate(world_, sampleRate_);
+        scLanguageServerPort_ = dexter::sclang::findAvailableServerPort();
+        if (scLanguageServerPort_ <= 0 ||
+            !World_OpenTCP(world_, "127.0.0.1", scLanguageServerPort_, 8, 8)) {
+            std::fprintf(stderr,
+                         "Dexter VST3: could not open the loopback-only SuperCollider language endpoint.\n");
+            scLanguageServerPort_ = 0;
+        }
         {
             LifecycleTrace startTrace("World_Start", this);
             World_Start(world_);
@@ -4536,10 +4661,12 @@ private:
     }
 
     void discardPartialWorld() {
+        scLanguageRuntime_.shutdown();
         if (world_) {
             World_Cleanup(world_, false);
             world_ = nullptr;
         }
+        scLanguageServerPort_ = 0;
         for (auto& voice : audioVoices_)
             voice = {};
         for (auto& player : reverbGraphs_)
@@ -5265,6 +5392,8 @@ private:
 
     // Caller owns worldAccessMutex_. Never call the locking wrapper recursively.
     void stopWorldLocked() {
+        scLanguageRuntime_.shutdown();
+        scLanguageServerPort_ = 0;
         if (world_) {
             std::string diskError;
             const bool diskDrained = diskIO_.closeAll(diskError);
@@ -5342,6 +5471,8 @@ private:
     bool hostProcessingConfigured_ = false;
     std::string worldInitializationError_;
     World* world_ = nullptr;
+    int scLanguageServerPort_ = 0;
+    dexter::sclang::Runtime scLanguageRuntime_;
     PortableDiskIO diskIO_;
     bool diskCleanupFailed_ = false;
     Group* rootGroup_ = nullptr;
@@ -5449,6 +5580,8 @@ private:
     std::string editorSource_ =
         "tempo(120)\r\nplay([60, 64, 67, 72], step=0.5, duration=0.45)\r\n";
     bool hasEditorSource_ = true;
+    std::string superColliderSource_ = defaultSuperColliderSource();
+    bool hasSuperColliderSource_ = true;
 };
 
 } // namespace Steinberg::Vst

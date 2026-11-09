@@ -101,12 +101,3 @@ continue to work. The Players > Synths index groups bundled instruments as:
 Player-effect SynthDefs are listed separately in the Effects index. Newly added
 user SynthDefs are still discovered automatically and grouped by a best-effort
 filename match; these two bundled voices use explicit catalog entries.
-
-
-External UGen smoke test
-------------------------
-BlitB3SawProbe.scsyndef is a stereo test SynthDef using the precompiled
-BlitB3Saw UGen from Portable/SCPlugins/AntiAliasingOscillators.scx. Its source
-and bounded leak slider sidecar are included here. The UGen itself is not
-rebuilt by the VST workflow; Example 221 checks whether the provided Windows
-x64 module loads with the pinned embedded SuperCollider engine.

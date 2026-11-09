@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.176)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.177)
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
@@ -145,6 +145,7 @@ endif()
 smtg_add_vst3plugin(dexter_sc_tone
   processor.cpp
   python_runtime.cpp
+  sclang_runtime_win32.cpp
   win32_code_editor.cpp
   "${SDK_ROOT}/public.sdk/source/vst/vstsinglecomponenteffect.cpp")
 smtg_target_add_plugin_resources(dexter_sc_tone
@@ -184,5 +185,10 @@ elseif(UNIX AND NOT APPLE)
   target_link_libraries(dexter_sc_tone PRIVATE m rt pthread)
 endif()
 
+add_executable(dexter_sclang_osc_test EXCLUDE_FROM_ALL
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/test-sclang-osc.cpp")
+target_include_directories(dexter_sclang_osc_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(dexter_sclang_osc_test PRIVATE cxx_std_17)
 
 smtg_target_configure_version_file(dexter_sc_tone)

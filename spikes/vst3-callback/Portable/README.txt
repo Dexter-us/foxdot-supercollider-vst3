@@ -841,4 +841,17 @@ to 32 conditional statements, four nested levels, and the existing cycle,
 event, and timeline caps. Example 220 demonstrates a four-beat fill.
 
 
-0.4.176 adds a test-only external UGen probe (Example 221) using the precompiled SC3plugins AntiAliasingOscillators module. See Portable/SCPlugins/AntiAliasingOscillators-TEST.txt; no UGen rebuild is performed.
+0.4.177 adds a separate SuperCollider (.scd) editor tab backed by the pinned
+SuperCollider 3.15 sclang language runtime. It connects by loopback OSC/TCP to
+the VST's existing embedded SuperCollider World; it does not start a second
+scsynth/audio engine. The FoxDot/Python tab remains separate and keeps its
+bounded compatibility checker. Example 222 is a starter score for the .scd tab.
+The sclang-side audio-bus allocator reserves the buses already used by VST
+voices and effect chains so ordinary Bus.audio allocations do not collide.
+
+The SuperCollider tab executes full language code, including file and process
+operations. Run only source you trust. The helper runs headlessly and is built
+with SCLANG_SERVER=OFF. Portable/SCPlugins contains only modules built for the
+same pinned SuperCollider 3.15/API-7 engine; the former SC3.14.1/API-3
+AntiAliasingOscillators probe was removed because it was incompatible with
+this VST.

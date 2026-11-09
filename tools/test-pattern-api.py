@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.176' not in cmake_source or
+if ('VERSION 0.4.177' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2837,36 +2837,12 @@ def read_synthdef_manifest(data, validate_builtin_controls=True, return_controls
     return (version, graphs, controls) if return_controls else (version, graphs)
 
 
-blitModulePath = os.path.join(
-    sys.argv[2], 'SCPlugins', 'AntiAliasingOscillators.scx')
-blitModule = open(blitModulePath, 'rb').read()
-assert blitModule[:2] == b'MZ'
-blitPeOffset = struct.unpack_from('<I', blitModule, 0x3c)[0]
-assert blitModule[blitPeOffset:blitPeOffset + 4] == b'PE\0\0'
-assert struct.unpack_from('<H', blitModule, blitPeOffset + 4)[0] == 0x8664, (
-    'The isolated UGen probe must use the precompiled Windows x64 module.')
-blitSynthDefPath = os.path.join(
-    sys.argv[2], 'SynthDefs', 'BlitB3SawProbe.scsyndef')
-blitSynthDef = open(blitSynthDefPath, 'rb').read()
-_, blitGraphs, blitControls = read_synthdef_manifest(
-    blitSynthDef, validate_builtin_controls=False, return_controls=True)
-assert set(blitGraphs) == {'BlitB3SawProbe'}, blitGraphs
-assert blitControls['BlitB3SawProbe'] == {
-    'out': 0, 'freq': 1, 'gate': 2, 'amp': 3, 'leak': 4
-}, blitControls
-assert ('BlitB3Saw', 2, 2) in blitGraphs['BlitB3SawProbe'], (
-    'The test SynthDef must instantiate the precompiled BlitB3Saw UGen.')
-blitOutUnits = [unit for unit in blitGraphs['BlitB3SawProbe']
-                if unit[0] == 'Out']
-assert len(blitOutUnits) == 1 and blitOutUnits[0][1] == 3, (
-    'Example 221 must exercise the VST stereo user-SynthDef path.')
-blitControlsSidecar = open(
-    os.path.join(sys.argv[2], 'SynthDefs', 'BlitB3SawProbe.controls'),
-    encoding='utf-8').read()
-assert 'leak 0.90 0.999 0.99' in blitControlsSidecar
-blitProbeRows = run_example(
-    '221-antialiasing-oscillator-probe.py', ('BlitB3SawProbe',))
-assert len(blitProbeRows) == 1 and int(blitProbeRows[0][1]) == 0
+assert not os.path.exists(os.path.join(
+    sys.argv[2], 'SCPlugins', 'AntiAliasingOscillators.scx')), (
+        'The unverified SC3.14.1/API-3 module must not be packaged with the 3.15 VST.')
+assert not os.path.exists(os.path.join(
+    sys.argv[2], 'SynthDefs', 'BlitB3SawProbe.scsyndef')), (
+        'The probe SynthDef requires an unavailable UGen and must not block the VST validator.')
 
 
 def test_embedded_synthdef():
@@ -2882,6 +2858,31 @@ def test_embedded_synthdef():
         os.path.join(plugin_dir, 'plugin_version.h.in'), encoding='utf-8').read()
     assert '@PROJECT_VERSION@' in version_template, (
         'Generated VST/panel version must match the CMake project version')
+    assert "{'D', 'X', 'C', '3'}" in processor_source and 'superColliderSource_' in processor_source, (
+        'Plugin state must persist the independent SuperCollider editor buffer.')
+    assert 'World_OpenTCP' in processor_source and '127.0.0.1' in processor_source, (
+        'The .scd tab must connect to the existing embedded World, not create another audio server.')
+    assert 'World_OpenUDP' not in processor_source, (
+        'The .scd bridge should expose only the TCP server socket it needs.')
+    assert 'findAvailableServerPort' in processor_source, (
+        'Embedded SuperCollider control ports must be selected for loopback use.')
+    assert 'SCLANG_SERVER=OFF' in open(
+        os.path.join(repo_root, 'tools', 'build-sclang-runtime-windows.ps1'),
+        encoding='utf-8').read(), (
+            'The bundled sclang helper must be built without a second internal server.')
+    sclang_runtime = open(
+        os.path.join(plugin_dir, 'sclang_runtime_win32.cpp'),
+        encoding='utf-8').read()
+    assert 'opts.reservedNumAudioBusChannels' in sclang_runtime, (
+        'The sclang bus allocator must skip the plugin-owned private audio buses.')
+    assert 'Server.remote' in sclang_runtime, (
+        'sclang must connect to the existing VST World rather than booting another audio server.')
+    assert 'SuperCollider .scd' in editor_text and 'switchEditorTab(1)' in editor_text, (
+        'The editor must expose a separate SuperCollider source tab.')
+    assert 'host_->submitSuperColliderCode(source)' in editor_text, (
+        'The .scd Run action must route to the headless sclang bridge.')
+    assert 'Unrestricted SuperCollider code' in editor_text, (
+        'The editor must warn before executing full SuperCollider language code.')
     generator = os.path.join(repo_root, 'spikes', 'direct-world', 'testdata', 'generate_tone.py')
     header = os.path.join(plugin_dir, 'tone_synthdef.h')
     with tempfile.TemporaryDirectory() as directory:
@@ -4114,8 +4115,6 @@ for filename in os.listdir(sys.argv[2]):
                 'SCLOrkCrossoverDistortionFX')
         if filename == '199-limut-compressor.py':
             example_names = ('LimutCompressor',)
-        if filename == '221-antialiasing-oscillator-probe.py':
-            example_names = ('BlitB3SawProbe',)
         if filename in ('214-jazz-brush-kit.py',
                         '217-jazz-kit-core-groove.py',
                         '218-jazz-kit-kick-compare.py'):

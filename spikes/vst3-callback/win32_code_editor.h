@@ -55,10 +55,16 @@ public:
     virtual std::string editorSource() = 0;
     virtual bool hasEditorSource() = 0;
     virtual void setEditorSource(const std::string& source) = 0;
+    virtual std::string superColliderSource() = 0;
+    virtual bool hasSuperColliderSource() = 0;
+    virtual void setSuperColliderSource(const std::string& source) = 0;
     virtual std::string checkCompatibility(const std::string& source) = 0;
     virtual void submitCode(const std::string& source) = 0;
     virtual void stopPattern() = 0;
     virtual std::string editorStatus() = 0;
+    virtual void submitSuperColliderCode(const std::string& source) = 0;
+    virtual void stopSuperCollider() = 0;
+    virtual std::string superColliderStatus() = 0;
     virtual float masterOutputGain() = 0;
     virtual void setMasterOutputGain(float gain) = 0;
     virtual void editorPlayerStates(std::array<EditorPlayerState, 8>& states) = 0;

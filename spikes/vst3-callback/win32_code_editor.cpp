@@ -63,6 +63,8 @@ constexpr int kPanelStopId = 118;
 constexpr int kPanelSamplesId = 119;
 constexpr int kPanelVersionId = 120;
 constexpr int kPlayerSliderBaseId = 121;
+constexpr int kPythonTabButtonId = 3200;
+constexpr int kSuperColliderTabButtonId = 3201;
 constexpr int kPlayerControlLabelBaseId = 128;
 constexpr int kPlayerControlValueBaseId = 135;
 constexpr int kEffectChainItemDataBase = 100;
@@ -104,6 +106,13 @@ constexpr char kPythonKeywords[] =
     "and as assert async await break class continue def del elif else except finally "
     "for from global if import in is lambda nonlocal not or pass raise return try "
     "while with yield False None True";
+constexpr char kSuperColliderKeywords[] =
+    "var arg class this thisThread currentEnvironment nil true false inf "
+    "SinOsc Saw Pulse TriSaw LFTri Blip WhiteNoise PinkNoise BrownNoise "
+    "Out In Env EnvGen Line XLine Lag Lag2 LPF HPF BPF RLPF RHPF "
+    "Synth SynthDef Group Bus Buffer Server ServerOptions NetAddr "
+    "Pbind Pseq Ppar Pmono Pwhite Prand Pwrand Pfunc Pser Pn Pstutter "
+    "Routine Task TempoClock SystemClock AppClock OSCdef CmdPeriod";
 constexpr char kFoxDotApiKeywords[] =
     "Clock Scale Root Player P PGroup Pvar PWalk PChain PDelta PSquare var linvar DiskIn VDiskIn DiskOut record play stop sine triangle saw pulse bass varsaw dirt jbass noise "
     "dub growl soprano crunch lazer rave bell gong marimba pluck twang donk squish "
@@ -274,12 +283,13 @@ public:
             if (editor_) {
                 currentSource_ = editorSource();
                 sourceInitialized_ = true;
-                if (host_)
-                    host_->setEditorSource(toUtf8(currentSource_));
+                persistActiveDocument();
             }
             DestroyWindow(window_);
             window_ = nullptr;
-            editor_ = runButton_ = stopButton_ = openButton_ = saveButton_ = saveAsButton_ =
+            editor_ = pythonEditor_ = superColliderEditor_ = nullptr;
+            pythonTabButton_ = superColliderTabButton_ = nullptr;
+            runButton_ = stopButton_ = openButton_ = saveButton_ = saveAsButton_ =
                 status_ = brand_ = fileName_ = copyErrorButton_ =
                     masterGainSlider_ = masterGainValue_ = masterGainLabel_ = nullptr;
         }
@@ -460,9 +470,11 @@ private:
                     (notification->modificationType &
                      (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT)) != 0)
                     view->onEditorChanged();
-                else if (notification->nmhdr.code == SCN_CHARADDED)
+                else if (notification->nmhdr.code == SCN_CHARADDED &&
+                         view->activeTab_ == 0)
                     view->onEditorCharacterAdded(notification->ch);
-                else if (notification->nmhdr.code == SCN_UPDATEUI)
+                else if (notification->nmhdr.code == SCN_UPDATEUI &&
+                         view->activeTab_ == 0)
                     view->selectPlayerAtEditorCaret();
                 return 0;
             }
@@ -494,9 +506,23 @@ private:
                 return 0;
             }
             if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kStopId) {
-                if (view->host_)
-                    view->host_->stopPattern();
-                SetWindowTextW(view->status_, L"Stopped.");
+                if (view->host_) {
+                    if (view->activeTab_ == 0)
+                        view->host_->stopPattern();
+                    else
+                        view->host_->stopSuperCollider();
+                }
+                SetWindowTextW(view->status_, L"Stop sent.");
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED &&
+                LOWORD(wParam) == kPythonTabButtonId) {
+                view->switchEditorTab(0);
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED &&
+                LOWORD(wParam) == kSuperColliderTabButtonId) {
+                view->switchEditorTab(1);
                 return 0;
             }
             if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kOpenId) {
@@ -547,11 +573,12 @@ private:
             if (view->editor_) {
                 view->currentSource_ = view->editorSource();
                 view->sourceInitialized_ = true;
-                if (view->host_)
-                    view->host_->setEditorSource(toUtf8(view->currentSource_));
+                view->persistActiveDocument();
             }
             view->window_ = nullptr;
-            view->editor_ = view->runButton_ = view->stopButton_ =
+            view->editor_ = view->pythonEditor_ = view->superColliderEditor_ = nullptr;
+            view->pythonTabButton_ = view->superColliderTabButton_ = nullptr;
+            view->runButton_ = view->stopButton_ =
                 view->openButton_ = view->saveButton_ = view->saveAsButton_ =
                     view->status_ = view->brand_ = view->fileName_ =
                         view->copyErrorButton_ = view->masterGainSlider_ =
@@ -583,6 +610,19 @@ private:
                                       0, 0, 56, 26, window_,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStopId)),
                                       moduleInstance(), nullptr);
+        pythonTabButton_ = CreateWindowExW(
+            0, L"BUTTON", L"FoxDot / Python",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON | WS_GROUP,
+            0, 0, 116, 22, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPythonTabButtonId)),
+            moduleInstance(), nullptr);
+        superColliderTabButton_ = CreateWindowExW(
+            0, L"BUTTON", L"SuperCollider .scd",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON,
+            0, 0, 150, 22, window_,
+            reinterpret_cast<HMENU>(
+                static_cast<INT_PTR>(kSuperColliderTabButtonId)),
+            moduleInstance(), nullptr);
         openButton_ = CreateWindowExW(0, L"BUTTON", L"Open",
                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                                       0, 0, 56, 26, window_,
@@ -760,18 +800,60 @@ private:
                 currentSource_ = kInitialCode;
             sourceInitialized_ = true;
         }
+        pythonSource_ = currentSource_;
+        pythonSourceInitialized_ = sourceInitialized_;
+        if (!superColliderSourceInitialized_) {
+            superColliderSource_ = host_ && host_->hasSuperColliderSource()
+                ? fromUtf8(host_->superColliderSource())
+                : fromUtf8(
+                    "// SuperCollider 3.15 code runs in bundled headless sclang.\r\n"
+                    "// It connects to this VST's embedded engine, not a second server.\r\n"
+                    "// Run only source you trust; this is unrestricted SuperCollider code.\r\n"
+                    "s = Server.default;\r\n"
+                    "(\r\n"
+                    "Routine({\r\n"
+                    "    SynthDef(\\dexterSine, { |out=0, freq=440, amp=0.12, gate=1|\r\n"
+                    "        var env = EnvGen.kr(Env.asr(0.01, 1, 0.15), gate, doneAction: 2);\r\n"
+                    "        Out.ar(out, (SinOsc.ar(freq) * amp * env) ! 2);\r\n"
+                    "    }).add;\r\n"
+                    "    s.sync;\r\n"
+                    "    x = Synth(\\dexterSine);\r\n"
+                    "}).play(SystemClock);\r\n"
+                    ")\r\n");
+            superColliderSourceInitialized_ = true;
+        }
         updatingEditor_ = true;
-        editor_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"Scintilla", L"",
+        pythonEditor_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"Scintilla", L"",
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL,
                                   0, 0, 600, 380, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kEditorId)),
                                   moduleInstance(), nullptr);
-        if (editor_) {
+        if (pythonEditor_) {
+            editor_ = pythonEditor_;
             configureEditor();
-            setEditorSource(currentSource_);
+            setEditorWindowText(pythonEditor_, pythonSource_);
             SetWindowSubclass(editor_, editorSubclassProcedure, 1,
                               reinterpret_cast<DWORD_PTR>(this));
         }
+        superColliderEditor_ = CreateWindowExW(
+            WS_EX_CLIENTEDGE, L"Scintilla", L"",
+            WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL,
+            0, 0, 600, 380, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kEditorId + 1)),
+            moduleInstance(), nullptr);
+        if (superColliderEditor_) {
+            editor_ = superColliderEditor_;
+            configureSuperColliderEditor();
+            setEditorWindowText(superColliderEditor_, superColliderSource_);
+            SetWindowSubclass(editor_, editorSubclassProcedure, 1,
+                              reinterpret_cast<DWORD_PTR>(this));
+        }
+        editor_ = pythonEditor_;
+        currentSource_ = pythonSource_;
+        currentFilePath_ = pythonFilePath_;
+        documentDirty_ = pythonDirty_;
+        sourceInitialized_ = pythonSourceInitialized_;
+        SendMessageW(pythonTabButton_, BM_SETCHECK, BST_CHECKED, 0);
         updatingEditor_ = false;
         SetTimer(window_, 1, 250, nullptr);
         layoutChildren(kViewWidth, kViewHeight);
@@ -837,6 +919,51 @@ private:
         SendMessageW(editor_, SCI_AUTOCSETORDER, SC_ORDER_PERFORMSORT, 0);
     }
 
+    void configureSuperColliderEditor() {
+        SendMessageW(editor_, SCI_SETCODEPAGE, SC_CP_UTF8, 0);
+        SendMessageW(editor_, SCI_SETMODEVENTMASK,
+                     SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT, 0);
+        SendMessageW(editor_, SCI_SETEOLMODE, SC_EOL_CRLF, 0);
+        SendMessageW(editor_, SCI_SETTABWIDTH, 4, 0);
+        SendMessageW(editor_, SCI_SETUSETABS, FALSE, 0);
+        SendMessageW(editor_, SCI_SETINDENT, 4, 0);
+        SendMessageW(editor_, SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER);
+        SendMessageW(editor_, SCI_SETMARGINWIDTHN, 0, 44);
+        SendMessageW(editor_, SCI_STYLECLEARALL, 0, 0);
+        SendMessageW(editor_, SCI_STYLESETFONT, STYLE_DEFAULT,
+                     reinterpret_cast<LPARAM>("Consolas"));
+        SendMessageW(editor_, SCI_STYLESETSIZE, STYLE_DEFAULT, 11);
+        SendMessageW(editor_, SCI_STYLESETFORE, STYLE_DEFAULT, RGB(35, 39, 43));
+        SendMessageW(editor_, SCI_STYLESETBACK, STYLE_DEFAULT, RGB(250, 250, 250));
+        SendMessageW(editor_, SCI_STYLESETBACK, STYLE_LINENUMBER, RGB(239, 242, 245));
+        SendMessageW(editor_, SCI_STYLESETFORE, STYLE_LINENUMBER, RGB(105, 112, 120));
+        ILexer5* lexer = CreateLexer("cpp");
+        if (lexer) {
+            SendMessageW(editor_, SCI_SETILEXER, 0,
+                         reinterpret_cast<LPARAM>(lexer));
+            SendMessageW(editor_, SCI_SETKEYWORDS, 0,
+                         reinterpret_cast<LPARAM>(kSuperColliderKeywords));
+        }
+        const auto setStyle = [this](int style, COLORREF foreground,
+                                     bool bold = false) {
+            SendMessageW(editor_, SCI_STYLESETFORE, style, foreground);
+            if (bold)
+                SendMessageW(editor_, SCI_STYLESETBOLD, style, TRUE);
+        };
+        setStyle(SCE_C_COMMENT, RGB(0, 126, 60));
+        setStyle(SCE_C_COMMENTLINE, RGB(0, 126, 60));
+        setStyle(SCE_C_COMMENTDOC, RGB(0, 126, 60));
+        setStyle(SCE_C_NUMBER, RGB(157, 72, 24));
+        setStyle(SCE_C_STRING, RGB(163, 44, 44));
+        setStyle(SCE_C_CHARACTER, RGB(163, 44, 44));
+        setStyle(SCE_C_WORD, RGB(38, 75, 145), true);
+        setStyle(SCE_C_WORD2, RGB(111, 61, 151), true);
+        setStyle(SCE_C_OPERATOR, RGB(75, 79, 84));
+        setStyle(SCE_C_PREPROCESSOR, RGB(125, 78, 33));
+        SendMessageW(editor_, SCI_AUTOCSETIGNORECASE, TRUE, 0);
+        SendMessageW(editor_, SCI_AUTOCSETORDER, SC_ORDER_PERFORMSORT, 0);
+    }
+
     void onEditorChanged() {
         if (updatingEditor_)
             return;
@@ -846,8 +973,96 @@ private:
         if (copyErrorButton_)
             EnableWindow(copyErrorButton_, FALSE);
         updateSaveButton();
-        if (host_)
-            host_->setEditorSource(toUtf8(editorSource()));
+        currentSource_ = editorSource();
+        sourceInitialized_ = true;
+        if (activeTab_ == 0) {
+            pythonSource_ = currentSource_;
+            pythonSourceInitialized_ = true;
+            pythonDirty_ = documentDirty_;
+            if (host_)
+                host_->setEditorSource(toUtf8(currentSource_));
+        } else {
+            superColliderSource_ = currentSource_;
+            superColliderSourceInitialized_ = true;
+            superColliderDirty_ = documentDirty_;
+            if (host_)
+                host_->setSuperColliderSource(toUtf8(currentSource_));
+        }
+    }
+
+    void persistActiveDocument() {
+        if (!editor_)
+            return;
+        currentSource_ = editorSource();
+        sourceInitialized_ = true;
+        if (activeTab_ == 0) {
+            pythonSource_ = currentSource_;
+            pythonSourceInitialized_ = true;
+            pythonFilePath_ = currentFilePath_;
+            pythonDirty_ = documentDirty_;
+            if (host_)
+                host_->setEditorSource(toUtf8(currentSource_));
+        } else {
+            superColliderSource_ = currentSource_;
+            superColliderSourceInitialized_ = true;
+            superColliderFilePath_ = currentFilePath_;
+            superColliderDirty_ = documentDirty_;
+            if (host_)
+                host_->setSuperColliderSource(toUtf8(currentSource_));
+        }
+    }
+
+    static void setEditorWindowText(HWND target, const std::wstring& source) {
+        if (!target)
+            return;
+        const auto utf8 = toUtf8(source);
+        SendMessageW(target, SCI_SETTEXT, 0,
+                     reinterpret_cast<LPARAM>(utf8.c_str()));
+    }
+
+    void switchEditorTab(int tab) {
+        if (tab < 0 || tab > 1 || tab == activeTab_ || !editor_ ||
+            (tab == 0 && !pythonEditor_) ||
+            (tab == 1 && !superColliderEditor_))
+            return;
+        persistActiveDocument();
+        activeTab_ = tab;
+        if (activeTab_ == 0) {
+            editor_ = pythonEditor_;
+            currentSource_ = pythonSource_;
+            currentFilePath_ = pythonFilePath_;
+            documentDirty_ = pythonDirty_;
+            sourceInitialized_ = pythonSourceInitialized_;
+            ShowWindow(pythonEditor_, SW_SHOW);
+            ShowWindow(superColliderEditor_, SW_HIDE);
+            SendMessageW(pythonTabButton_, BM_SETCHECK, BST_CHECKED, 0);
+            SendMessageW(superColliderTabButton_, BM_SETCHECK, BST_UNCHECKED, 0);
+        } else {
+            editor_ = superColliderEditor_;
+            currentSource_ = superColliderSource_;
+            currentFilePath_ = superColliderFilePath_;
+            documentDirty_ = superColliderDirty_;
+            sourceInitialized_ = superColliderSourceInitialized_;
+            ShowWindow(pythonEditor_, SW_HIDE);
+            ShowWindow(superColliderEditor_, SW_SHOW);
+            SendMessageW(pythonTabButton_, BM_SETCHECK, BST_UNCHECKED, 0);
+            SendMessageW(superColliderTabButton_, BM_SETCHECK, BST_CHECKED, 0);
+        }
+        updatingEditor_ = true;
+        setEditorWindowText(editor_, currentSource_);
+        updatingEditor_ = false;
+        copyDiagnosticPinned_ = false;
+        lastDiagnostic_.clear();
+        updateSaveButton();
+        const auto status = activeTab_ == 0
+            ? (host_ ? host_->editorStatus() : "FoxDot/Python editor ready.")
+            : (host_ ? host_->superColliderStatus()
+                     : "Bundled headless sclang is available in the Windows VST3.");
+        SetWindowTextW(status_, fromUtf8(status).c_str());
+        RECT client{};
+        GetClientRect(window_, &client);
+        layoutChildren(client.right - client.left, client.bottom - client.top);
+        SetFocus(editor_);
     }
 
     static bool isIdentifierByte(unsigned char character) {
@@ -1305,6 +1520,8 @@ private:
     void insertCatalogEntryAtCaret(
         const dexter::editor::CatalogEntry& entry,
         std::size_t position) {
+        if (activeTab_ != 0 || !entry.available)
+            return;
         auto source = editorUtf8Source();
         std::string failure;
         if (!dexter::editor::applyCatalogEntry(source, position, entry,
@@ -1345,7 +1562,7 @@ private:
         if (!menu)
             return true;
         AppendMenuW(menu, MF_STRING |
-                    (entry.available ? 0 : MF_GRAYED),
+                    (entry.available && activeTab_ == 0 ? 0 : MF_GRAYED),
                     kContextPanelInsertId, L"Insert at editor caret");
         AppendMenuW(menu, MF_STRING, kContextPanelAboutId,
                     L"About this item");
@@ -1374,6 +1591,8 @@ private:
 
     void beginCatalogDrag(LPARAM coordinates) {
         resetCatalogDrag();
+        if (activeTab_ != 0)
+            return;
         const auto hit = static_cast<DWORD>(SendMessageW(
             panelList_, LB_ITEMFROMPOINT, 0, coordinates));
         if (HIWORD(hit) != 0)
@@ -1424,7 +1643,7 @@ private:
         resetCatalogDrag();
         if (GetCapture() == panelList_)
             ReleaseCapture();
-        if (!wasActive || !editor_)
+        if (!wasActive || !editor_ || activeTab_ != 0)
             return wasActive;
         POINT cursor{};
         GetCursorPos(&cursor);
@@ -2429,7 +2648,11 @@ private:
             MoveWindow(masterGainValue_, kMargin + 286, gainRowY + 2,
                        64, 22, TRUE);
         }
-        const int editorTop = kMargin + kToolbarHeight + kGainRowHeight;
+        const int languageRowY = kMargin + kToolbarHeight + kGainRowHeight;
+        MoveWindow(pythonTabButton_, kMargin, languageRowY, 116, 22, TRUE);
+        MoveWindow(superColliderTabButton_, kMargin + 120, languageRowY,
+                   150, 22, TRUE);
+        const int editorTop = languageRowY + 24;
         const int editorHeight = std::max(80, height - editorTop - kStatusHeight - 2 * kMargin);
         const int panelX = width - kMargin - kPanelWidth;
         const int editorWidth = std::max(280, panelX - kMargin - 12);
@@ -2476,7 +2699,9 @@ private:
         if (!fileName_)
             return;
         std::wstring name = currentFilePath_.empty()
-                                ? L"Untitled script"
+                                ? (activeTab_ == 0
+                                       ? L"Untitled Python script"
+                                       : L"Untitled SuperCollider script")
                                 : std::filesystem::path(currentFilePath_).filename().wstring();
         if (documentDirty_)
             name += L"  *";
@@ -2559,12 +2784,23 @@ private:
         if (copyErrorButton_)
             EnableWindow(copyErrorButton_, FALSE);
         updateSaveButton();
-        if (host_)
-            host_->setEditorSource(source);
+        if (activeTab_ == 0) {
+            pythonSource_ = currentSource_;
+            pythonSourceInitialized_ = true;
+            pythonDirty_ = true;
+            if (host_)
+                host_->setEditorSource(source);
+        } else {
+            superColliderSource_ = currentSource_;
+            superColliderSourceInitialized_ = true;
+            superColliderDirty_ = true;
+            if (host_)
+                host_->setSuperColliderSource(source);
+        }
     }
 
     bool showPlayerContextMenu(HWND editor, LPARAM coordinates) {
-        if (!host_ || !editor || editor != editor_)
+        if (!host_ || activeTab_ != 0 || !editor || editor != editor_)
             return false;
         POINT screenPoint{};
         const POINTS packed = MAKEPOINTS(coordinates);
@@ -2669,9 +2905,7 @@ private:
         if (!editor_)
             return;
         updatingEditor_ = true;
-        const auto utf8 = toUtf8(source);
-        SendMessageW(editor_, SCI_SETTEXT, 0,
-                     reinterpret_cast<LPARAM>(utf8.c_str()));
+        setEditorWindowText(editor_, source);
         updatingEditor_ = false;
         currentSource_ = source;
         sourceInitialized_ = true;
@@ -2680,8 +2914,19 @@ private:
         lastDiagnostic_.clear();
         if (copyErrorButton_)
             EnableWindow(copyErrorButton_, FALSE);
-        if (host_)
-            host_->setEditorSource(toUtf8(source));
+        if (activeTab_ == 0) {
+            pythonSource_ = source;
+            pythonSourceInitialized_ = true;
+            pythonDirty_ = false;
+            if (host_)
+                host_->setEditorSource(toUtf8(source));
+        } else {
+            superColliderSource_ = source;
+            superColliderSourceInitialized_ = true;
+            superColliderDirty_ = false;
+            if (host_)
+                host_->setSuperColliderSource(toUtf8(source));
+        }
         updateSaveButton();
     }
 
@@ -2740,14 +2985,20 @@ private:
             ~ComRelease() { if (object) object->Release(); }
         } dialogRelease{dialog};
 
-        static constexpr COMDLG_FILTERSPEC filters[] = {
-            {L"Python scripts (*.py)", L"*.py"},
+        static constexpr COMDLG_FILTERSPEC pythonFilters[] = {
+            {L"FoxDot/Python scripts (*.py)", L"*.py"},
             {L"All files (*.*)", L"*.*"}};
+        static constexpr COMDLG_FILTERSPEC superColliderFilters[] = {
+            {L"SuperCollider scripts (*.scd; *.sc)", L"*.scd;*.sc"},
+            {L"All files (*.*)", L"*.*"}};
+        const auto* filters =
+            activeTab_ == 0 ? pythonFilters : superColliderFilters;
         result = dialog->SetFileTypes(2, filters);
         if (SUCCEEDED(result))
             result = dialog->SetFileTypeIndex(1);
         if (SUCCEEDED(result))
-            result = dialog->SetDefaultExtension(L"py");
+            result = dialog->SetDefaultExtension(
+                activeTab_ == 0 ? L"py" : L"scd");
 
         IShellItem* folder = nullptr;
         if (SUCCEEDED(result))
@@ -2762,7 +3013,8 @@ private:
         if (SUCCEEDED(result))
             result = dialog->SetOptions(options);
         if (SUCCEEDED(result) && saveDialog)
-            result = dialog->SetFileName(L"new-pattern.py");
+            result = dialog->SetFileName(
+                activeTab_ == 0 ? L"new-pattern.py" : L"new-score.scd");
         if (FAILED(result)) {
             std::wstring message = L"Could not set the dialog folder to:\n";
             message += portableDirectory.wstring();
@@ -2845,8 +3097,11 @@ private:
 
         setEditorSource(wideSource);
         currentFilePath_ = selectedPath;
+        persistActiveDocument();
         updateFileName();
-        SetWindowTextW(status_, L"Script loaded. Press Run to evaluate.");
+        SetWindowTextW(status_, activeTab_ == 0
+            ? L"Python script loaded. Press Run for compatibility check and evaluation."
+            : L"SuperCollider script loaded. Press Run to send it to the embedded engine.");
     }
 
     bool saveSourceToPath(const std::wstring& path) {
@@ -2884,8 +3139,10 @@ private:
         currentSource_ = editorSource();
         sourceInitialized_ = true;
         documentDirty_ = false;
+        persistActiveDocument();
         updateSaveButton();
-        SetWindowTextW(status_, L"Python script saved.");
+        SetWindowTextW(status_, activeTab_ == 0
+            ? L"Python script saved." : L"SuperCollider script saved.");
         return true;
     }
 
@@ -2897,8 +3154,10 @@ private:
         currentSource_ = editorSource();
         sourceInitialized_ = true;
         documentDirty_ = false;
+        persistActiveDocument();
         updateSaveButton();
-        SetWindowTextW(status_, L"Python script saved.");
+        SetWindowTextW(status_, activeTab_ == 0
+            ? L"Python script saved." : L"SuperCollider script saved.");
         return true;
     }
 
@@ -2912,6 +3171,27 @@ private:
         const auto source = toUtf8(editorSource());
         if (source.size() > kMaxScriptBytes) {
             SetWindowTextW(status_, L"Script exceeds the 256 KiB size limit.");
+            return;
+        }
+        if (activeTab_ == 1) {
+            if (!superColliderExecutionWarningShown_) {
+                const int answer = MessageBoxW(
+                    window_,
+                    L"This tab runs full SuperCollider code through bundled sclang. "
+                    L"It can read or write files, start processes, and make network "
+                    L"connections. Run only code you trust. Continue?",
+                    L"Unrestricted SuperCollider code",
+                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+                if (answer != IDYES) {
+                    SetWindowTextW(status_, L"SuperCollider code was not run.");
+                    return;
+                }
+                superColliderExecutionWarningShown_ = true;
+            }
+            host_->setSuperColliderSource(source);
+            host_->submitSuperColliderCode(source);
+            SetWindowTextW(status_,
+                L"Queued for headless sclang; it uses this VST's embedded engine.");
             return;
         }
         const auto report = host_->checkCompatibility(source);
@@ -2976,15 +3256,21 @@ private:
         if (masterGainSlider_)
             SendMessageW(masterGainSlider_, TBM_SETPOS, TRUE, gainPosition);
         updateMasterGainText(gainPosition);
-        const auto restoredSource = fromUtf8(host_->editorSource());
-        if (!documentDirty_ && host_->hasEditorSource() &&
+        const auto restoredSource = activeTab_ == 0
+            ? fromUtf8(host_->editorSource())
+            : fromUtf8(host_->superColliderSource());
+        const bool hasRestoredSource = activeTab_ == 0
+            ? host_->hasEditorSource() : host_->hasSuperColliderSource();
+        if (!documentDirty_ && hasRestoredSource &&
             restoredSource != currentSource_) {
             currentFilePath_.clear();
             setEditorSource(restoredSource);
         }
         if (copyDiagnosticPinned_)
             return;
-        const auto message = fromUtf8(host_->editorStatus());
+        const auto statusText = activeTab_ == 0
+            ? host_->editorStatus() : host_->superColliderStatus();
+        const auto message = fromUtf8(statusText);
         const bool hasDiagnostic =
             message.find(L"Traceback") != std::wstring::npos ||
             message.find(L"Error") != std::wstring::npos ||
@@ -2997,14 +3283,21 @@ private:
             message.find(L"overlap") != std::wstring::npos ||
             message.find(L"exceeds") != std::wstring::npos ||
             message.find(L"Could not") != std::wstring::npos ||
-            message.find(L"could not") != std::wstring::npos;
-        if (hasDiagnostic)
+            message.find(L"could not") != std::wstring::npos ||
+            message.find(L"timed out") != std::wstring::npos ||
+            message.find(L"Timed out") != std::wstring::npos;
+        if (hasDiagnostic) {
             lastDiagnostic_ = message;
-        else
+            copyDiagnosticPinned_ = true;
+        } else {
             lastDiagnostic_.clear();
+        }
         if (copyErrorButton_)
             EnableWindow(copyErrorButton_, hasDiagnostic ? TRUE : FALSE);
-        SetWindowTextW(status_, message.c_str());
+        const auto newline = message.find_first_of(L"\r\n");
+        const auto visibleMessage = newline == std::wstring::npos
+            ? message : message.substr(0, newline);
+        SetWindowTextW(status_, visibleMessage.c_str());
     }
 
     ICodeEditorHost* host_ = nullptr;
@@ -3013,6 +3306,11 @@ private:
     Steinberg::IPlugFrame* frame_ = nullptr;
     HWND window_ = nullptr;
     HWND editor_ = nullptr;
+    HWND pythonEditor_ = nullptr;
+    HWND superColliderEditor_ = nullptr;
+    HWND pythonTabButton_ = nullptr;
+    HWND superColliderTabButton_ = nullptr;
+    int activeTab_ = 0;
     HWND runButton_ = nullptr;
     HWND stopButton_ = nullptr;
     HWND openButton_ = nullptr;
@@ -3058,9 +3356,18 @@ private:
     bool copyDiagnosticPinned_ = false;
     std::wstring currentFilePath_;
     std::wstring currentSource_;
+    std::wstring pythonFilePath_;
+    std::wstring superColliderFilePath_;
+    std::wstring pythonSource_;
+    std::wstring superColliderSource_;
     bool updatingEditor_ = false;
     bool documentDirty_ = false;
     bool sourceInitialized_ = false;
+    bool pythonDirty_ = false;
+    bool superColliderDirty_ = false;
+    bool pythonSourceInitialized_ = false;
+    bool superColliderSourceInitialized_ = false;
+    bool superColliderExecutionWarningShown_ = false;
 };
 } // namespace
 
