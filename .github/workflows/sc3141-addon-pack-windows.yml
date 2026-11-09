@@ -1,0 +1,101 @@
+name: Windows SuperCollider 3.14.1 add-on UGen pack
+
+on:
+  pull_request:
+    paths:
+      - "UGens/SC3141Addons/**"
+      - ".github/workflows/sc3141-addon-pack-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sc3141-addon-pack:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out add-on sources
+        uses: actions/checkout@v4
+
+      - name: Check out SuperCollider 3.14.1 source headers only
+        uses: actions/checkout@v4
+        with:
+          repository: supercollider/supercollider
+          ref: Version-3.14.1
+          path: sc-source
+          submodules: false
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate examples and SynthDef ABI
+        shell: pwsh
+        run: |
+          $tag = (git -C "$env:GITHUB_WORKSPACE\sc-source" describe --tags --exact-match).Trim()
+          if ($tag -ne "Version-3.14.1") { throw "Unexpected SuperCollider source tag: $tag" }
+          python .\UGens\Airwindows\test-examples.py .\spikes\vst3-callback\python_runtime.cpp .\UGens\Airwindows\Portable
+          if ($LASTEXITCODE -ne 0) { throw "Airwindows example checks failed." }
+          python UGens/LimutFX/test-examples.py
+          if ($LASTEXITCODE -ne 0) { throw "LimutFX example checks failed." }
+
+      - name: Build and test API-3 modules only
+        shell: pwsh
+        run: |
+          $sc = "$env:GITHUB_WORKSPACE\sc-source"
+          $build = "$env:RUNNER_TEMP\sc3141-build"
+          cmake -S UGens/Airwindows -B "$build\airwindows" -DSC_SOURCE_DIR="$sc"
+          if ($LASTEXITCODE -ne 0) { throw "Airwindows configure failed." }
+          cmake --build "$build\airwindows" --config Release --parallel 2 --target AirwindowsFX AirwindowsSources
+          if ($LASTEXITCODE -ne 0) { throw "Airwindows API-3 build failed." }
+          cmake -S UGens/LimutFX -B "$build\limutfx" -DSC_SOURCE_DIR="$sc"
+          if ($LASTEXITCODE -ne 0) { throw "LimutFX configure failed." }
+          cmake --build "$build\limutfx" --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "LimutFX API-3 build failed." }
+          ctest --test-dir "$build\limutfx" -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "LimutFX DSP regression tests failed." }
+
+      - name: Package API-3 modules, classes, source, and licenses
+        shell: pwsh
+        run: |
+          $sc = "$env:GITHUB_WORKSPACE\sc-source"
+          $build = "$env:RUNNER_TEMP\sc3141-build"
+          $pack = "$env:RUNNER_TEMP\dexter-sc3141-addon-pack"
+          New-Item -ItemType Directory -Force -Path "$pack\SCPlugins", "$pack\Classes", "$pack\SynthDefs\Airwindows", "$pack\SynthDefs\LimutFX", "$pack\Sidechain\SynthDefs", "$pack\Sources\project\UGens\Airwindows", "$pack\Sources\project\UGens\LimutFX", "$pack\Sources\Airwindows", "$pack\Licenses" | Out-Null
+          $air = Get-ChildItem "$build\airwindows" -Filter "AirwindowsFX.scx" -File -Recurse | Select-Object -First 1
+          $limut = Get-ChildItem "$build\limutfx" -Filter "LimutFX.scx" -File -Recurse | Select-Object -First 1
+          if (-not $air -or -not $limut) { throw "A compiled API-3 module is missing." }
+          Copy-Item $air.FullName "$pack\SCPlugins\AirwindowsFX.scx"
+          Copy-Item $limut.FullName "$pack\SCPlugins\LimutFX.scx"
+          Copy-Item "UGens\Airwindows\Portable\SynthDefs\AirwindowsUGens.sc" "$pack\Classes\AirwindowsUGens.sc"
+          Copy-Item "UGens\LimutFX\Portable\SynthDefs\LimutFX.sc" "$pack\Classes\LimutFX.sc"
+          Copy-Item "UGens\Airwindows\Portable\SynthDefs\*.scd" "$pack\SynthDefs\Airwindows"
+          Copy-Item "UGens\Airwindows\Portable\SynthDefs\*.scsyndef" "$pack\SynthDefs\Airwindows"
+          Copy-Item "UGens\LimutFX\Portable\SynthDefs\*.scd" "$pack\SynthDefs\LimutFX"
+          Copy-Item "UGens\LimutFX\Portable\SynthDefs\*.scsyndef" "$pack\SynthDefs\LimutFX"
+          Copy-Item "UGens\LimutFX\Portable\Sidechain\SynthDefs\LimutVocoder.scsyndef" "$pack\Sidechain\SynthDefs\LimutVocoder.scsyndef"
+          Copy-Item "UGens\LimutFX\Portable\Sidechain\*.scd" "$pack\Sidechain"
+          Copy-Item "UGens\Airwindows\*" "$pack\Sources\project\UGens\Airwindows" -Recurse -Force
+          Copy-Item "UGens\LimutFX\*" "$pack\Sources\project\UGens\LimutFX" -Recurse -Force
+          Copy-Item "$build\airwindows\Sources\*" "$pack\Sources\Airwindows" -Recurse -Force
+          Copy-Item "$sc\COPYING" "$pack\Licenses\SuperCollider-GPL.txt"
+          Copy-Item "UGens\Airwindows\LICENSE-Airwindows.txt" "$pack\Licenses\Airwindows.txt"
+          Copy-Item "UGens\LimutFX\ATTRIBUTION.txt" "$pack\Licenses\LimutFX-Attribution.txt"
+          Copy-Item "UGens\SC3141Addons\README.txt" "$pack\README.txt"
+          $scCommit = (git -C $sc rev-parse HEAD).Trim()
+          @("SuperCollider tag: Version-3.14.1", "SuperCollider commit: $scCommit", "Target: Windows x64 UGen modules, API 3", "No SuperCollider engine or VST rebuild.") | Set-Content "$pack\BUILD-INFO.txt" -Encoding UTF8
+          $required = @("SCPlugins\AirwindowsFX.scx", "SCPlugins\LimutFX.scx", "Classes\AirwindowsUGens.sc", "Classes\LimutFX.sc", "SynthDefs\Airwindows\AirwindowsEchojam.scsyndef", "SynthDefs\Airwindows\AirwindowsTapeDelay2.scsyndef", "SynthDefs\LimutFX\LimutShifter.scsyndef", "Sidechain\SynthDefs\LimutVocoder.scsyndef", "Licenses\SuperCollider-GPL.txt", "Licenses\Airwindows.txt", "Licenses\LimutFX-Attribution.txt")
+          foreach ($file in $required) { if (-not (Test-Path (Join-Path $pack $file))) { throw "Package missing required file: $file" } }
+          if (Get-ChildItem $pack -Recurse -File | Where-Object { $_.Name -match "JPverb|Greyhole|DiskIO" }) { throw "Reverb or duplicate DiskIO files must not be included." }
+          Get-ChildItem "$pack\SCPlugins" -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { $relative = $_.Path.Substring($pack.Length + 1).Replace("\", "/"); "$($_.Hash.ToLowerInvariant())  $relative" } | Set-Content "$pack\SHA256SUMS.txt" -Encoding ASCII
+          Compress-Archive -Path "$pack\*" -DestinationPath "$env:RUNNER_TEMP\dexter-sc3141-addon-ugens-win-x64.zip" -Force
+
+      - name: Upload standalone SC 3.14.1 add-on pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: dexter-sc3141-addon-ugens-win-x64
+          path: ${{ runner.temp }}/dexter-sc3141-addon-ugens-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14
