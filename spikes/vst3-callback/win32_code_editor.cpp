@@ -65,6 +65,7 @@ constexpr int kPanelVersionId = 120;
 constexpr int kPlayerSliderBaseId = 121;
 constexpr int kPythonTabButtonId = 3200;
 constexpr int kSuperColliderTabButtonId = 3201;
+constexpr int kSuperColliderEditorId = 3202;
 constexpr int kPlayerControlLabelBaseId = 128;
 constexpr int kPlayerControlValueBaseId = 135;
 constexpr int kEffectChainItemDataBase = 100;
@@ -164,12 +165,16 @@ bool acquireScintillaClasses(HINSTANCE instance) {
     return true;
 }
 
-void releaseScintillaClasses() {
+void releaseScintillaClasses(HINSTANCE instance) {
     std::lock_guard<std::mutex> lock(gScintillaMutex);
     if (gScintillaViewCount == 0)
         return;
-    if (--gScintillaViewCount == 0)
+    if (--gScintillaViewCount == 0) {
+        // DLL-owned window classes survive DLL unload unless explicitly removed.
+        // Never leave a host with a class pointing into an unloaded VST binary.
+        UnregisterClassW(kWindowClass, instance);
         Scintilla_ReleaseResources();
+    }
 }
 
 constexpr wchar_t kInitialCode[] =
@@ -253,12 +258,15 @@ public:
             return Steinberg::kResultOk;
 
         if (!scintillaClassesAcquired_) {
-            if (!acquireScintillaClasses(moduleInstance()))
+            if (!acquireScintillaClasses(moduleInstance())) {
+                LifecycleTrace::failure("register Scintilla", GetLastError());
                 return Steinberg::kResultFalse;
+            }
             scintillaClassesAcquired_ = true;
         }
         if (!registerWindowClass()) {
-            releaseScintillaClasses();
+            LifecycleTrace::failure("register editor window class", GetLastError());
+            releaseScintillaClasses(moduleInstance());
             scintillaClassesAcquired_ = false;
             return Steinberg::kResultFalse;
         }
@@ -269,7 +277,8 @@ public:
                                   static_cast<HWND>(parent), nullptr,
                                   moduleInstance(), this);
         if (!window_) {
-            releaseScintillaClasses();
+            LifecycleTrace::failure("create editor window", GetLastError());
+            releaseScintillaClasses(moduleInstance());
             scintillaClassesAcquired_ = false;
             return Steinberg::kResultFalse;
         }
@@ -294,7 +303,7 @@ public:
                     masterGainSlider_ = masterGainValue_ = masterGainLabel_ = nullptr;
         }
         if (scintillaClassesAcquired_) {
-            releaseScintillaClasses();
+            releaseScintillaClasses(moduleInstance());
             scintillaClassesAcquired_ = false;
         }
         return Steinberg::kResultOk;
@@ -379,9 +388,15 @@ private:
     }
 
     static bool registerWindowClass() {
-        static bool registered = false;
-        if (registered)
-            return true;
+        WNDCLASSEXW existing{};
+        existing.cbSize = sizeof(existing);
+        if (GetClassInfoExW(moduleInstance(), kWindowClass, &existing)) {
+            if (existing.lpfnWndProc == windowProcedure)
+                return true;
+            // A different version may have been unloaded by this host.
+            if (!UnregisterClassW(kWindowClass, moduleInstance()))
+                return false;
+        }
         WNDCLASSEXW windowClass{};
         windowClass.cbSize = sizeof(windowClass);
         windowClass.lpfnWndProc = windowProcedure;
@@ -391,7 +406,6 @@ private:
         windowClass.lpszClassName = kWindowClass;
         if (!RegisterClassExW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
             return false;
-        registered = true;
         return true;
     }
 
@@ -442,8 +456,7 @@ private:
 
         switch (message) {
         case WM_CREATE:
-            view->createChildren();
-            return 0;
+            return view->createChildren() ? 0 : -1;
         case WM_SIZE: {
             RECT client{};
             GetClientRect(window, &client);
@@ -595,7 +608,8 @@ private:
         return DefWindowProcW(window, message, wParam, lParam);
     }
 
-    void createChildren() {
+    bool createChildren() {
+        LifecycleTrace trace("editor create children", this);
         INITCOMMONCONTROLSEX controls{};
         controls.dwSize = sizeof(controls);
         controls.dwICC = ICC_BAR_CLASSES | ICC_TAB_CLASSES;
@@ -792,16 +806,12 @@ private:
                 sliderValueText(index, initialPlayerControlPositions[index]));
             SetWindowTextW(playerControlValues_[index], value.c_str());
         }
-        if (!sourceInitialized_) {
-            currentSource_ = host_ && host_->hasEditorSource()
+        if (!pythonSourceInitialized_) {
+            pythonSource_ = host_ && host_->hasEditorSource()
                                  ? fromUtf8(host_->editorSource())
                                  : kInitialCode;
-            if (!host_ && currentSource_.empty())
-                currentSource_ = kInitialCode;
-            sourceInitialized_ = true;
+            pythonSourceInitialized_ = true;
         }
-        pythonSource_ = currentSource_;
-        pythonSourceInitialized_ = sourceInitialized_;
         if (!superColliderSourceInitialized_) {
             superColliderSource_ = host_ && host_->hasSuperColliderSource()
                 ? fromUtf8(host_->superColliderSource())
@@ -834,21 +844,15 @@ private:
             setEditorWindowText(pythonEditor_, pythonSource_);
             SetWindowSubclass(editor_, editorSubclassProcedure, 1,
                               reinterpret_cast<DWORD_PTR>(this));
+        } else {
+            LifecycleTrace::failure("create Python Scintilla child", GetLastError());
+            updatingEditor_ = false;
+            return false;
         }
-        superColliderEditor_ = CreateWindowExW(
-            WS_EX_CLIENTEDGE, L"Scintilla", L"",
-            WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL,
-            0, 0, 600, 380, window_,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kEditorId + 1)),
-            moduleInstance(), nullptr);
-        if (superColliderEditor_) {
-            editor_ = superColliderEditor_;
-            configureSuperColliderEditor();
-            setEditorWindowText(superColliderEditor_, superColliderSource_);
-            SetWindowSubclass(editor_, editorSubclassProcedure, 1,
-                              reinterpret_cast<DWORD_PTR>(this));
-        }
+        // The second Scintilla document is created only when its tab is opened.
+        // No SuperCollider UI or language process is needed to open Python.
         editor_ = pythonEditor_;
+        activeTab_ = 0;
         currentSource_ = pythonSource_;
         currentFilePath_ = pythonFilePath_;
         documentDirty_ = pythonDirty_;
@@ -859,6 +863,7 @@ private:
         layoutChildren(kViewWidth, kViewHeight);
         renderPanelTab();
         updateSaveButton();
+        return true;
     }
 
     void configureEditor() {
@@ -1022,9 +1027,34 @@ private:
 
     void switchEditorTab(int tab) {
         if (tab < 0 || tab > 1 || tab == activeTab_ || !editor_ ||
-            (tab == 0 && !pythonEditor_) ||
-            (tab == 1 && !superColliderEditor_))
+            (tab == 0 && !pythonEditor_))
             return;
+        if (tab == 1 && !superColliderEditor_) {
+            LifecycleTrace trace("editor create SuperCollider child", this);
+            superColliderEditor_ = CreateWindowExW(
+                WS_EX_CLIENTEDGE, L"Scintilla", L"",
+                WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL,
+                0, 0, 600, 380, window_,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSuperColliderEditorId)),
+                moduleInstance(), nullptr);
+            if (!superColliderEditor_) {
+                const auto error = GetLastError();
+                LifecycleTrace::failure("create SuperCollider Scintilla child", error);
+                const auto message = L"Could not open the SuperCollider editor (Windows error " +
+                    std::to_wstring(error) + L"). The Python editor is still available.";
+                SetWindowTextW(status_, message.c_str());
+                return;
+            }
+            const auto previous = editor_;
+            editor_ = superColliderEditor_;
+            updatingEditor_ = true;
+            configureSuperColliderEditor();
+            setEditorWindowText(superColliderEditor_, superColliderSource_);
+            SetWindowSubclass(editor_, editorSubclassProcedure, 1,
+                              reinterpret_cast<DWORD_PTR>(this));
+            updatingEditor_ = false;
+            editor_ = previous;
+        }
         persistActiveDocument();
         activeTab_ = tab;
         if (activeTab_ == 0) {

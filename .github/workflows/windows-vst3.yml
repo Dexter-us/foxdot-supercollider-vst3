@@ -93,6 +93,27 @@ jobs:
           & $test
           if ($LASTEXITCODE -ne 0) { throw "OSC helper tests failed ($LASTEXITCODE)." }
 
+      - name: Required Win32 editor open switch and reopen test
+        id: editor_smoke
+        if: steps.build_vst3.outcome == 'success'
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          & cmake --build $pluginBuild --config Release --target dexter_editor_smoke_test
+          if ($LASTEXITCODE -ne 0) { throw "Editor smoke target failed to build ($LASTEXITCODE)." }
+          $test = Join-Path $pluginBuild "Release\dexter_editor_smoke_test.exe"
+          $process = Start-Process -FilePath $test -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\editor-smoke.stdout.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\editor-smoke.stderr.log"
+          if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            throw "Editor smoke test timed out after 30 seconds."
+          }
+          $process.Refresh()
+          Get-Content "$env:RUNNER_TEMP\editor-smoke.stdout.log"
+          Get-Content "$env:RUNNER_TEMP\editor-smoke.stderr.log"
+          if ($process.ExitCode -ne 0) { throw "Editor smoke test failed ($($process.ExitCode))." }
+
       - name: Build headless sclang from the pinned cached SC 3.15 source
         id: build_sclang
         if: steps.build_vst3.outcome == 'success' && steps.sclang_cache.outputs.cache-hit != 'true'
@@ -149,7 +170,31 @@ jobs:
             throw "Bundled sclang did not report version 3.15 successfully."
           }
 
+      - name: Required actual VST3 startup editor and first-Run audio test
+        id: startup_smoke
+        if: steps.verify_sclang.outcome == 'success' && steps.editor_smoke.outcome == 'success'
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          & cmake --build $pluginBuild --config Release --target dexter_vst_startup_test
+          if ($LASTEXITCODE -ne 0) { throw "VST3 startup test target failed to build ($LASTEXITCODE)." }
+          $test = Join-Path $pluginBuild "Release\dexter_vst_startup_test.exe"
+          $binary = Join-Path $pluginBuild "VST3\Release\dexter_sc_tone.vst3\Contents\x86_64-win\dexter_sc_tone.vst3"
+          $process = Start-Process -FilePath $test -ArgumentList ('"' + $binary + '"') `
+            -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\startup-smoke.stdout.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\startup-smoke.stderr.log"
+          if (-not $process.WaitForExit(60000)) {
+            $process.Kill()
+            throw "VST3 startup/editor/audio test timed out after sixty seconds."
+          }
+          $process.Refresh()
+          Get-Content "$env:RUNNER_TEMP\startup-smoke.stdout.log"
+          Get-Content "$env:RUNNER_TEMP\startup-smoke.stderr.log"
+          if ($process.ExitCode -ne 0) { throw "VST3 startup/editor/audio test failed ($($process.ExitCode))." }
+
       - name: Required VST3 validator (five-minute limit)
+        id: validate_vst3
         if: always() && steps.build_vst3.outcome == 'success' && steps.install_sclang.outcome == 'success' && steps.verify_sclang.outcome == 'success'
         shell: pwsh
         run: |
@@ -177,6 +222,16 @@ jobs:
           if (Test-Path $stderr) { Get-Content $stderr }
           if ($process.ExitCode -ne 0) { throw "VST3 validator failed with exit code $($process.ExitCode)." }
 
+      - name: Collect persistent lifecycle logs
+        if: always()
+        shell: pwsh
+        run: |
+          $tempFolder = [IO.Path]::GetTempPath()
+          if ([IO.Path]::GetFullPath($tempFolder).TrimEnd('\') -ne [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')) {
+            Get-ChildItem -Path $tempFolder -Filter 'Dexter-VST-lifecycle-*.log' -File |
+              Copy-Item -Destination $env:RUNNER_TEMP -Force
+          }
+
       - name: Upload lifecycle diagnostics
         uses: actions/upload-artifact@v4
         if: always()
@@ -185,12 +240,15 @@ jobs:
           path: |
             ${{ runner.temp }}/vst3-validator.stdout.log
             ${{ runner.temp }}/vst3-validator.stderr.log
+            ${{ runner.temp }}/editor-smoke.*.log
+            ${{ runner.temp }}/startup-smoke.*.log
+            ${{ runner.temp }}/Dexter-VST-lifecycle-*.log
           if-no-files-found: warn
           retention-days: 14
 
       - name: Upload Windows VST3 diagnostic bundle
         uses: actions/upload-artifact@v4
-        if: always() && steps.build_vst3.outcome == 'success' && steps.install_sclang.outcome == 'success'
+        if: steps.validate_vst3.outcome == 'success' && steps.editor_smoke.outcome == 'success' && steps.startup_smoke.outcome == 'success'
         with:
           name: dexter-foxdot-live-vst3-windows-x64
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3

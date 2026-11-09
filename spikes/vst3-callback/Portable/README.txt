@@ -859,3 +859,20 @@ this VST.
 0.4.178 fixes the headless sclang TCP bootstrap: the script keeps a Server
 instance and starts the asynchronous connection separately, then reports ready
 only after the existing VST engine responds. No second audio server is started.
+
+0.4.179 defers embedded-engine startup until the first Run. Initial host audio
+setup records the sample rate and returns without scanning/loading the engine.
+Idle audio is silent and successful while the engine is absent or preparing.
+Both Python and SuperCollider engine preparation use a background script worker.
+Installed SynthDef names are discovered separately so the sidebar still fills
+before first Run. The SC editor document is created on first tab selection.
+Closing on the SC tab and reopening no longer mixes the Python and SC sources.
+The editor and Run button have distinct child IDs, and the DLL-owned editor
+window class is released when the last editor closes and re-registered on reopen.
+
+Windows lifecycle diagnostics are written to
+%TEMP%\Dexter-VST-lifecycle-<host-process-id>.log (phase/timing/errors only;
+no script contents). Files are bounded to approximately 2 MB per host process.
+The Windows checks now include actual editor open/switch/reopen tests and an
+actual VST3 first-Run audio check, in addition to the standard VST3 validator.
+These checks do not substitute for testing the editor and sclang in your DAW.

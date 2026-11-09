@@ -310,6 +310,7 @@ public:
     ~DexterSCTone() override {
         LifecycleTrace trace("processor destructor", this);
         joinScriptThread();
+        joinCatalogThread();
         diskIO_.shutdown();
         stopWorld();
     }
@@ -328,6 +329,7 @@ public:
         LifecycleTrace trace("createView", this);
         if (!name || std::strcmp(name, ViewType::kEditor) != 0)
             return nullptr;
+        discoverEditorCatalogAsync();
         return createCodeEditorView(
             this, static_cast<IEditController*>(this));
     }
@@ -462,12 +464,14 @@ public:
             return baseResult;
         if (!std::isfinite(setup.sampleRate) || setup.sampleRate <= 0.0)
             return kInvalidArgument;
-        return initializeWorld(setup.sampleRate) ? kResultOk : kResultFalse;
+        configureHostProcessing(setup.sampleRate);
+        return kResultOk;
     }
 
     tresult PLUGIN_API terminate() override {
         LifecycleTrace trace("processor terminate", this);
         joinScriptThread();
+        joinCatalogThread();
         diskIO_.shutdown();
         stopWorld();
         return SingleComponentEffect::terminate();
@@ -493,11 +497,13 @@ public:
         // block rather than blocking the host's audio callback.
         std::unique_lock<std::mutex> worldLock(worldAccessMutex_, std::try_to_lock);
         if (!worldLock.owns_lock()) {
-            output.silenceFlags = 1;
+            output.silenceFlags = ~uint64{0};
             return kResultOk;
         }
-        if (!world_)
-            return kResultFalse;
+        if (!world_) {
+            output.silenceFlags = ~uint64{0};
+            return kResultOk;
+        }
 
         std::unique_lock<std::mutex> patternLock(patternMutex_, std::try_to_lock);
         if (patternLock.owns_lock()) {
@@ -736,7 +742,7 @@ public:
             return "Code is limited to 64 KB in this prototype.";
         std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
         if (scriptRunning_.load(std::memory_order_acquire))
-            return "Python is evaluating another script; wait for it to finish, then check again.";
+            return "The script worker is busy; wait for it to finish, then check again.";
         if (scriptThread_.joinable())
             scriptThread_.join();
 
@@ -758,7 +764,7 @@ public:
     void submitCode(const std::string& source) override {
         std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
         if (scriptRunning_.load(std::memory_order_acquire)) {
-            setEditorStatus("Python is still evaluating the previous script.");
+            setEditorStatus("The script worker is still preparing the previous request.");
             return;
         }
         if (scriptThread_.joinable())
@@ -1129,34 +1135,67 @@ public:
     void submitSuperColliderCode(const std::string& source) override {
         if (source.size() > kMaxEditorSourceBytes ||
             source.find('\0') != std::string::npos) {
+            scPreparationStatusOverride_.store(true, std::memory_order_release);
             setEditorStatus("SuperCollider source is invalid or exceeds 256 KB.");
             return;
         }
-        if (!initializeWorld()) {
-            setEditorStatus("The embedded SuperCollider engine is not ready. See the host status for its startup error.");
+        std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
+        if (scriptRunning_.load(std::memory_order_acquire)) {
+            setEditorStatus("The script worker is still preparing the previous request.");
             return;
         }
-        int serverPort = 0;
-        double currentSampleRate = 0.0;
-        {
-            std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
-            serverPort = scLanguageServerPort_;
-            currentSampleRate = sampleRate_;
+        if (scriptThread_.joinable())
+            scriptThread_.join(); // Only a completed worker can reach this point.
+        const auto generation =
+            scSourceGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        scriptRunning_.store(true, std::memory_order_release);
+        scPreparationStatusOverride_.store(true, std::memory_order_release);
+        setEditorStatus("Preparing the embedded engine on the script worker...");
+        try {
+            scriptThread_ = std::thread([this, source, generation] {
+                struct Finished {
+                    std::atomic<bool>& running;
+                    ~Finished() { running.store(false, std::memory_order_release); }
+                } finished{scriptRunning_};
+                try {
+                    if (scSourceGeneration_.load(std::memory_order_acquire) != generation)
+                        return;
+                    if (!initializeWorld())
+                        return; // initializeWorld preserves the specific startup error.
+                    std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+                    if (scSourceGeneration_.load(std::memory_order_acquire) != generation)
+                        return;
+                    if (!world_ || scLanguageServerPort_ <= 0) {
+                        setEditorStatus("The embedded engine's private SuperCollider TCP endpoint is unavailable.");
+                        return;
+                    }
+                    // Keep the endpoint/sample-rate snapshot valid through queueing.
+                    // Runtime::submit starts its own language worker, not sclang here.
+                    scLanguageRuntime_.submit(
+                        bundledSuperColliderLanguagePath(), scLanguageServerPort_,
+                        kSclangFirstAllocatableAudioBus, sampleRate_, source);
+                    scPreparationStatusOverride_.store(false, std::memory_order_release);
+                } catch (const std::exception& exception) {
+                    setEditorStatus(std::string("SuperCollider worker error: ") + exception.what());
+                } catch (...) {
+                    setEditorStatus("SuperCollider preparation failed unexpectedly.");
+                }
+            });
+        } catch (const std::exception& exception) {
+            scriptRunning_.store(false, std::memory_order_release);
+            setEditorStatus(std::string("Could not start SuperCollider worker: ") + exception.what());
         }
-        if (serverPort <= 0) {
-            setEditorStatus("The embedded engine is running, but its private SuperCollider TCP endpoint could not be opened.");
-            return;
-        }
-        scLanguageRuntime_.submit(
-            bundledSuperColliderLanguagePath(), serverPort,
-            kSclangFirstAllocatableAudioBus, currentSampleRate, source);
     }
 
     void stopSuperCollider() override {
+        scSourceGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        scPreparationStatusOverride_.store(false, std::memory_order_release);
         scLanguageRuntime_.stop();
     }
 
     std::string superColliderStatus() override {
+        if (scPreparationStatusOverride_.load(std::memory_order_acquire))
+            return editorStatus();
         return scLanguageRuntime_.status();
     }
 
@@ -2246,6 +2285,45 @@ private:
         scriptRunning_.store(false, std::memory_order_release);
     }
 
+    void discoverEditorCatalogAsync() {
+        // Keep installed instruments visible before the first Run, without
+        // loading a World or scanning files on the host/editor thread.
+        std::lock_guard<std::mutex> lock(catalogThreadMutex_);
+        if (catalogDiscoveryStarted_) return;
+        try {
+            catalogThread_ = std::thread([this] {
+                LifecycleTrace trace("discover editor catalog without engine", this);
+                try {
+                    std::string error;
+                    const auto files = discoverUserSynthFiles(error);
+                    if (!error.empty()) {
+                        setEditorStatus("Portable SynthDef scan failed: " + error);
+                        return;
+                    }
+                    std::vector<std::string> names;
+                    for (const auto& file : files) names.push_back(file.name);
+                    std::lock_guard<std::mutex> catalogLock(editorCatalogMutex_);
+                    // Engine registration may have completed first. Never
+                    // replace its index mapping with an earlier discovery.
+                    if (editorExternalSynthNames_.empty())
+                        editorExternalSynthNames_ = std::move(names);
+                } catch (const std::exception& exception) {
+                    setEditorStatus(std::string("Catalog discovery failed: ") + exception.what());
+                } catch (...) {
+                    setEditorStatus("Catalog discovery failed unexpectedly.");
+                }
+            });
+            catalogDiscoveryStarted_ = true;
+        } catch (const std::exception& exception) {
+            setEditorStatus(std::string("Could not start catalog worker: ") + exception.what());
+        }
+    }
+
+    void joinCatalogThread() {
+        std::lock_guard<std::mutex> lock(catalogThreadMutex_);
+        if (catalogThread_.joinable()) catalogThread_.join();
+    }
+
     static void addMidiNoteEvent(IEventList* outputEvents, int32 sampleOffset,
                                  int midiNote, int velocity, bool noteOn, int channel = 0,
                                  int32 noteId = -1) {
@@ -2910,8 +2988,8 @@ private:
         std::uint8_t updateMask,
         const std::vector<std::string>& expectedUserSynthNames,
         std::string& error) {
-        // Run may follow a failed host setup (e.g. a previously missing UGen
-        // folder). Retry once on this worker, never on the audio callback.
+        // Start lazily on the Run worker, or retry a previous startup failure.
+        // Never initialize the engine on the audio callback or editor thread.
         if (!initializeWorld()) {
             std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
             error = worldInitializationError_;
@@ -4420,20 +4498,26 @@ private:
         return true;
     }
 
-    bool initializeWorld(double hostSampleRate = 0.0) {
+    void configureHostProcessing(double hostSampleRate) {
+        LifecycleTrace trace("configure host audio without engine startup", this);
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        if (hostProcessingConfigured_ && sampleRate_ == hostSampleRate)
+            return;
+        // Initial setup records the rate only. If an existing World is being
+        // reconfigured, retire it safely; the next Run creates its replacement.
+        if (world_)
+            stopWorldLocked();
+        sampleRate_ = hostSampleRate;
+        hostProcessingConfigured_ = true;
+        worldInitializationError_.clear();
+        setEditorStatus("Host audio configured. The embedded engine starts on first Run.");
+    }
+
+    bool initializeWorld() {
         LifecycleTrace trace("initializeWorld including locks", this);
         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
-        if (hostSampleRate > 0.0) {
-            if (world_ && sampleRate_ == hostSampleRate)
-                return true;
-            // Keep teardown, sample-rate change and creation under one lock so
-            // a Run worker cannot initialize at the previous host sample rate.
-            stopWorldLocked();
-            sampleRate_ = hostSampleRate;
-            hostProcessingConfigured_ = true;
-        } else if (world_) {
+        if (world_)
             return true;
-        }
         auto fail = [this](std::string message) {
             worldInitializationError_ = std::move(message);
             setEditorStatus(worldInitializationError_);
@@ -5570,6 +5654,11 @@ private:
     std::atomic<bool> stopRequested_{false};
     std::mutex scriptThreadMutex_;
     std::thread scriptThread_;
+    std::atomic<std::uint64_t> scSourceGeneration_{0};
+    std::atomic<bool> scPreparationStatusOverride_{false};
+    std::mutex catalogThreadMutex_;
+    std::thread catalogThread_;
+    bool catalogDiscoveryStarted_ = false;
     std::atomic<bool> scriptRunning_{false};
     std::atomic<std::uint64_t> scriptGeneration_{0};
     std::mutex statusMutex_;

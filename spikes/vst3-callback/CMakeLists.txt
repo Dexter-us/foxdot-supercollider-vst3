@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.178)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.179)
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
@@ -190,5 +190,25 @@ add_executable(dexter_sclang_osc_test EXCLUDE_FROM_ALL
 target_include_directories(dexter_sclang_osc_test PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(dexter_sclang_osc_test PRIVATE cxx_std_17)
+
+if(WIN32)
+  add_executable(dexter_vst_startup_test EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/test-vst-startup-win32.cpp")
+  target_include_directories(dexter_vst_startup_test PRIVATE
+    "${scintilla_SOURCE_DIR}/include")
+  target_compile_features(dexter_vst_startup_test PRIVATE cxx_std_17)
+  target_link_libraries(dexter_vst_startup_test PRIVATE sdk user32)
+
+  add_executable(dexter_editor_smoke_test EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/test-editor-win32.cpp"
+    win32_code_editor.cpp)
+  target_include_directories(dexter_editor_smoke_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    "${scintilla_SOURCE_DIR}/include" "${lexilla_SOURCE_DIR}/include")
+  target_compile_features(dexter_editor_smoke_test PRIVATE cxx_std_17)
+  target_link_libraries(dexter_editor_smoke_test PRIVATE sdk
+    dexter_scintilla dexter_sc_lexilla shell32 shlwapi comdlg32 comctl32
+    winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
+endif()
 
 smtg_target_configure_version_file(dexter_sc_tone)
