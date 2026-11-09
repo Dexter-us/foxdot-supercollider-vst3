@@ -92,6 +92,10 @@ jobs:
           if (-not (Test-Path $test)) { throw "OSC helper test executable not found: $test" }
           & $test
           if ($LASTEXITCODE -ne 0) { throw "OSC helper tests failed ($LASTEXITCODE)." }
+          & cmake --build $pluginBuild --config Release --target dexter_sclang_host_bridge_test
+          if ($LASTEXITCODE -ne 0) { throw "Host OSC bridge test target failed to build." }
+          & (Join-Path $pluginBuild "Release\dexter_sclang_host_bridge_test.exe")
+          if ($LASTEXITCODE -ne 0) { throw "Host OSC bridge regression tests failed." }
 
       - name: Required Win32 editor open switch and reopen test
         id: editor_smoke
@@ -193,6 +197,27 @@ jobs:
           Get-Content "$env:RUNNER_TEMP\startup-smoke.stderr.log"
           if ($process.ExitCode -ne 0) { throw "VST3 startup/editor/audio test failed ($($process.ExitCode))." }
 
+      - name: Required bundled sclang handshake audio coexistence and Stop test
+        id: sclang_bridge
+        if: steps.startup_smoke.outcome == 'success'
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          $test = Join-Path $pluginBuild "Release\dexter_vst_startup_test.exe"
+          $binary = Join-Path $pluginBuild "VST3\Release\dexter_sc_tone.vst3\Contents\x86_64-win\dexter_sc_tone.vst3"
+          $process = Start-Process -FilePath $test -ArgumentList ('"' + $binary + '" --sclang') `
+            -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\sclang-bridge.stdout.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\sclang-bridge.stderr.log"
+          if (-not $process.WaitForExit(90000)) {
+            $process.Kill()
+            throw "Actual sclang/VST3 bridge test timed out after ninety seconds."
+          }
+          $process.Refresh()
+          Get-Content "$env:RUNNER_TEMP\sclang-bridge.stdout.log"
+          Get-Content "$env:RUNNER_TEMP\sclang-bridge.stderr.log"
+          if ($process.ExitCode -ne 0) { throw "Actual sclang bridge/audio test failed ($($process.ExitCode))." }
+
       - name: Required VST3 validator (five-minute limit)
         id: validate_vst3
         if: always() && steps.build_vst3.outcome == 'success' && steps.install_sclang.outcome == 'success' && steps.verify_sclang.outcome == 'success'
@@ -231,6 +256,15 @@ jobs:
             Get-ChildItem -Path $tempFolder -Filter 'Dexter-VST-lifecycle-*.log' -File |
               Copy-Item -Destination $env:RUNNER_TEMP -Force
           }
+          $destination = Join-Path $env:RUNNER_TEMP "sclang-session-logs"
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          Get-ChildItem -Path $tempFolder -Filter 'Dexter-SC-*' -Directory |
+            ForEach-Object {
+              $log = Join-Path $_.FullName "sclang.log"
+              if (Test-Path $log) {
+                Copy-Item $log (Join-Path $destination ($_.Name + ".log")) -Force
+              }
+            }
 
       - name: Upload lifecycle diagnostics
         uses: actions/upload-artifact@v4
@@ -242,13 +276,15 @@ jobs:
             ${{ runner.temp }}/vst3-validator.stderr.log
             ${{ runner.temp }}/editor-smoke.*.log
             ${{ runner.temp }}/startup-smoke.*.log
+            ${{ runner.temp }}/sclang-bridge.*.log
+            ${{ runner.temp }}/sclang-session-logs/*.log
             ${{ runner.temp }}/Dexter-VST-lifecycle-*.log
           if-no-files-found: warn
           retention-days: 14
 
       - name: Upload Windows VST3 diagnostic bundle
         uses: actions/upload-artifact@v4
-        if: steps.validate_vst3.outcome == 'success' && steps.editor_smoke.outcome == 'success' && steps.startup_smoke.outcome == 'success'
+        if: steps.validate_vst3.outcome == 'success' && steps.editor_smoke.outcome == 'success' && steps.startup_smoke.outcome == 'success' && steps.sclang_bridge.outcome == 'success'
         with:
           name: dexter-foxdot-live-vst3-windows-x64
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3

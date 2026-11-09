@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.179' not in cmake_source or
+if ('VERSION 0.4.180' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2860,10 +2860,10 @@ def test_embedded_synthdef():
         'Generated VST/panel version must match the CMake project version')
     assert "{'D', 'X', 'C', '3'}" in processor_source and 'superColliderSource_' in processor_source, (
         'Plugin state must persist the independent SuperCollider editor buffer.')
-    assert 'World_OpenTCP' in processor_source and '127.0.0.1' in processor_source, (
-        'The .scd tab must connect to the existing embedded World, not create another audio server.')
-    assert 'World_OpenUDP' not in processor_source, (
-        'The .scd bridge should expose only the TCP server socket it needs.')
+    assert 'scHostBridge_.start(' in processor_source and 'PerformOSCMessage(' in processor_source, (
+        'Host-driven Worlds need worker-side NRT command dispatch, not an absent audio driver.')
+    assert '!World_OpenTCP(' not in processor_source and 'World_OpenUDP(' not in processor_source, (
+        'Native network dispatch requires an audio driver; do not use it for this NRT World.')
     assert 'findAvailableServerPort' in processor_source, (
         'Embedded SuperCollider control ports must be selected for loopback use.')
     assert 'SCLANG_SERVER=OFF' in open(
@@ -2900,8 +2900,8 @@ def test_embedded_synthdef():
         'The sclang bus allocator must skip the plugin-owned private audio buses.')
     assert 's = Server.new(\\\\DexterVST, NetAddr' in sclang_runtime, (
         'The sclang bootstrap must retain the Server instance for the embedded VST World.')
-    assert 's.connectToServerAddr({ s.startAliveThread });' in sclang_runtime, (
-        'The sclang bootstrap must connect its Server instance to the existing VST TCP endpoint.')
+    assert 'opts.protocol = \\\\udp;' in sclang_runtime and 's.startAliveThread;' in sclang_runtime, (
+        'The sclang bootstrap must use the bounded host-driven loopback UDP bridge.')
     assert 'Server.remote' not in sclang_runtime, (
         'Do not assign Server.remote’s asynchronous TCP task as if it were the Server object.')
     assert 's.doWhenBooted' in sclang_runtime and 'DEXTER_SCLANG_READY' in sclang_runtime, (

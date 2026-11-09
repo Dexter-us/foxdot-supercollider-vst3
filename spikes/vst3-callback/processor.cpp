@@ -16,6 +16,8 @@
 #include "SC_Group.h"
 #include "SC_Graph.h"
 #include "SC_Lib_Cintf.h"
+#include "SC_HiddenWorld.h"
+#include "SC_ReplyImpl.hpp"
 #include "tone_synthdef.h"
 #include "foxdot_synthdefs.h"
 #include "sample_synthdef.h"
@@ -40,6 +42,8 @@
 #include "user_synth_control_state.h"
 #include "sardine_pattern_gates.h"
 #include "sclang_runtime_win32.h"
+#include "sclang_host_bridge.h"
+#include "sclang_host_protocol.h"
 
 #include <algorithm>
 #include <array>
@@ -55,6 +59,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <string_view>
 #include <sstream>
@@ -72,6 +77,9 @@
 
 #include "SC_UnitDef.h"
 #include "SC_UnitSpec.h"
+
+// Pinned libscsynth's synchronous dispatch does not require an audio driver.
+int PerformOSCMessage(World*, int, char*, ReplyAddress*);
 
 namespace {
 std::mutex scLibraryLifecycleMutex;
@@ -1166,7 +1174,7 @@ public:
                     if (scSourceGeneration_.load(std::memory_order_acquire) != generation)
                         return;
                     if (!world_ || scLanguageServerPort_ <= 0) {
-                        setEditorStatus("The embedded engine's private SuperCollider TCP endpoint is unavailable.");
+                        setEditorStatus("The embedded engine's private host-driven OSC bridge endpoint is unavailable.");
                         return;
                     }
                     // Keep the endpoint/sample-rate snapshot valid through queueing.
@@ -2672,7 +2680,7 @@ private:
         sc_msg_iter noControls(0, "");
         Graph* created = nullptr;
         const auto graphError =
-            Graph_New(world_, synthDefinitions_[graphIndex], nextDynamicGraphNodeId_++,
+            Graph_New(world_, synthDefinitions_[graphIndex], nextPrivateGraphNodeId(),
                       &noControls, &created, true);
         if (graphError != 0 || !created) {
             error = "SuperCollider could not create synth graph " +
@@ -2727,7 +2735,7 @@ private:
         sc_msg_iter noControls(0, "");
         Graph* created = nullptr;
         const auto graphError = Graph_New(world_, userDefinition.definition,
-                                          nextDynamicGraphNodeId_++, &noControls,
+                                          nextPrivateGraphNodeId(), &noControls,
                                           &created, true);
         if (graphError != 0 || !created) {
             error = "SuperCollider could not create user synth " + userDefinition.name +
@@ -2799,7 +2807,7 @@ private:
         sc_msg_iter noControls(0, "");
         Graph* created = nullptr;
         const auto graphError = Graph_New(world_, definition.definition,
-                                          nextDynamicGraphNodeId_++, &noControls,
+                                          nextPrivateGraphNodeId(), &noControls,
                                           &created, true);
         if (graphError != 0 || !created) {
             error = "SuperCollider could not create the persistent " +
@@ -4498,6 +4506,141 @@ private:
         return true;
     }
 
+    int nextPrivateGraphNodeId() {
+        for (std::size_t attempt = 0; attempt < kWorldNodeCapacity; ++attempt) {
+            if (nextDynamicGraphNodeId_ >= dexter::sclang::kLanguageFirstNodeId)
+                nextDynamicGraphNodeId_ = 100;
+            const auto id = nextDynamicGraphNodeId_++;
+            if (!World_GetNode(world_, id)) return id;
+        }
+        // A full table is reported by Graph_New; SC may use a private negative
+        // ID, which the language bridge never allows clients to address.
+        return -1;
+    }
+
+    static void hostSuperColliderReply(ReplyAddress* address, char* bytes, int size) {
+        if (address && address->mReplyData && size > 0)
+            static_cast<DexterSCTone*>(address->mReplyData)->scHostBridge_.reply(
+                static_cast<std::uint16_t>(address->mPort), bytes,
+                static_cast<std::size_t>(size));
+    }
+
+    bool dispatchHostSuperCollider(std::vector<char>& packet, std::uint16_t port) {
+        using namespace dexter::sclang;
+        std::unique_lock<std::mutex> lock(worldAccessMutex_, std::try_to_lock);
+        if (!lock.owns_lock()) return false;
+        auto reply = [&](const std::vector<char>& bytes) {
+            scHostBridge_.reply(port, bytes.data(), bytes.size());
+        };
+        HostOscMessage message;
+        const auto invalid = protectHostCommand(packet, message);
+        if (!invalid.empty() || !world_) {
+            reply(hostOscFailure(message.address.empty() ? "/bridge" : message.address,
+                !world_ ? "Embedded engine is not ready" : invalid));
+            return true;
+        }
+        if (message.address == "/notify" && message.args[0].integer(packet) == 1 &&
+            languageClientPort_ != port) {
+            // UDP has no TCP disconnect event. Retire the previous helper's
+            // registration on a new launch, otherwise maxLogins=1 prevents
+            // every retry after a timeout/crash from becoming ready.
+            if (auto* group = World_GetGroup(world_, 1)) Group_DeleteAll(group);
+            world_->hw->mNodeEnds.Perform();
+            world_->hw->mNodeMsgs.Perform();
+            world_->hw->mTriggers.Perform();
+            world_->hw->mDeleteGraphDefs.Perform();
+            world_->hw->mUsers->clear();
+            world_->hw->mClientIDdict->clear();
+            world_->hw->mAvailableClientIDs->clear();
+            world_->hw->mAvailableClientIDs->push_back(0);
+            languageClientPort_ = port;
+            scHostBridge_.clearScheduled();
+        }
+        if (message.address != "/status" && message.address != "/version" &&
+            message.address != "/notify" && languageClientPort_ != port) {
+            reply(hostOscFailure(message.address, "Language client is not registered"));
+            return true;
+        }
+        if (message.address == "/clearSched") {
+            scHostBridge_.clearScheduled();
+            return true;
+        }
+        if (message.address == "/g_new" && message.args.size() == 3 &&
+            message.args[0].integer(packet) == 1 && World_GetGroup(world_, 1))
+            return true; // CmdPeriod/initTree may recreate the surviving default group.
+        if (message.address == "/status") {
+            // Native AudioStatusCmd dereferences an absent hardware driver.
+            auto status = hostOscMessage("/status.reply", ",iiiiiffdd");
+            appendOscU32(status, 1);
+            appendOscU32(status, world_->mNumUnits);
+            appendOscU32(status, world_->mNumGraphs);
+            appendOscU32(status, world_->mNumGroups);
+            appendOscU32(status, world_->hw->mGraphDefLib->NumItems());
+            appendOscFloat(status, 0.0f); // Hardware-driver CPU metrics unavailable.
+            appendOscFloat(status, 0.0f);
+            appendOscDouble(status, sampleRate_);
+            appendOscDouble(status, sampleRate_);
+            reply(status);
+            return true;
+        }
+        if (message.address == "/d_recv") {
+            LifecycleTrace trace("language bridge SynthDef receive", this);
+            const auto& blob = message.args[0];
+            auto* definitions = GraphDef_Recv(world_, packet.data() + blob.offset,
+                                               blob.size, nullptr);
+            if (!definitions) {
+                reply(hostOscFailure("/d_recv", "SynthDef rejected; check its UGens"));
+                return true;
+            }
+            auto newNames = languageSynthDefNames_;
+            std::string error;
+            std::vector<GraphDef*> originals;
+            for (auto* d = definitions; d; d = d->mNext) {
+                if (d == d->mOriginal) originals.push_back(d);
+                const auto name = synthDefName(d);
+                if (World_GetGraphDef(world_, d->mNodeDef.mName) &&
+                    !languageSynthDefNames_.count(name))
+                    error = "Cannot replace a FoxDot/bundled SynthDef; use a new name";
+                newNames.insert(name);
+            }
+            if (newNames.size() > kMaxLanguageSynthDefs)
+                error = "Language SynthDef limit is " +
+                    std::to_string(kMaxLanguageSynthDefs) + " distinct names";
+            if (!error.empty()) {
+                for (auto* d : originals) GraphDef_Free(d);
+                reply(hostOscFailure("/d_recv", error));
+                return true;
+            }
+            GraphDef_Define(world_, definitions);
+            languageSynthDefNames_ = std::move(newNames);
+            auto done = hostOscMessage("/done", ",s");
+            appendOscString(done, "/d_recv");
+            reply(done);
+            return true;
+        }
+        ReplyAddress address{};
+        address.mAddress = boost::asio::ip::address_v4::loopback();
+        address.mProtocol = kUDP;
+        address.mPort = port;
+        address.mSocket = 0;
+        address.mReplyFunc = &DexterSCTone::hostSuperColliderReply;
+        address.mReplyData = this;
+        // NRT commands execute synchronously here, serialized with host audio.
+        PerformOSCMessage(world_, static_cast<int>(packet.size()),
+                          packet.data(), &address);
+        return true;
+    }
+
+    void maintainHostSuperCollider() {
+        std::unique_lock<std::mutex> lock(worldAccessMutex_, std::try_to_lock);
+        if (!lock.owns_lock() || !world_) return;
+        // Replace the absent driver's non-RT notification/deletion service.
+        world_->hw->mNodeEnds.Perform();
+        world_->hw->mNodeMsgs.Perform();
+        world_->hw->mTriggers.Perform();
+        world_->hw->mDeleteGraphDefs.Perform();
+    }
+
     void configureHostProcessing(double hostSampleRate) {
         LifecycleTrace trace("configure host audio without engine startup", this);
         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
@@ -4548,7 +4691,8 @@ private:
                 (kSynthGraphCount + kReverbGraphCount))
             return fail("Too many SynthDefs are installed for SuperCollider's graph-definition table.");
         const auto graphDefinitionCapacity =
-            scPoolCapacity(kSynthGraphCount + kReverbGraphCount + userSynthFiles_.size());
+            scPoolCapacity(kSynthGraphCount + kReverbGraphCount + userSynthFiles_.size() +
+                           dexter::sclang::kMaxLanguageSynthDefs);
 
         try {
             LifecycleTrace allocationTrace("echo buffer allocation", this);
@@ -4564,6 +4708,7 @@ private:
         options.mBufLength = kSCBlockSize;
         options.mMaxNodes = static_cast<uint32>(kWorldNodeCapacity);
         options.mMaxGraphDefs = static_cast<uint32>(graphDefinitionCapacity);
+        options.mMaxLogins = 1; // One private sclang client; not an audio-device server.
         // SuperCollider measures this field in KiB. 64 MiB is enough for the
         // normal graph bank and persistent delay inserts. Both reverbs' upstream
         // documentation explicitly requires memSize_(65536 * 4), so reserve
@@ -4600,13 +4745,9 @@ private:
         }
         moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
         World_SetSampleRate(world_, sampleRate_);
-        scLanguageServerPort_ = dexter::sclang::findAvailableServerPort();
-        if (scLanguageServerPort_ <= 0 ||
-            !World_OpenTCP(world_, "127.0.0.1", scLanguageServerPort_, 8, 8)) {
-            std::fprintf(stderr,
-                         "Dexter VST3: could not open the loopback-only SuperCollider language endpoint.\n");
-            scLanguageServerPort_ = 0;
-        }
+        // World_OpenTCP silently drops packets for an NRT World without an
+        // SC_AudioDriver. The VST owns the audio callback: use our bounded
+        // loopback worker and synchronous NRT dispatch instead.
         {
             LifecycleTrace startTrace("World_Start", this);
             World_Start(world_);
@@ -4740,12 +4881,26 @@ private:
         for (const auto& definition : userSynthDefinitions_)
             moduleStatus += " " + definition.name;
         moduleStatus += ".";
+        std::string bridgeError;
+        scLanguageServerPort_ = dexter::sclang::findAvailableServerPort();
+        if (scLanguageServerPort_ <= 0 || !scHostBridge_.start(
+                scLanguageServerPort_,
+                [this](std::vector<char>& packet, std::uint16_t port) {
+                    return dispatchHostSuperCollider(packet, port);
+                },
+                [this] { maintainHostSuperCollider(); }, bridgeError)) {
+            scLanguageServerPort_ = 0;
+            moduleStatus += " SuperCollider language bridge unavailable: " + bridgeError;
+        }
         setEditorStatus("SuperCollider ready. Press Run to evaluate the script. " + moduleStatus);
         return true;
     }
 
     void discardPartialWorld() {
         scLanguageRuntime_.shutdown();
+        scHostBridge_.stop();
+        languageSynthDefNames_.clear();
+        languageClientPort_ = 0;
         if (world_) {
             World_Cleanup(world_, false);
             world_ = nullptr;
@@ -5440,10 +5595,20 @@ private:
                                             ? 1.0f
                                             : 1.0f / static_cast<float>(mixContributors);
             mixGain_ += (targetMixGain - mixGain_) * mixSmoothing;
+            // The language tab writes normal SC hardware-output buses 0/1.
+            // FoxDot uses private buses; include each direct bus only when it
+            // was written this block, so stale tails cannot repeat forever.
+            const auto direct = [&](int channel) {
+                if (world_->mAudioBusTouched[channel] != world_->mBufCounter)
+                    return 0.0f;
+                const auto value = world_->mAudioBus[
+                    channel * world_->mBufLength + sampleIndex];
+                return std::isfinite(value) ? value : 0.0f;
+            };
             outputBlock_[0][static_cast<std::size_t>(sampleIndex)] = leftMixed * mixGain_ +
-                diskIO_.left(static_cast<unsigned>(sampleIndex));
+                diskIO_.left(static_cast<unsigned>(sampleIndex)) + direct(0);
             outputBlock_[1][static_cast<std::size_t>(sampleIndex)] = rightMixed * mixGain_ +
-                diskIO_.right(static_cast<unsigned>(sampleIndex));
+                diskIO_.right(static_cast<unsigned>(sampleIndex)) + direct(1);
         }
 
         const auto blockEnd = blockStart + static_cast<std::uint64_t>(kSCBlockSize);
@@ -5477,6 +5642,9 @@ private:
     // Caller owns worldAccessMutex_. Never call the locking wrapper recursively.
     void stopWorldLocked() {
         scLanguageRuntime_.shutdown();
+        scHostBridge_.stop();
+        languageSynthDefNames_.clear();
+        languageClientPort_ = 0;
         scLanguageServerPort_ = 0;
         if (world_) {
             std::string diskError;
@@ -5557,6 +5725,9 @@ private:
     World* world_ = nullptr;
     int scLanguageServerPort_ = 0;
     dexter::sclang::Runtime scLanguageRuntime_;
+    dexter::sclang::HostOscBridge scHostBridge_;
+    std::set<std::string> languageSynthDefNames_;
+    std::uint16_t languageClientPort_ = 0;
     PortableDiskIO diskIO_;
     bool diskCleanupFailed_ = false;
     Group* rootGroup_ = nullptr;

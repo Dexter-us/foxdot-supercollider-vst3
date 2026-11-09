@@ -842,7 +842,7 @@ event, and timeline caps. Example 220 demonstrates a four-beat fill.
 
 
 0.4.177 adds a separate SuperCollider (.scd) editor tab backed by the pinned
-SuperCollider 3.15 sclang language runtime. It connects by loopback OSC/TCP to
+SuperCollider 3.15 sclang language runtime. It connects by private loopback OSC to
 the VST's existing embedded SuperCollider World; it does not start a second
 scsynth/audio engine. The FoxDot/Python tab remains separate and keeps its
 bounded compatibility checker. Example 222 is a starter score for the .scd tab.
@@ -856,9 +856,9 @@ same pinned SuperCollider 3.15/API-7 engine; the former SC3.14.1/API-3
 AntiAliasingOscillators probe was removed because it was incompatible with
 this VST.
 
-0.4.178 fixes the headless sclang TCP bootstrap: the script keeps a Server
-instance and starts the asynchronous connection separately, then reports ready
-only after the existing VST engine responds. No second audio server is started.
+0.4.178 corrected the bootstrap's Server variable, but its native TCP dispatch
+still required an audio driver that a host-driven NRT World does not have.
+0.4.180 replaces that network path; no second audio server is started.
 
 0.4.179 defers embedded-engine startup until the first Run. Initial host audio
 setup records the sample rate and returns without scanning/loading the engine.
@@ -876,3 +876,41 @@ no script contents). Files are bounded to approximately 2 MB per host process.
 The Windows checks now include actual editor open/switch/reopen tests and an
 actual VST3 first-Run audio check, in addition to the standard VST3 validator.
 These checks do not substitute for testing the editor and sclang in your DAW.
+
+0.4.180 adds a bounded host-driven OSC bridge for the language tab. It does not
+use SC's hardware-driver network queue, and status replies do not dereference an
+absent hardware driver. A loopback UDP worker performs validated NRT commands
+under the engine mutex; socket waits and SynthDef loading stay off the UI/audio
+threads. Only one private language client is supported. No SC/UGen rebuild is
+needed for this change.
+
+Normal SC output buses 0/1 now enter the VST mix and master gain, only when
+written in the current block. SC Stop/CmdPeriod clears the language's group,
+not FoxDot's cached voice/effect nodes. Language node IDs start at 16777216;
+private VST IDs stay below that range. Bundled SynthDefs cannot be overwritten
+by language definitions. Failed/missing commands return /fail, not a silent
+promise of full-server compatibility.
+
+Initial server command subset:
+status, notify, version, sync, clearSched, d_recv (SynthDef.add), s_new,
+n_set, n_run, n_free, g_new, g_freeAll and g_deepFree. Both string and numeric
+SC command forms are supported. Tree insertion supports head/tail, not
+replacing/reordering FoxDot's nodes. d_recv accepts an absent/empty completion
+message, not nested completion commands. Buffer/disk/recording/mapping/query
+commands and external hardware-server control are not part of this bridge yet.
+The 256 distinct language SynthDef names include SC's automatic system defs.
+OSC datagrams are at most 65504 bytes with 512 arguments; controls are finite
+scalar int32/float32 values. Queues hold at most 256 messages/1 MiB;
+bundles nest at most eight levels and schedule at most 30 seconds ahead.
+Timed bundles dispatch at host-block boundaries, not sample-accurately.
+
+Startup is limited to 20 seconds and Stop can cancel a pending language launch.
+Windows owns sclang in a kill-on-close job, inheriting only its input/log
+handles; closing/crashing the host must not leave the language helper running.
+Example 223 tests SynthDef.add, sync, a stereo tone, control changes and release.
+The required Windows test now starts the bundled interpreter, requires actual
+SC-tab audio, runs Python alongside it, and checks that SC Stop preserves Python
+while removing the SC test tone. Windows/DAW results remain pending until run.
+The same check exits/restarts sclang and requires renewed SC audio. A new
+language client's registration retires the old client/group/scheduled events,
+so a stale UDP notification login cannot permanently block retries.

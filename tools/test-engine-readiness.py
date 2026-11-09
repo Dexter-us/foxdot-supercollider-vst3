@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Test actual host setup and initializeWorld entry with a fake SC backend.
 
-This does not validate SC loading/audio. Windows' required validator exercises
-the real engine; this test isolates host-order/retry/locking regressions.
+This does not validate SC loading/audio. The required Windows actual-VST audio
+tests exercise the real engine; this isolates host-order/retry/locking.
 """
 from pathlib import Path
 import subprocess

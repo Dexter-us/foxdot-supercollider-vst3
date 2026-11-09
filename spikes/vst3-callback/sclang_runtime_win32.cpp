@@ -172,13 +172,13 @@ int findAvailableServerPort() {
             nextServerPort.fetch_add(1, std::memory_order_relaxed);
         const int port = kFirstServerPort +
                          static_cast<int>(sequence % kServerPortCount);
-        SOCKET tcp = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (tcp == INVALID_SOCKET) {
+        SOCKET udp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (udp == INVALID_SOCKET) {
             return 0;
         }
-        const bool tcpAvailable = bindProbe(tcp, port, SOCK_STREAM);
-        closesocket(tcp);
-        if (tcpAvailable)
+        const bool udpAvailable = bindProbe(udp, port, SOCK_DGRAM);
+        closesocket(udp);
+        if (udpAvailable)
             return port;
     }
     return 0;
@@ -253,6 +253,7 @@ void Runtime::stop() {
         pendingRun_ = false;
         pendingSource_.clear();
         ++sourceGeneration_;
+        ++cancellationGeneration_;
         port = languagePort_;
         status_ = port > 0
             ? "Sending Stop to the SuperCollider language process..."
@@ -268,6 +269,7 @@ void Runtime::shutdown() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         shutdownRequested_ = true;
+        ++cancellationGeneration_;
         pendingRun_ = false;
         pendingSource_.clear();
         port = languagePort_;
@@ -292,6 +294,10 @@ void Runtime::shutdown() {
         if (processHandle_ == process && processHandle_) {
             CloseHandle(process);
             processHandle_ = nullptr;
+        }
+        if (jobHandle_) {
+            CloseHandle(static_cast<HANDLE>(jobHandle_));
+            jobHandle_ = nullptr;
         }
         languagePort_ = 0;
         if (!workingDirectory_.empty()) {
@@ -326,12 +332,24 @@ void Runtime::setStatus(std::string value) {
     status_ = std::move(value);
 }
 
+void Runtime::releaseProcess(void* expected) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (processHandle_ != expected) return;
+    if (processHandle_) CloseHandle(static_cast<HANDLE>(processHandle_));
+    if (jobHandle_) CloseHandle(static_cast<HANDLE>(jobHandle_));
+    processHandle_ = jobHandle_ = nullptr;
+    languagePort_ = 0;
+}
+
 bool Runtime::ensureStarted(const std::filesystem::path& runtimeRoot,
                             int serverPort,
                             int firstUserAudioBus,
-                            double sampleRate) {
+                            double sampleRate,
+                            std::uint64_t cancellation) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (shutdownRequested_ || cancellation != cancellationGeneration_)
+            return false;
         if (processHandle_ &&
             WaitForSingleObject(static_cast<HANDLE>(processHandle_), 0) == WAIT_TIMEOUT)
             return true;
@@ -340,14 +358,19 @@ bool Runtime::ensureStarted(const std::filesystem::path& runtimeRoot,
             processHandle_ = nullptr;
             languagePort_ = 0;
         }
+        if (jobHandle_) {
+            CloseHandle(static_cast<HANDLE>(jobHandle_));
+            jobHandle_ = nullptr;
+        }
     }
-    return startProcess(runtimeRoot, serverPort, firstUserAudioBus, sampleRate);
+    return startProcess(runtimeRoot, serverPort, firstUserAudioBus, sampleRate, cancellation);
 }
 
 bool Runtime::startProcess(const std::filesystem::path& runtimeRoot,
                            int serverPort,
                            int firstUserAudioBus,
-                           double sampleRate) {
+                           double sampleRate,
+                           std::uint64_t cancellation) {
     const auto executable = runtimeRoot / "sclang.exe";
     const auto classLibrary = runtimeRoot / "SCClassLibrary";
     const auto versionPath = runtimeRoot / "SC_RUNTIME_VERSION.txt";
@@ -412,17 +435,20 @@ bool Runtime::startProcess(const std::filesystem::path& runtimeRoot,
         ";\n"
         "opts.numAudioBusChannels = 1024;\n"
         "opts.sampleRate = " + std::to_string(sampleRate) + ";\n"
-        "opts.protocol = \\tcp;\n"
+        "opts.maxLogins = 1;\n"
+        "opts.initialNodeID = 16777216;\n"
+        "opts.protocol = \\udp;\n"
+        "\"DEXTER_SCLANG_BOOTSTRAP\".postln;\n"
         "s = Server.new(\\DexterVST, NetAddr(\"127.0.0.1\", " +
         std::to_string(serverPort) +
         "), opts);\n"
         "Server.default = s;\n"
-        "s.connectToServerAddr({ s.startAliveThread });\n"
+        "s.startAliveThread;\n"
         "OSCdef(\\DexterVSTRun, { |msg, time, addr| "
         "if(addr.ip == \"127.0.0.1\") { msg[1].asString.load; }; }, "
         "\"/dexter/evalFile\");\n"
         "OSCdef(\\DexterVSTStop, { |msg, time, addr| "
-        "if(addr.ip == \"127.0.0.1\") { CmdPeriod.run; s.freeAll; }; }, "
+        "if(addr.ip == \"127.0.0.1\") { CmdPeriod.run; s.freeMyDefaultGroup; }; }, "
         "\"/dexter/stop\");\n"
         "OSCdef(\\DexterVSTQuit, { |msg, time, addr| "
         "if(addr.ip == \"127.0.0.1\") { 0.exit; }; }, "
@@ -463,58 +489,99 @@ bool Runtime::startProcess(const std::filesystem::path& runtimeRoot,
         quoteArgument(bootstrapPath.wstring());
     std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
     mutableCommand.push_back(L'\0');
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    startup.dwFlags = STARTF_USESTDHANDLES;
-    startup.hStdInput = nullInput;
-    startup.hStdOutput = logFile;
-    startup.hStdError = logFile;
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                          &limits, sizeof(limits))) {
+        if (job) CloseHandle(job);
+        CloseHandle(nullInput); CloseHandle(logFile);
+        setStatus("Could not create an owned sclang process job.");
+        return false;
+    }
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = nullInput;
+    startup.StartupInfo.hStdOutput = logFile;
+    startup.StartupInfo.hStdError = logFile;
+    SIZE_T attributeSize = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeSize);
+    std::vector<unsigned char> attributes(attributeSize);
+    startup.lpAttributeList =
+        reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+    HANDLE inherited[]{nullInput, logFile};
+    if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attributeSize)) {
+        CloseHandle(job); CloseHandle(nullInput); CloseHandle(logFile);
+        setStatus("Could not initialize sclang's restricted handle list.");
+        return false;
+    }
+    if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited), nullptr, nullptr)) {
+        DeleteProcThreadAttributeList(startup.lpAttributeList);
+        CloseHandle(job); CloseHandle(nullInput); CloseHandle(logFile);
+        setStatus("Could not restrict inherited sclang handles.");
+        return false;
+    }
     PROCESS_INFORMATION processInfo{};
     const BOOL created = CreateProcessW(
         executable.c_str(), mutableCommand.data(), nullptr, nullptr, TRUE,
-        CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, nullptr,
-        runtimeRoot.c_str(), &startup, &processInfo);
+        CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED |
+            EXTENDED_STARTUPINFO_PRESENT, nullptr,
+        runtimeRoot.c_str(), &startup.StartupInfo, &processInfo);
+    const auto createError = created ? 0 : GetLastError();
+    DeleteProcThreadAttributeList(startup.lpAttributeList);
     CloseHandle(nullInput);
     CloseHandle(logFile);
     if (!created) {
+        CloseHandle(job);
         setStatus("Could not launch bundled sclang.exe (Windows error " +
-                  std::to_string(GetLastError()) + ").");
+                  std::to_string(createError) + ").");
+        return false;
+    }
+    if (!AssignProcessToJobObject(job, processInfo.hProcess) ||
+        ResumeThread(processInfo.hThread) == static_cast<DWORD>(-1)) {
+        const auto failure = GetLastError();
+        TerminateProcess(processInfo.hProcess, 1);
+        WaitForSingleObject(processInfo.hProcess, 1000);
+        CloseHandle(processInfo.hThread); CloseHandle(processInfo.hProcess);
+        CloseHandle(job);
+        setStatus("Could not start the owned sclang process (Windows error " +
+                  std::to_string(failure) + ").");
         return false;
     }
     CloseHandle(processInfo.hThread);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         processHandle_ = processInfo.hProcess;
+        jobHandle_ = job;
         languagePort_ = languagePort;
         workingDirectory_ = directory;
         logPath_ = logPath;
     }
 
     setStatus("sclang 3.15 is loading its class library and connecting to the embedded VST engine...");
-    constexpr auto timeout = std::chrono::seconds(60);
+    constexpr auto timeout = std::chrono::seconds(20);
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
         bool cancelled = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            cancelled = shutdownRequested_;
+            cancelled = shutdownRequested_ || cancellation != cancellationGeneration_;
         }
         if (cancelled) {
             TerminateProcess(processInfo.hProcess, 0);
             WaitForSingleObject(processInfo.hProcess, 1000);
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                if (processHandle_ == processInfo.hProcess) {
-                    CloseHandle(processInfo.hProcess);
-                    processHandle_ = nullptr;
-                    languagePort_ = 0;
-                }
-            }
+            releaseProcess(processInfo.hProcess);
             setStatus("sclang startup cancelled.");
             return false;
         }
         if (WaitForSingleObject(processInfo.hProcess, 0) != WAIT_TIMEOUT) {
-            setStatus("sclang exited before the embedded server connected.\r\n" +
+            DWORD exitCode = 0;
+            GetExitCodeProcess(processInfo.hProcess, &exitCode);
+            releaseProcess(processInfo.hProcess);
+            setStatus("sclang exited before the engine handshake (exit code " +
+                      std::to_string(exitCode) + ").\r\n" +
                       readTail(logPath));
             return false;
         }
@@ -527,16 +594,11 @@ bool Runtime::startProcess(const std::filesystem::path& runtimeRoot,
     }
     TerminateProcess(processInfo.hProcess, 0);
     WaitForSingleObject(processInfo.hProcess, 1000);
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (processHandle_ == processInfo.hProcess) {
-            CloseHandle(processInfo.hProcess);
-            processHandle_ = nullptr;
-            languagePort_ = 0;
-        }
-    }
-    setStatus("Timed out waiting for sclang to connect to the VST's embedded engine.\r\n" +
-              readTail(logPath));
+    releaseProcess(processInfo.hProcess);
+    const auto tail = readTail(logPath);
+    setStatus(tail.find("DEXTER_SCLANG_BOOTSTRAP") != std::string::npos
+        ? "sclang compiled its class library, but the VST engine handshake timed out after 20 seconds. Press Run to retry.\r\n" + tail
+        : "sclang's class library did not become ready within 20 seconds. Press Run to retry.\r\n" + tail);
     return false;
 }
 
@@ -587,6 +649,7 @@ void Runtime::workerLoop() {
         double sampleRate = 44100.0;
         std::string source;
         std::uint64_t generation = 0;
+        std::uint64_t cancellation = 0;
         {
             std::unique_lock<std::mutex> lock(mutex_);
             condition_.wait(lock, [this] {
@@ -602,9 +665,10 @@ void Runtime::workerLoop() {
             firstUserAudioBus = firstUserAudioBus_;
             sampleRate = sampleRate_;
             generation = sourceGeneration_;
+            cancellation = cancellationGeneration_;
         }
         if (!ensureStarted(runtimeRoot, serverPort, firstUserAudioBus,
-                           sampleRate))
+                           sampleRate, cancellation))
             continue;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -639,20 +703,18 @@ int findAvailableServerPort() {
     for (unsigned attempt = 0; attempt < portCount; ++attempt) {
         const int port = firstPort + static_cast<int>(
             nextPort.fetch_add(1, std::memory_order_relaxed) % portCount);
-        const int tcp = socket(AF_INET, SOCK_STREAM, 0);
-        if (tcp < 0) {
+        const int udp = socket(AF_INET, SOCK_DGRAM, 0);
+        if (udp < 0) {
             return 0;
         }
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_port = htons(static_cast<std::uint16_t>(port));
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        const bool tcpAvailable =
-            bind(tcp, reinterpret_cast<const sockaddr*>(&address),
-                 sizeof(address)) == 0 &&
-            listen(tcp, 1) == 0;
-        close(tcp);
-        if (tcpAvailable)
+        const bool udpAvailable =
+            bind(udp, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0;
+        close(udp);
+        if (udpAvailable)
             return port;
     }
     return 0;
@@ -665,6 +727,7 @@ void Runtime::submit(const std::filesystem::path&, int, int, double,
 }
 void Runtime::stop() {}
 void Runtime::shutdown() {}
+void Runtime::releaseProcess(void*) {}
 std::string Runtime::status() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return status_;
@@ -673,8 +736,8 @@ void Runtime::setStatus(std::string value) {
     std::lock_guard<std::mutex> lock(mutex_);
     status_ = std::move(value);
 }
-bool Runtime::ensureStarted(const std::filesystem::path&, int, int, double) { return false; }
-bool Runtime::startProcess(const std::filesystem::path&, int, int, double) { return false; }
+bool Runtime::ensureStarted(const std::filesystem::path&, int, int, double, std::uint64_t) { return false; }
+bool Runtime::startProcess(const std::filesystem::path&, int, int, double, std::uint64_t) { return false; }
 bool Runtime::sendSource(const std::string&) { return false; }
 bool Runtime::sendControl(const char*) { return false; }
 void Runtime::workerLoop() {}

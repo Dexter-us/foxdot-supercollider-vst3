@@ -9,7 +9,7 @@
 
 namespace dexter::sclang {
 
-// Returns a free loopback TCP port for the embedded SuperCollider World.
+// Probes a loopback UDP port for the private host-driven World bridge.
 // The caller binds it immediately with World_OpenTCP.
 int findAvailableServerPort();
 
@@ -39,14 +39,17 @@ private:
     bool ensureStarted(const std::filesystem::path& runtimeRoot,
                        int serverPort,
                        int firstUserAudioBus,
-                       double sampleRate);
+                       double sampleRate,
+                       std::uint64_t cancellation);
     bool startProcess(const std::filesystem::path& runtimeRoot,
                       int serverPort,
                       int firstUserAudioBus,
-                      double sampleRate);
+                      double sampleRate,
+                      std::uint64_t cancellation);
     bool sendSource(const std::string& source);
     bool sendControl(const char* address);
     void setStatus(std::string value);
+    void releaseProcess(void* expected);
 
     mutable std::mutex mutex_;
     std::mutex lifecycleMutex_;
@@ -63,9 +66,11 @@ private:
     double sampleRate_ = 44100.0;
     int languagePort_ = 0;
     std::uint64_t sourceGeneration_ = 0;
+    std::uint64_t cancellationGeneration_ = 0;
     std::string status_ = "SuperCollider tab ready; sclang starts on first Run.";
 #if defined(_WIN32)
     void* processHandle_ = nullptr;
+    void* jobHandle_ = nullptr;
 #endif
 };
 
