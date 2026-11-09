@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.180' not in cmake_source or
+if ('VERSION 0.4.182' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3392,6 +3392,28 @@ if 'dexterAutoFree=2' not in open(
     raise AssertionError('Jazz Kit must retain its standalone self-free default.')
 sardineGateExample = run_example('216-sardine-chance-loaf-on.py')
 assert len(sardineGateExample) == 2
+sardineSwimGatesSource = open(os.path.join(
+    os.path.abspath(sys.argv[2]),
+    '221-sardine-swim-chance-bar-gates.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    sardineSwimGatesSource), run_compatibility_check(sardineSwimGatesSource)
+sardineSwimGateRows, sardineSwimGateControls = run_script(
+    sardineSwimGatesSource, include_gates=True)
+assert [int(row[5]) for row in sardineSwimGateRows] == [16, 64]
+assert [int(row[1]) for row in sardineSwimGateControls] == [0, 1]
+assert [float(row[2]) for row in sardineSwimGateControls] == [0.5, 0.75]
+assert [int(row[4]) for row in sardineSwimGateControls] == [4, 2]
+assert [int(row[5]) for row in sardineSwimGateControls] == [5, 1]
+assert all(0 <= int(row[3]) <= 0xffffffff
+           for row in sardineSwimGateControls)
+repeatableSwimGate = (
+    'Seed.default = 221\n'
+    '@swim(cycles=4, period=1)\n'
+    'def repeatable(p=1, i=0):\n'
+    '    p1 >> bass([0], dur=1, oct=5, chance=0.5, loaf=4, on=(1, 3))\n'
+    '    again(repeatable, p=p, i=i+1)\n')
+assert run_script(repeatableSwimGate, include_gates=True) == \
+       run_script(repeatableSwimGate, include_gates=True)
 sardineSwimPath = os.path.join(
     os.path.abspath(sys.argv[2]), '219-sardine-swim-finite-cycles.py')
 sardineSwimSource = open(sardineSwimPath, encoding='utf-8').read()
@@ -3456,7 +3478,22 @@ for invalid_swim_runtime, expected_swim_runtime_error in (
          '    p1 >> saw([0])\n'
          '    p1 >> saw([2])\n'
          '    again(groove, p=p, i=i+1)\n',
-         'only once per cycle')):
+          'only once per cycle'),
+         ('@swim(cycles=2)\n'
+          'def groove(p=1, i=0):\n'
+          '    p1 >> saw([0], chance=1.1)\n'
+          '    again(groove, p=p, i=i+1)\n',
+          'chance probability must be from 0 to 1'),
+         ('@swim(cycles=2)\n'
+          'def groove(p=1, i=0):\n'
+          '    p1 >> saw([0], loaf=33)\n'
+          '    again(groove, p=p, i=i+1)\n',
+          'loaf must be from 1 to 32 bars'),
+         ('@swim(cycles=2)\n'
+          'def groove(p=1, i=0):\n'
+          '    p1 >> saw([0], loaf=4, on=(0, 3))\n'
+          '    again(groove, p=p, i=i+1)\n',
+          'on bar positions must be within the loaf')):
     swim_error = run_error_script(invalid_swim_runtime)
     if 'ERROR' not in swim_error or expected_swim_runtime_error not in swim_error:
         raise AssertionError('@swim runtime bounds must reject invalid input: ' +
@@ -3861,6 +3898,25 @@ example39Rows, example39Events = run_script(
 assert [int(row[6]) for row in example39Rows] == [4, 5]
 assert all(float(event[5]) == 0.01 and float(event[6]) == 0.04
            for event in example39Events)
+for bassExampleName in os.listdir(os.path.abspath(sys.argv[2])):
+    if not bassExampleName.endswith('.py'):
+        continue
+    bassExamplePath = os.path.join(os.path.abspath(sys.argv[2]),
+                                   bassExampleName)
+    bassExampleTree = ast.parse(
+        open(bassExamplePath, encoding='utf-8').read(),
+        filename=bassExampleName)
+    for bassCall in ast.walk(bassExampleTree):
+        if (not isinstance(bassCall, ast.Call) or
+                not isinstance(bassCall.func, ast.Name) or
+                bassCall.func.id not in ('bass', 'jbass')):
+            continue
+        octaveKeyword = next((keyword.value for keyword in bassCall.keywords
+                              if keyword.arg == 'oct'), None)
+        if isinstance(octaveKeyword, ast.Constant) and isinstance(
+                octaveKeyword.value, (int, float)):
+            assert octaveKeyword.value >= 5, (
+                bassExampleName + ' places the /4 bass oscillator too low')
 example40Rows = run_example('40-charm-and-spark.py')
 assert [int(row[6]) for row in example40Rows] == [22, 23]
 example41Rows = run_example('41-blip-oscillator.py')
