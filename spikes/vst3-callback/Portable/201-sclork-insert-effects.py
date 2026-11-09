@@ -10,7 +10,7 @@ p1 >> pluck(P[0, 3, 7, 10], dur=1, sus=0.8, oct=4, amp=0.22,
             fx_q=0.25, fx_tone=11000)
 
 # Decimator: lower fx_rate and fx_bits for stronger sample/bit reduction.
-p2 >> bass(P[0, 0, 7, 3], dur=1, sus=0.7, oct=3, amp=0.18,
+p2 >> bass(P[0, 0, 7, 3], dur=1, sus=0.7, oct=5, amp=0.18,
            effect="SCLOrkDecimatorFX", fx_mix=0.7, fx_rate=5200,
            fx_bits=7, fx_drive=1.6, fx_tone=7000)
 

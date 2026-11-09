@@ -3,7 +3,7 @@
 Clock.bpm = 72
 Scale.default.set("minor")
 
-p1 >> bass(P[0, 2, 4, 2], dur=1, sus=0.9, oct=3,
+p1 >> bass(P[0, 2, 4, 2], dur=1, sus=0.9, oct=5,
           rate=5, atk=0.04, rel=0.28, amp=0.16,
           reverb="none", pan=-0.2)
 p2 >> varsaw(P[0, 2, 4, 2], dur=1, sus=0.9, oct=4,

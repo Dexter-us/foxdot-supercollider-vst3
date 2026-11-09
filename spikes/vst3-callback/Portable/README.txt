@@ -914,3 +914,14 @@ while removing the SC test tone. Windows/DAW results remain pending until run.
 The same check exits/restarts sclang and requires renewed SC audio. A new
 language client's registration retires the old client/group/scheduled events,
 so a stale UDP notification login cannot permanently block retries.
+
+0.4.181 moves the bundled bass and jbass demo lines out of the subsonic range.
+FoxDot's original Bass/JBass definitions divide oscillator frequency by four;
+the examples now use the normal octave-5 register. This changes example
+settings only, not the original SynthDefs or compatibility behavior.
+
+0.4.182 supports the existing Sardine-style chance, loaf and on controls inside
+finite @swim phrases. Each player's chance seed is held constant while its
+cycles are expanded; Seed.default still provides a repeatable seed between
+runs. Example 221 demonstrates a 50% chance on bars 1 and 3 of a four-bar
+loaf, alongside an "often" drum part gated to every second bar.

@@ -9,7 +9,7 @@ p1 >> pluck(P[0, 3, 7, 10], dur=0.5, oct=4, amp=0.20,
             fx_time=var([0.25, 0.375], 4), fx_feedback=0.52)
 
 # The duck envelope drops at each period and recovers over attack seconds.
-p2 >> bass(P[0, 0, 7, 3], dur=0.5, oct=3, amp=0.18,
+p2 >> bass(P[0, 0, 7, 3], dur=0.5, oct=5, amp=0.18,
            effect="LimutDuck", fx_mix=1,
            fx_period=0.5, fx_depth=0.68, fx_length=0.07, fx_attack=0.18)
 

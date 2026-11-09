@@ -8438,6 +8438,13 @@ def _dexter_record_swim_update(player_index):
     context['written'].add(player_index)
     update = _dexter_updates[player_index]
     config = update[:2] + update[4:]
+    # Chance controls allocate a seed for each PlayerPattern construction.
+    # A @swim builds many cycles into one pattern, so keep the first cycle's
+    # seed and compare all other controls without that per-construction value.
+    chance_seed_config_index = 2 + 56 - 4
+    comparable_config = (
+        config[:chance_seed_config_index] +
+        config[chance_seed_config_index + 1:])
     side_state = tuple(
         (player_index in values, values.get(player_index))
         for values in _DEXTER_SWIM_SIDE_MAPS
@@ -8446,13 +8453,14 @@ def _dexter_record_swim_update(player_index):
     if record is None:
         record = {
             'base': update,
-            'config': config,
+            'config': comparable_config,
             'side_state': side_state,
             'events': [],
             'sample_requests': [],
         }
         context['players'][player_index] = record
-    elif config != record['config'] or side_state != record['side_state']:
+    elif (comparable_config != record['config'] or
+          side_state != record['side_state']):
         raise ValueError(
             '@swim keeps each player on the same synth/effect controls; '
             'vary notes and sample hits across cycles')

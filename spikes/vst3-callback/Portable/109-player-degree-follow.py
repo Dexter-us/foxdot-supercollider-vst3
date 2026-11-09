@@ -8,7 +8,7 @@ Scale.default.set("dorian")
 p1 >> pluck(P[0, 2, 4, 6, 5, 3, 1, 4], dur=0.5, sus=0.38,
            oct=5, amp=0.24, pan=-0.25)
 p2 >> bass(P[0, 0, 4, 0, 3, 0, 5, 0], dur=0.5, sus=0.45,
-           oct=3, amp=0.32, pan=0.2)
+           oct=5, amp=0.32, pan=0.2)
 p3 >> triangle(P[0, None, 2, None, 4, None, 3, None], dur=0.5,
                sus=0.3, oct=5, amp=0.12, pan=0.35)
 

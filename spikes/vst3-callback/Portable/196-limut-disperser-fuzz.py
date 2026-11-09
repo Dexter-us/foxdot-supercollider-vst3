@@ -10,7 +10,7 @@ p1 >> pluck(P[0, 3, 7, 10], dur=0.5, oct=4, amp=0.22,
             fx_stages=linvar([8, 20], [4, 4]))
 
 # Drive thickens the harmonics; tone is the post-drive low-pass cutoff in Hz.
-p2 >> bass(P[0, 0, 7, 3], dur=1, oct=3, amp=0.20,
+p2 >> bass(P[0, 0, 7, 3], dur=1, oct=5, amp=0.20,
            effect="LimutFuzz", fx_mix=0.55,
            fx_drive=var([12, 24], 4), fx_tone=linvar([3500, 9000], [4, 4]))
 

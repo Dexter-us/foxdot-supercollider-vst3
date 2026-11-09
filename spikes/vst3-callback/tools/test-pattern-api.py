@@ -315,7 +315,7 @@ assert namespace['_dexter_updates'][1][3][1][2] == 64
 namespace['p1'].stop()
 assert namespace['_dexter_updates'][0][0] is True
 
-def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_effect_modulations=False, user_synth_names=()):
+def run_script(script_text, include_events=False, include_effects=False, include_filters=False, include_decay=False, include_mutes=False, include_modulations=False, include_effect_modulations=False, include_gates=False, user_synth_names=()):
     with tempfile.TemporaryDirectory() as directory:
         source_path = os.path.join(directory, 'source.py')
         result_path = os.path.join(directory, 'result.out')
@@ -329,7 +329,7 @@ def run_script(script_text, include_events=False, include_effects=False, include
         wrapper_globals = {'__name__': '__main__'}
         exec(wrapper, wrapper_globals, wrapper_globals)
         lines = open(result_path, encoding='utf-8').read().splitlines()
-        assert lines[0].startswith('OK\t') and 0 <= int(lines[0].split('\t')[1]) <= 8, lines[0]
+        assert lines[0].startswith('OK\t') and 0 <= int(lines[0].split('\t')[1]) <= 8, '\n'.join(lines[:12])
         player_rows = [line.split('\t') for line in lines if line.startswith('P\t')]
         event_rows = [line.split('\t') for line in lines if line.startswith('N\t')]
         effect_rows = [line.split('\t') for line in lines if line.startswith('R\t')]
@@ -338,6 +338,9 @@ def run_script(script_text, include_events=False, include_effects=False, include
         modulation_rows = [line.split('\t') for line in lines if line.startswith('G\t')]
         decay_rows = [line.split('\t') for line in lines if line.startswith('E\t')]
         mute_rows = [line.split('\t') for line in lines if line.startswith('M\t')]
+        gate_rows = [line.split('\t') for line in lines if line.startswith('C\t')]
+        if include_gates:
+            return player_rows, event_rows, gate_rows
         if include_mutes:
             return player_rows, mute_rows
         if include_filters:
@@ -373,10 +376,11 @@ def run_error_script(script_text):
         exec(make_wrapper(source_path, result_path), wrapper_globals, wrapper_globals)
         return open(result_path, encoding='utf-8').read()
 
-def run_example(name, user_synth_names=()):
+def run_example(name, user_synth_names=(), include_gates=False):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read(),
-                      user_synth_names=user_synth_names)
+                      user_synth_names=user_synth_names,
+                      include_gates=include_gates)
 
 assert 'one-shot riser' in run_error_script('Clock.bpm = riser(8)\n')
 assert 'riser' in run_error_script('p1 >> saw([0], slide=riser(8))\n')
@@ -743,12 +747,51 @@ assert [int(row[-1]) for row in swimRows] == [1, 1]
 branchRows = run_example('220-sardine-swim-cycle-branches.py',
                          example_synth_names)
 assert len(branchRows) == 2 and [int(row[-1]) for row in branchRows] == [1, 1]
+gatedSwimRows, gatedSwimEvents, gatedSwimControls = run_example(
+    '221-sardine-swim-chance-bar-gates.py', example_synth_names,
+    include_gates=True)
+assert [int(row[5]) for row in gatedSwimRows] == [16, 64]
+assert len(gatedSwimControls) == 2
+assert [int(row[1]) for row in gatedSwimControls] == [0, 1]
+assert [float(row[2]) for row in gatedSwimControls] == [0.5, 0.75]
+assert [int(row[4]) for row in gatedSwimControls] == [4, 2]
+assert [int(row[5]) for row in gatedSwimControls] == [5, 1]
+assert all(0 <= int(row[3]) <= 0xffffffff for row in gatedSwimControls)
+repeatable_swim = """Seed.default = 221
+@swim(cycles=4, period=1)
+def repeatable(p=1, i=0):
+    p1 >> bass([0], dur=1, oct=5, chance=0.5, loaf=4, on=(1, 3))
+    again(repeatable, p=p, i=i + 1)
+"""
+_, _, repeatableGatesA = run_script(repeatable_swim, include_gates=True)
+_, _, repeatableGatesB = run_script(repeatable_swim, include_gates=True)
+assert repeatableGatesA == repeatableGatesB
+invalid_swim_gate = run_error_script("""@swim(cycles=2, period=1)
+def invalid_gate(p=1, i=0):
+    p1 >> bass([0], dur=1, chance=1.1)
+    again(invalid_gate, p=p, i=i + 1)
+""")
+assert 'chance probability must be from 0 to 1' in invalid_swim_gate
+for invalid_gate_script, expected_gate_error in (
+        ("""@swim(cycles=2, period=1)
+def invalid_loaf(p=1, i=0):
+    p1 >> bass([0], dur=1, loaf=33)
+    again(invalid_loaf, p=p, i=i + 1)
+""", 'loaf must be from 1 to 32 bars'),
+        ("""@swim(cycles=2, period=1)
+def invalid_on(p=1, i=0):
+    p1 >> bass([0], dur=1, loaf=4, on=(0, 3))
+    again(invalid_on, p=p, i=i + 1)
+""", 'on bar positions must be within the loaf')):
+    gate_error = run_error_script(invalid_gate_script)
+    assert expected_gate_error in gate_error, gate_error
 for swim_fragment in (
         'def again(function, p=None, i=None):',
         'def _dexter_compile_swim(function, cycles=8, period=None):',
         'def _swim_condition_test(self, node, depth=0, budget=None):',
         '@swim may assign each player only once per cycle',
         '@swim is limited to 256 expanded events per player',
+        'Chance controls allocate a seed for each PlayerPattern construction.',
         '@swim conditions may use only bounded integer expressions based on i.',
         'update[-5] = 1'):
     if swim_fragment not in source:
@@ -895,6 +938,43 @@ example39Rows, example39Events = run_script(
 assert [int(row[6]) for row in example39Rows] == [4, 5]
 assert all(float(event[5]) == 0.01 and float(event[6]) == 0.04
            for event in example39Events)
+for bassExample in ('39-foxdot-native-bass-varsaw.py',
+                    '219-sardine-swim-finite-cycles.py'):
+    bassText = open(os.path.join(sys.argv[2], bassExample),
+                    encoding='utf-8').read()
+    bassTree = ast.parse(bassText, filename=bassExample)
+    bassCalls = [node for node in ast.walk(bassTree)
+                 if isinstance(node, ast.Call) and
+                 isinstance(node.func, ast.Name) and node.func.id == 'bass']
+    assert bassCalls, (bassExample, 'missing bass player')
+    for bassCall in bassCalls:
+        bassKeywords = {item.arg: item.value for item in bassCall.keywords}
+        assert isinstance(bassKeywords.get('oct'), ast.Constant) and \
+            bassKeywords['oct'].value >= 5, (
+                bassExample, 'bass octave is too low after the graph /4')
+        assert isinstance(bassKeywords.get('amp'), ast.Constant) and \
+            bassKeywords['amp'].value >= 0.35, (
+                bassExample, 'bass amplitude is too quiet for the demo')
+bassDemoDirectory = os.path.join(os.path.dirname(os.path.abspath(sys.argv[2])))
+for bassPath in [os.path.join(bassDemoDirectory, name)
+                 for name in os.listdir(bassDemoDirectory)
+                 if name.endswith('.py')]:
+    bassTree = ast.parse(open(bassPath, encoding='utf-8').read(),
+                         filename=os.path.basename(bassPath))
+    for bassCall in (node for node in ast.walk(bassTree)
+                     if isinstance(node, ast.Call) and
+                     isinstance(node.func, ast.Name) and
+                     node.func.id in ('bass', 'jbass')):
+        bassKeywords = {item.arg: item.value for item in bassCall.keywords}
+        octave = bassKeywords.get('oct', ast.Constant(value=5))
+        assert isinstance(octave, ast.Constant) and octave.value >= 5, (
+            os.path.basename(bassPath),
+            'bass/jbass demo is below the audible register after /4')
+bassGraphSource = open(os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[1])), '..', 'direct-world',
+    'testdata', 'generate_tone.py'), encoding='utf-8').read()
+assert 'FoxDot bass frequency / 4' in bassGraphSource
+print('PASS bass examples keep the /4 oscillator in an audible register')
 example40Rows = run_example('40-charm-and-spark.py')
 assert [int(row[6]) for row in example40Rows] == [22, 23]
 example41Rows = run_example('41-blip-oscillator.py')
