@@ -9,6 +9,8 @@ on:
       - "tools/package-sclang-runtime.cmake"
       - "tools/install-sclang-runtime-windows.ps1"
       - "tools/test-sclang-osc.cpp"
+      - "tools/test-vst-startup-win32.cpp"
+      - "tools/test-sclang-host-bridge.cpp"
       - ".github/workflows/windows-vst3.yml"
   workflow_dispatch:
 
@@ -211,6 +213,8 @@ jobs:
             -RedirectStandardError "$env:RUNNER_TEMP\sclang-bridge.stderr.log"
           if (-not $process.WaitForExit(90000)) {
             $process.Kill()
+            Get-Content "$env:RUNNER_TEMP\sclang-bridge.stdout.log" -Tail 60
+            Get-Content "$env:RUNNER_TEMP\sclang-bridge.stderr.log" -Tail 80
             throw "Actual sclang/VST3 bridge test timed out after ninety seconds."
           }
           $process.Refresh()

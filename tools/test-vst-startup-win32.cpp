@@ -19,6 +19,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 using namespace Steinberg;
@@ -63,6 +64,10 @@ static void click(HWND window, int id) {
     SendMessageW(window, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED),
                  reinterpret_cast<LPARAM>(GetDlgItem(window, id)));
 }
+static void stage(const char* text) {
+    std::fprintf(stderr, "[SC integration test] %s\n", text);
+    std::fflush(stderr);
+}
 struct TestCodeConsent {
     std::atomic<bool> finished{false};
     std::thread worker;
@@ -71,10 +76,20 @@ struct TestCodeConsent {
             EnumWindows([](HWND dialog, LPARAM) -> BOOL {
                 DWORD pid = 0;
                 GetWindowThreadProcessId(dialog, &pid);
+                if (pid != GetCurrentProcessId()) return TRUE;
+                wchar_t className[32]{};
+                GetClassNameW(dialog, className, 32);
+                if (std::wcscmp(className, L"#32770") != 0) return TRUE;
                 wchar_t title[128]{};
-                GetWindowTextW(dialog, title, 128);
-                if (pid == GetCurrentProcessId() &&
-                    std::wcscmp(title, L"Unrestricted SuperCollider code") == 0)
+                DWORD_PTR copied = 0;
+                // GetWindowTextW on any same-process window can synchronously
+                // wait on the UI thread. That deadlocks if the UI thread is
+                // joining this helper. Inspect only dialogs, with a deadline.
+                if (!SendMessageTimeoutW(dialog, WM_GETTEXT, 128,
+                        reinterpret_cast<LPARAM>(title),
+                        SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &copied))
+                    return TRUE;
+                if (std::wcscmp(title, L"Unrestricted SuperCollider code") == 0)
                     PostMessageW(dialog, WM_COMMAND, IDYES, 0);
                 return TRUE;
             }, 0);
@@ -177,6 +192,7 @@ int main(int argc, char** argv) {
         }
         require(audible, "First Run produced no audible engine output within twenty seconds");
         } else {
+            stage("Selecting SC tab");
             click(window, 3201);
             HWND scEditor = GetDlgItem(window, 3202);
             require(scEditor != nullptr, "SC editor missing");
@@ -194,10 +210,13 @@ Routine({
             {
                 TestCodeConsent consent; // Accept only this test's constant trusted score.
                 start = std::chrono::steady_clock::now();
+                stage("Clicking SC Run");
                 click(window, 102);
+                stage("SC Run returned; stopping bounded consent helper");
                 require(std::chrono::steady_clock::now() - start < 5s,
                         "SC Run handler blocked the UI");
             }
+            stage("Consent helper stopped; pumping UI and audio");
             auto processBlock = [&] {
                 pump();
                 require(IsWindow(window) != FALSE, "Editor disappeared while sclang ran");
@@ -219,9 +238,16 @@ Routine({
             if (!audible) {
                 wchar_t status[16384]{};
                 GetWindowTextW(GetDlgItem(window, 104), status, 16384);
-                std::fwprintf(stderr, L"SuperCollider status: %ls\n", status);
+                const auto size = WideCharToMultiByte(CP_UTF8, 0, status, -1,
+                                                     nullptr, 0, nullptr, nullptr);
+                std::string text(static_cast<std::size_t>(size > 0 ? size : 1), '\0');
+                if (size > 0) WideCharToMultiByte(CP_UTF8, 0, status, -1,
+                                                text.data(), size, nullptr, nullptr);
+                std::fprintf(stderr, "SuperCollider status: %s\n", text.c_str());
+                std::fflush(stderr);
             }
             require(audible, "Bundled sclang did not return actual SC-tab audio in thirty seconds");
+            stage("SC audio audible; starting Python alongside it");
             // Run Python while the SC tone remains alive, then stop only SC.
             click(window, 3200);
             const char* python = "Clock.bpm = 120\np1 >> sine(0, dur=0.25, sus=0.2, amp=0.1)\n";
@@ -249,6 +275,7 @@ Routine({
             };
             const auto both = measure();
             require(both.second > 0.001, "Expected SC's 997 Hz tone while Python was playing");
+            stage("Both sources measured; sending SC-only Stop");
             click(window, 3201);
             click(window, 103);
             settle = std::chrono::steady_clock::now() + 300ms;
@@ -257,6 +284,7 @@ Routine({
             require(pythonOnly.first > 0.00001, "SC Stop also stopped/destroyed FoxDot audio");
             require(pythonOnly.second < both.second * 0.2,
                     "SC Stop failed to remove the SC tone");
+            stage("SC Stop preserved Python; exiting interpreter for restart test");
             // Retire the interpreter without destroying the embedded World.
             // A new helper must obtain client 0 again, not time out on a stale
             // UDP /notify registration from the former process.
@@ -264,6 +292,7 @@ Routine({
             click(window, 102);
             settle = std::chrono::steady_clock::now() + 3s;
             while (std::chrono::steady_clock::now() < settle) processBlock();
+            stage("Restarting interpreter");
             SendMessageW(scEditor, SCI_SETTEXT, 0, reinterpret_cast<LPARAM>(score));
             click(window, 102);
             bool restarted = false;
@@ -271,6 +300,7 @@ Routine({
             while (!restarted && std::chrono::steady_clock::now() < retryLimit)
                 restarted = measure().second > 0.001;
             require(restarted, "Interpreter restart did not reconnect and restore SC audio");
+            stage("Interpreter restart returned SC audio");
             click(window, 103);
             std::puts("PASS: bundled sclang class library, server handshake, SynthDef.add, sync, SC audio; Python coexistence, SC-only Stop and interpreter restart");
         }
