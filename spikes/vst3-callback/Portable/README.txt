@@ -920,6 +920,11 @@ FoxDot's original Bass/JBass definitions divide oscillator frequency by four;
 the examples now use the normal octave-5 register. This changes example
 settings only, not the original SynthDefs or compatibility behavior.
 
+0.4.183 adds the bounded @swim cycle gate every(n, offset=0). It selects
+finite cycle indices by interval and phase, with literal counts from 1 to 32;
+it is allowed only in an @swim if condition. Example 222 changes a melodic
+phrase every fourth cycle.
+
 0.4.182 supports the existing Sardine-style chance, loaf and on controls inside
 finite @swim phrases. Each player's chance seed is held constant while its
 cycles are expanded; Seed.default still provides a repeatable seed between

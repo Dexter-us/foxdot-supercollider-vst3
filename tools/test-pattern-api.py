@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.182' not in cmake_source or
+if ('VERSION 0.4.183' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3406,6 +3406,18 @@ assert [int(row[4]) for row in sardineSwimGateControls] == [4, 2]
 assert [int(row[5]) for row in sardineSwimGateControls] == [5, 1]
 assert all(0 <= int(row[3]) <= 0xffffffff
            for row in sardineSwimGateControls)
+everySwimSource = open(os.path.join(
+    os.path.abspath(sys.argv[2]),
+    '222-sardine-swim-every-cycle.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    everySwimSource), run_compatibility_check(everySwimSource)
+everySwimRows, everySwimEvents = run_script(
+    everySwimSource, include_events=True)
+assert len(everySwimRows) == 1 and int(everySwimRows[0][5]) == 64
+assert len(everySwimEvents) == 64
+everySwimPitches = [int(event[3]) for event in everySwimEvents]
+assert everySwimPitches[0:4] == everySwimPitches[4:8]
+assert everySwimPitches[12:16] != everySwimPitches[0:4]
 repeatableSwimGate = (
     'Seed.default = 221\n'
     '@swim(cycles=4, period=1)\n'

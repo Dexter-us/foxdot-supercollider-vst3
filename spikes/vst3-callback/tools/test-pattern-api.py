@@ -747,6 +747,17 @@ assert [int(row[-1]) for row in swimRows] == [1, 1]
 branchRows = run_example('220-sardine-swim-cycle-branches.py',
                          example_synth_names)
 assert len(branchRows) == 2 and [int(row[-1]) for row in branchRows] == [1, 1]
+cycleGateRows, cycleGateEvents = run_example(
+    '222-sardine-swim-every-cycle.py',
+    example_synth_names, include_events=True)
+assert len(cycleGateRows) == 1 and int(cycleGateRows[0][5]) == 64
+assert len(cycleGateEvents) == 64
+cycleGatePitches = [int(event[3]) for event in cycleGateEvents]
+assert cycleGatePitches[0:4] == cycleGatePitches[4:8]
+assert cycleGatePitches[8:12] == cycleGatePitches[0:4]
+assert cycleGatePitches[12:16] != cycleGatePitches[0:4]
+assert cycleGatePitches[28:32] == cycleGatePitches[12:16]
+assert cycleGatePitches[32:36] == cycleGatePitches[0:4]
 gatedSwimRows, gatedSwimEvents, gatedSwimControls = run_example(
     '221-sardine-swim-chance-bar-gates.py', example_synth_names,
     include_gates=True)
@@ -766,6 +777,79 @@ def repeatable(p=1, i=0):
 _, _, repeatableGatesA = run_script(repeatable_swim, include_gates=True)
 _, _, repeatableGatesB = run_script(repeatable_swim, include_gates=True)
 assert repeatableGatesA == repeatableGatesB
+every_swim = """@swim(cycles=8, period=1)
+def every_test(p=1, i=0):
+    if every(4):
+        p1 >> saw([7], dur=1)
+    else:
+        p1 >> saw([0], dur=1)
+    again(every_test, p=p, i=i + 1)
+"""
+everyRows, everyEvents = run_script(every_swim, include_events=True)
+assert len(everyRows) == 1 and len(everyEvents) == 8
+everyPitches = [int(event[3]) for event in everyEvents]
+assert everyPitches[0] == everyPitches[1] == everyPitches[2]
+assert everyPitches[3] != everyPitches[0]
+assert everyPitches[4] == everyPitches[0]
+assert everyPitches[7] == everyPitches[3]
+every_offset_swim = """@swim(cycles=8, period=1)
+def every_offset_test(p=1, i=0):
+    if every(4, offset=2):
+        p1 >> saw([7], dur=1)
+    else:
+        p1 >> saw([0], dur=1)
+    again(every_offset_test, p=p, i=i + 1)
+"""
+_, everyOffsetEvents = run_script(
+    every_offset_swim, include_events=True)
+everyOffsetPitches = [int(event[3]) for event in everyOffsetEvents]
+assert everyOffsetPitches[2] != everyOffsetPitches[0]
+assert everyOffsetPitches[3] == everyOffsetPitches[0]
+for invalid_every_script, expected_every_error in (
+        ("""@swim(cycles=2, period=1)
+def invalid_every_zero(p=1, i=0):
+    if every(0):
+        p1 >> saw([0], dur=1)
+    again(invalid_every_zero, p=p, i=i + 1)
+""", '@swim every() requires a literal count from 1 to 32'),
+        ("""@swim(cycles=2, period=1)
+def invalid_every_offset(p=1, i=0):
+    if every(4, offset=4):
+        p1 >> saw([0], dur=1)
+    again(invalid_every_offset, p=p, i=i + 1)
+""", '@swim every() requires a literal count from 1 to 32'),
+        ("""@swim(cycles=2, period=1)
+def invalid_every_dynamic(p=1, i=0):
+    if every(i):
+        p1 >> saw([0], dur=1)
+    again(invalid_every_dynamic, p=p, i=i + 1)
+""", '@swim every() requires a literal count from 1 to 32'),
+        ('every(4)\n', 'every() is supported only inside a bounded @swim')):
+    everyError = run_error_script(invalid_every_script)
+    assert expected_every_error in everyError, everyError
+previous_swim_context = namespace['_dexter_swim_context']
+namespace['_dexter_swim_context'] = {'iteration': 5}
+try:
+    assert namespace['every'](4, 1) is True
+    for invalid_every_runtime in (
+            (0, 0), (33, 0), (True, 0), (4, 4), (4, True), (4, 1.5)):
+        try:
+            namespace['every'](*invalid_every_runtime)
+        except (TypeError, ValueError):
+            pass
+        else:
+            raise AssertionError(
+                '@swim every must reject invalid counts and offsets')
+finally:
+    namespace['_dexter_swim_context'] = previous_swim_context
+for swim_fragment in (
+        'def every(count, offset=0):',
+        'every() is supported only in a bounded @swim if condition.',
+        '@swim every() requires a literal count from 1 to 32 and an offset within that count.',
+        'return context[\\'iteration\\'] % count == offset'):
+    if swim_fragment not in source:
+        raise SystemExit('Bounded Sardine @swim cycle gates are missing: ' +
+                         swim_fragment)
 invalid_swim_gate = run_error_script("""@swim(cycles=2, period=1)
 def invalid_gate(p=1, i=0):
     p1 >> bass([0], dur=1, chance=1.1)

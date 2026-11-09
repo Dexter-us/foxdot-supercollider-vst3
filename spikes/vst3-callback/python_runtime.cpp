@@ -121,7 +121,7 @@ _COMPAT_CALLS = {
     'PZ12', 'PFibMod',
     'PSquare', 'PSq', 'PRange', 'PStep', 'PEuclid', 'PEuclid2',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
-    'swim', 'again',
+    'swim', 'again', 'every',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
     'charm', 'spark', 'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
@@ -338,6 +338,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self.pattern_names = set()
         self.pvar_names = set()
         self._current_swim = None
+        self._swim_condition_depth = 0
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 self.defined.add(node.name)
@@ -575,6 +576,27 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             return -value if isinstance(node.op, ast.USub) else value
         return None
 
+    def _swim_every_call_valid(self, node):
+        if (not isinstance(node, ast.Call) or
+                not isinstance(node.func, ast.Name) or
+                node.func.id != 'every' or
+                len(node.args) not in (1, 2) or
+                any(keyword.arg != 'offset' for keyword in node.keywords) or
+                len(node.keywords) > 1):
+            return False
+        count = self._swim_condition_literal(node.args[0])
+        if count is None or not 1 <= count <= 32:
+            return False
+        if len(node.args) == 2:
+            if node.keywords:
+                return False
+            offset = self._swim_condition_literal(node.args[1])
+        elif node.keywords:
+            offset = self._swim_condition_literal(node.keywords[0].value)
+        else:
+            offset = 0
+        return offset is not None and 0 <= offset < count
+
     def _swim_condition_value(self, node, depth=0, budget=None):
         if budget is None:
             budget = [0]
@@ -583,6 +605,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             return False
         if isinstance(node, ast.Name):
             return node.id == 'i' and isinstance(node.ctx, ast.Load)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            return self._swim_every_call_valid(node)
         if self._swim_condition_literal(node) is not None:
             return True
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
@@ -739,6 +763,16 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self.add(node.lineno, 'Loops are not supported inside bounded @swim functions.')
         self.generic_visit(node)
 
+    def visit_If(self, node):
+        if self._current_swim is None:
+            self.generic_visit(node)
+            return
+        self._swim_condition_depth += 1
+        self.visit(node.test)
+        self._swim_condition_depth -= 1
+        for statement in node.body + node.orelse:
+            self.visit(statement)
+
     def visit_ListComp(self, node):
         if self._current_swim is not None:
             self.add(node.lineno,
@@ -771,6 +805,15 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = node.func.id if isinstance(node.func, ast.Name) else None
+        if name == 'every':
+            if (self._current_swim is None or
+                    self._swim_condition_depth == 0):
+                self.add(node.lineno,
+                         'every() is supported only in a bounded @swim if condition.')
+            if not self._swim_every_call_valid(node):
+                self.add(
+                    node.lineno,
+                    '@swim every() requires a literal count from 1 to 32 and an offset within that count.')
         if name == 'again':
             if self._current_swim is None:
                 self.add(node.lineno, 'again() is supported only inside an @swim function.')
@@ -8494,6 +8537,20 @@ def again(function, p=None, i=None):
     if not -1000000 <= iteration <= 1000000:
         raise ValueError('@swim iterator i must be between -1000000 and 1000000')
     context['next'] = (period, iteration)
+
+def every(count, offset=0):
+    context = _dexter_swim_context
+    if context is None:
+        raise ValueError('every() is available only inside an active @swim function')
+    if isinstance(count, bool) or not isinstance(count, int):
+        raise TypeError('@swim every count must be a whole number')
+    if not 1 <= count <= 32:
+        raise ValueError('@swim every count must be from 1 to 32 cycles')
+    if isinstance(offset, bool) or not isinstance(offset, int):
+        raise TypeError('@swim every offset must be a whole number')
+    if not 0 <= offset < count:
+        raise ValueError('@swim every offset must be within its cycle count')
+    return context['iteration'] % count == offset
 
 def _dexter_compile_swim(function, cycles=8, period=None):
     if not isinstance(function, _dexter_function_type):

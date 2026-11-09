@@ -793,6 +793,16 @@ sample players. A 10 ms release prevents a hard waveform discontinuity.
 `Portable/175-foxdot-cut-controls.py` demonstrates changing cut per note and
 over time.
 
+## Bounded Sardine-style `@swim` cycle gates (0.4.183)
+
+Inside a bounded `@swim` function, `if every(n)` selects cycle indices
+`0, n, 2n, ...`. `if every(n, offset=k)` selects indices whose phase is `k`
+within each `n`-cycle group. Both values must be literal integers; `n` is
+limited to 1–32 and `offset` to `0..n-1`. The helper is valid only in an
+`@swim` conditional. The decorated function is still expanded into the
+existing finite event list, so it creates no persistent Python loop or second
+scheduler. Example 222 demonstrates a four-cycle melodic variation.
+
 ## Ordered player-effect chains (0.4.137)
 
 `effects=[("Phaser", {"fx_mix": 0.5}), ("Tremolo", {"fx_rate": 5})]`
