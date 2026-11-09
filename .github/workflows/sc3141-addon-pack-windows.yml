@@ -36,7 +36,7 @@ jobs:
         run: |
           $tag = (git -C "$env:GITHUB_WORKSPACE\sc-source" describe --tags --exact-match).Trim()
           if ($tag -ne "Version-3.14.1") { throw "Unexpected SuperCollider source tag: $tag" }
-          python UGens/Airwindows/test-examples.py
+          python .\UGens\Airwindows\test-examples.py .\spikes\vst3-callback\python_runtime.cpp .\UGens\Airwindows\Portable
           if ($LASTEXITCODE -ne 0) { throw "Airwindows example checks failed." }
           python UGens/LimutFX/test-examples.py
           if ($LASTEXITCODE -ne 0) { throw "LimutFX example checks failed." }
