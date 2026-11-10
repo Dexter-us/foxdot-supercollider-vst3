@@ -1,6 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.186 makes the script worker state visible in the editor: Run becomes
+Version 0.4.187 adds bounded per-note `fx_event` selection for Chorus, Flanger,
+Phaser, and Tremolo with a `fx_event_mix` pattern. Each overlapping note voice
+gets its own stereo insert graph. This is PbindFx-inspired rather than a full
+PbindFx implementation; reverbs and delays remain player-wide so their tails
+are shared and are not truncated when notes end. Example 227 demonstrates it.
+The script worker state from 0.4.186 remains visible in the editor: Run becomes
 a disabled Busy button while a request is processing, and duplicate submissions
 are reported as in-progress instead of being presented as compatibility errors.
 PShift is treated as a per-player note control; its slider appears only when a

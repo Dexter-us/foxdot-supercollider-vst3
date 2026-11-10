@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.186' not in cmake_source or
+if ('VERSION 0.4.187' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3003,7 +3003,13 @@ def test_embedded_synthdef():
     assert 'kPlayerCount * kVoiceSlotsPerPlayer' in processor_source
     assert 'kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice' in processor_source
     assert 'kPlayerCount * (kReverbGraphCount + 1) +' in processor_source
-    assert 'kPlayerCount * kMaxPlayerEffectChain + 1' in processor_source
+    assert ('kPlayerCount * kMaxPlayerEffectChain +' in processor_source and
+            'kAudioVoiceCount + 1' in processor_source)
+    assert 'createNoteEventEffectGraph' in processor_source
+    assert 'kEventEffectInputBusBase' in processor_source
+    assert 'Graph_Calc(voice.eventEffectGraph)' in processor_source
+    assert 'Node_End(&voice.eventEffectGraph->mNode)' in processor_source
+    assert 'eventEffectControlValues' in processor_source
     assert 'kAirwindowsInputBusBase' in processor_source
     assert 'playerEffectGraphs_[player]' in processor_source
     assert 'Graph_Calc(graph)' in processor_source
@@ -4266,7 +4272,9 @@ for filename in os.listdir(sys.argv[2]):
             if filename == '196-limut-disperser-fuzz.py' else
             ('LimutShifter', 'LimutShimmer', 'LimutGatedVerb')
             if filename in ('197-limut-shifter-shimmer.py',
-                            '198-limut-gated-reverb.py') else ())
+                            '198-limut-gated-reverb.py') else
+            ('Chorus', 'Flanger', 'Phaser')
+            if filename == '227-pbindfx-style-event-effects.py' else ())
         if filename == '201-sclork-insert-effects.py':
             example_names = (
                 'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
@@ -4755,6 +4763,47 @@ tremoloControls = run_script(
     include_effect_control_vars=True, user_synth_names=('Tremolo',))
 assert next(row for row in tremoloControls[3] if row[1] == '0')[7].startswith(
     'l:0.0,0.5:2.0,2.0'), tremoloControls[3]
+eventEffectCompatibility = run_compatibility_check(
+    'p1 >> pluck(P[0, 4, 7], fx_event=P[None, "Chorus", "Flanger"], '
+    'fx_event_mix=P[0, 0.35, 0.4])\n', ('Chorus', 'Flanger'))
+assert 'No unsupported constructs detected' in eventEffectCompatibility
+assert 'requires the matching player-effect SynthDef' in run_compatibility_check(
+    'p1 >> pluck(P[0, 4], fx_event=P["Chorus", None])\n')
+assert 'supports only Chorus, Flanger, Phaser, Tremolo, or None' in \
+    run_compatibility_check(
+        'p1 >> pluck(P[0], fx_event="AirwindowsEchojam")\n',
+        ('AirwindowsEchojam',))
+assert 'fx_event_mix values must be from 0 to 1' in run_error_script(
+    'p1 >> pluck(P[0], fx_event="Chorus", fx_event_mix=1.1)\n',
+    ('Chorus',))
+assert 'fx_event effect Chorus is not loaded' in run_error_script(
+    'p1 >> pluck(P[0], fx_event="Chorus")\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    'p1 >> pluck(P[0, 4], effect="Chorus", '
+    'fx_event=P["Flanger", None], fx_event_mix=P[0.3, 0.0])\n',
+    ('Chorus', 'Flanger'))
+assert 'at most 256 effect names' in run_compatibility_check(
+    'p1 >> pluck(P[0], fx_event=P[' + ','.join(['None'] * 257) + '])\n')
+eventEffectRows = run_script(
+    'p1 >> pluck(P[0, 4, 7, 2], fx_event=P[None, "Chorus", "Flanger"], '
+    'fx_event_mix=P[0.0, 0.35, 0.4])\n',
+    include_events=True, user_synth_names=('Chorus', 'Flanger'))
+eventEffectNotes = eventEffectRows[1]
+assert [row[20] for row in eventEffectNotes] == ['-1', '0', '1', '-1']
+assert [float(row[21]) for row in eventEffectNotes] == [0.0, 0.35, 0.4, 0.0]
+assert all(len(row) == 28 for row in eventEffectNotes)
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    open(os.path.join(
+        sys.argv[2], '227-pbindfx-style-event-effects.py'),
+         encoding='utf-8').read(),
+    ('Chorus', 'Flanger', 'Phaser'))
+eventEffectExampleRows, eventEffectExampleEvents = run_script(
+    open(os.path.join(
+        sys.argv[2], '227-pbindfx-style-event-effects.py'),
+         encoding='utf-8').read(),
+    include_events=True, user_synth_names=('Chorus', 'Flanger', 'Phaser'))
+assert len(eventEffectExampleRows) == 2
+assert len(eventEffectExampleEvents) == 12
 subprocess.run([sys.executable, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     'UGens', 'SpaceReverbs', 'test-examples.py')], check=True)

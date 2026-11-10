@@ -1514,7 +1514,8 @@ private:
     static constexpr std::size_t kCalculatedWorldNodeCapacity =
         kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice +
         kPlayerCount * (kReverbGraphCount + 1) +
-        kPlayerCount * kMaxPlayerEffectChain + 1;
+        kPlayerCount * kMaxPlayerEffectChain +
+        kAudioVoiceCount + 1;
     // Preserve the known-good headroom; graph definitions are registered
     // independently, while active voice graphs are created lazily and cached.
     static constexpr std::size_t kWorldNodeCapacity =
@@ -1536,13 +1537,17 @@ private:
         kReverbBaseBus + static_cast<int>(kPlayerCount) * kReverbBusStride;
     static constexpr int kAirwindowsOutputBusBase =
         kAirwindowsInputBusBase + static_cast<int>(kPlayerCount) * 2;
-    static constexpr int kNumAudioBusChannels = 1024;
+    static constexpr int kEventEffectInputBusBase =
+        kAirwindowsOutputBusBase +
+        static_cast<int>(kPlayerCount * kMaxPlayerEffectChain * 2);
+    static constexpr int kEventEffectOutputBusBase =
+        kEventEffectInputBusBase + static_cast<int>(kAudioVoiceCount * 2);
+    static constexpr int kNumAudioBusChannels = 2048;
     // Present plugin-reserved buses as the ServerOptions output prefix to
     // sclang's client-side Bus allocator. User Bus.audio allocations then begin
     // after the VST's voice/reverb/effect-chain buses instead of overlapping.
     static constexpr int kSclangFirstAllocatableAudioBus =
-        kAirwindowsOutputBusBase +
-        static_cast<int>(kPlayerCount * kMaxPlayerEffectChain * 2);
+        kEventEffectOutputBusBase + static_cast<int>(kAudioVoiceCount * 2);
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kReverbSendReleaseSeconds = 0.015;
@@ -1574,6 +1579,9 @@ private:
                       kPlayerCount * kMaxPlayerEffectChain * 2 <=
                       kNumAudioBusChannels,
                   "The SuperCollider world needs private stereo buses for each player effect-chain stage.");
+    static_assert(kEventEffectOutputBusBase +
+                      kAudioVoiceCount * 2 <= kNumAudioBusChannels,
+                  "The SuperCollider world needs private input/output stereo buses for every per-note effect voice.");
     static_assert(kSclangFirstAllocatableAudioBus < kNumAudioBusChannels,
                   "The sclang bus allocator must have some free audio buses.");
     static_assert(kWorldNodeCapacity <= 0xffffffffu,
@@ -1968,11 +1976,13 @@ private:
         std::array<Graph*, kSynthGraphCount> synthGraphs{};
         std::vector<Graph*> userSynthGraphs;
         Graph* activeSynth = nullptr;
+        Graph* eventEffectGraph = nullptr;
         int playerIndex = -1;
         int32 noteId = -1;
         int midiNote = -1;
         int velocity = 0;
         int synthIndex = 0;
+        int eventEffectUserSynthIndex = -1;
         int userSynthControlDefinitionIndex = -1;
         std::array<float, dexter::kMaxPortableUserSynthControls>
             userSynthControlSmoothed{};
@@ -2078,6 +2088,10 @@ private:
         float coarse = 0.0f;
         float formant = -1.0f;
         float pshift = 0.0f;
+        int eventEffectUserSynthIndex = -1;
+        std::array<double, 7> eventEffectControlValues{
+            0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0
+        };
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -2590,6 +2604,10 @@ private:
     void deactivateAudioVoice(AudioVoice& voice) {
         if (voice.activeSynth)
             Node_SetRun(&voice.activeSynth->mNode, 0);
+        if (voice.eventEffectGraph) {
+            Node_SetRun(&voice.eventEffectGraph->mNode, 0);
+            Node_End(&voice.eventEffectGraph->mNode);
+        }
         const auto synthGraphs = voice.synthGraphs;
         auto userSynthGraphs = std::move(voice.userSynthGraphs);
         voice = {};
@@ -2859,6 +2877,75 @@ private:
         created->mNode.mCalcFunc(&created->mNode);
         Node_SetRun(&created->mNode, 0);
 
+        preparedGraph = created;
+        return true;
+    }
+
+    bool createNoteEventEffectGraph(std::size_t voiceIndex,
+                                    std::size_t userIndex,
+                                    const std::array<double, 7>& controls,
+                                    Graph*& preparedGraph,
+                                    std::string& error) {
+        if (!world_ || !rootGroup_ || voiceIndex >= kAudioVoiceCount ||
+            userIndex >= userSynthDefinitions_.size()) {
+            error = "The requested per-note effect is not registered.";
+            return false;
+        }
+        const auto& definition = userSynthDefinitions_[userIndex];
+        if (!definition.persistentPlayerEffect ||
+            !isNoteEventEffectName(definition.name) ||
+            definition.inputBusControl < 0 || definition.outControl < 0) {
+            error = definition.name +
+                    " is not in the bounded per-note effect set.";
+            return false;
+        }
+
+        sc_msg_iter noControls(0, "");
+        Graph* created = nullptr;
+        const auto graphError = Graph_New(world_, definition.definition,
+                                          nextPrivateGraphNodeId(), &noControls,
+                                          &created, true);
+        if (graphError != 0 || !created) {
+            error = "SuperCollider could not create per-note effect " +
+                    definition.name + " (error " +
+                    std::to_string(static_cast<int>(graphError)) + ").";
+            return false;
+        }
+        const auto inputBus = kEventEffectInputBusBase +
+                              static_cast<int>(voiceIndex * 2);
+        const auto outputBus = kEventEffectOutputBusBase +
+                               static_cast<int>(voiceIndex * 2);
+        Graph_SetControl(created, definition.inputBusControl,
+                         static_cast<float>(inputBus));
+        Graph_SetControl(created, definition.outControl,
+                         static_cast<float>(outputBus));
+        for (std::size_t control = 0;
+             control < definition.effectControlIndices.size(); ++control) {
+            const auto controlIndex = definition.effectControlIndices[control];
+            if (controlIndex < 0)
+                continue;
+            const auto normalized = std::clamp(controls[control], 0.0, 1.0);
+            const auto value =
+                definition.effectControlMinimum[control] +
+                normalized * (definition.effectControlMaximum[control] -
+                              definition.effectControlMinimum[control]);
+            Graph_SetControl(created, controlIndex, static_cast<float>(value));
+        }
+        Group_AddTail(rootGroup_, &created->mNode);
+        if (!created->mNode.mCalcFunc) {
+            Node_End(&created->mNode);
+            error = "SuperCollider returned a per-note effect without a calculation function.";
+            return false;
+        }
+        const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+        for (int channel = 0; channel < 2; ++channel) {
+            const auto bus = static_cast<std::size_t>(inputBus + channel);
+            auto* samples = world_->mAudioBus + bus * busLength;
+            std::fill(samples, samples + busLength, 0.0f);
+            world_->mAudioBusTouched[bus] = world_->mBufCounter;
+        }
+        created->mNode.mCalcFunc(&created->mNode);
+        Node_SetRun(&created->mNode, 0);
         preparedGraph = created;
         return true;
     }
@@ -3532,7 +3619,8 @@ private:
                         evaluateTimeVar(pattern.noteEffectControls[10],
                                         absoluteStartBeat,
                                         static_cast<float>(event.formant)),
-                        pitchShift};
+                        pitchShift, event.eventEffectUserSynthIndex,
+                        event.eventEffectControlValues};
                     ++playerVoices;
                 }
             }
@@ -3577,6 +3665,12 @@ private:
                 found->midiNote = note.midiNote;
                 found->velocity = note.velocity;
                 found->synthIndex = note.synthIndex;
+                found->eventEffectUserSynthIndex = -1;
+                if (found->eventEffectGraph) {
+                    Node_SetRun(&found->eventEffectGraph->mNode, 0);
+                    Node_End(&found->eventEffectGraph->mNode);
+                    found->eventEffectGraph = nullptr;
+                }
                 found->stereoUserSynth = false;
                 if (static_cast<std::size_t>(note.synthIndex) >=
                     kSynthIndexToGraphIndex.size()) {
@@ -3843,6 +3937,25 @@ private:
                     Node_SetRun(&found->activeSynth->mNode, 1);
                 }
             }
+            if (note.eventEffectUserSynthIndex >= 0 &&
+                found->eventEffectUserSynthIndex !=
+                    note.eventEffectUserSynthIndex) {
+                const auto voiceIndex =
+                    static_cast<std::size_t>(std::distance(audioVoices_.begin(), found));
+                std::string effectError;
+                if (createNoteEventEffectGraph(
+                        voiceIndex,
+                        static_cast<std::size_t>(note.eventEffectUserSynthIndex),
+                        note.eventEffectControlValues,
+                        found->eventEffectGraph, effectError)) {
+                    found->eventEffectUserSynthIndex =
+                        note.eventEffectUserSynthIndex;
+                } else {
+                    found->eventEffectUserSynthIndex =
+                        note.eventEffectUserSynthIndex;
+                    setEditorStatus(effectError + " The note will play dry.");
+                }
+            }
             found->velocity = note.velocity;
         }
     }
@@ -4012,6 +4125,11 @@ private:
                name == "LimutDisperser" || name == "LimutFuzz" ||
                name == "LimutShifter" || name == "LimutShimmer" ||
                 name == "LimutGatedVerb" || name == "LimutCompressor";
+    }
+
+    static bool isNoteEventEffectName(std::string_view name) {
+        return name == "Chorus" || name == "Flanger" ||
+               name == "Phaser" || name == "Tremolo";
     }
 
     static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
@@ -5051,6 +5169,41 @@ private:
             }
         }
         World_Run(world_);
+        const auto eventEffectBusLength =
+            static_cast<std::size_t>(world_->mBufLength);
+        for (std::size_t voiceIndex = 0;
+             voiceIndex < audioVoices_.size(); ++voiceIndex) {
+            auto& voice = audioVoices_[voiceIndex];
+            if (!voice.eventEffectGraph ||
+                (!voice.releasing && voice.midiNote < 0))
+                continue;
+            const auto sourceBus = voice.stereoUserSynth
+                ? static_cast<std::size_t>(kStereoSynthOutputBaseBus) +
+                      voiceIndex * 2
+                : static_cast<std::size_t>(kFirstAudioBus) +
+                      voiceIndex * static_cast<std::size_t>(kAudioBusStride);
+            const auto inputBus =
+                static_cast<std::size_t>(kEventEffectInputBusBase) +
+                voiceIndex * 2;
+            for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
+                const auto sample = static_cast<std::size_t>(sampleIndex);
+                const auto sourceOffset =
+                    sourceBus * eventEffectBusLength + sample;
+                const float left = world_->mAudioBus[sourceOffset];
+                const float right = voice.stereoUserSynth
+                    ? world_->mAudioBus[(sourceBus + 1) *
+                                            eventEffectBusLength +
+                                        sample]
+                    : left;
+                world_->mAudioBus[inputBus * eventEffectBusLength + sample] =
+                    left;
+                world_->mAudioBus[(inputBus + 1) * eventEffectBusLength +
+                                  sample] = right;
+            }
+            world_->mAudioBusTouched[inputBus] = world_->mBufCounter;
+            world_->mAudioBusTouched[inputBus + 1] = world_->mBufCounter;
+            Graph_Calc(voice.eventEffectGraph);
+        }
         diskIO_.renderBlock();
         for (auto& voice : audioVoices_) {
             if (voice.triggerControlPendingReset && voice.activeSynth) {
@@ -5098,7 +5251,19 @@ private:
                 const auto offset = bus * busLength + static_cast<std::size_t>(sampleIndex);
                 float source = world_->mAudioBus[offset];
                 float sourceRight = source;
-                if (voice.stereoUserSynth) {
+                const bool stereoOutput =
+                    voice.stereoUserSynth || voice.eventEffectGraph != nullptr;
+                if (voice.eventEffectGraph) {
+                    const auto effectBus =
+                        static_cast<std::size_t>(kEventEffectOutputBusBase) +
+                        voiceIndex * 2;
+                    source = world_->mAudioBus[
+                        effectBus * busLength +
+                        static_cast<std::size_t>(sampleIndex)];
+                    sourceRight = world_->mAudioBus[
+                        (effectBus + 1) * busLength +
+                        static_cast<std::size_t>(sampleIndex)];
+                } else if (voice.stereoUserSynth) {
                     const auto stereoBus =
                         static_cast<std::size_t>(kStereoSynthOutputBaseBus) +
                         voiceIndex * 2;
@@ -5188,7 +5353,7 @@ private:
                     voice.filterState = source;
                 else
                     voice.filterState += voice.filterCoefficient * (source - voice.filterState);
-                if (voice.stereoUserSynth)
+                if (stereoOutput)
                     voice.filterStateRight += voice.filterCoefficient *
                         (sourceRight - voice.filterStateRight);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
@@ -5243,7 +5408,7 @@ private:
                                     voice.modulatedBpr, 2);
                     configureBiquad(voice.swellState, voice.swellCutoffHz,
                                     voice.hpr, 1);
-                    if (voice.stereoUserSynth) {
+                    if (stereoOutput) {
                         configureBiquad(voice.lpfRightState, voice.lpfHz,
                                         voice.lpr, 0);
                         configureBiquad(voice.hpfRightState, voice.hpfHz,
@@ -5260,7 +5425,7 @@ private:
                 shaped = processBiquad(voice.bpfState, shaped);
                 shaped = processBiquad(voice.swellState, shaped);
                 float shapedRight = shaped;
-                if (voice.stereoUserSynth) {
+                if (stereoOutput) {
                     shapedRight = processBiquad(voice.lpfRightState,
                                                 voice.filterStateRight);
                     shapedRight = processBiquad(voice.hpfRightState,
@@ -5273,7 +5438,7 @@ private:
                 if (voice.formant >= 0.0f)
                     shaped = dexter::foxDotFormantSample(
                         voice.formantState, shaped, voice.formant, sampleRate_);
-                if (voice.stereoUserSynth && voice.formant >= 0.0f)
+                if (stereoOutput && voice.formant >= 0.0f)
                     shapedRight = dexter::foxDotFormantSample(
                         voice.formantStateRight, shapedRight, voice.formant,
                         sampleRate_);
@@ -5302,7 +5467,7 @@ private:
                 const float noteGain = envelope * velocity * voice.amplitude *
                     noteEffectGain * chopGain * coarseGain;
                 const float amplitude = shaped * noteGain;
-                if (voice.stereoUserSynth) {
+                if (stereoOutput) {
                     const auto balance = dexter::stereoBalanceGains(voice.pan);
                     playerLeft[player] += amplitude * balance[0] *
                         spinGains.left;

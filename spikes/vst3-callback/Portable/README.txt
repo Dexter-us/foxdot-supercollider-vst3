@@ -1,3 +1,9 @@
+0.4.187 adds bounded per-note `fx_event` selection for Chorus, Flanger, Phaser,
+and Tremolo with a `fx_event_mix` pattern. Each overlapping note voice gets its
+own stereo insert graph. This is PbindFx-inspired, not a full PbindFx
+implementation. Delays and reverbs remain player-wide so their tails are shared
+and are not cut off at note boundaries. See Example 227.
+
 0.4.186 makes the editor show a disabled Busy button while the script worker
 processes a request, then restores Run when it finishes. PShift is a per-player
 note control; its slider appears only for a selected player whose script uses

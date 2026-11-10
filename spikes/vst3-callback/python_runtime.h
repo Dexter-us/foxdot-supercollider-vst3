@@ -30,6 +30,10 @@ struct PythonNoteEvent {
     double coarse = 0.0;
     double formant = -1.0;
     double pshift = 0.0;
+    int eventEffectUserSynthIndex = -1;
+    std::array<double, 7> eventEffectControlValues{
+        0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0
+    };
     int sampleSymbol = 0;
     int sampleIndex = 0;
     double sampleRate = 1.0;

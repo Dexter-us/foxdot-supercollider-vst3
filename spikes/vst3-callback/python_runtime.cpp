@@ -174,7 +174,7 @@ _COMPAT_WAVE_KEYWORDS = {
     'delay', 'delaytime', 'echomix', 'feedback', 'velocity', 'rate', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'strum',
     'vib', 'depth', 'vibdepth', 'slide', 'slidefrom', 'slidedelay',
     'bend', 'benddelay', 'pshift', 'bits', 'crush', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
-    'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth',
+    'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_event', 'fx_event_mix', 'fx_vib', 'fx_depth',
     'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60',
     'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq',
     'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
@@ -191,7 +191,7 @@ _USER_SYNTH_KEYWORDS = {
     'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell',
     'strum', 'vib', 'depth', 'vibdepth', 'slide', 'slidefrom', 'slidedelay',
     'bend', 'benddelay', 'pshift', 'bits', 'crush', 'lforate', 'lfowidth', 'rq', 'fmod', 'blur',
-    'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth',
+    'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_event', 'fx_event_mix', 'fx_vib', 'fx_depth',
     'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60',
     'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq',
     'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone',
@@ -205,7 +205,7 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'span', 'until', 'chance', 'loaf', 'on',
     'amp', 'pan', 'cutoff', 'echo', 'decay', 'delay', 'delaytime', 'echomix', 'feedback', 'atk', 'rel', 'reverb', 'room', 'mix', 'damp', 'revtime', 'spread', 'lpf', 'lpr', 'hpf', 'hpr', 'bpf', 'bpr', 'bpnoise', 'swell', 'root', 'strum', 'rate',
     'shape', 'drive', 'vib', 'depth', 'vibdepth', 'slide', 'slidefrom',
-    'slidedelay', 'bend', 'benddelay', 'pshift', 'bits', 'crush', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect',
+    'slidedelay', 'bend', 'benddelay', 'pshift', 'bits', 'crush', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_event', 'fx_event_mix',
     'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq',
     'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size',
     'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff',
@@ -215,7 +215,7 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release',
     'fx_knee', 'fx_bits'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'span', 'until', 'chance', 'loaf', 'on', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee', 'fx_bits'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'span', 'until', 'chance', 'loaf', 'on', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'effects', 'fx_event', 'fx_event_mix', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee', 'fx_bits'}
 _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'AirwindowsTapeDelay2': {
         'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur'},
@@ -1323,10 +1323,46 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 elif keyword.value.value not in _USER_SYNTH_NAMES:
                     self.add(keyword.lineno or node.lineno,
                              'effect= requires the matching player-effect SynthDef in Portable/SynthDefs.')
+            eventEffect = next((kw for kw in node.keywords
+                                if kw.arg == 'fx_event'), None)
+            if eventEffect is not None:
+                eventValues = None
+                value = eventEffect.value
+                if isinstance(value, ast.Constant):
+                    eventValues = [value]
+                elif isinstance(value, (ast.List, ast.Tuple)):
+                    eventValues = list(value.elts)
+                elif (isinstance(value, ast.Subscript) and
+                      isinstance(value.value, ast.Name) and
+                      value.value.id == 'P'):
+                    sliceValue = value.slice
+                    if isinstance(sliceValue, ast.Tuple):
+                        eventValues = list(sliceValue.elts)
+                    elif isinstance(sliceValue, ast.List):
+                        eventValues = list(sliceValue.elts)
+                    else:
+                        eventValues = [sliceValue]
+                if eventValues is None or not 1 <= len(eventValues) <= 256:
+                    self.add(eventEffect.lineno or node.lineno,
+                             'fx_event= requires a name or a finite P/list of at most 256 effect names.')
+                else:
+                    for eventValue in eventValues:
+                        if isinstance(eventValue, ast.Constant) and eventValue.value is None:
+                            continue
+                        if (not isinstance(eventValue, ast.Constant) or
+                                not isinstance(eventValue.value, str) or
+                                eventValue.value not in {
+                                    'Chorus', 'Flanger', 'Phaser', 'Tremolo'}):
+                            self.add(eventEffect.lineno or node.lineno,
+                                     'fx_event= supports only Chorus, Flanger, Phaser, Tremolo, or None.')
+                        elif eventValue.value not in _USER_SYNTH_NAMES:
+                            self.add(eventValue.lineno or eventEffect.lineno,
+                                     'fx_event requires the matching player-effect SynthDef in Portable/SynthDefs.')
             if effect_name in _COMPAT_PLAYER_EFFECT_CONTROLS:
                 supported_controls = _COMPAT_PLAYER_EFFECT_CONTROLS[effect_name]
                 for keyword in node.keywords:
                     if (keyword.arg and keyword.arg.startswith('fx_') and
+                            keyword.arg not in {'fx_event', 'fx_event_mix'} and
                             keyword.arg not in supported_controls):
                         self.add(
                             keyword.lineno or node.lineno,
@@ -1512,7 +1548,13 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     len(item.value) == 1 and
                     (item.value == ' ' or item.value in _COMPAT_SAMPLE_SYMBOLS)
                     for item in items)
-                if not valid_sample_symbols:
+                valid_event_effects = all(
+                    isinstance(item, ast.Constant) and
+                    (item.value is None or
+                     isinstance(item.value, str) and item.value in {
+                         'Chorus', 'Flanger', 'Phaser', 'Tremolo'})
+                    for item in items)
+                if not valid_sample_symbols and not valid_event_effects:
                     self.add(node.lineno, 'P sample-symbol literals require one sample symbol or a single-space rest per item.')
         self.generic_visit(node)
 
@@ -5278,10 +5320,13 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
          _write_control_tokens=True, bits=0.0, crush=1.0,
          vibdepth=0.5, slide=0.0, slidefrom=0.0, slidedelay=0.0,
            bend=0.0, benddelay=0.0, pshift=0.0, chop=0.0, spin=0.0,
-          cut=1.0, coarse=0.0, formant=-1.0):
+          cut=1.0, coarse=0.0, formant=-1.0,
+          _fx_event=None, _fx_event_mix=0.5):
     global _dexter_length, _dexter_slots, _dexter_default_touched
     global _dexter_note_effect_control_variables, _dexter_bitcrusher_controls
     _dexter_default_touched = True
+    noteEventEffects = _normalize_note_event_effects(_fx_event)
+    noteEventMixes = _normalize_note_event_mix(_fx_event_mix)
     if isinstance(notes, _DexterPVar):
         notes = notes.expand(step, offset=offset)
     if isinstance(notes, _FoxDotChord):
@@ -5481,6 +5526,16 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                 formantDefault, formantControl, start, i)
             pshiftValue = _note_effect_value(
                 pshiftDefault, pshiftControl, start, i)
+            eventEffectIndex = (noteEventEffects[i % len(noteEventEffects)]
+                                if noteEventEffects else -1)
+            eventEffectMix = noteEventMixes[i % len(noteEventMixes)]
+            if eventEffectIndex >= 0:
+                eventEffectValues, _ = _player_effect_control_values(
+                    _dexter_user_synth_names[eventEffectIndex], {})
+                eventEffectValues = list(eventEffectValues)
+                eventEffectValues[0] = eventEffectMix
+            else:
+                eventEffectValues = [0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0]
             additions.append((start, sustainValue, note, noteVelocity,
                               attackValue, releaseValue,
                               strumValue * chordIndex + groupOffset,
@@ -5492,7 +5547,8 @@ def _play_notes(notes, step=1.0, duration=None, velocity=100, offset=0.0, degree
                                 bendDelayValue, chopValue, spinValue,
                                 _note_effect_value(cutDefault, cutControl,
                                                    start, i),
-                                 coarseValue, formantValue, pshiftValue))
+                                 coarseValue, formantValue, pshiftValue,
+                                 eventEffectIndex, *eventEffectValues))
     if len(_dexter_events) + len(additions) > 256:
         raise ValueError('a pattern is limited to 256 note events')
     candidate = _dexter_events + additions
@@ -6110,8 +6166,9 @@ class PlayerPattern:
                       vib=0.0, depth=None,
                       vibdepth=None, slide=0.0, slidefrom=0.0,
                       slidedelay=0.0, bend=0.0, benddelay=0.0,
-                      effect=None, span=1.0, until=None, chance=None,
-                      loaf=None, on=None, **effectControls):
+                       effect=None, fx_event=None, fx_event_mix=0.5,
+                       span=1.0, until=None, chance=None,
+                       loaf=None, on=None, **effectControls):
         self.notes = notes
         self.step = step
         self.spanFactor = _sardine_span(span)
@@ -6143,6 +6200,10 @@ class PlayerPattern:
             formant, 'formant', -1.0, 7.0)
         effectChain = effectControls.pop('effects', None)
         self.playerEffects = _player_effect_chain(effect, effectChain, effectControls)
+        self.fxEvent = fx_event
+        self.fxEventMix = fx_event_mix
+        _normalize_note_event_effects(self.fxEvent)
+        _normalize_note_event_mix(self.fxEventMix)
         self.playerEffectUserIndex = (
             self.playerEffects[0][0] if self.playerEffects else -1)
         self.synthControls = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
@@ -7027,8 +7088,50 @@ def _player_effect_chain(effect, effects, controls):
         result.append((_dexter_user_synth_names.index(name), values, variables))
     return result
 
+_NOTE_EVENT_EFFECT_NAMES = {'Chorus', 'Flanger', 'Phaser', 'Tremolo'}
+
+def _normalize_note_event_effects(value):
+    if value is None:
+        return ()
+    values = list(value) if isinstance(value, (list, tuple, _FoxDotFinitePattern)) else [value]
+    if not values or len(values) > 256:
+        raise ValueError('fx_event is limited to 1..256 event choices')
+    result = []
+    for name in values:
+        if name is None:
+            result.append(-1)
+            continue
+        if not isinstance(name, str) or name not in _NOTE_EVENT_EFFECT_NAMES:
+            raise ValueError(
+                'fx_event supports only Chorus, Flanger, Phaser, Tremolo, or None')
+        if name not in _dexter_user_synth_names:
+            raise ValueError(
+                'fx_event effect ' + name +
+                ' is not loaded; install its player-effect SynthDef and restart the DAW')
+        result.append(_dexter_user_synth_names.index(name))
+    return tuple(result)
+
+def _normalize_note_event_mix(value):
+    values = (list(value) if isinstance(value, (list, tuple, _FoxDotFinitePattern))
+              else [value])
+    if not values or len(values) > 256:
+        raise ValueError('fx_event_mix is limited to 1..256 values')
+    result = []
+    for mix in values:
+        if isinstance(mix, bool):
+            raise TypeError('fx_event_mix requires finite numbers from 0 to 1')
+        try:
+            number = float(mix)
+        except (TypeError, ValueError, OverflowError):
+            raise TypeError('fx_event_mix requires finite numbers from 0 to 1')
+        if number != number or number in (float('inf'), float('-inf')) or not 0.0 <= number <= 1.0:
+            raise ValueError('fx_event_mix values must be from 0 to 1')
+        result.append(number)
+    return tuple(result)
+
 def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
                     start=0.0, end=1.0, loop=False, effect=None,
+                    fx_event=None, fx_event_mix=0.5,
                     span=1.0, until=None, chance=None, loaf=None, on=None,
                     **controls):
     playerEffectUserIndex = -1
@@ -7113,7 +7216,8 @@ def _sample_pattern(text, dur=1.0, sus=None, sample=0, rate=1.0,
     pattern = sequence(notes, step=dur, duration=sus,
                        span=span, until=until, chance=chance, loaf=loaf, on=on,
                        _time_multipliers=multipliers,
-                       _allow_repeated_notes=True, **controls)
+                       _allow_repeated_notes=True, fx_event=fx_event,
+                       fx_event_mix=fx_event_mix, **controls)
     pattern.synth = 'sample'
     pattern.synthRate = 1.0
     pattern.sampleSpec = (selections, rates, sus is not None or loop, positions,
@@ -7534,7 +7638,8 @@ class Player:
                     spin=pattern.spinControl if pattern.spinControl is not None else pattern.spin,
                     cut=pattern.cutControl if pattern.cutControl is not None else pattern.cut,
                     coarse=pattern.coarseControl if pattern.coarseControl is not None else pattern.coarse,
-                    formant=pattern.formantControl if pattern.formantControl is not None else pattern.formant)
+                    formant=pattern.formantControl if pattern.formantControl is not None else pattern.formant,
+                    _fx_event=pattern.fxEvent, _fx_event_mix=pattern.fxEventMix)
             compiledLength = _dexter_length
             delayPattern = isinstance(pattern.delayControl, _FoxDotFinitePattern)
             if delayPattern:
@@ -9139,7 +9244,8 @@ DiskOut = _DiskRecorder()
                << "                _fx = _e[10:18] if len(_e) >= 18 else (0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)\n"
                << "                _cut = _e[18:19] if len(_e) >= 19 else (1.0,)\n"
                << "                _extra_note_fx = _e[19:22] if len(_e) >= 22 else (0.0, -1.0, 0.0)\n"
-               << "                _f.write('N' + chr(9) + chr(9).join(map(str, _e[:7] + _fx + _cut + _extra_note_fx)) + chr(10))\n"
+               << "                _event_fx = _e[22:30] if len(_e) >= 30 else (-1, 0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)\n"
+               << "                _f.write('N' + chr(9) + chr(9).join(map(str, _e[:7] + _fx + _cut + _extra_note_fx + _event_fx)) + chr(10))\n"
             << "                if _synth == 57:\n"
             << "                    _f.write('B\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\t{}\\n'.format(*_dexter_scope['_dexter_sample_events'][_player][_event_index]))\n"
             << "        for _player, _muted in sorted(_mutes.items()):\n"
@@ -9650,7 +9756,8 @@ bool parseResult(const std::filesystem::path& resultPath,
                   event.releaseSeconds >> event.delayBeats >> event.vibDepth >>
                   event.slide >> event.slideFrom >> event.slideDelay >>
                   event.bend >> event.bendDelay >> event.chop >> event.spin >>
-                  event.cut >> event.coarse >> event.formant >> event.pshift) ||
+                  event.cut >> event.coarse >> event.formant >> event.pshift >>
+                  event.eventEffectUserSynthIndex) ||
                 noteRecord != 'N' ||
                 !std::isfinite(event.beat) || !std::isfinite(event.durationBeats) ||
                 !std::isfinite(event.delayBeats) || event.delayBeats < 0.0 || event.delayBeats > 15.0 ||
@@ -9678,6 +9785,10 @@ bool parseResult(const std::filesystem::path& resultPath,
                 event.formant > 7.0 ||
                 !std::isfinite(event.pshift) || event.pshift < -24.0 ||
                 event.pshift > 24.0 ||
+                event.eventEffectUserSynthIndex < -1 ||
+                (event.eventEffectUserSynthIndex >= 0 &&
+                 static_cast<std::size_t>(event.eventEffectUserSynthIndex) >=
+                     userSynthCount) ||
                 event.beat < 0.0 || event.beat > update.lengthBeats ||
                 event.durationBeats < 0.02 ||
                 event.durationBeats > std::min(4096.0, update.lengthBeats * 8.0) + 1e-9 ||
@@ -9688,6 +9799,13 @@ bool parseResult(const std::filesystem::path& resultPath,
                 event.releaseSeconds < 0.0 || event.releaseSeconds > 3.0) {
                 error = "Python returned a malformed note event.";
                 return false;
+            }
+            for (auto& controlValue : event.eventEffectControlValues) {
+                if (!(input >> controlValue) || !std::isfinite(controlValue) ||
+                    controlValue < 0.0 || controlValue > 1.0) {
+                    error = "Python returned invalid per-note effect controls.";
+                    return false;
+                }
             }
             if (update.synthIndex == 57) {
                 char bufferRecord = 0;

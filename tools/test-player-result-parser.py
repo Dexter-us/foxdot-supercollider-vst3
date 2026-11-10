@@ -278,6 +278,8 @@ with tempfile.TemporaryDirectory() as directory:
              if example.name == "201-sclork-insert-effects.py" else
              ("CustomTone",)
              if example.name == "202-custom-synth-live-controls.py" else
+              ("Chorus", "Flanger", "Phaser")
+              if example.name == "227-pbindfx-style-event-effects.py" else
              ("JazzKitKick", "JazzKitClosedHat", "JazzKitBrushTap",
               "JazzKitBrushSweep", "JazzKitRide", "JazzKitCrossStick",
               "JazzKitRackTom", "JazzKitFloorTom")
