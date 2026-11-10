@@ -35,6 +35,7 @@
 #include "event_effect_tail.h"
 #include "foxdot_bitcrusher.h"
 #include "player_effect_chain.h"
+#include "editor_catalog.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
@@ -619,7 +620,8 @@ public:
                     if (userSynthIndex >= 0 &&
                         static_cast<std::size_t>(userSynthIndex) <
                             userSynthDefinitions_.size()) {
-                        const auto mixIndex = playerEffectMixControlIndex(
+                        const auto mixIndex =
+                            dexter::editor::playerEffectMixControlIndex(
                             userSynthDefinitions_[static_cast<std::size_t>(
                                 userSynthIndex)].name);
                         if (mixIndex >= 0)
@@ -1832,7 +1834,7 @@ private:
                     userSynthDefinitions_[static_cast<std::size_t>(
                         userSynthIndex)].name;
                 const auto mixIndex =
-                    playerEffectMixControlIndex(effectName);
+                    dexter::editor::playerEffectMixControlIndex(effectName);
                 effectMixAvailable = mixIndex >= 0;
                 if (mixIndex >= 0)
                     effectMixControlIndex =
