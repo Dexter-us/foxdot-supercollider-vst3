@@ -827,6 +827,43 @@ periodsTimingRows, periodsTimingEvents = run_script(
 assert len(periodsTimingRows) == 1
 assert [float(event[1]) for event in periodsTimingEvents] == [
     0.0, 0.5, 1.5, 1.75, 2.5, 3.0, 4.0, 4.25]
+sleep_timing_swim = """@swim(cycles=3, period=1)
+def sleep_timing(p=1, i=0):
+    p1 >> saw([i], dur=0.25)
+    sleep(0.5)
+    p2 >> sine([i + 3], dur=0.25)
+    again(sleep_timing, p=p, i=i + 1)
+"""
+sleepTimingRows, sleepTimingEvents = run_script(
+    sleep_timing_swim, include_events=True)
+assert len(sleepTimingRows) == 2 and len(sleepTimingEvents) == 6
+assert [float(event[1]) for event in sleepTimingEvents[:3]] == [
+    0.0, 1.0, 2.0]
+assert [float(event[1]) for event in sleepTimingEvents[3:]] == [
+    0.5, 1.5, 2.5]
+assert 'sleep() is available only inside an active @swim function' in \
+       run_error_script('sleep(0.25)\n')
+bad_sleep_timing = """@swim(cycles=2, period=0.5)
+def bad_sleep(p=0.5, i=0):
+    sleep(0.4)
+    sleep(0.2)
+    p1 >> saw([i], dur=0.25)
+    again(bad_sleep, p=p, i=i + 1)
+"""
+badSleepError = run_error_script(bad_sleep_timing)
+assert 'sleep offsets may not exceed the current cycle period' in \
+       badSleepError, badSleepError
+outsideSleepCheck = run_compatibility_check('sleep(0.25)\n')
+assert 'sleep() is supported only inside a bounded @swim function' in \
+       outsideSleepCheck, outsideSleepCheck
+many_sleep_calls = '\n'.join(['    sleep(0)'] * 33)
+tooManySleepCheck = run_compatibility_check(
+    '@swim(cycles=2, period=1)\n'
+    'def too_many_sleeps(p=1, i=0):\n' +
+    many_sleep_calls + '\n'
+    '    p1 >> saw([0], dur=0.25)\n')
+assert '@swim supports at most 32 sleep() calls' in tooManySleepCheck, \
+       tooManySleepCheck
 die_swim = """@swim(cycles=4, period=1)
 def named_swim(p=1, i=0):
     p1 >> saw([i], dur=1)
@@ -885,6 +922,20 @@ def conflicting_periods(p=1, i=0):
          '@swim periods must be a literal P[...]')):
     periodError = run_compatibility_check(invalid_periods_script)
     assert expected_period_error in periodError, periodError
+for invalid_sleep_script in (
+        """@swim(cycles=2, period=1)
+def variable_sleep(p=1, i=0):
+    sleep(i / 4)
+    p1 >> saw([0], dur=0.25)
+""",
+        """@swim(cycles=2, period=1)
+def oversized_sleep(p=1, i=0):
+    sleep(4097)
+    p1 >> saw([0], dur=0.25)
+"""):
+    sleepError = run_compatibility_check(invalid_sleep_script)
+    assert '@swim sleep() requires one literal beat value from 0 to 4096' \
+           in sleepError, sleepError
 for invalid_every_script, expected_every_error in (
         ("""@swim(cycles=2, period=1)
 def invalid_every_zero(p=1, i=0):

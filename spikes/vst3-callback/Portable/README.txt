@@ -937,6 +937,18 @@ owned by that schedule; assigning a new pattern to a player clears its old
 ownership. Example 224 demonstrates the playable phrase and the separate
 stop snippet. It does not create or cancel an unbounded Python task.
 
+0.4.185 adds sleep(beats) as a bounded @swim event offset. It advances later
+player sends in the current cycle without blocking Python. Use a literal
+duration from 0 to 4096 beats, at most 32 calls, and no more combined sleep
+than that cycle's period. The overall expanded schedule remains limited to
+4096 beats. Example 225 demonstrates a half-beat call-and-response.
+
+The finite ramp(start, stop, step=1) helper returns an ascending or descending
+numeric P pattern, includes stop when the step lands on it, and permits
+fractional steps. Output is limited to 256 values in the range -1000000 to
+1000000. It is a function form of Sardine's ramp idea, not the original
+bracket-string syntax. Example 226 uses ramps for pitch and duration.
+
 0.4.182 supports the existing Sardine-style chance, loaf and on controls inside
 finite @swim phrases. Each player's chance seed is held constant while its
 cycles are expanded; Seed.default still provides a repeatable seed between

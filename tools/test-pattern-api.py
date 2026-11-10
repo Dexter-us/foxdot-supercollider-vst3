@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.184' not in cmake_source or
+if ('VERSION 0.4.185' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -515,6 +515,16 @@ assert namespace['PRange'](5) == [0, 1, 2, 3, 4]
 assert namespace['PRange'](1, 6, 2) == [1, 3, 5]
 assert namespace['PRange'](5, 0) == [5, 4, 3, 2, 1]
 assert namespace['PRange'](3, 3) == [3]
+assert namespace['ramp'](1, 10, 2) == [1, 3, 5, 7, 9]
+assert namespace['ramp'](5, 0) == [5, 4, 3, 2, 1, 0]
+floatRamp = namespace['ramp'](0.0, 1.0, 0.3)
+assert len(floatRamp) == 4 and all(
+    abs(value - expected) < 1e-12
+    for value, expected in zip(floatRamp, [0.0, 0.3, 0.6, 0.9]))
+assert namespace['ramp'](1.0, 0.0, 0.25) == [
+    1.0, 0.75, 0.5, 0.25, 0.0]
+assert namespace['ramp'](4, 4, 0.5) == [4]
+assert namespace['ramp'](0, 255, 1)[-1] == 255
 assert namespace['PStep'](4, 1) == [0, 0, 0, 1]
 assert namespace['PStep'](4, 'x', '-') == ['-', '-', '-', 'x']
 assert namespace['PEuclid'](3, 8) == [1, 0, 0, 1, 0, 0, 1, 0]
@@ -741,6 +751,12 @@ for generator in (
         lambda: namespace['PRange'](0, 8, 0),
         lambda: namespace['PRange'](True, 4),
         lambda: namespace['PRange'](0, 1000000),
+        lambda: namespace['ramp'](0, 257, 1),
+        lambda: namespace['ramp'](0, 1, 0),
+        lambda: namespace['ramp'](False, 1),
+        lambda: namespace['ramp'](0, float('inf'), 0.5),
+        lambda: namespace['ramp'](0, 1, 1e-300),
+        lambda: namespace['ramp'](0, 1000001, 1),
         lambda: namespace['PStep'](0, 1),
         lambda: namespace['PStep'](257, 1),
         lambda: namespace['PStep'](4, 'x'),
@@ -3439,6 +3455,30 @@ assert len(dieSwimRows) == 1 and len(dieSwimEvents) == 32
 assert [float(event[1]) for event in dieSwimEvents[::2]] == [
     0.0, 0.5, 1.5, 1.75, 2.5, 3.0, 4.0, 4.25,
     5.0, 5.5, 6.5, 6.75, 7.5, 8.0, 9.0, 9.25]
+sleepExample = open(os.path.join(
+    os.path.abspath(sys.argv[2]),
+    '225-sardine-swim-sleep-offsets.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    sleepExample), run_compatibility_check(sleepExample)
+sleepRows, sleepEvents = run_script(sleepExample, include_events=True)
+assert len(sleepRows) == 2 and len(sleepEvents) == 32
+assert [float(event[1]) for event in sleepEvents[:16]] == [
+    float(index) for index in range(16)]
+assert [float(event[1]) for event in sleepEvents[16:]] == [
+    index + 0.5 for index in range(16)]
+rampExample = open(os.path.join(
+    os.path.abspath(sys.argv[2]),
+    '226-sardine-finite-ramp-patterns.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    rampExample), run_compatibility_check(rampExample)
+rampRows, rampEvents = run_script(rampExample, include_events=True)
+assert len(rampRows) == 2 and len(rampEvents) == 22
+rampPitches = [float(event[3]) for event in rampEvents[:16]]
+assert all(right > left for left, right in zip(rampPitches, rampPitches[1:]))
+assert [float(event[1]) for event in rampEvents[:16]] == [
+    index * 0.25 for index in range(16)]
+assert [round(float(event[1]), 8) for event in rampEvents[16:22]] == [
+    0.0, 0.25, 0.55, 0.9, 1.3, 1.75]
 repeatableSwimGate = (
     'Seed.default = 221\n'
     '@swim(cycles=4, period=1)\n'

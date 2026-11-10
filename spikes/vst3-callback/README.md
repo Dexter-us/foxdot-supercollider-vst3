@@ -822,6 +822,22 @@ playable phrase and the separate stop snippet. Because `@swim` is expanded to
 a finite event list in the VST, `@die` stops those player schedules; it does
 not create or terminate a persistent Python task.
 
+## Beat offsets and finite ramps (0.4.185)
+
+Inside bounded `@swim`, `sleep(0.5)` advances the event cursor by half a beat
+for later sends in that cycle; it does not block or sleep the Python worker.
+Use a literal duration from 0 to 4096 beats, with at most 32 calls. The
+combined sleep offset cannot exceed that cycle's period, and the overall
+expanded schedule remains capped at 4096 beats. Example 225 demonstrates a
+two-player call-and-response phrase.
+
+`ramp(start, stop, step=1)` returns a finite ascending or descending numeric
+pattern, includes the stop value when the step lands on it, and is capped at
+256 values. Fractional steps can shape note or duration patterns. Each ramp
+value is limited to -1,000,000 through 1,000,000. This is a bounded function
+form of Sardine's ramp idea, not its bracket-string pattern syntax. Example
+226 demonstrates a pitch ramp and ramped durations.
+
 ## Ordered player-effect chains (0.4.137)
 
 `effects=[("Phaser", {"fx_mix": 0.5}), ("Tremolo", {"fx_rate": 5})]`

@@ -121,7 +121,7 @@ _COMPAT_CALLS = {
     'PZ12', 'PFibMod',
     'PSquare', 'PSq', 'PRange', 'PStep', 'PEuclid', 'PEuclid2',
     'play', 'sequence', 'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw',
-    'swim', 'again', 'every',
+    'swim', 'again', 'every', 'sleep', 'ramp',
     'dirt', 'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
     'bell', 'gong', 'marimba', 'pluck', 'twang', 'donk', 'squish',
     'charm', 'spark', 'blip', 'scatter', 'orient', 'zap', 'fuzz', 'bug',
@@ -157,7 +157,7 @@ _COMPAT_PATTERN_CALLS = {
     'PSquare', 'PSq',
     'PRange', 'PStep', 'PEuclid', 'PEuclid2', 'P10', 'PBern', 'PSine',
     'PTri', 'PSum', 'PIndex', 'PxRand', 'PwRand', 'reverse', 'rotate', 'repeat',
-    'palindrome', 'stutter', 'interleave', 'transpose', 'euclid'
+    'palindrome', 'stutter', 'interleave', 'transpose', 'euclid', 'ramp'
 }
 _COMPAT_WAVES = {'saw', 'pulse', 'sine', 'triangle', 'bass', 'varsaw', 'dirt',
                  'jbass', 'noise', 'dub', 'growl', 'soprano', 'crunch', 'lazer', 'rave',
@@ -437,7 +437,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                      if keyword.arg == sourceName), None))
                 if source is not None:
                     return self._pattern_kind(source)
-            if node.func.id in {'PRange', 'PSq', 'PEuclid', 'P10', 'PBern',
+            if node.func.id in {'PRange', 'ramp', 'PSq', 'PEuclid', 'P10', 'PBern',
                                 'PSine', 'PTri', 'PSum'}:
                 return 'numeric'
             if node.func.id in {'PStep', 'PEuclid2'}:
@@ -626,6 +626,27 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             offset = 0
         return offset is not None and 0 <= offset < count
 
+    def _swim_sleep_call_valid(self, node):
+        if (not isinstance(node, ast.Call) or
+                not isinstance(node.func, ast.Name) or
+                node.func.id != 'sleep' or len(node.args) != 1 or
+                node.keywords):
+            return False
+        value = node.args[0]
+        sign = 1
+        if isinstance(value, ast.UnaryOp) and isinstance(
+                value.op, (ast.UAdd, ast.USub)):
+            sign = -1 if isinstance(value.op, ast.USub) else 1
+            value = value.operand
+        if (not isinstance(value, ast.Constant) or
+                isinstance(value.value, bool) or
+                not isinstance(value.value, (int, float))):
+            return False
+        beats = sign * value.value
+        return (
+            beats == beats and beats not in (float('inf'), float('-inf')) and
+            0.0 <= beats <= 4096.0)
+
     def _swim_condition_value(self, node, depth=0, budget=None):
         if budget is None:
             budget = [0]
@@ -692,6 +713,10 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     isinstance(value.func, ast.Name) and
                     value.func.id == 'again'):
                 return 0
+            if (isinstance(value, ast.Call) and
+                    isinstance(value.func, ast.Name) and
+                    value.func.id == 'sleep'):
+                return 0
         elif isinstance(statement, ast.Assign):
             if (statement.targets and
                     all(isinstance(target, ast.Name) and
@@ -714,7 +739,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     child, nesting + 1, function_name)
             return sends
         self.add(statement.lineno,
-                 '@swim bodies allow local assignments, player sends, bounded if/else, and again() only.')
+                 '@swim bodies allow local assignments, player sends, bounded if/else, again(), and sleep().')
         return 0
 
     def visit_FunctionDef(self, node):
@@ -775,6 +800,18 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         swim_ifs = [item for item in ast.walk(node) if isinstance(item, ast.If)]
         if len(swim_ifs) > 32:
             self.add(node.lineno, '@swim supports at most 32 conditional statements.')
+        swim_sleeps = [
+            item for item in ast.walk(node)
+            if (isinstance(item, ast.Call) and
+                isinstance(item.func, ast.Name) and item.func.id == 'sleep')
+        ]
+        if len(swim_sleeps) > 32:
+            self.add(node.lineno, '@swim supports at most 32 sleep() calls.')
+        for call in swim_sleeps:
+            if not self._swim_sleep_call_valid(call):
+                self.add(
+                    call.lineno,
+                    '@swim sleep() requires one literal beat value from 0 to 4096.')
         player_sends = 0
         for statement in node.body:
             player_sends += self._swim_statement(
@@ -860,6 +897,14 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = node.func.id if isinstance(node.func, ast.Name) else None
+        if name == 'sleep' and self._current_swim is None:
+            self.add(node.lineno,
+                     'sleep() is supported only inside a bounded @swim function.')
+        if name == 'sleep' and self._current_swim is not None:
+            if not self._swim_sleep_call_valid(node):
+                self.add(
+                    node.lineno,
+                    '@swim sleep() requires one literal beat value from 0 to 4096.')
         if name == 'every':
             if (self._current_swim is None or
                     self._swim_condition_depth == 0):
@@ -962,6 +1007,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             self.add(node.lineno, "Call '" + name + "()' is not in the embedded API (often an unsupported FoxDot synth or pattern helper).")
         if name == 'PRange':
             self._check_fixed_signature(node, name, ('start', 'stop', 'step'), 1)
+        if name == 'ramp':
+            self._check_fixed_signature(node, name, ('start', 'stop', 'step'), 2)
         if name == 'PSq':
             self._check_fixed_signature(node, name, ('a', 'b', 'c'), 0)
         if name == 'PStep':
@@ -4506,6 +4553,48 @@ def PRange(start, stop=None, step=1):
     if len(values) > 256:
         raise ValueError('PRange output is limited to 256 notes')
     return _FoxDotFinitePattern(values)
+
+def ramp(start, stop, step=1):
+    """Inclusive Sardine-style numeric ramp with finite, bounded output."""
+    values = (start, stop, step)
+    if any(isinstance(value, bool) or
+           not isinstance(value, (int, float)) for value in values):
+        raise TypeError('ramp start, stop, and step must be finite numbers')
+    if any(value != value or value in (float('inf'), float('-inf'))
+           for value in values):
+        raise ValueError('ramp start, stop, and step must be finite numbers')
+    if any(abs(float(value)) > 1000000.0 for value in values):
+        raise ValueError('ramp values must be within -1000000..1000000')
+    if step == 0:
+        raise ValueError('ramp step cannot be zero')
+    if start == stop:
+        return _FoxDotFinitePattern([start])
+
+    direction = 1 if stop > start else -1
+    signed_step = abs(float(step)) * direction
+    distance = abs(float(stop) - float(start))
+    step_size = abs(float(step))
+    limit = distance / step_size
+    if limit > 255.0 + 1e-12:
+        raise ValueError('ramp output is limited to 256 values')
+    count = int(limit + 1e-12) + 1
+
+    result = []
+    tolerance = max(1.0, abs(float(start)), abs(float(stop))) * 1e-12
+    for index in range(count):
+        value = start + index * signed_step
+        if direction > 0 and value > stop + tolerance:
+            break
+        if direction < 0 and value < stop - tolerance:
+            break
+        if value != value or value in (float('inf'), float('-inf')):
+            raise ValueError('ramp values must remain finite')
+        if abs(float(value)) > 1000000.0:
+            raise ValueError('ramp values must be within -1000000..1000000')
+        result.append(value)
+    if not result:
+        raise ValueError('ramp did not produce any values')
+    return _FoxDotFinitePattern(result)
 
 def PSq(a=1, b=2, c=3):
     """FoxDot-style bounded power sequence: a**b through (a+c-1)**b."""
@@ -8538,6 +8627,19 @@ def _dexter_swim_number(value, name):
         raise ValueError('@swim ' + name + ' must be finite')
     return result
 
+def sleep(beats):
+    """Advance the event cursor within the current bounded @swim cycle."""
+    context = _dexter_swim_context
+    if context is None:
+        raise ValueError('sleep() is available only inside an active @swim function')
+    amount = _dexter_swim_number(beats, 'sleep duration')
+    if not 0.0 <= amount <= 4096.0:
+        raise ValueError('@swim sleep duration must be from 0 to 4096 beats')
+    next_offset = context['sleep_offset'] + amount
+    if next_offset > context['period'] + 1e-9:
+        raise ValueError('@swim sleep offsets may not exceed the current cycle period')
+    context['sleep_offset'] = next_offset
+
 def _dexter_record_swim_update(player_index):
     context = _dexter_swim_context
     if context is None:
@@ -8578,7 +8680,9 @@ def _dexter_record_swim_update(player_index):
         raise ValueError('@swim is limited to 256 expanded events per player')
     for event in events:
         shifted = list(event)
-        shifted[0] = float(shifted[0]) + context['offset']
+        shifted[0] = (
+            float(shifted[0]) + context['offset'] +
+            context['sleep_offset'])
         record['events'].append(tuple(shifted))
     if update[4] == 57:
         requests = list(_dexter_sample_events.get(player_index, ()))
@@ -8685,6 +8789,7 @@ def _dexter_compile_swim(function, cycles=8, period=None, periods=None):
         'cycle_index': 0,
         'iteration': initial_iteration,
         'offset': 0.0,
+        'sleep_offset': 0.0,
         'next': None,
         'written': set(),
         'players': {},
@@ -8700,6 +8805,7 @@ def _dexter_compile_swim(function, cycles=8, period=None, periods=None):
             context['written'] = set()
             context['next'] = None
             context['cycle_index'] = cycle
+            context['sleep_offset'] = 0.0
             function(p=context['period'], i=context['iteration'])
             cycle_end = context['offset'] + context['period']
             if cycle_end > 4096.0:
