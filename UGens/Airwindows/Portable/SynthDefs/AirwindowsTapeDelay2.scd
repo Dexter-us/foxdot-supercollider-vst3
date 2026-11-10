@@ -3,13 +3,14 @@
 // alive between notes so the original Airwindows delay state is not reset.
 SynthDef(\AirwindowsTapeDelay2, {
     |out=0, inbus=0, vib=0.94, depth=0.28, lforate=0.72,
-     lfowidth=0.28, rq=0.12, blur=0.5|
-    var stereo, processed;
+     lfowidth=0.28, rq=0.12, blur=0.5, fx_mix=1.0|
+    var stereo, processed, wetMix;
     stereo = In.ar(inbus, 2);
     processed = TapeDelay2.ar(
         stereo[0], stereo[1],
         vib.clip(0, 1), depth.clip(0, 1), lforate.clip(0, 1),
         lfowidth.clip(0, 1), rq.clip(0, 1), blur.clip(0, 1)
     );
-    Out.ar(out, processed);
+    wetMix = Lag.kr(fx_mix.clip(0, 1), 0.02);
+    Out.ar(out, (stereo * (1 - wetMix)) + (processed * wetMix));
 })

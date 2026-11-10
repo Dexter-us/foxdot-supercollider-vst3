@@ -1,3 +1,6 @@
+ per-note effect from the installed-effect whitelist.
+Example 229 demonstrates seeded random choices and per-note wetness.
+
 0.4.188 extends per-note `fx_event` selection to installed delay/reverb inserts:
 JPverb, Greyhole, LimutPingPong, LimutShimmer, and LimutGatedVerb. Effects have independent stereo graphs per
 note. Tails receive zero input and decay until below the silence threshold for
@@ -5,8 +8,6 @@ their grace period, or until the 12-second cap. No more than four event-effect
 tails per player are retained; starting a fifth retires the oldest. See Example
 228. The sclang bridge now uses the same 2048 audio-bus layout as the embedded
 engine; 0.4.187's stale 1024-bus guard rejected bus 1338 before sclang could run.
-Airwindows TapeDelay2 and Echojam stay player-wide: their SynthDefs do not expose
-the `fx_mix` control required for per-note wet/dry selection.
 
 0.4.187 added bounded per-note `fx_event` selection for Chorus, Flanger, Phaser,
 and Tremolo with an `fx_event_mix` pattern. This is PbindFx-inspired, not a full
@@ -137,12 +138,11 @@ fx_* controls. Existing effect="Name", fx_*=... scripts still work unchanged.
 
 Dexter U.S. FoxDot portable scripts
 
-Version 0.4.148 fixes sidebar insertion for Airwindows Echojam and TapeDelay2:
-these effects do not expose fx_mix, so the editor now inserts them without
-that control and hides the live FX Mix slider for them. Use their supported
-fx_vib/fx_depth/fx_lforate/fx_blur controls (plus TapeDelay2 fx_lfowidth,
-fx_rq). The matching compiled SynthDef/UGen pack must still be installed in
-Portable/SynthDefs before either insert can be used.
+Version 0.4.148 originally omitted Airwindows `fx_mix`; 0.4.189 supersedes
+that limitation. The updated compiled SynthDefs add the smoothed outer
+dry/wet control, while retaining `fx_vib`, `fx_depth`, `fx_lforate`,
+`fx_blur`, and TapeDelay2's `fx_lfowidth`/`fx_rq`. Install the updated
+SynthDefs under `Portable/SynthDefs` before using the new mix control.
 
 Version 0.4.136 adds per-player Phaser and Tremolo inserts in SynthDefs/.
 Examples 171-172 show independent, time-varying settings. Both use stock

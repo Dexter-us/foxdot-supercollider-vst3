@@ -1,7 +1,8 @@
 # Example 99: a sparse kick/snare-like loop leaves space for Echojam repeats.
 # This is synthesized (no drum samples required). The short dry noise ticks
 # provide a timing reference while the pitched hits run through persistent Echojam.
-# Raise depth for longer feedback; blur raises the wet delay in the mix.
+# Raise depth for longer feedback. fx_mix is the smoothed outer dry/wet amount;
+# blur remains Echojam's internal color/mix control.
 Clock.bpm = 96
 Scale.default.set("minor")
 
@@ -10,7 +11,7 @@ Scale.default.set("minor")
 p1 >> userSynth(
     "AirwindowsEchojam", P[0, None, None, None, 7, None, None, None],
     dur=0.5, sus=0.10, oct=2, amp=0.20, pan=-0.12, atk=0.005, rel=0.16,
-    vib=0.29, depth=0.62, lforate=0.48, blur=0.82
+    vib=0.29, depth=0.62, lforate=0.48, fx_mix=0.72, blur=0.82
 )
 
 # Dry synthetic hi-hat ticks, deliberately not sent through the delay.

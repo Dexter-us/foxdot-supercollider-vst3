@@ -266,10 +266,25 @@ int main() {
                duckControls[1].maximum == 8.0f);
         const auto tapeControls =
             playerEffectControlSpecs("AirwindowsTapeDelay2");
-        assert(tapeControls.size() == 6 &&
-               tapeControls[0].name == "fx_vib" &&
+        assert(tapeControls.size() == 7 &&
+               tapeControls[0].name == "fx_mix" &&
                tapeControls[0].minimum == 0.0f &&
-               tapeControls[0].maximum == 1.0f);
+               tapeControls[0].maximum == 1.0f &&
+               tapeControls[0].controlIndex == 5 &&
+               tapeControls[1].controlIndex == 0 &&
+               tapeControls[6].controlIndex == 6);
+        assert(playerEffectMixControlIndex("AirwindowsTapeDelay2") == 5);
+        assert(playerEffectMixControlIndex("AirwindowsEchojam") == 5);
+        assert(playerEffectMixControlIndex("Chorus") == 0);
+        assert(playerEffectMixControlIndex("not-an-effect") == -1);
+        const auto echojamControls =
+            playerEffectControlSpecs("AirwindowsEchojam");
+        assert(echojamControls.size() == 5 &&
+               echojamControls[0].name == "fx_mix" &&
+               echojamControls[0].minimum == 0.0f &&
+               echojamControls[0].maximum == 1.0f &&
+               echojamControls[0].controlIndex == 5 &&
+               echojamControls[4].controlIndex == 6);
         const auto reverbControls = playerEffectControlSpecs("JPverb");
         assert(reverbControls.size() == 7 &&
                reverbControls[1].name == "fx_t60" &&
@@ -382,7 +397,8 @@ int main() {
             playerEffectControlSpecs("LimutDisperser");
         const auto fuzzControls = playerEffectControlSpecs("LimutFuzz");
         assert(chorusControls.size() == 7);
-        assert(echoControls.size() == 4);
+        assert(echoControls.size() == 5 &&
+               echoControls.front().name == "fx_mix");
         assert(sclorkPhazerControls.size() == 7);
         assert(sclorkDecimatorControls.size() == 5);
         assert(sclorkCrossoverControls.size() == 4);

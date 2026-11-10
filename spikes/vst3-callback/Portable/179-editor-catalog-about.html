@@ -130,13 +130,16 @@ Distortion inserts, and optional LimutFX inserts such as LimutShifter,
 LimutShimmer, and LimutGatedVerb. A chain may contain up to four inserts.
 Use <code>effects=[("Chorus", {"fx_mix": 0.4}), ...]</code> for a chain or the
 legacy <code>effect="Chorus", fx_mix=0.4</code> form for one insert when that
-effect exposes <code>fx_mix</code>. Airwindows Echojam and TapeDelay2 do not:
-use their effect-specific controls instead.</p>
+ effect exposes <code>fx_mix</code>. TapeDelay2 and Echojam now expose a smoothed
+ <code>fx_mix</code> dry/wet control from 0 to 1, with 1 preserving the prior
+ full-effect default.</p>
 <table><thead><tr><th>Insert</th><th>Controls (inclusive bounds)</th></tr></thead><tbody>
-<tr id="AirwindowsTapeDelay2"><td>TapeDelay2</td><td><code>fx_vib</code>,
+<tr id="AirwindowsTapeDelay2"><td>TapeDelay2</td><td><code>fx_mix</code>,
+<code>fx_vib</code>,
 <code>fx_depth</code>, <code>fx_lforate</code>, <code>fx_lfowidth</code>,
 <code>fx_rq</code>, <code>fx_blur</code>: each 0–1.</td></tr>
-<tr id="AirwindowsEchojam"><td>Echojam</td><td><code>fx_vib</code>,
+<tr id="AirwindowsEchojam"><td>Echojam</td><td><code>fx_mix</code>,
+<code>fx_vib</code>,
 <code>fx_depth</code>, <code>fx_lforate</code>, <code>fx_blur</code>: each 0–1.</td></tr>
 <tr id="JPverb"><td>JPverb</td><td><code>fx_mix</code>, <code>fx_damp</code>,
 <code>fx_earlydiff</code>, <code>fx_moddepth</code>: 0–1;

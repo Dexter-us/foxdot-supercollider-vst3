@@ -377,17 +377,20 @@ struct PlayerEffectControlSpec {
     std::string name;
     float minimum = 0.0f;
     float maximum = 1.0f;
+    int controlIndex = -1;
 };
 
 inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
     std::string_view effectName) {
     if (effectName == "AirwindowsTapeDelay2")
-        return {{"fx_vib", 0, 1}, {"fx_depth", 0, 1},
-                {"fx_lforate", 0, 1}, {"fx_lfowidth", 0, 1},
-                {"fx_rq", 0, 1}, {"fx_blur", 0, 1}};
+        return {{"fx_mix", 0, 1, 5}, {"fx_vib", 0, 1, 0},
+                {"fx_depth", 0, 1, 1}, {"fx_lforate", 0, 1, 2},
+                {"fx_lfowidth", 0, 1, 3}, {"fx_rq", 0, 1, 4},
+                {"fx_blur", 0, 1, 6}};
     if (effectName == "AirwindowsEchojam")
-        return {{"fx_vib", 0, 1}, {"fx_depth", 0, 1},
-                {"fx_lforate", 0, 1}, {"fx_blur", 0, 1}};
+        return {{"fx_mix", 0, 1, 5}, {"fx_vib", 0, 1, 0},
+                {"fx_depth", 0, 1, 1}, {"fx_lforate", 0, 1, 2},
+                {"fx_blur", 0, 1, 6}};
     if (effectName == "JPverb")
         return {{"fx_mix", 0, 1}, {"fx_t60", 0.1f, 60},
                 {"fx_damp", 0, 0.999f}, {"fx_size", 0.5f, 3},
@@ -460,6 +463,24 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
                 {"fx_ratio", 0, 20}, {"fx_attack", 0, 1},
                 {"fx_release", 0.001f, 3}, {"fx_knee", 0, 24}};
     return {};
+}
+
+inline int playerEffectMixControlIndex(std::string_view effectName) noexcept {
+    if (effectName == "AirwindowsTapeDelay2" ||
+        effectName == "AirwindowsEchojam")
+        return 5;
+    if (effectName == "JPverb" || effectName == "Greyhole" ||
+        effectName == "Chorus" || effectName == "Flanger" ||
+        effectName == "Phaser" || effectName == "Tremolo" ||
+        effectName == "SCLOrkPhazerFX" ||
+        effectName == "SCLOrkDecimatorFX" ||
+        effectName == "SCLOrkCrossoverDistortionFX" ||
+        effectName == "LimutPingPong" || effectName == "LimutDuck" ||
+        effectName == "LimutDisperser" || effectName == "LimutFuzz" ||
+        effectName == "LimutShifter" || effectName == "LimutShimmer" ||
+        effectName == "LimutGatedVerb" || effectName == "LimutCompressor")
+        return 0;
+    return -1;
 }
 
 inline int firstConfiguredEffectSlot(

@@ -301,7 +301,8 @@ with tempfile.TemporaryDirectory() as directory:
             ("AirwindowsEchojam",)
             if example.name == "104-sample-player-airwindows-echojam.py" else
             ("AirwindowsTapeDelay2", "AirwindowsEchojam")
-            if example.name == "105-airwindows-timevar-controls.py" else ())
+             if example.name in ("105-airwindows-timevar-controls.py",
+                                 "229-seeded-random-per-note-delays.py") else ())
         wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
