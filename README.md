@@ -2,6 +2,14 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.191 adds finite pattern-valued `sleep()` and Sardine-style
+oversleeping inside bounded `@swim`: `sleep(P[0.5, 1.25])` selects by cycle
+iterator `i`, and later events may land after the next cycle starts. Expanded
+events are kept in chronological order; each sample hit remains paired with its
+sample request. Per-call and total offsets, event counts, and the 4096-beat
+timeline stay bounded. This does not add Sardine's SPL/Ziffers/Vortex languages
+or its `D()`/`N()` senders; see Example 231.
+
 Version 0.4.190 adds bounded ordered chains of up to two per-note inserts:
 `fx_event=P[("Chorus", "Greyhole"), None, ...]` applies each pair in order,
 and seeded `PRand` can choose among such chains. `fx_event_mix` is broadcast

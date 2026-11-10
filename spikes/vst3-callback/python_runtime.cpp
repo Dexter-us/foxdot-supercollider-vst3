@@ -634,19 +634,33 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 node.keywords):
             return False
         value = node.args[0]
-        sign = 1
-        if isinstance(value, ast.UnaryOp) and isinstance(
-                value.op, (ast.UAdd, ast.USub)):
-            sign = -1 if isinstance(value.op, ast.USub) else 1
-            value = value.operand
-        if (not isinstance(value, ast.Constant) or
-                isinstance(value.value, bool) or
-                not isinstance(value.value, (int, float))):
+        if (isinstance(value, ast.Subscript) and
+                isinstance(value.value, ast.Name) and
+                value.value.id == 'P'):
+            values = (value.slice.elts
+                      if isinstance(value.slice, ast.Tuple)
+                      else [value.slice])
+        elif isinstance(value, (ast.List, ast.Tuple)):
+            values = value.elts
+        else:
+            values = [value]
+        if not 1 <= len(values) <= 256:
             return False
-        beats = sign * value.value
-        return (
-            beats == beats and beats not in (float('inf'), float('-inf')) and
-            0.0 <= beats <= 4096.0)
+        for item in values:
+            sign = 1
+            if isinstance(item, ast.UnaryOp) and isinstance(
+                    item.op, (ast.UAdd, ast.USub)):
+                sign = -1 if isinstance(item.op, ast.USub) else 1
+                item = item.operand
+            if (not isinstance(item, ast.Constant) or
+                    isinstance(item.value, bool) or
+                    not isinstance(item.value, (int, float))):
+                return False
+            beats = sign * item.value
+            if (beats != beats or beats in (float('inf'), float('-inf')) or
+                    not 0.0 <= beats <= 4096.0):
+                return False
+        return True
 
     def _swim_condition_value(self, node, depth=0, budget=None):
         if budget is None:
@@ -812,7 +826,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             if not self._swim_sleep_call_valid(call):
                 self.add(
                     call.lineno,
-                    '@swim sleep() requires one literal beat value from 0 to 4096.')
+                    '@swim sleep() requires a beat value or finite P/list/tuple of 1 to 256 literal beat values from 0 to 4096.')
         player_sends = 0
         for statement in node.body:
             player_sends += self._swim_statement(
@@ -905,7 +919,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
             if not self._swim_sleep_call_valid(node):
                 self.add(
                     node.lineno,
-                    '@swim sleep() requires one literal beat value from 0 to 4096.')
+                    '@swim sleep() requires a beat value or finite P/list/tuple of 1 to 256 literal beat values from 0 to 4096.')
         if name == 'every':
             if (self._current_swim is None or
                     self._swim_condition_depth == 0):
@@ -8872,16 +8886,25 @@ def _dexter_swim_number(value, name):
     return result
 
 def sleep(beats):
-    """Advance the event cursor within the current bounded @swim cycle."""
+    """Offset later sends; bounded offsets may extend beyond the current cycle."""
     context = _dexter_swim_context
     if context is None:
         raise ValueError('sleep() is available only inside an active @swim function')
-    amount = _dexter_swim_number(beats, 'sleep duration')
+    if isinstance(beats, _FoxDotFinitePattern):
+        values = list(beats)
+    elif isinstance(beats, (list, tuple)):
+        values = list(beats)
+    else:
+        values = [beats]
+    if not 1 <= len(values) <= 256:
+        raise ValueError('@swim sleep pattern is limited to 1..256 beat values')
+    beat_value = values[context['iteration'] % len(values)]
+    amount = _dexter_swim_number(beat_value, 'sleep duration')
     if not 0.0 <= amount <= 4096.0:
         raise ValueError('@swim sleep duration must be from 0 to 4096 beats')
     next_offset = context['sleep_offset'] + amount
-    if next_offset > context['period'] + 1e-9:
-        raise ValueError('@swim sleep offsets may not exceed the current cycle period')
+    if next_offset > 4096.0 + 1e-9:
+        raise ValueError('@swim combined sleep offset may not exceed 4096 beats per cycle')
     context['sleep_offset'] = next_offset
 
 def _dexter_record_swim_update(player_index):
@@ -9075,6 +9098,16 @@ def _dexter_compile_swim(function, cycles=8, period=None, periods=None):
         if not record['events']:
             raise ValueError('@swim player assignments must produce at least one event')
         update = list(record['base'])
+        event_order = sorted(
+            range(len(record['events'])),
+            key=lambda index: (float(record['events'][index][0]), index)
+        )
+        record['events'] = [record['events'][index] for index in event_order]
+        if update[4] == 57:
+            if len(record['sample_requests']) != len(event_order):
+                raise ValueError('@swim sample events lost their request mapping while sorting')
+            record['sample_requests'] = [
+                record['sample_requests'][index] for index in event_order]
         latest_start = max(
             (event[0] + (event[6] if len(event) > 6 else 0.0)
              for event in record['events']),

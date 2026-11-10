@@ -1,5 +1,12 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.191 adds finite pattern-valued `sleep()` and Sardine-style
+oversleeping inside bounded `@swim`: `sleep(P[0.5, 1.25])` selects by cycle
+iterator `i`, and later events may land after the next cycle starts. Events are
+sorted chronologically without losing sample-hit mappings. Bounds remain 256
+sleep values/events per player and a 4096-beat timeline. Sardine's SPL,
+Ziffers, Vortex, `D()` and `N()` are not included; see Example 231.
+
 Version 0.4.190 adds bounded ordered chains of up to two per-note inserts:
 `fx_event=P[("Chorus", "Greyhole"), None, ...]` applies each pair in order,
 and seeded `PRand` can choose among such chains. `fx_event_mix` is broadcast

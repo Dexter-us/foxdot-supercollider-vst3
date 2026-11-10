@@ -1,3 +1,12 @@
+0.4.191 adds Sardine-style pattern-valued and oversleeping `sleep()` inside
+bounded `@swim`. `sleep(P[0.5, 1.25])` selects the delay by the current cycle
+iterator `i`; later sends may occur after the following cycle has begun.
+Expanded events are sorted chronologically, preserving each sample request.
+Each sleep pattern is limited to 256 literal nonnegative beat values, each call
+and the combined per-cycle offset are limited to 4096 beats, and the expanded
+timeline is still capped at 4096 beats. This does not add SPL, Ziffers, Vortex,
+or Sardine's `D()`/`N()` output senders. See Example 231.
+
 0.4.190 adds bounded ordered per-note insert chains of up to two effects:
 `fx_event=P[("Chorus", "Greyhole"), None, ...]` applies each pair in order;
 seeded `PRand` can choose among chains. `fx_event_mix` is broadcast to each

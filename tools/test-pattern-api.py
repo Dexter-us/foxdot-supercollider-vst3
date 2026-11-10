@@ -49,7 +49,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.190' not in cmake_source or
+if ('VERSION 0.4.191' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3481,6 +3481,86 @@ assert [float(event[1]) for event in sleepEvents[:16]] == [
     float(index) for index in range(16)]
 assert [float(event[1]) for event in sleepEvents[16:]] == [
     index + 0.5 for index in range(16)]
+patternSleepSource = (
+    '@swim(cycles=4, period=1)\n'
+    'def patterned_sleep(p=1, i=0):\n'
+    '    p1 >> saw([0], dur=0.25)\n'
+    '    sleep(P[1.5, 0.25])\n'
+    '    p2 >> triangle([i], dur=0.25)\n'
+    '    again(patterned_sleep, p=p, i=i+1)\n')
+patternSleepReport = run_compatibility_check(patternSleepSource)
+assert 'No unsupported constructs detected' in patternSleepReport, patternSleepReport
+patternSleepRows, patternSleepEvents = run_script(
+    patternSleepSource, include_events=True)
+assert len(patternSleepRows) == 2 and len(patternSleepEvents) == 8
+assert [float(event[1]) for event in patternSleepEvents[:4]] == [
+    0.0, 1.0, 2.0, 3.0]
+assert [float(event[1]) for event in patternSleepEvents[4:]] == [
+    1.25, 1.5, 3.25, 3.5], (
+        'Patterned oversleep must cross cycle boundaries and keep each '
+        'player’s events in chronological order: ' + repr(patternSleepEvents))
+sampleSleepSource = (
+    '@swim(cycles=2, period=1)\n'
+    'def sample_sleep(p=1, i=0):\n'
+    '    sleep(P[1.5, 0.25])\n'
+    '    p1 >> play("xo", sample=P[0, 1], dur=0.25)\n'
+    '    again(sample_sleep, p=p, i=i+1)\n')
+sampleSleepRows, sampleSleepRequests, sampleSleepEvents = run_script(
+    sampleSleepSource, include_samples=True, include_events=True)
+assert len(sampleSleepRows) == 1 and len(sampleSleepEvents) == 4
+assert [float(event[1]) for event in sampleSleepEvents] == [
+    1.25, 1.5, 1.5, 1.75]
+assert [int(request[2]) for request in sampleSleepRequests] == [0, 0, 1, 1], (
+    'Sorting overslept sample hits must keep each sample request paired with '
+    'its event: ' + repr(sampleSleepRequests))
+for invalid_sleep_source in (
+        '@swim(cycles=1, period=1)\n'
+        'def bad(p=1, i=0):\n'
+        '    sleep(P[0.5, -0.25])\n'
+        '    p1 >> saw([0])\n',
+        '@swim(cycles=1, period=1)\n'
+        'def bad(p=1, i=0):\n'
+        '    sleep(P[4096.1])\n'
+        '    p1 >> saw([0])\n',
+        '@swim(cycles=1, period=1)\n'
+        'def bad(p=1, i=0):\n'
+        '    sleep(P[' + ', '.join(['0.25'] * 257) + '])\n'
+        '    p1 >> saw([0])\n'):
+    sleepReport = run_compatibility_check(invalid_sleep_source)
+    assert '@swim sleep() requires a beat value or finite P/list/tuple' in \
+        sleepReport, ('Invalid patterned sleep should be rejected before '
+                      'execution: ' + sleepReport)
+for invalid_sleep_runtime, expected_sleep_runtime_error in (
+        ('@swim(cycles=2, period=1)\n'
+         'def bad(p=1, i=0):\n'
+         '    sleep(P[0.5, -0.25])\n'
+         '    p1 >> saw([0])\n'
+         '    again(bad, p=p, i=i+1)\n',
+         'sleep duration must be from 0 to 4096 beats'),
+        ('@swim(cycles=1, period=1)\n'
+         'def bad(p=1, i=0):\n'
+         '    sleep(4096)\n'
+         '    sleep(1)\n'
+         '    p1 >> saw([0])\n',
+         'combined sleep offset may not exceed 4096 beats per cycle'),
+        ('@swim(cycles=1, period=1)\n'
+         'def bad(p=1, i=0):\n'
+         '    sleep(4096)\n'
+         '    p1 >> saw([0], dur=0.25)\n',
+         'expanded timeline exceeds 4096 beats')):
+    sleepError = run_error_script(invalid_sleep_runtime)
+    assert expected_sleep_runtime_error in sleepError, (
+        'Oversleep bounds must reject unsafe timing: ' + sleepError)
+patternSleepExample = open(os.path.join(
+    os.path.abspath(sys.argv[2]),
+    '231-sardine-swim-patterned-oversleep.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    patternSleepExample), run_compatibility_check(patternSleepExample)
+patternSleepExampleRows, patternSleepExampleEvents = run_script(
+    patternSleepExample, include_events=True)
+assert len(patternSleepExampleRows) == 2 and len(patternSleepExampleEvents) == 16
+assert [float(event[1]) for event in patternSleepExampleEvents[8:16]] == [
+    0.5, 2.25, 2.5, 4.25, 4.5, 6.25, 6.5, 8.25]
 rampExample = open(os.path.join(
     os.path.abspath(sys.argv[2]),
     '226-sardine-finite-ramp-patterns.py'), encoding='utf-8').read()
