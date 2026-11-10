@@ -2,6 +2,11 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.190 adds bounded ordered chains of up to two per-note inserts:
+`fx_event=P[("Chorus", "Greyhole"), None, ...]` applies each pair in order,
+and seeded `PRand` can choose among such chains. `fx_event_mix` is broadcast
+to both inserts; their other controls use SynthDef defaults. This is a
+PbindFx-inspired subset, not a complete clone; see Example 230.
 Version 0.4.189 adds a smoothed `fx_mix` dry/wet control to Airwindows
 TapeDelay2 and Echojam, and lets seeded `PRand` choose between installed
 per-note effects. Example 229 demonstrates reproducible random delay choices

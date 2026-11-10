@@ -1,6 +1,7 @@
 #pragma once
 
 #include "player_effect_chain.h"
+#include "note_event_effects.h"
 
 #include <array>
 #include <cstddef>
@@ -31,7 +32,12 @@ struct PythonNoteEvent {
     double formant = -1.0;
     double pshift = 0.0;
     int eventEffectUserSynthIndex = -1;
-    std::array<double, 7> eventEffectControlValues{
+    NoteEventEffectControls eventEffectControlValues{
+        0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0
+    };
+    std::uint8_t eventEffectChainCount = 0;
+    int eventEffectSecondUserSynthIndex = -1;
+    NoteEventEffectControls eventEffectSecondControlValues{
         0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0
     };
     int sampleSymbol = 0;

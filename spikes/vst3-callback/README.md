@@ -1,4 +1,247 @@
-pping list indexing. Inputs/results are capped at 256 items
+# Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
+
+Version 0.4.190 adds bounded ordered chains of up to two per-note inserts:
+`fx_event=P[("Chorus", "Greyhole"), None, ...]` applies each pair in order,
+and seeded `PRand` can choose among such chains. `fx_event_mix` is broadcast
+to both inserts; their other controls use SynthDef defaults. This is a
+PbindFx-inspired subset, not a complete PbindFx clone; see Example 230.
+
+Version 0.4.189 adds a smoothed `fx_mix` dry/wet control to Airwindows
+TapeDelay2 and Echojam, and allows seeded `PRand` to select installed per-note
+effects. Example 229 demonstrates reproducible random delay choices with a
+separately seeded per-note wet amount.
+
+Version 0.4.188 extends bounded per-note `fx_event` selection to installed
+delay and reverb inserts (JPverb, Greyhole, LimutPingPong, LimutShimmer, and
+LimutGatedVerb). Each overlapping
+note gets an independent stereo insert. Its tail runs on zero input until it
+stays below the silence threshold for an effect-specific grace period, or the
+12-second hard cap; at most four tails per player are retained, with the oldest
+retired if another is needed. Example 228 demonstrates per-note reverb and
+ping-pong delay. This remains PbindFx-inspired, not a full PbindFx clone.
+
+The sclang bridge and embedded World now share the 2048-channel audio-bus
+layout. The previous 0.4.187 smoke test exposed a stale 1024-bus validation
+limit that rejected the bridge's first free bus (1338), before sclang ran.
+Version 0.4.187 adds bounded per-note modulation effects (Chorus, Flanger,
+Phaser, and Tremolo) with `fx_event_mix`; see Example 227.
+The script worker state from 0.4.186 remains visible in the editor: Run becomes
+a disabled Busy button while a request is processing, and duplicate submissions
+are reported as in-progress instead of being presented as compatibility errors.
+PShift is treated as a per-player note control; its slider appears only when a
+selected player has `pshift` enabled.
+
+Version 0.4.162 adds bounded `.controls` sidecars and live Players-panel
+sliders for custom instrument SynthDefs. The bundled CustomPluck exposes
+brightness and a sub-octave blend with zero defaults that preserve its prior
+sine tone; CustomTone exposes waveform blend, filter cutoff, and resonance.
+Ranges are explicit, validated against actual SynthDef parameters, and capped
+at seven controls / 8 KiB per sidecar. Example 94 demonstrates CustomPluck;
+Example 202 demonstrates CustomTone. Rebuild both demo SynthDefs, only when
+their sources change, with `python tools/build-portable-user-synthdefs.py`.
+
+Version 0.4.161 adds three SCLOrk-derived stereo insert effects: Phazer,
+Decimator, and Crossover Distortion. They use SuperCollider core UGens only.
+The loader detects each definition's output width, reserves isolated voice
+buses, preserves stereo image, and rejects mixed-width or multichannel graphs.
+These are player-chain effects, not instruments, so they appear in the Effects
+sidebar category. The bundled portable SynthDefs are `SCLOrkPhazerFX`,
+`SCLOrkDecimatorFX`, and `SCLOrkCrossoverDistortionFX`; source, attribution,
+and the GPL-3.0 license accompany them. Example 201 demonstrates all three.
+They do not require an SCPlugins module or a SuperCollider rebuild.
+
+Version 0.4.159 adds a stereo-linked `LimutCompressor` insert with live FX
+sliders, ranges, and `var()`/`linvar()` support. The built-in sine, saw, pulse,
+and triangle calls are grouped under Waveforms. The optional LimutFX module also
+contains a true two-input `LimutVocoder` UGen and a standalone bus example; it is
+not yet exposed as a FoxDot insert because the embedded engine has no
+per-player modulator/sidechain route. See `UGens/LimutFX/README.md`.
+
+Version 0.4.158 adds three compiled LimutFX player-effect UGens: `LimutShifter`,
+`LimutShimmer`, and `LimutGatedVerb`. They are optional members of
+`LimutFX.scx`, with matching precompiled SynthDefs, effect-chain controls, and
+Examples 197–198. The Shifter uses a two-head windowed delay; Shimmer feeds its
+pitch-shifted signal into the pack's stereo reverb; GatedVerb shapes the reverb
+tail with a smoothed input detector. See `UGens/LimutFX/README.md` for ranges,
+installation, and test details. Building this optional module does not rebuild
+SuperCollider itself.
+
+Version 0.4.157 adds optional Limut-inspired Disperser and Fuzz inserts, and
+fixes Players-panel chain selection so opening a chain selects its first insert.
+LimutDuck now appears in its own Duck category. See Example 196.
+
+Version 0.4.156 adds the optional Limut-inspired PingPong delay and Duck
+inserts, with CC BY-SA 4.0 attribution, range-checked controls, and Example 195.
+The separately compiled `LimutFX.scx` pack is not part of the VST3 build.
+
+Version 0.4.155 adds bounded Pattern metadata helpers: `get_data()` returns the
+live list-backed data view (unwrapping a single nested Pattern), `get_methods()`
+lists the curated embedded API, `help()` returns help text without printing,
+`new(data)` creates a bounded Pattern, `make()` flattens a single nested
+Pattern in place, and `get_behaviour()` returns the default `None`. The
+compatibility layer caps inputs and nesting at 256 nodes and 16 levels.
+Example 194 demonstrates these helpers. Returning help text rather than
+printing and making the supported method list curated are embedded-editor
+adaptations.
+
+Version 0.4.154 adds bounded `Pattern.true_copy(new_data=None)` and
+`Pattern.convert_data(dtype=float)`. `true_copy` returns a shallow copy: the
+top-level list is independent, while nested Patterns/groups are shared; an
+optional finite `new_data` replaces the copied top-level values. Because this
+engine stores Pattern values directly in a list, it cannot alias the root data
+list as Renardo's internal Pattern object does. `convert_data` recursively
+applies an approved pure one-argument converter, preserving nested patterns and
+numeric chord groups when possible. Both methods enforce 16-level and
+256-node/input/output bounds. Example 193 demonstrates copying and conversion.
+
+Version 0.4.153 adds recursive Renardo-compatible `Pattern.transform(func)`.
+It applies an approved pure one-argument mapper to numeric, text, or rest leaves,
+recursing through nested patterns and chord groups while preserving their
+structure. The callable and every result are validated, with the existing
+16-level and 256-node input/output bounds. Example 192 demonstrates nested
+transformation.
+
+Version 0.4.152 adds bounded FoxDot-style elementwise `==`, `!=`, `<`, `<=`,
+`>`, `>=`, and unary `~` for finite patterns. Comparisons produce bounded 0/1
+patterns, preserve rests, recursively compare chord groups, and use finite
+LCM-based lacing capped at 256 values. Unary `~` mirrors the pattern and nested
+groups. Example 191 uses comparison masks to select notes.
+
+Version 0.4.151 adds bounded Renardo `PZ12` and `PFibMod` generators.
+`PZ12(tokens, p, length=256)` follows Renardo's documented experimental
+two-token deficit ordering; `PFibMod(length=31)` provides the Fibonacci prefix,
+limited so its values remain within the embedded note range. Example 190
+combines weighted note selection, a Fibonacci-derived melody, and a steady
+sample groove.
+Renardo's callback-based `PTree`
+generator is intentionally deferred because arbitrary user callbacks do not
+fit the embedded engine's bounded evaluation model.
+
+Version 0.4.150 adds a collapsible per-player effect-chain list. Selecting an
+insert displays only that effect's supported controls, current values, and
+numeric min/max ranges with units; dragging a slider changes the sound live,
+and releasing it writes the value to the matching effect entry in the script.
+The compatibility checker now validates `fx_*` names against each effect,
+including inserts inside `effects=[...]`. It also supports Renardo's
+`Clock.clear()` as a stop-all command for the eight local players and
+`Seed.default` for repeatable random-pattern generation (with explicit
+per-generator seeds taking priority). See Portable Examples 187-189.
+
+Version 0.4.148 originally omitted `fx_mix` for Airwindows delays; 0.4.189
+supersedes that limitation with a smoothed dry/wet `fx_mix` in the SynthDefs,
+panel, and per-note effect path. The updated compiled SynthDefs must be
+installed under `Portable/SynthDefs`.
+
+Version 0.4.147 adds bounded FoxDot-compatible `Pattern.flatten()`. It
+flattens one finite Pattern level into a simultaneous chord (`PGroup`), with a
+maximum of eight numeric notes. Example 185 demonstrates nested chord flattening.
+The compatibility audit also confirmed that `eq()`, `getslice()`, `i_rotate()`,
+`i_reverse()`, `i_sort()`, `i_shuf()`, and `setitem()` are implemented and
+allowlisted; a checker still rejecting those methods is likely from an older
+plugin build.
+
+Version 0.4.146 keeps the full player-control row visible and disabled until a
+player is selected, so PShift remains discoverable. Clicking a `pN >>`
+assignment in the editor selects that player in the Players panel. Example 184
+demonstrates PShift and bitcrusher controls together.
+
+Version 0.4.145 adds bounded `PIndex`, seeded `PxRand` without adjacent
+repeats, and seeded weighted `PwRand`; see Portable Example 183. Synth and
+Effect family categories now start collapsed, with a click to expand.
+
+Version 0.4.144 adds the finite FoxDot generators `P10`, `PBern`, `PSine`,
+`PTri`, and `PSum`, fixes `.expand()` compatibility checking for `Pvar`,
+exposes PShift as a live semitone slider on any selected player, and makes
+Synths/Effects category headings collapsible. Examples 181–182 cover the new
+controls and generators.
+
+Version 0.4.143 groups the Synths and Effects catalogs by family and adds live
+Bits and Crush sliders for players using the native bitcrusher. Select such a
+player to expose the controls; edits are smoothed in real time and written back
+to the player call when released. See Example 180.
+
+Version 0.4.142 alphabetizes the instrument catalog, expands the Effects list
+with the embedded native controls and optional loaded inserts, and supports
+right-click or drag-and-drop from either sidebar onto a player line. A bare
+`p3 >>` gets a starter voice; choosing an effect there first creates a default
+sine player. Right-click sidebar rows for About details and effect ranges in
+`Portable/179-editor-catalog-about.html`. Example 179 demonstrates the workflow.
+Catalog actions edit source; click Run to apply. No SuperCollider server or OSC
+connection is introduced.
+
+Version 0.4.141 added live per-player Level, Pan, Cutoff, and FX-mix sliders;
+audio-thread updates are queued and smoothed without rerunning the script.
+Releasing a slider writes its scalar value into the selected player's source
+line. FX Mix controls the first insert in a chain. See Portable Example 178.
+
+Version 0.4.140 adds bounded FoxDot-style `pshift` (semitones, -24 to +24)
+and native per-player `bits`/`crush` controls. `bits=0` bypasses bit-depth
+reduction; 1–24 quantizes the player's summed signal, while `crush=1–128`
+reduces the hold rate. Both bitcrusher controls are smoothed and support scalar,
+`var()`, and `linvar()` input. `pshift` is applied per note, accepts scalar,
+finite `P[...]`, `var()`, and `linvar()` values, and transposes WAV playback as
+well as pitched synths. The native effect needs no external UGen or
+SuperCollider rebuild. Portable Example 177 demonstrates the controls.
+
+Version 0.4.139 adds native FoxDot-style `coarse` pulse gating and a bounded
+`formant` control for synth and WAV players. `coarse` ranges from 0–32;
+`formant` ranges from -1 (bypass) to 7. Both accept scalar, finite Pattern,
+`var()`, and `linvar()` values and appear in the live Effects panel. The
+formant DSP is a stable Formlet-style resonator approximation; it does not load
+an external SynthDef or rebuild SuperCollider. Portable Example 176 demonstrates
+both controls.
+
+Version 0.4.136 adds self-contained Phaser and Tremolo per-player inserts using
+stock SuperCollider UGens only. Their controls are smoothed and accept scalar,
+`var()`, and `linvar()` values. Portable Examples 171–172 demonstrate the
+effects; no external UGen pack or SuperCollider rebuild is required.
+
+Version 0.4.133 adds bounded FoxDot `chop` and `spin` effects to synth and WAV
+players. `chop` gates the note into pulses across its sustain (0–32); `spin`
+adds the original stereo sine-pan motion (0–40). Both accept scalar, finite
+Pattern, `var()`, and `linvar()` controls and appear in the live Effects panel
+and compatibility checker. Portable Example 165 demonstrates both.
+
+Version 0.4.132 adds FoxDot-compatible `vibdepth`, `slide`, `slidefrom`, and
+`bend` note controls, including `slidedelay` and `benddelay`. The slide and bend
+controls follow FoxDot's bundled SynthDef amplitude envelopes; they do not
+retune pitch. Scalar, `var()`/`linvar()`, and finite `P[...]` control values are
+bounded and evaluated per note. `vib` is the rate; `vibdepth` is the depth.
+`vibdepth` and the older `depth=` name share one control and cannot both be
+specified; omitting both preserves the existing `depth` default. Supported
+ranges are 0–10 for depth, -1–4 for slide/bend amounts, and 0–1 for delay
+fractions. `vibdepth` applies to bundled synth graphs that expose FoxDot's
+vibrato controls; the simple sine/saw/triangle/pulse oscillator aliases do not
+yet have a vibrato input. Portable Example 164 uses `viola` for that control.
+
+Version 0.4.131 adds smoothly modulated, native per-player FoxDot `shape` and
+`drive` effects for synths and WAV sample players, plus Portable Example 163.
+Both accept 0–4 (FoxDot's usual range is 0–1); the self-contained VST DSP
+curves are FoxDot-style controls, not bit-for-bit SuperCollider effect
+emulations.
+
+Version 0.4.130 adds a live local-engine browser with Players, Synths, Effects,
+and Samples tabs. Player rows track active/muted state, synth selection, and
+per-player effects; selected players can be muted or stopped without editing
+their other players. The Samples tab lists WAVs in the Portable letter banks and
+opens that folder. The compatibility checker now has direct coverage for
+`.eq()`, `.getslice()`, `.i_rotate()`, `.i_reverse()`, `.i_sort()`, `.i_shuf()`,
+and `.setitem()` so supported finite Pattern internals are not reported as
+unknown methods. Portable Example 162 demonstrates per-letter WAV banks,
+`sample=` selection, and the per-hit `|x1|` override.
+
+Version 0.4.129 adds bounded `Pattern.eq()`/`.ne()` comparison masks with
+right-side cycling; in-place `.i_rotate()`, `.i_reverse()`, `.i_sort()`, and
+`.i_shuf()`; integer `.setitem()` mutation; and explicit cyclic `.getslice()`.
+Mutators preserve Pattern identity so aliases see edits, while `.copy()` stays
+independent. Sorting is atomic on incomparable values, and all source/result
+sizes are bounded to 256 with 16 nested levels. Example 161 demonstrates masks,
+selection, mutation, and slices.
+
+Version 0.4.128 adds bounded FoxDot-style `Pattern.getitem()`: integer indices
+wrap cyclically, nested finite Patterns advance by cycle, and finite index
+Patterns/tuples return bounded Pattern results. Python `pattern[index]` remains
+ordinary non-wrapping list indexing. Inputs/results are capped at 256 items
 with 16 nested levels. Portable Example 160 demonstrates cyclic selection.
 
 Version 0.4.127 adds bounded `Pattern.items()`, returning a materialized list

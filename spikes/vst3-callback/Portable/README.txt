@@ -1,4 +1,12 @@
- per-note effect from the installed-effect whitelist.
+0.4.190 adds bounded ordered per-note insert chains of up to two effects:
+`fx_event=P[("Chorus", "Greyhole"), None, ...]` applies each pair in order;
+seeded `PRand` can choose among chains. `fx_event_mix` is broadcast to each
+insert and other controls use its SynthDef defaults. This is PbindFx-inspired,
+not a complete PbindFx clone. See Example 230.
+
+0.4.189 adds a smoothed 0–1 `fx_mix` dry/wet control to Airwindows TapeDelay2
+and Echojam; 1.0 preserves the previous full-effect sound. It also allows seeded
+`PRand` to choose a per-note effect from the installed-effect whitelist.
 Example 229 demonstrates seeded random choices and per-note wetness.
 
 0.4.188 extends per-note `fx_event` selection to installed delay/reverb inserts:

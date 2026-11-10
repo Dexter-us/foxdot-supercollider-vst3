@@ -303,6 +303,8 @@ with tempfile.TemporaryDirectory() as directory:
             ("AirwindowsTapeDelay2", "AirwindowsEchojam")
              if example.name in ("105-airwindows-timevar-controls.py",
                                  "229-seeded-random-per-note-delays.py") else ())
+        if example.name == "230-pbindfx-style-ordered-note-effect-chains.py":
+            user_synth_names = ("Chorus", "Phaser", "Flanger", "Tremolo")
         wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],
@@ -483,6 +485,29 @@ with tempfile.TemporaryDirectory() as directory:
                                            capture_output=True, text=True)
     assert rejected_effect_index.returncode == 1
     assert "effect selection" in rejected_effect_index.stderr.lower()
+    ordered_chain_example = plugin / "Portable" / (
+        "230-pbindfx-style-ordered-note-effect-chains.py")
+    ordered_chain_wrapper = api_tests["make_wrapper"](
+        str(ordered_chain_example), str(result),
+        ("Chorus", "Phaser", "Flanger", "Tremolo"))
+    exec(ordered_chain_wrapper, {"__name__": "__main__"})
+    valid_ordered_chain = result.read_text()
+    chain_event = next(line for line in valid_ordered_chain.splitlines()
+                       if line.startswith("N\t"))
+    chain_fields = chain_event.split("\t")
+    assert chain_fields[28] == "2" and chain_fields[29] == "1"
+    for index, value in ((28, "3"), (29, "99"), (28, "0")):
+        invalid_fields = chain_fields.copy()
+        invalid_fields[index] = value
+        invalid_text = valid_ordered_chain.replace(
+            chain_event, "\t".join(invalid_fields), 1)
+        result.write_text(invalid_text)
+        rejected_chain = subprocess.run(
+            [str(binary), str(result), "4"], capture_output=True, text=True)
+        assert rejected_chain.returncode == 1, (
+            index, value, rejected_chain.stdout, rejected_chain.stderr)
+        assert "effect-chain" in rejected_chain.stderr.lower(), (
+            index, value, rejected_chain.stderr)
     swing_example = plugin / "Portable" / "93-clock-swing.py"
     swing_wrapper = api_tests["make_wrapper"](str(swing_example), str(result))
     exec(swing_wrapper, {"__name__": "__main__"})
