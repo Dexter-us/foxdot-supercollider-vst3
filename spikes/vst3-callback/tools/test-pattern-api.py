@@ -376,11 +376,13 @@ def run_error_script(script_text):
         exec(make_wrapper(source_path, result_path), wrapper_globals, wrapper_globals)
         return open(result_path, encoding='utf-8').read()
 
-def run_example(name, user_synth_names=(), include_gates=False):
+def run_example(name, user_synth_names=(), include_gates=False,
+                include_events=False):
     example_path = os.path.join(sys.argv[2], name)
     return run_script(open(example_path, encoding='utf-8').read(),
                       user_synth_names=user_synth_names,
-                      include_gates=include_gates)
+                      include_gates=include_gates,
+                      include_events=include_events)
 
 assert 'one-shot riser' in run_error_script('Clock.bpm = riser(8)\n')
 assert 'riser' in run_error_script('p1 >> saw([0], slide=riser(8))\n')
@@ -788,8 +790,8 @@ def every_test(p=1, i=0):
 everyRows, everyEvents = run_script(every_swim, include_events=True)
 assert len(everyRows) == 1 and len(everyEvents) == 8
 everyPitches = [int(event[3]) for event in everyEvents]
-assert everyPitches[0] == everyPitches[1] == everyPitches[2]
-assert everyPitches[3] != everyPitches[0]
+assert everyPitches[0] != everyPitches[1]
+assert everyPitches[1] == everyPitches[2] == everyPitches[3]
 assert everyPitches[4] == everyPitches[0]
 assert everyPitches[7] == everyPitches[3]
 every_offset_swim = """@swim(cycles=8, period=1)
@@ -805,26 +807,104 @@ _, everyOffsetEvents = run_script(
 everyOffsetPitches = [int(event[3]) for event in everyOffsetEvents]
 assert everyOffsetPitches[2] != everyOffsetPitches[0]
 assert everyOffsetPitches[3] == everyOffsetPitches[0]
+variable_timing_swim = """@swim(cycles=4, period=0.5)
+def variable_timing(p=0.5, i=0):
+    p1 >> saw([i], dur=0.25)
+    again(variable_timing, p=p * 2, i=i + 1)
+"""
+variableTimingRows, variableTimingEvents = run_script(
+    variable_timing_swim, include_events=True)
+assert len(variableTimingRows) == 1
+assert [float(event[1]) for event in variableTimingEvents] == [
+    0.0, 0.5, 1.5, 3.5]
+periods_timing_swim = """@swim(cycles=8, periods=P[0.5, 1, 0.25, 0.75])
+def periods_timing(p=0.5, i=0):
+    p1 >> saw([i], dur=0.125)
+    again(periods_timing, i=i + 1)
+"""
+periodsTimingRows, periodsTimingEvents = run_script(
+    periods_timing_swim, include_events=True)
+assert len(periodsTimingRows) == 1
+assert [float(event[1]) for event in periodsTimingEvents] == [
+    0.0, 0.5, 1.5, 1.75, 2.5, 3.0, 4.0, 4.25]
+die_swim = """@swim(cycles=4, period=1)
+def named_swim(p=1, i=0):
+    p1 >> saw([i], dur=1)
+    again(named_swim, p=p, i=i + 1)
+p2 >> sine([9], dur=1)
+@die
+def named_swim():
+    pass
+"""
+dieRows, dieEvents = run_script(die_swim, include_events=True)
+assert len(dieEvents) == 1 and int(dieEvents[0][3]) == 76, (
+    '@die must stop only the players owned by the named @swim')
+stale_die = """@swim(cycles=2, period=1)
+def replaced_swim(p=1, i=0):
+    p1 >> saw([i], dur=1)
+    again(replaced_swim, p=p, i=i + 1)
+p1 >> sine([7], dur=1)
+@die
+def replaced_swim():
+    pass
+"""
+staleDieError = run_error_script(stale_die)
+assert 'No current bounded @swim schedule named replaced_swim to stop' in \
+       staleDieError, staleDieError
+unknown_die = run_error_script("""@die
+def never_scheduled():
+    pass
+""")
+assert 'No current bounded @swim schedule named never_scheduled to stop' in \
+       unknown_die, unknown_die
+too_many_periods = ', '.join(['0.5'] * 33)
+for invalid_periods_script, expected_period_error in (
+        ("""@swim(cycles=2, periods=[])
+def empty_periods(p=1, i=0):
+    p1 >> saw([0], dur=1)
+""", '@swim periods must be a literal P[...]'),
+        ("""@swim(cycles=2, periods=P[0])
+def zero_period(p=1, i=0):
+    p1 >> saw([0], dur=1)
+""", '@swim periods must be a literal P[...]'),
+        ("""@swim(cycles=2, periods=P[4097])
+def oversized_period(p=1, i=0):
+    p1 >> saw([0], dur=1)
+""", '@swim periods must be a literal P[...]'),
+        ("""@swim(cycles=2, periods=P[p])
+def dynamic_period(p=1, i=0):
+    p1 >> saw([0], dur=1)
+""", '@swim periods must be a literal P[...]'),
+        ("""@swim(cycles=2, period=1, periods=P[0.5])
+def conflicting_periods(p=1, i=0):
+    p1 >> saw([0], dur=1)
+""", '@swim period and periods cannot be specified together'),
+        ('@swim(cycles=2, periods=P[' + too_many_periods + '])\n'
+         'def too_many_period_values(p=1, i=0):\n'
+         '    p1 >> saw([0], dur=1)\n',
+         '@swim periods must be a literal P[...]')):
+    periodError = run_compatibility_check(invalid_periods_script)
+    assert expected_period_error in periodError, periodError
 for invalid_every_script, expected_every_error in (
         ("""@swim(cycles=2, period=1)
 def invalid_every_zero(p=1, i=0):
     if every(0):
         p1 >> saw([0], dur=1)
     again(invalid_every_zero, p=p, i=i + 1)
-""", '@swim every() requires a literal count from 1 to 32'),
+""", '@swim every count must be from 1 to 32 cycles'),
         ("""@swim(cycles=2, period=1)
 def invalid_every_offset(p=1, i=0):
     if every(4, offset=4):
         p1 >> saw([0], dur=1)
     again(invalid_every_offset, p=p, i=i + 1)
-""", '@swim every() requires a literal count from 1 to 32'),
+""", '@swim every offset must be within its cycle count'),
         ("""@swim(cycles=2, period=1)
 def invalid_every_dynamic(p=1, i=0):
     if every(i):
         p1 >> saw([0], dur=1)
     again(invalid_every_dynamic, p=p, i=i + 1)
-""", '@swim every() requires a literal count from 1 to 32'),
-        ('every(4)\n', 'every() is supported only inside a bounded @swim')):
+""", '@swim every count must be from 1 to 32 cycles'),
+        ('every(4)\n', 'every() is available only inside an active @swim function')):
     everyError = run_error_script(invalid_every_script)
     assert expected_every_error in everyError, everyError
 previous_swim_context = namespace['_dexter_swim_context']
@@ -846,7 +926,7 @@ for swim_fragment in (
         'def every(count, offset=0):',
         'every() is supported only in a bounded @swim if condition.',
         '@swim every() requires a literal count from 1 to 32 and an offset within that count.',
-        'return context[\\'iteration\\'] % count == offset'):
+        "return context['iteration'] % count == offset"):
     if swim_fragment not in source:
         raise SystemExit('Bounded Sardine @swim cycle gates are missing: ' +
                          swim_fragment)
@@ -871,7 +951,11 @@ def invalid_on(p=1, i=0):
     assert expected_gate_error in gate_error, gate_error
 for swim_fragment in (
         'def again(function, p=None, i=None):',
-        'def _dexter_compile_swim(function, cycles=8, period=None):',
+        'def die(function):',
+        'def _dexter_compile_swim(function, cycles=8, period=None, periods=None):',
+        "'periods': period_values",
+        '@die must be the function’s only bare decorator.',
+        '_dexter_unregister_swim_player(player_index)',
         'def _swim_condition_test(self, node, depth=0, budget=None):',
         '@swim may assign each player only once per cycle',
         '@swim is limited to 256 expanded events per player',

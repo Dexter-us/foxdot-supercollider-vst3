@@ -534,9 +534,9 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                 self.add(node.lineno, '@swim accepts cycles and period as keywords.')
             seen = set()
             for keyword in decorator.keywords:
-                if keyword.arg not in {'cycles', 'period'} or keyword.arg in seen:
+                if keyword.arg not in {'cycles', 'period', 'periods'} or keyword.arg in seen:
                     self.add(keyword.lineno or node.lineno,
-                             '@swim supports only cycles and period once each.')
+                             '@swim supports only cycles, period, or periods once each.')
                     continue
                 seen.add(keyword.arg)
                 value = keyword.value
@@ -549,7 +549,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     if not valid:
                         self.add(value.lineno or node.lineno,
                                  '@swim cycles must be a literal integer from 1 to 32.')
-                else:
+                elif keyword.arg == 'period':
                     valid = (
                         isinstance(value, ast.Constant) and
                         isinstance(value.value, (int, float)) and
@@ -558,6 +558,35 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     if not valid:
                         self.add(value.lineno or node.lineno,
                                  '@swim period must be a literal from 0.001 to 4096 beats.')
+                else:
+                    if isinstance(value, ast.Subscript):
+                        literal = (
+                            isinstance(value.value, ast.Name) and
+                            value.value.id == 'P')
+                        values = (value.slice.elts
+                                  if isinstance(value.slice, ast.Tuple)
+                                  else [value.slice])
+                    elif isinstance(value, (ast.List, ast.Tuple)):
+                        literal = True
+                        values = value.elts
+                    else:
+                        literal = False
+                        values = []
+                    valid = (
+                        literal and 1 <= len(values) <= 32 and
+                        all(isinstance(item, ast.Constant) and
+                            isinstance(item.value, (int, float)) and
+                            not isinstance(item.value, bool) and
+                            0.001 <= item.value <= 4096.0
+                            for item in values))
+                    if not valid:
+                        self.add(
+                            value.lineno or node.lineno,
+                            '@swim periods must be a literal P[...] or list/tuple of 1 to 32 values from 0.001 to 4096 beats.')
+            if 'period' in seen and 'periods' in seen:
+                self.add(
+                    node.lineno,
+                    '@swim period and periods cannot be specified together.')
         return True
 
     def _swim_condition_literal(self, node):
@@ -689,6 +718,25 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         return 0
 
     def visit_FunctionDef(self, node):
+        die_decorators = [
+            decorator for decorator in node.decorator_list
+            if (isinstance(decorator, ast.Name) and decorator.id == 'die') or
+            (isinstance(decorator, ast.Call) and
+             isinstance(decorator.func, ast.Name) and
+             decorator.func.id == 'die')
+        ]
+        if die_decorators:
+            if (len(die_decorators) != 1 or
+                    len(node.decorator_list) != 1 or
+                    not isinstance(die_decorators[0], ast.Name)):
+                self.add(node.lineno,
+                         '@die must be the function’s only bare decorator.')
+            if node.col_offset != 0:
+                self.add(node.lineno, '@die functions must be defined at the top level.')
+            if self._current_swim is not None:
+                self.add(node.lineno, '@die cannot be nested inside @swim.')
+            # @die is a stop directive: Python does not execute this function body.
+            return
         if not self._swim_decorator(node):
             self.generic_visit(node)
             return
@@ -749,6 +797,13 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
         self._current_swim = previous
 
     def visit_AsyncFunctionDef(self, node):
+        if any(
+                (isinstance(decorator, ast.Name) and decorator.id == 'die') or
+                (isinstance(decorator, ast.Call) and
+                 isinstance(decorator.func, ast.Name) and
+                 decorator.func.id == 'die')
+                for decorator in node.decorator_list):
+            self.add(node.lineno, 'Async @die functions are not supported.')
         if self._swim_decorator(node):
             self.add(node.lineno, 'Async @swim functions are not supported.')
         self.generic_visit(node)
@@ -1508,6 +1563,14 @@ _dexter_random_counter = 0
 _dexter_default_seed = None
 _dexter_swing_seconds = 0.0
 _dexter_swim_context = None
+_dexter_swim_players_by_name = {}
+
+def _dexter_unregister_swim_player(player_index):
+    for swim_name in tuple(_dexter_swim_players_by_name):
+        players = _dexter_swim_players_by_name[swim_name]
+        players.discard(player_index)
+        if not players:
+            _dexter_swim_players_by_name.pop(swim_name, None)
 _NEW_SYNTHS = ('viola', 'nylon', 'arpy', 'dab', 'sawbass', 'dbass',
                'prophet', 'pads', 'pasha', 'ambi', 'sinepad', 'keys',
                'klank', 'feel', 'glass', 'soft', 'quin', 'space',
@@ -7547,6 +7610,8 @@ class Player:
                                           pattern.barOnMask)
         if _dexter_swim_context is not None:
             _dexter_record_swim_update(playerIndex)
+        else:
+            _dexter_unregister_swim_player(playerIndex)
         if playerIndex == 0:
             _dexter_default_touched = False
         self._currentPattern = pattern
@@ -8422,6 +8487,7 @@ class Player:
         return self
 
     def stop(self):
+        _dexter_unregister_swim_player(self.number - 1)
         _dexter_player_effect_chains[self.number - 1] = ()
         _dexter_player_effect_indices[self.number - 1] = -1
         _dexter_effect_control_values[self.number - 1] = (0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0)
@@ -8528,7 +8594,11 @@ def again(function, p=None, i=None):
         raise ValueError('again() must schedule the current @swim function')
     if context['next'] is not None:
         raise ValueError('an @swim cycle may call again() only once')
-    period = context['period'] if p is None else _dexter_swim_number(p, 'period')
+    if p is None and context['periods'] is not None:
+        period = context['periods'][
+            (context['cycle_index'] + 1) % len(context['periods'])]
+    else:
+        period = context['period'] if p is None else _dexter_swim_number(p, 'period')
     if not 0.001 <= period <= 4096.0:
         raise ValueError('@swim period must be between 0.001 and 4096 beats')
     iteration = context['iteration'] + 1 if i is None else i
@@ -8552,7 +8622,19 @@ def every(count, offset=0):
         raise ValueError('@swim every offset must be within its cycle count')
     return context['iteration'] % count == offset
 
-def _dexter_compile_swim(function, cycles=8, period=None):
+def die(function):
+    if not isinstance(function, _dexter_function_type):
+        raise TypeError('@die decorates a function')
+    swim_name = function.__name__
+    player_indices = _dexter_swim_players_by_name.pop(swim_name, None)
+    if not player_indices:
+        raise ValueError(
+            'No current bounded @swim schedule named ' + swim_name + ' to stop')
+    for player_index in sorted(player_indices):
+        _DEXTER_PLAYERS[player_index].stop()
+    return function
+
+def _dexter_compile_swim(function, cycles=8, period=None, periods=None):
     if not isinstance(function, _dexter_function_type):
         raise TypeError('@swim decorates a function')
     if isinstance(cycles, bool) or not isinstance(cycles, int) or not 1 <= cycles <= 32:
@@ -8564,8 +8646,27 @@ def _dexter_compile_swim(function, cycles=8, period=None):
     defaults = function.__defaults__ or ()
     if len(defaults) != 2:
         raise TypeError('@swim functions need p and i defaults, e.g. (p=1, i=0)')
-    initial_period = _dexter_swim_number(
-        defaults[0] if period is None else period, 'period')
+    if periods is not None:
+        if period is not None:
+            raise ValueError('@swim period and periods cannot be specified together')
+        if not isinstance(periods, (list, tuple)) or not 1 <= len(periods) <= 32:
+            raise ValueError('@swim periods must contain from 1 to 32 beat values')
+        period_values = []
+        for value in periods:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError('@swim periods must contain finite numeric beat values')
+            value = float(value)
+            if value != value or value in (float('inf'), float('-inf')):
+                raise ValueError('@swim periods must contain finite numeric beat values')
+            if not 0.001 <= value <= 4096.0:
+                raise ValueError('@swim periods must be from 0.001 to 4096 beats')
+            period_values.append(value)
+        period_values = tuple(period_values)
+        initial_period = period_values[0]
+    else:
+        period_values = None
+        initial_period = _dexter_swim_number(
+            defaults[0] if period is None else period, 'period')
     initial_iteration = defaults[1]
     if not 0.001 <= initial_period <= 4096.0:
         raise ValueError('@swim period must be between 0.001 and 4096 beats')
@@ -8580,6 +8681,8 @@ def _dexter_compile_swim(function, cycles=8, period=None):
     context = {
         'function': function,
         'period': initial_period,
+        'periods': period_values,
+        'cycle_index': 0,
         'iteration': initial_iteration,
         'offset': 0.0,
         'next': None,
@@ -8596,6 +8699,7 @@ def _dexter_compile_swim(function, cycles=8, period=None):
         for cycle in range(cycles):
             context['written'] = set()
             context['next'] = None
+            context['cycle_index'] = cycle
             function(p=context['period'], i=context['iteration'])
             cycle_end = context['offset'] + context['period']
             if cycle_end > 4096.0:
@@ -8615,6 +8719,8 @@ def _dexter_compile_swim(function, cycles=8, period=None):
 
     if not context['players']:
         raise ValueError('@swim must assign at least one supported player')
+    owned_players = set(
+        _dexter_swim_players_by_name.get(function.__name__, ()))
     for player_index, record in context['players'].items():
         if not record['events']:
             raise ValueError('@swim player assignments must produce at least one event')
@@ -8628,6 +8734,7 @@ def _dexter_compile_swim(function, cycles=8, period=None):
             raise ValueError('@swim expanded timeline exceeds 4096 beats')
         update[3] = record['events']
         update[-5] = 1
+        _dexter_unregister_swim_player(player_index)
         _dexter_updates[player_index] = tuple(update)
         for values, state in zip(_DEXTER_SWIM_SIDE_MAPS, record['side_state']):
             present, value = state
@@ -8641,12 +8748,15 @@ def _dexter_compile_swim(function, cycles=8, period=None):
             _dexter_sample_events[player_index] = list(record['sample_requests'])
             _dexter_sample_base_events[player_index] = list(record['sample_requests'])
         _DEXTER_PLAYERS[player_index]._baseUpdate = _dexter_updates[player_index]
+        owned_players.add(player_index)
+    _dexter_swim_players_by_name[function.__name__] = owned_players
     return function
 
-def swim(function=None, *, cycles=8, period=None):
+def swim(function=None, *, cycles=8, period=None, periods=None):
     if function is None:
-        return lambda target: _dexter_compile_swim(target, cycles, period)
-    return _dexter_compile_swim(function, cycles, period)
+        return lambda target: _dexter_compile_swim(
+            target, cycles, period, periods)
+    return _dexter_compile_swim(function, cycles, period, periods)
 
 class Group:
     def __init__(self, *players):

@@ -925,6 +925,18 @@ finite cycle indices by interval and phase, with literal counts from 1 to 32;
 it is allowed only in an @swim if condition. Example 222 changes a melodic
 phrase every fourth cycle.
 
+0.4.184 adds @swim(cycles=8, periods=P[0.5, 1, 0.25, 0.75]) as a shorthand
+for selecting a finite cycle-period pattern. It accepts 1–32 literal values
+from 0.001–4096 beats, cannot be combined with period=, and the full expanded
+timeline remains capped at 4096 beats. Existing again(function, p=...) timing
+continues to work. Example 223 demonstrates the shorthand.
+
+Sardine-style @die stops the bounded @swim schedule with the same function
+name. The stop function body is not executed. It only stops players still
+owned by that schedule; assigning a new pattern to a player clears its old
+ownership. Example 224 demonstrates the playable phrase and the separate
+stop snippet. It does not create or cancel an unbounded Python task.
+
 0.4.182 supports the existing Sardine-style chance, loaf and on controls inside
 finite @swim phrases. Each player's chance seed is held constant while its
 cycles are expanded; Seed.default still provides a repeatable seed between

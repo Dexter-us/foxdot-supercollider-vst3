@@ -46,7 +46,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.183' not in cmake_source or
+if ('VERSION 0.4.184' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3418,6 +3418,27 @@ assert len(everySwimEvents) == 64
 everySwimPitches = [int(event[3]) for event in everySwimEvents]
 assert everySwimPitches[0:4] == everySwimPitches[4:8]
 assert everySwimPitches[12:16] != everySwimPitches[0:4]
+variableSwimTiming = open(os.path.join(
+    os.path.abspath(sys.argv[2]),
+    '223-sardine-swim-variable-cycle-timing.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    variableSwimTiming), run_compatibility_check(variableSwimTiming)
+variableTimingRows, variableTimingEvents = run_script(
+    variableSwimTiming, include_events=True)
+assert len(variableTimingRows) == 1 and len(variableTimingEvents) == 16
+assert [float(event[1]) for event in variableTimingEvents[::2]] == [
+    0.0, 0.5, 1.5, 1.75, 2.5, 3.0, 4.0, 4.25]
+dieSwimExample = open(os.path.join(
+    os.path.abspath(sys.argv[2]),
+    '224-sardine-swim-die-stop.py'), encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    dieSwimExample), run_compatibility_check(dieSwimExample)
+dieSwimRows, dieSwimEvents = run_script(
+    dieSwimExample, include_events=True)
+assert len(dieSwimRows) == 1 and len(dieSwimEvents) == 32
+assert [float(event[1]) for event in dieSwimEvents[::2]] == [
+    0.0, 0.5, 1.5, 1.75, 2.5, 3.0, 4.0, 4.25,
+    5.0, 5.5, 6.5, 6.75, 7.5, 8.0, 9.0, 9.25]
 repeatableSwimGate = (
     'Seed.default = 221\n'
     '@swim(cycles=4, period=1)\n'

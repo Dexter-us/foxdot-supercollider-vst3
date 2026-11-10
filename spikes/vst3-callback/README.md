@@ -803,6 +803,25 @@ limited to 1–32 and `offset` to `0..n-1`. The helper is valid only in an
 existing finite event list, so it creates no persistent Python loop or second
 scheduler. Example 222 demonstrates a four-cycle melodic variation.
 
+## Variable `@swim` cycle timing (0.4.184)
+
+Cycle timing is already adjustable through `again(function, p=next_period)`.
+For a repeated schedule, `@swim(cycles=8, periods=P[0.5, 1, 0.25, 0.75])`
+selects the next cycle's period from the finite pattern; `again(function,
+i=i+1)` advances it. `periods` accepts a literal pattern/list/tuple of 1–32
+values, each 0.001–4096 beats. It cannot be combined with `period=`, and the
+expanded timeline remains capped at 4096 beats. Example 223 demonstrates the
+shorthand.
+
+Sardine's `@die` stops a named swimming function. The embedded version adds a
+bounded stop directive: run `@die` on the same function name to stop the
+players still owned by that compiled `@swim`. The stop function body is not
+executed. A later ordinary assignment to a player clears that ownership, so
+an old `@die` cannot stop a newer unrelated pattern. Example 224 shows the
+playable phrase and the separate stop snippet. Because `@swim` is expanded to
+a finite event list in the VST, `@die` stops those player schedules; it does
+not create or terminate a persistent Python task.
+
 ## Ordered player-effect chains (0.4.137)
 
 `effects=[("Phaser", {"fx_mix": 0.5}), ("Tremolo", {"fx_rate": 5})]`
