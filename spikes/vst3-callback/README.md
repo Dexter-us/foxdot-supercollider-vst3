@@ -1,10 +1,19 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.187 adds bounded per-note `fx_event` selection for Chorus, Flanger,
-Phaser, and Tremolo with a `fx_event_mix` pattern. Each overlapping note voice
-gets its own stereo insert graph. This is PbindFx-inspired rather than a full
-PbindFx implementation; reverbs and delays remain player-wide so their tails
-are shared and are not truncated when notes end. Example 227 demonstrates it.
+Version 0.4.188 extends bounded per-note `fx_event` selection to installed
+delay and reverb inserts (JPverb, Greyhole, LimutPingPong, LimutShimmer, and
+LimutGatedVerb). Each overlapping
+note gets an independent stereo insert. Its tail runs on zero input until it
+stays below the silence threshold for an effect-specific grace period, or the
+12-second hard cap; at most four tails per player are retained, with the oldest
+retired if another is needed. Example 228 demonstrates per-note reverb and
+ping-pong delay. This remains PbindFx-inspired, not a full PbindFx clone.
+
+The sclang bridge and embedded World now share the 2048-channel audio-bus
+layout. The previous 0.4.187 smoke test exposed a stale 1024-bus validation
+limit that rejected the bridge's first free bus (1338), before sclang ran.
+Version 0.4.187 adds bounded per-note modulation effects (Chorus, Flanger,
+Phaser, and Tremolo) with `fx_event_mix`; see Example 227.
 The script worker state from 0.4.186 remains visible in the editor: Run becomes
 a disabled Busy button while a request is processing, and duplicate submissions
 are reported as in-progress instead of being presented as compatibility errors.

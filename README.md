@@ -2,6 +2,15 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.188 lets `fx_event` select installed delay and reverb SynthDefs per
+note, including JPverb, Greyhole, and selected Limut effects.
+Each note has its own stereo insert graph; tails process zero input until quiet
+or a 12-second cap, with at most four tails per player. It also fixes the sclang
+audio-bus range mismatch exposed by 0.4.187's Windows integration test. Example
+228 demonstrates the per-note delay/reverb selector. Airwindows TapeDelay2 and
+Echojam remain player-wide inserts because they do not expose the wet/dry `fx_mix`
+control used by the per-note selector.
+
 Version 0.4.186 makes the script worker's state visible: Run changes to a
 disabled Busy button until the current request finishes, and duplicate Run
 attempts receive a wait-for-ready message rather than a misleading compatibility

@@ -202,7 +202,7 @@ void Runtime::submit(const std::filesystem::path& runtimeRoot,
         return;
     }
     if (!std::isfinite(sampleRate) || sampleRate <= 0.0 ||
-        firstUserAudioBus < 2 || firstUserAudioBus >= 1024) {
+        !validFirstUserAudioBus(firstUserAudioBus)) {
         setStatus("The embedded SuperCollider engine parameters are invalid.");
         return;
     }
@@ -435,7 +435,8 @@ bool Runtime::startProcess(const std::filesystem::path& runtimeRoot,
         "opts.reservedNumAudioBusChannels = " +
         std::to_string(firstUserAudioBus - 2) +
         ";\n"
-        "opts.numAudioBusChannels = 1024;\n"
+        "opts.numAudioBusChannels = " +
+        std::to_string(dexter::sclang::kAudioBusChannelCount) + ";\n"
         "opts.sampleRate = " + std::to_string(sampleRate) + ";\n"
         "opts.maxLogins = 1;\n"
         "opts.initialNodeID = 16777216;\n"

@@ -1,8 +1,16 @@
-0.4.187 adds bounded per-note `fx_event` selection for Chorus, Flanger, Phaser,
-and Tremolo with a `fx_event_mix` pattern. Each overlapping note voice gets its
-own stereo insert graph. This is PbindFx-inspired, not a full PbindFx
-implementation. Delays and reverbs remain player-wide so their tails are shared
-and are not cut off at note boundaries. See Example 227.
+0.4.188 extends per-note `fx_event` selection to installed delay/reverb inserts:
+JPverb, Greyhole, LimutPingPong, LimutShimmer, and LimutGatedVerb. Effects have independent stereo graphs per
+note. Tails receive zero input and decay until below the silence threshold for
+their grace period, or until the 12-second cap. No more than four event-effect
+tails per player are retained; starting a fifth retires the oldest. See Example
+228. The sclang bridge now uses the same 2048 audio-bus layout as the embedded
+engine; 0.4.187's stale 1024-bus guard rejected bus 1338 before sclang could run.
+Airwindows TapeDelay2 and Echojam stay player-wide: their SynthDefs do not expose
+the `fx_mix` control required for per-note wet/dry selection.
+
+0.4.187 added bounded per-note `fx_event` selection for Chorus, Flanger, Phaser,
+and Tremolo with an `fx_event_mix` pattern. This is PbindFx-inspired, not a full
+PbindFx implementation. See Example 227.
 
 0.4.186 makes the editor show a disabled Busy button while the script worker
 processes a request, then restores Run when it finishes. PShift is a per-player

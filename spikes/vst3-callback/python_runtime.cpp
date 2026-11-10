@@ -1352,9 +1352,11 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         if (not isinstance(eventValue, ast.Constant) or
                                 not isinstance(eventValue.value, str) or
                                 eventValue.value not in {
-                                    'Chorus', 'Flanger', 'Phaser', 'Tremolo'}):
+                                    'Chorus', 'Flanger', 'Phaser', 'Tremolo',
+                                    'JPverb', 'Greyhole', 'LimutPingPong',
+                                    'LimutShimmer', 'LimutGatedVerb'}):
                             self.add(eventEffect.lineno or node.lineno,
-                                     'fx_event= supports only Chorus, Flanger, Phaser, Tremolo, or None.')
+                                     'fx_event= supports installed modulation, delay, and reverb inserts, or None.')
                         elif eventValue.value not in _USER_SYNTH_NAMES:
                             self.add(eventValue.lineno or eventEffect.lineno,
                                      'fx_event requires the matching player-effect SynthDef in Portable/SynthDefs.')
@@ -1552,7 +1554,9 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                     isinstance(item, ast.Constant) and
                     (item.value is None or
                      isinstance(item.value, str) and item.value in {
-                         'Chorus', 'Flanger', 'Phaser', 'Tremolo'})
+                         'Chorus', 'Flanger', 'Phaser', 'Tremolo',
+                         'JPverb', 'Greyhole', 'LimutPingPong',
+                         'LimutShimmer', 'LimutGatedVerb'})
                     for item in items)
                 if not valid_sample_symbols and not valid_event_effects:
                     self.add(node.lineno, 'P sample-symbol literals require one sample symbol or a single-space rest per item.')
@@ -7088,7 +7092,10 @@ def _player_effect_chain(effect, effects, controls):
         result.append((_dexter_user_synth_names.index(name), values, variables))
     return result
 
-_NOTE_EVENT_EFFECT_NAMES = {'Chorus', 'Flanger', 'Phaser', 'Tremolo'}
+_NOTE_EVENT_EFFECT_NAMES = {
+    'Chorus', 'Flanger', 'Phaser', 'Tremolo',
+    'JPverb', 'Greyhole',
+    'LimutPingPong', 'LimutShimmer', 'LimutGatedVerb'}
 
 def _normalize_note_event_effects(value):
     if value is None:
@@ -7103,7 +7110,7 @@ def _normalize_note_event_effects(value):
             continue
         if not isinstance(name, str) or name not in _NOTE_EVENT_EFFECT_NAMES:
             raise ValueError(
-                'fx_event supports only Chorus, Flanger, Phaser, Tremolo, or None')
+                'fx_event supports installed modulation, delay, and reverb inserts, or None')
         if name not in _dexter_user_synth_names:
             raise ValueError(
                 'fx_event effect ' + name +

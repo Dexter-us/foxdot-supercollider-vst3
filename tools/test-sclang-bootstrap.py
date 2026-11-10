@@ -52,11 +52,13 @@ def main():
         generator = tmp / "generate.cpp"
         generator.write_text(
             '#include <iostream>\n#include <string>\n#include <cstdlib>\n'
+            '#include "sclang_runtime_limits.h"\n'
             'int main(int, char** argv) { int serverPort=std::atoi(argv[1]); '
-            'int firstUserAudioBus=512; double sampleRate=48000; std::cout << '
+            'int firstUserAudioBus=1626; double sampleRate=48000; std::cout << '
             + expression + "; }\n"
         )
-        subprocess.run(["g++", "-std=c++17", str(generator), "-o", str(tmp / "generate")],
+        subprocess.run(["g++", "-std=c++17", "-I", str(CPP), str(generator),
+                        "-o", str(tmp / "generate")],
                        check=True)
         fixture_log = tmp / "fixture.log"
         language_log = tmp / "sclang.log"
@@ -75,6 +77,9 @@ def main():
             bootstrap = tmp / "bootstrap.scd"
             bootstrap.write_bytes(subprocess.check_output(
                 [str(tmp / "generate"), str(server_port)]))
+            bootstrap_text = bootstrap.read_text()
+            assert "opts.numAudioBusChannels = 2048;" in bootstrap_text
+            assert "opts.reservedNumAudioBusChannels = 1624;" in bootstrap_text
             config = tmp / "sclang.yaml"
             config.write_text(
                 f'includePaths:\n  - "{classes}"\nexcludePaths: []\nexcludeDefaultPaths: true\n')

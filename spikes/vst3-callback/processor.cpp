@@ -32,6 +32,7 @@
 #include "master_output_gain.h"
 #include "native_player_effects.h"
 #include "foxdot_note_effects.h"
+#include "event_effect_tail.h"
 #include "foxdot_bitcrusher.h"
 #include "player_effect_chain.h"
 #include "win32_code_editor.h"
@@ -1479,7 +1480,9 @@ private:
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
-    static constexpr std::size_t kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1;
+    static constexpr std::size_t kVoiceSlotsPerPlayer =
+        kMaxPolyphony * 2 + 1 +
+        dexter::kMaxEventEffectTailVoicesPerPlayer;
     static constexpr std::size_t kAudioVoiceCount =
         kPlayerCount * kVoiceSlotsPerPlayer;
     static constexpr std::size_t kMaxCachedSynthGraphsPerVoice = 2;
@@ -1542,7 +1545,8 @@ private:
         static_cast<int>(kPlayerCount * kMaxPlayerEffectChain * 2);
     static constexpr int kEventEffectOutputBusBase =
         kEventEffectInputBusBase + static_cast<int>(kAudioVoiceCount * 2);
-    static constexpr int kNumAudioBusChannels = 2048;
+    static constexpr int kNumAudioBusChannels =
+        dexter::sclang::kAudioBusChannelCount;
     // Present plugin-reserved buses as the ServerOptions output prefix to
     // sclang's client-side Bus allocator. User Bus.audio allocations then begin
     // after the VST's voice/reverb/effect-chain buses instead of overlapping.
@@ -2042,6 +2046,7 @@ private:
         bool userSynthGateReleased = false;
         bool releasing = false;
         bool reverbTail = false;
+        dexter::EventEffectTailState eventEffectTail;
         std::uint64_t releaseStartSample = 0;
         std::uint64_t releaseEndSample = 0;
         float releaseStartGain = 0.0f;
@@ -2623,6 +2628,51 @@ private:
         voice.releaseEndSample =
             tailStartSample + envelopeSamples(kReverbSendReleaseSeconds);
         voice.releaseStartGain = 0.0f;
+    }
+
+    bool beginNoteEventEffectTail(AudioVoice& voice,
+                                  std::uint64_t tailStartSample) {
+        if (!voice.eventEffectGraph || voice.eventEffectUserSynthIndex < 0 ||
+            static_cast<std::size_t>(voice.eventEffectUserSynthIndex) >=
+                userSynthDefinitions_.size() ||
+            voice.playerIndex < 0 ||
+            voice.playerIndex >= static_cast<int>(kPlayerCount))
+            return false;
+        const auto& definition = userSynthDefinitions_[
+            static_cast<std::size_t>(voice.eventEffectUserSynthIndex)];
+        auto tail = dexter::beginEventEffectTail(
+            definition.name, tailStartSample, sampleRate_);
+        if (!tail.active)
+            return false;
+
+        const auto playerBegin =
+            audioVoices_.begin() +
+            static_cast<std::ptrdiff_t>(voice.playerIndex) *
+                static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer);
+        const auto playerEnd =
+            playerBegin + static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer);
+        std::size_t activeTails = 0;
+        AudioVoice* oldestTail = nullptr;
+        for (auto it = playerBegin; it != playerEnd; ++it) {
+            if (!it->eventEffectTail.active)
+                continue;
+            ++activeTails;
+            if (!oldestTail ||
+                it->eventEffectTail.startSample <
+                    oldestTail->eventEffectTail.startSample)
+                oldestTail = &*it;
+        }
+        if (activeTails >= dexter::kMaxEventEffectTailVoicesPerPlayer &&
+            oldestTail)
+            deactivateAudioVoice(*oldestTail);
+
+        if (voice.activeSynth)
+            Node_SetRun(&voice.activeSynth->mNode, 0);
+        voice.midiNote = -1;
+        voice.releasing = true;
+        voice.reverbTail = false;
+        voice.eventEffectTail = tail;
+        return true;
     }
 
     Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
@@ -3627,12 +3677,19 @@ private:
         }
 
         for (auto& voice : audioVoices_) {
-            if (voice.reverbTail && voice.releaseEndSample <= blockStart)
+            if (voice.eventEffectTail.active &&
+                voice.eventEffectTail.finished)
                 deactivateAudioVoice(voice);
+            else if (voice.reverbTail &&
+                     voice.releaseEndSample <= blockStart) {
+                if (!beginNoteEventEffectTail(voice, blockStart))
+                    deactivateAudioVoice(voice);
+            }
             else if (!voice.releasing && voice.midiNote >= 0 &&
                      voice.endSample <= blockStart)
                 beginReverbTail(voice, blockStart);
             else if (voice.releasing && !voice.reverbTail &&
+                     !voice.eventEffectTail.active &&
                      voice.releaseEndSample <= blockStart)
                 beginReverbTail(voice, blockStart);
         }
@@ -4129,7 +4186,10 @@ private:
 
     static bool isNoteEventEffectName(std::string_view name) {
         return name == "Chorus" || name == "Flanger" ||
-               name == "Phaser" || name == "Tremolo";
+               name == "Phaser" || name == "Tremolo" ||
+               name == "JPverb" || name == "Greyhole" ||
+               name == "LimutPingPong" ||
+               name == "LimutShimmer" || name == "LimutGatedVerb";
     }
 
     static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
@@ -5187,14 +5247,16 @@ private:
                 voiceIndex * 2;
             for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
                 const auto sample = static_cast<std::size_t>(sampleIndex);
-                const auto sourceOffset =
-                    sourceBus * eventEffectBusLength + sample;
-                const float left = world_->mAudioBus[sourceOffset];
-                const float right = voice.stereoUserSynth
-                    ? world_->mAudioBus[(sourceBus + 1) *
-                                            eventEffectBusLength +
-                                        sample]
-                    : left;
+                const auto sourceOffset = sourceBus * eventEffectBusLength + sample;
+                const float left = voice.eventEffectTail.active
+                    ? 0.0f : world_->mAudioBus[sourceOffset];
+                const float right = voice.eventEffectTail.active
+                    ? 0.0f
+                    : voice.stereoUserSynth
+                          ? world_->mAudioBus[(sourceBus + 1) *
+                                                  eventEffectBusLength +
+                                              sample]
+                          : left;
                 world_->mAudioBus[inputBus * eventEffectBusLength + sample] =
                     left;
                 world_->mAudioBus[(inputBus + 1) * eventEffectBusLength +
@@ -5203,6 +5265,26 @@ private:
             world_->mAudioBusTouched[inputBus] = world_->mBufCounter;
             world_->mAudioBusTouched[inputBus + 1] = world_->mBufCounter;
             Graph_Calc(voice.eventEffectGraph);
+            if (voice.eventEffectTail.active) {
+                const auto outputBus =
+                    static_cast<std::size_t>(kEventEffectOutputBusBase) +
+                    voiceIndex * 2;
+                double energy = 0.0;
+                for (int sampleIndex = 0; sampleIndex < kSCBlockSize;
+                     ++sampleIndex) {
+                    const auto sample = static_cast<std::size_t>(sampleIndex);
+                    const float left = world_->mAudioBus[
+                        outputBus * eventEffectBusLength + sample];
+                    const float right = world_->mAudioBus[
+                        (outputBus + 1) * eventEffectBusLength + sample];
+                    energy += static_cast<double>(left) * left +
+                              static_cast<double>(right) * right;
+                }
+                const float rms = static_cast<float>(
+                    std::sqrt(energy / (2.0 * kSCBlockSize)));
+                dexter::updateEventEffectTail(
+                    voice.eventEffectTail, rms, blockStart, kSCBlockSize);
+            }
         }
         diskIO_.renderBlock();
         for (auto& voice : audioVoices_) {
@@ -5241,7 +5323,9 @@ private:
             std::size_t contributingVoices = 0;
             for (std::size_t voiceIndex = 0; voiceIndex < audioVoices_.size(); ++voiceIndex) {
                 auto& voice = audioVoices_[voiceIndex];
-                const float envelope = voiceEnvelopeAt(voice, absoluteSample);
+                const bool eventEffectTail = voice.eventEffectTail.active;
+                const float envelope = eventEffectTail
+                    ? 1.0f : voiceEnvelopeAt(voice, absoluteSample);
                 if (envelope <= 0.0f || voice.velocity <= 0 || voice.playerIndex < 0 ||
                     voice.playerIndex >= static_cast<int>(kPlayerCount))
                     continue;
@@ -5447,22 +5531,26 @@ private:
                     ? static_cast<double>(voice.sustainEndSample -
                                           voice.startSample)
                     : 0.0;
-                const double effectProgress = effectDuration > 0.0
+                const double effectProgress = !eventEffectTail &&
+                    effectDuration > 0.0
                     ? static_cast<double>(absoluteSample - voice.startSample) /
                           effectDuration
                     : 1.0;
-                const float noteEffectGain = dexter::foxDotNoteEffectGain(
-                    effectProgress, voice.slide, voice.slideFrom,
-                    voice.slideDelay, voice.bend, voice.bendDelay);
-                const float chopGain = dexter::foxDotChopGain(
-                    effectProgress, voice.chop);
-                const float coarseGain = dexter::foxDotCoarseGain(
-                    effectProgress, voice.coarse);
+                const float noteEffectGain = eventEffectTail ? 1.0f :
+                    dexter::foxDotNoteEffectGain(
+                        effectProgress, voice.slide, voice.slideFrom,
+                        voice.slideDelay, voice.bend, voice.bendDelay);
+                const float chopGain = eventEffectTail ? 1.0f :
+                    dexter::foxDotChopGain(effectProgress, voice.chop);
+                const float coarseGain = eventEffectTail ? 1.0f :
+                    dexter::foxDotCoarseGain(effectProgress, voice.coarse);
                 const double elapsedSeconds =
                     static_cast<double>(absoluteSample - voice.startSample) /
                     sampleRate_;
-                const auto spinGains = dexter::foxDotSpinGains(
+                auto spinGains = dexter::foxDotSpinGains(
                     elapsedSeconds, voice.spin);
+                if (eventEffectTail)
+                    spinGains = {1.0f, 1.0f};
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
                 const float noteGain = envelope * velocity * voice.amplitude *
                     noteEffectGain * chopGain * coarseGain;
@@ -5784,9 +5872,15 @@ private:
 
         const auto blockEnd = blockStart + static_cast<std::uint64_t>(kSCBlockSize);
         for (auto& voice : audioVoices_) {
-            if (voice.reverbTail && voice.releaseEndSample <= blockEnd) {
+            if (voice.eventEffectTail.active &&
+                voice.eventEffectTail.finished) {
                 deactivateAudioVoice(voice);
+            } else if (voice.reverbTail &&
+                       voice.releaseEndSample <= blockEnd) {
+                if (!beginNoteEventEffectTail(voice, blockEnd))
+                    deactivateAudioVoice(voice);
             } else if (voice.releasing && !voice.reverbTail &&
+                       !voice.eventEffectTail.active &&
                        voice.releaseEndSample <= blockEnd) {
                 // SynthDef reverb sends use a control-rate Lag. Keep the graph alive
                 // after its voice envelope reaches zero so a later block can set the

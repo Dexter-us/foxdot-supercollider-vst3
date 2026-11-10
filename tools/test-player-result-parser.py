@@ -280,6 +280,9 @@ with tempfile.TemporaryDirectory() as directory:
              if example.name == "202-custom-synth-live-controls.py" else
               ("Chorus", "Flanger", "Phaser")
               if example.name == "227-pbindfx-style-event-effects.py" else
+              ("JPverb", "Greyhole", "LimutPingPong",
+               "LimutShimmer", "LimutGatedVerb")
+              if example.name == "228-pbindfx-style-delay-reverb-tails.py" else
              ("JazzKitKick", "JazzKitClosedHat", "JazzKitBrushTap",
               "JazzKitBrushSweep", "JazzKitRide", "JazzKitCrossStick",
               "JazzKitRackTom", "JazzKitFloorTom")

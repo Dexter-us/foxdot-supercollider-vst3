@@ -15,6 +15,6 @@ p1 >> pluck(
 )
 
 # Existing player-wide effect chains remain available and are still shared
-# across the player's summed notes. Per-event selection is limited to these
-# short modulation effects; delays and reverbs keep their player-wide tails.
+# across the player's summed notes. Example 228 also demonstrates per-event
+# delay/reverb selection with bounded independent tails.
 p2 >> triangle(P[0, 3, 5, 7], dur=2, sus=1.8, oct=3, amp=0.12)

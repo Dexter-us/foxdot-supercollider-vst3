@@ -28,6 +28,9 @@ processor_source = read_cpp_source(processor_path)
 runtime_header_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'python_runtime.h')
 runtime_header_source = read_cpp_source(runtime_header_path)
+sclang_runtime_path = os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[1])), 'sclang_runtime_win32.cpp')
+sclang_runtime_source = read_cpp_source(sclang_runtime_path)
 sardine_gate_header_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'sardine_pattern_gates.h')
 sardine_gate_header_source = read_cpp_source(sardine_gate_header_path)
@@ -46,7 +49,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.187' not in cmake_source or
+if ('VERSION 0.4.188' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -2999,7 +3002,12 @@ def test_embedded_synthdef():
         'C++ must reject every filename that collides with a built-in FoxDot synth'
     assert ('len(_DEXTER_BUILTIN_SYNTHS) +' in api and
             '_dexter_user_synth_names.index(pattern.synth)' in api)
-    assert 'kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1' in processor_source
+    assert ('kVoiceSlotsPerPlayer =' in processor_source and
+            'dexter::kMaxEventEffectTailVoicesPerPlayer' in processor_source)
+    assert 'beginNoteEventEffectTail' in processor_source
+    assert 'updateEventEffectTail' in processor_source
+    assert 'kAudioBusChannelCount' in processor_source
+    assert 'validFirstUserAudioBus(firstUserAudioBus)' in sclang_runtime_source
     assert 'kPlayerCount * kVoiceSlotsPerPlayer' in processor_source
     assert 'kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice' in processor_source
     assert 'kPlayerCount * (kReverbGraphCount + 1) +' in processor_source
@@ -4274,7 +4282,10 @@ for filename in os.listdir(sys.argv[2]):
             if filename in ('197-limut-shifter-shimmer.py',
                             '198-limut-gated-reverb.py') else
             ('Chorus', 'Flanger', 'Phaser')
-            if filename == '227-pbindfx-style-event-effects.py' else ())
+            if filename == '227-pbindfx-style-event-effects.py' else
+            ('JPverb', 'Greyhole', 'LimutPingPong',
+             'LimutShimmer', 'LimutGatedVerb')
+            if filename == '228-pbindfx-style-delay-reverb-tails.py' else ())
         if filename == '201-sclork-insert-effects.py':
             example_names = (
                 'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
@@ -4769,9 +4780,9 @@ eventEffectCompatibility = run_compatibility_check(
 assert 'No unsupported constructs detected' in eventEffectCompatibility
 assert 'requires the matching player-effect SynthDef' in run_compatibility_check(
     'p1 >> pluck(P[0, 4], fx_event=P["Chorus", None])\n')
-assert 'supports only Chorus, Flanger, Phaser, Tremolo, or None' in \
+assert 'supports installed modulation, delay, and reverb inserts' in \
     run_compatibility_check(
-        'p1 >> pluck(P[0], fx_event="AirwindowsEchojam")\n',
+        'p1 >> pluck(P[0], fx_event="NotAnEffect")\n',
         ('AirwindowsEchojam',))
 assert 'fx_event_mix values must be from 0 to 1' in run_error_script(
     'p1 >> pluck(P[0], fx_event="Chorus", fx_event_mix=1.1)\n',
@@ -4804,6 +4815,21 @@ eventEffectExampleRows, eventEffectExampleEvents = run_script(
     include_events=True, user_synth_names=('Chorus', 'Flanger', 'Phaser'))
 assert len(eventEffectExampleRows) == 2
 assert len(eventEffectExampleEvents) == 12
+eventTailNames = (
+    'JPverb', 'Greyhole', 'LimutPingPong', 'LimutShimmer',
+    'LimutGatedVerb')
+eventTailExample = open(os.path.join(
+    sys.argv[2], '228-pbindfx-style-delay-reverb-tails.py'),
+    encoding='utf-8').read()
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    eventTailExample, eventTailNames)
+eventTailRows, eventTailEvents = run_script(
+    eventTailExample, include_events=True, user_synth_names=eventTailNames)
+assert len(eventTailRows) == 2
+assert len(eventTailEvents) == 12
+assert [row[20] for row in eventTailEvents[:5]] == ['0', '1', '2', '3', '4']
+assert [float(row[21]) for row in eventTailEvents[:4]] == [
+    0.18, 0.25, 0.2, 0.28]
 subprocess.run([sys.executable, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     'UGens', 'SpaceReverbs', 'test-examples.py')], check=True)

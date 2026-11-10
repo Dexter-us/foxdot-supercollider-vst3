@@ -7,6 +7,8 @@
 #include <string>
 #include <thread>
 
+#include "sclang_runtime_limits.h"
+
 namespace dexter::sclang {
 
 // Probes a loopback UDP port for the private host-driven World bridge.
