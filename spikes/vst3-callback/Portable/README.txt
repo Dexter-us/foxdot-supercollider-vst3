@@ -1,3 +1,8 @@
+0.4.186 makes the editor show a disabled Busy button while the script worker
+processes a request, then restores Run when it finishes. PShift is a per-player
+note control; its slider appears only for a selected player whose script uses
+`pshift`.
+
 0.4.172 replaces the noise-forward JazzKitKick with a warmer low kick and
 retains the earlier texture as JazzKitBrushKick. Find the two complete-kit demos
 at Portable/217-jazz-kit-core-groove.py and Portable/218-jazz-kit-kick-compare.py.

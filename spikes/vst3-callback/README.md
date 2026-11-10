@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.186 makes the script worker state visible in the editor: Run becomes
+a disabled Busy button while a request is processing, and duplicate submissions
+are reported as in-progress instead of being presented as compatibility errors.
+PShift is treated as a per-player note control; its slider appears only when a
+selected player has `pshift` enabled.
+
 Version 0.4.162 adds bounded `.controls` sidecars and live Players-panel
 sliders for custom instrument SynthDefs. The bundled CustomPluck exposes
 brightness and a sub-octave blend with zero defaults that preserve its prior

@@ -750,7 +750,8 @@ public:
             return "Code is limited to 64 KB in this prototype.";
         std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
         if (scriptRunning_.load(std::memory_order_acquire))
-            return "The script worker is busy; wait for it to finish, then check again.";
+            return "The Python script worker is still processing the previous Run. "
+                   "Wait until the Run button is ready, then try again.";
         if (scriptThread_.joinable())
             scriptThread_.join();
 
@@ -772,7 +773,8 @@ public:
     void submitCode(const std::string& source) override {
         std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
         if (scriptRunning_.load(std::memory_order_acquire)) {
-            setEditorStatus("The script worker is still preparing the previous request.");
+            setEditorStatus("The Python script worker is still processing the previous Run. "
+                            "Wait until the Run button is ready, then try again.");
             return;
         }
         if (scriptThread_.joinable())
@@ -1092,6 +1094,10 @@ public:
         }
     }
 
+    bool scriptWorkerBusy() override {
+        return scriptRunning_.load(std::memory_order_acquire);
+    }
+
     void stopPattern() override {
         scriptGeneration_.fetch_add(1, std::memory_order_acq_rel);
         stopRequested_.store(true, std::memory_order_release);
@@ -1352,7 +1358,7 @@ public:
             if (!pattern.active ||
                 !editorPlayerControlAvailable(
                     control, pattern.playerEffectCount > 0,
-                    pattern.bitsEnabled))
+                    pattern.bitsEnabled, pattern.pshiftEnabled))
                 return;
             auto& pending = pendingEditorControls_[player];
             switch (control) {

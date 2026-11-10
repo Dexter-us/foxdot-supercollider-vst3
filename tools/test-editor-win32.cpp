@@ -19,6 +19,7 @@ struct Host final : ICodeEditorHost {
     std::string python = "p1 >> sine(0)\r\n";
     std::string sc = "// independent SC document\r\n1 + 1;\r\n";
     int submissions = 0;
+    bool workerBusy = false;
     std::string editorSource() override { return python; }
     bool hasEditorSource() override { return true; }
     void setEditorSource(const std::string& value) override { python = value; }
@@ -26,6 +27,7 @@ struct Host final : ICodeEditorHost {
     bool hasSuperColliderSource() override { return true; }
     void setSuperColliderSource(const std::string& value) override { sc = value; }
     std::string checkCompatibility(const std::string&) override { return ""; }
+    bool scriptWorkerBusy() override { return workerBusy; }
     void submitCode(const std::string&) override { ++submissions; }
     void stopPattern() override {}
     std::string editorStatus() override { return "Idle, engine not started"; }
@@ -49,6 +51,14 @@ static std::string text(HWND editor) {
     std::string result(static_cast<std::size_t>(length) + 1, '\0');
     SendMessageW(editor, SCI_GETTEXT, result.size(),
                  reinterpret_cast<LPARAM>(result.data()));
+    result.resize(static_cast<std::size_t>(length));
+    return result;
+}
+
+static std::wstring windowText(HWND control) {
+    const int length = GetWindowTextLengthW(control);
+    std::wstring result(static_cast<std::size_t>(length) + 1, L'\0');
+    GetWindowTextW(control, result.data(), length + 1);
     result.resize(static_cast<std::size_t>(length));
     return result;
 }
@@ -86,6 +96,18 @@ int main() {
             require(window != nullptr, "Main editor window is missing");
             require(text(GetDlgItem(window, 101)) == expectedPython, "Python document changed on reopen");
             require(GetDlgItem(window, 102) != nullptr, "Run button is missing");
+            host.workerBusy = true;
+            SendMessageW(window, WM_TIMER, 1, 0);
+            require(!IsWindowEnabled(GetDlgItem(window, 102)),
+                    "Run stayed enabled while the script worker was busy");
+            require(windowText(GetDlgItem(window, 102)) == L"Busy",
+                    "Run did not show a busy indicator while processing");
+            host.workerBusy = false;
+            SendMessageW(window, WM_TIMER, 1, 0);
+            require(IsWindowEnabled(GetDlgItem(window, 102)),
+                    "Run did not re-enable after the script worker became idle");
+            require(windowText(GetDlgItem(window, 102)) == L"Run",
+                    "Run button label did not return to idle");
             require(GetDlgItem(window, 3202) == nullptr,
                     "Second Scintilla editor was eagerly created");
             for (int i = 0; i < 25; ++i) {

@@ -78,14 +78,18 @@ int main() {
         EditorPlayerControl::BitDepth, false, true));
     assert(editorPlayerControlAvailable(
         EditorPlayerControl::CrushRate, false, true));
+    assert(!editorPlayerControlAvailable(
+        EditorPlayerControl::PShift, false, false, false));
     assert(editorPlayerControlAvailable(
-        EditorPlayerControl::PShift, false, false));
+        EditorPlayerControl::PShift, false, false, true));
     assert(editorPlayerControlVisible(
-        EditorPlayerControl::PShift, true, false, false));
+        EditorPlayerControl::PShift, true, false, false, false) == false);
     assert(editorPlayerControlVisible(
-        EditorPlayerControl::PShift, true, true, false));
+        EditorPlayerControl::PShift, true, true, false, false) == false);
+    assert(editorPlayerControlVisible(
+        EditorPlayerControl::PShift, true, true, false, true));
     assert(!editorPlayerControlVisible(
-        EditorPlayerControl::PShift, false, true, false));
+        EditorPlayerControl::PShift, false, true, false, true));
     assert(editorPlayerControlVisible(
         EditorPlayerControl::CrushRate, true, false, false));
     assert(!editorPlayerControlVisible(

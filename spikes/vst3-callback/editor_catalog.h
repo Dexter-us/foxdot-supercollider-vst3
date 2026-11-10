@@ -721,7 +721,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
          "start (0..1 of the event).",
          {Arg{"bend", "1.0"}, Arg{"benddelay", "0.1"}}},
         {CatalogKind::NativeControls, "PShift", "Pitch shift",
-         "Per-note pitch shift in semitones, bounded −24..24.",
+         "Per-player, per-note pitch shift in semitones, bounded −24..24. "
+         "It appears in that player's sliders only when pshift is enabled.",
          {Arg{"pshift", "7"}}},
         {CatalogKind::NativeControls, "Bits / Crush", "Bits / crush",
          "Native sample-rate/bit-depth texture. bits is 0..24; crush is "

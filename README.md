@@ -2,6 +2,12 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.186 makes the script worker's state visible: Run changes to a
+disabled Busy button until the current request finishes, and duplicate Run
+attempts receive a wait-for-ready message rather than a misleading compatibility
+error. PShift is now a per-player control; its slider is hidden until a selected
+player actually uses `pshift`.
+
 Version 0.4.146 keeps the full player-control row visible and disabled until a
 player is selected, so PShift is discoverable. Clicking a `pN >>` assignment
 in the editor selects that player in the Players panel. Example 184 demonstrates

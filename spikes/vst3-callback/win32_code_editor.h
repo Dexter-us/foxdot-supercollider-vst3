@@ -59,6 +59,7 @@ public:
     virtual bool hasSuperColliderSource() = 0;
     virtual void setSuperColliderSource(const std::string& source) = 0;
     virtual std::string checkCompatibility(const std::string& source) = 0;
+    virtual bool scriptWorkerBusy() = 0;
     virtual void submitCode(const std::string& source) = 0;
     virtual void stopPattern() = 0;
     virtual std::string editorStatus() = 0;

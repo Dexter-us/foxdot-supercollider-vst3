@@ -16,7 +16,7 @@ enum class EditorPlayerControl : std::uint8_t {
 
 inline constexpr bool editorPlayerControlAvailable(
     EditorPlayerControl control, bool effectMixAvailable,
-    bool bitcrusherEnabled) noexcept {
+    bool bitcrusherEnabled, bool pshiftEnabled = false) noexcept {
     switch (control) {
     case EditorPlayerControl::EffectMix:
         return effectMixAvailable;
@@ -24,7 +24,7 @@ inline constexpr bool editorPlayerControlAvailable(
     case EditorPlayerControl::CrushRate:
         return bitcrusherEnabled;
     case EditorPlayerControl::PShift:
-        return true;
+        return pshiftEnabled;
     case EditorPlayerControl::Amplitude:
     case EditorPlayerControl::Pan:
     case EditorPlayerControl::Cutoff:
@@ -35,9 +35,11 @@ inline constexpr bool editorPlayerControlAvailable(
 
 inline constexpr bool editorPlayerControlVisible(
     EditorPlayerControl control, bool playersTab, bool hasSelectedPlayer,
-    bool bitcrusherEnabled) noexcept {
+    bool bitcrusherEnabled, bool pshiftEnabled = false) noexcept {
     if (!playersTab)
         return false;
+    if (control == EditorPlayerControl::PShift)
+        return hasSelectedPlayer && pshiftEnabled;
     if (!hasSelectedPlayer)
         return true;
     if (control == EditorPlayerControl::BitDepth ||

@@ -2189,7 +2189,7 @@ private:
                     : index == 5 ? EditorPlayerControl::CrushRate
                                  : EditorPlayerControl::PShift;
                 const int visibility = editorPlayerControlVisible(
-                    control, selectedPanelTab() == 0, false, false)
+                    control, selectedPanelTab() == 0, false, false, false)
                     ? SW_SHOW : SW_HIDE;
                 ShowWindow(playerControlLabels_[index], visibility);
                 ShowWindow(playerControlSliders_[index], visibility);
@@ -2363,12 +2363,12 @@ private:
                              : EditorPlayerControl::PShift;
             const bool available = editorPlayerControlAvailable(
                 control, state.effectMixAvailable,
-                state.bitcrusherEnabled);
+                state.bitcrusherEnabled, state.pshiftEnabled);
             const int visibility = (control == EditorPlayerControl::EffectMix &&
                                     !available)
                 ? SW_HIDE : editorPlayerControlVisible(
                 control, selectedPanelTab() == 0, true,
-                state.bitcrusherEnabled)
+                state.bitcrusherEnabled, state.pshiftEnabled)
                 ? SW_SHOW : SW_HIDE;
             if (playerControlLabels_[index])
                 SetWindowTextW(playerControlLabels_[index], labels[index]);
@@ -3203,6 +3203,12 @@ private:
             SetWindowTextW(status_, L"Script exceeds the 256 KiB size limit.");
             return;
         }
+        if (host_->scriptWorkerBusy()) {
+            SetWindowTextW(
+                status_,
+                L"The previous script is still processing. Wait for Run to be ready before submitting another.");
+            return;
+        }
         if (activeTab_ == 1) {
             if (!superColliderExecutionWarningShown_) {
                 const int answer = MessageBoxW(
@@ -3226,6 +3232,12 @@ private:
         }
         const auto report = host_->checkCompatibility(source);
         if (report.rfind("No unsupported constructs detected", 0) != 0) {
+            if (report.rfind(
+                    "The Python script worker is still processing the previous Run.",
+                    0) == 0) {
+                SetWindowTextW(status_, fromUtf8(report).c_str());
+                return;
+            }
             const auto message = fromUtf8(report);
             lastDiagnostic_ = message.empty()
                                   ? L"Compatibility check failed; script was not run."
@@ -3237,6 +3249,7 @@ private:
             return;
         }
         host_->submitCode(source);
+        updateRunButtonState();
         SetWindowTextW(status_, L"Compatibility check passed; evaluating Python...");
     }
 
@@ -3280,6 +3293,7 @@ private:
     void refreshStatus() {
         if (!host_ || !status_)
             return;
+        updateRunButtonState();
         const int gainPosition = static_cast<int>(
             std::lround(std::clamp(host_->masterOutputGain(), 0.0f,
                                    kDexterMasterGainMaximum) * 100.0f));
@@ -3328,6 +3342,14 @@ private:
         const auto visibleMessage = newline == std::wstring::npos
             ? message : message.substr(0, newline);
         SetWindowTextW(status_, visibleMessage.c_str());
+    }
+
+    void updateRunButtonState() {
+        if (!host_ || !runButton_)
+            return;
+        const bool busy = host_->scriptWorkerBusy();
+        EnableWindow(runButton_, busy ? FALSE : TRUE);
+        SetWindowTextW(runButton_, busy ? L"Busy" : L"Run");
     }
 
     ICodeEditorHost* host_ = nullptr;
