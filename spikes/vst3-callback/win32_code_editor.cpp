@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -75,6 +76,11 @@ constexpr int kContextCatalogSynthBaseId = 2400;
 constexpr int kContextCatalogEffectBaseId = 2500;
 constexpr int kContextPanelInsertId = 2600;
 constexpr int kContextPanelAboutId = 2601;
+constexpr int kContextPanelCopyId = 2602;
+constexpr int kContextScaleBaseId = 2700;
+constexpr int kMicRecordId = 2610;
+constexpr int kMicPlayId = 2611;
+constexpr int kMicStopId = 2612;
 constexpr UINT kSciPositionFromPointClose = 2023;
 constexpr int kViewWidth = 1000;
 constexpr int kViewHeight = 600;
@@ -416,6 +422,9 @@ private:
         auto* view = reinterpret_cast<CodeEditorView*>(referenceData);
         if (view && message == WM_CONTEXTMENU) {
             if (editor == view->editor_ &&
+                view->showScaleContextMenu(editor, lParam))
+                return 0;
+            if (editor == view->editor_ &&
                 view->showPlayerContextMenu(editor, lParam))
                 return 0;
             if (editor == view->panelList_ &&
@@ -554,6 +563,27 @@ private:
                 view->copyLastError();
                 return 0;
             }
+            if (HIWORD(wParam) == BN_CLICKED &&
+                LOWORD(wParam) == kMicRecordId) {
+                if (view->host_)
+                    view->host_->toggleMicLoopRecording();
+                view->updateMicLoopUi();
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED &&
+                LOWORD(wParam) == kMicPlayId) {
+                if (view->host_)
+                    view->host_->playMicLoop();
+                view->updateMicLoopUi();
+                return 0;
+            }
+            if (HIWORD(wParam) == BN_CLICKED &&
+                LOWORD(wParam) == kMicStopId) {
+                if (view->host_)
+                    view->host_->stopMicLoop();
+                view->updateMicLoopUi();
+                return 0;
+            }
             if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kPanelMuteId) {
                 view->toggleSelectedPlayerMute();
                 return 0;
@@ -593,7 +623,9 @@ private:
             view->pythonTabButton_ = view->superColliderTabButton_ = nullptr;
             view->runButton_ = view->stopButton_ =
                 view->openButton_ = view->saveButton_ = view->saveAsButton_ =
-                    view->status_ = view->brand_ = view->fileName_ =
+                            view->status_ = view->brand_ = view->fileName_ =
+                                view->micRecordButton_ = view->micPlayButton_ =
+                                    view->micStopButton_ = view->micLoopStatus_ =
                         view->copyErrorButton_ = view->masterGainSlider_ =
                         view->masterGainValue_ = view->masterGainLabel_ =
                         view->panelTabs_ = view->panelList_ =
@@ -657,12 +689,34 @@ private:
                                             0, 0, 82, 26, window_,
                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCopyErrorId)),
                                             moduleInstance(), nullptr);
+        micRecordButton_ = CreateWindowExW(
+            0, L"BUTTON", L"Record mic loop",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 88, 26, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMicRecordId)),
+            moduleInstance(), nullptr);
+        micPlayButton_ = CreateWindowExW(
+            0, L"BUTTON", L"Play loop",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 64, 26, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMicPlayId)),
+            moduleInstance(), nullptr);
+        micStopButton_ = CreateWindowExW(
+            0, L"BUTTON", L"Stop loop",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 64, 26, window_,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMicStopId)),
+            moduleInstance(), nullptr);
         status_ = CreateWindowExW(0, L"EDIT", L"Ready. Open a script or edit code.",
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER |
                                       ES_READONLY | ES_AUTOHSCROLL | ES_NOHIDESEL,
                                   0, 0, 300, 24, window_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatusId)),
                                   moduleInstance(), nullptr);
+        micLoopStatus_ = CreateWindowExW(
+            0, L"STATIC", L"Mic loop idle",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+            0, 0, 280, 22, window_, nullptr, moduleInstance(), nullptr);
         const auto brandText =
             fromUtf8("Dexter U.S FoxDot  |  v" DEXTER_PLUGIN_VERSION);
         brand_ = CreateWindowExW(0, L"STATIC", brandText.c_str(),
@@ -1547,6 +1601,49 @@ private:
                     MB_OK | MB_ICONINFORMATION);
     }
 
+    void copyCatalogSnippet(const dexter::editor::CatalogEntry& entry) {
+        const auto snippet = dexter::editor::catalogOneLineSnippet(entry);
+        if (snippet.empty()) {
+            SetWindowTextW(status_,
+                           L"This item has no one-line code snippet.");
+            return;
+        }
+        const auto wide = fromUtf8(snippet);
+        if (!OpenClipboard(window_)) {
+            SetWindowTextW(status_, L"Could not open the clipboard.");
+            return;
+        }
+        EmptyClipboard();
+        const auto byteCount = (wide.size() + 1) * sizeof(wchar_t);
+        HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, byteCount);
+        if (!memory) {
+            CloseClipboard();
+            SetWindowTextW(status_, L"Could not allocate clipboard memory.");
+            return;
+        }
+        auto* text = static_cast<wchar_t*>(GlobalLock(memory));
+        if (!text) {
+            GlobalFree(memory);
+            CloseClipboard();
+            SetWindowTextW(status_, L"Could not lock clipboard memory.");
+            return;
+        }
+        std::memcpy(text, wide.c_str(), byteCount);
+        GlobalUnlock(memory);
+        if (!SetClipboardData(CF_UNICODETEXT, memory)) {
+            GlobalFree(memory);
+            CloseClipboard();
+            SetWindowTextW(status_, L"Could not copy the code snippet.");
+            return;
+        }
+        CloseClipboard();
+        SetWindowTextW(
+            status_,
+            entry.kind == dexter::editor::CatalogKind::ExternalEffect
+                ? L"Effect args copied; paste inside the pN synth call."
+                : L"One-line code copied to the clipboard.");
+    }
+
     void insertCatalogEntryAtCaret(
         const dexter::editor::CatalogEntry& entry,
         std::size_t position) {
@@ -1556,7 +1653,11 @@ private:
         std::string failure;
         if (!dexter::editor::applyCatalogEntry(source, position, entry,
                                                 failure)) {
-            SetWindowTextW(status_, fromUtf8(failure).c_str());
+            SetWindowTextW(
+                status_,
+                fromUtf8(failure +
+                         " Right-click this item and choose Copy one-line code "
+                         "for a safe paste fallback.").c_str());
             return;
         }
         applyEditorTextEdit(source);
@@ -1594,6 +1695,12 @@ private:
         AppendMenuW(menu, MF_STRING |
                     (entry.available && activeTab_ == 0 ? 0 : MF_GRAYED),
                     kContextPanelInsertId, L"Insert at editor caret");
+        AppendMenuW(menu, MF_STRING |
+                    (entry.available && activeTab_ == 0 ? 0 : MF_GRAYED),
+                    kContextPanelCopyId,
+                    entry.kind == dexter::editor::CatalogKind::ExternalEffect
+                        ? L"Copy effect args for a pN call"
+                        : L"Copy one-line code");
         AppendMenuW(menu, MF_STRING, kContextPanelAboutId,
                     L"About this item");
         POINT point{packed.x, packed.y};
@@ -1615,6 +1722,8 @@ private:
             const auto caret = static_cast<std::size_t>(
                 SendMessageW(editor_, SCI_GETCURRENTPOS, 0, 0));
             insertCatalogEntryAtCaret(entry, caret);
+        } else if (command == kContextPanelCopyId) {
+            copyCatalogSnippet(entry);
         }
         return true;
     }
@@ -2678,7 +2787,13 @@ private:
         MoveWindow(saveButton_, kMargin + 180, buttonY, 62, kToolbarHeight - 4, TRUE);
         MoveWindow(saveAsButton_, kMargin + 250, buttonY, 76, kToolbarHeight - 4, TRUE);
         MoveWindow(copyErrorButton_, kMargin + 330, buttonY, 82, kToolbarHeight - 4, TRUE);
-        MoveWindow(status_, kMargin + 420, buttonY, std::max(100, width - 440),
+        MoveWindow(micRecordButton_, kMargin + 418, buttonY, 88,
+                   kToolbarHeight - 4, TRUE);
+        MoveWindow(micPlayButton_, kMargin + 510, buttonY, 64,
+                   kToolbarHeight - 4, TRUE);
+        MoveWindow(micStopButton_, kMargin + 578, buttonY, 64,
+                   kToolbarHeight - 4, TRUE);
+        MoveWindow(status_, kMargin + 648, buttonY, std::max(80, width - 668),
                    kToolbarHeight - 4, TRUE);
         const int gainRowY = kMargin + kToolbarHeight;
         if (masterGainSlider_) {
@@ -2687,6 +2802,10 @@ private:
                        210, 24, TRUE);
             MoveWindow(masterGainValue_, kMargin + 286, gainRowY + 2,
                        64, 22, TRUE);
+            MoveWindow(micLoopStatus_, kMargin + 360, gainRowY + 2,
+                       std::max(120, width - kMargin - kPanelWidth -
+                                         (kMargin + 372)),
+                       22, TRUE);
         }
         const int languageRowY = kMargin + kToolbarHeight + kGainRowHeight;
         MoveWindow(pythonTabButton_, kMargin, languageRowY, 116, 22, TRUE);
@@ -2837,6 +2956,69 @@ private:
             if (host_)
                 host_->setSuperColliderSource(source);
         }
+    }
+
+    bool showScaleContextMenu(HWND editor, LPARAM coordinates) {
+        if (activeTab_ != 0 || !editor || editor != editor_)
+            return false;
+        POINT screenPoint{};
+        const POINTS packed = MAKEPOINTS(coordinates);
+        if (packed.x == -1 && packed.y == -1) {
+            const auto caret = static_cast<int>(
+                SendMessageW(editor_, SCI_GETCURRENTPOS, 0, 0));
+            screenPoint.x = static_cast<LONG>(
+                SendMessageW(editor_, SCI_POINTXFROMPOSITION, 0, caret));
+            screenPoint.y = static_cast<LONG>(
+                SendMessageW(editor_, SCI_POINTYFROMPOSITION, 0, caret));
+            ClientToScreen(editor_, &screenPoint);
+        } else {
+            screenPoint.x = packed.x;
+            screenPoint.y = packed.y;
+        }
+        POINT clientPoint = screenPoint;
+        if (!ScreenToClient(editor_, &clientPoint))
+            return false;
+        const auto position = static_cast<std::size_t>(SendMessageW(
+            editor_, kSciPositionFromPointClose,
+            clientPoint.x, clientPoint.y));
+        const auto source = editorUtf8Source();
+        if (!dexter::editor::scaleContextTargetAt(source, position))
+            return false;
+
+        HMENU menu = CreatePopupMenu();
+        if (!menu)
+            return true;
+        const auto selected = dexter::editor::currentEditorScale(source);
+        for (std::size_t index = 0;
+             index < std::size(dexter::editor::kEditorScaleNames); ++index) {
+            const auto name = dexter::editor::kEditorScaleNames[index];
+            const auto flags = MF_STRING |
+                (selected == name ? MF_CHECKED : MF_UNCHECKED);
+            AppendMenuW(menu, flags,
+                        static_cast<UINT_PTR>(kContextScaleBaseId + index),
+                        fromUtf8(std::string(name)).c_str());
+        }
+        const auto command = TrackPopupMenu(
+            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint.x, screenPoint.y, 0, window_, nullptr);
+        DestroyMenu(menu);
+        if (command >= kContextScaleBaseId &&
+            command < kContextScaleBaseId +
+                          static_cast<int>(
+                              std::size(dexter::editor::kEditorScaleNames))) {
+            const auto index = static_cast<std::size_t>(
+                command - kContextScaleBaseId);
+            auto updated = editorUtf8Source();
+            const auto scale = dexter::editor::kEditorScaleNames[index];
+            if (dexter::editor::setEditorScaleAt(updated, position, scale)) {
+                applyEditorTextEdit(updated);
+                SetWindowTextW(
+                    status_,
+                    (L"Scale set to " + fromUtf8(std::string(scale)) +
+                     L". Click Run to apply it.").c_str());
+            }
+        }
+        return true;
     }
 
     bool showPlayerContextMenu(HWND editor, LPARAM coordinates) {
@@ -3300,9 +3482,40 @@ private:
         SetWindowTextW(status_, L"Full error/report copied to the clipboard.");
     }
 
+    void updateMicLoopUi() {
+        if (!host_)
+            return;
+        const auto state = host_->micLoopState();
+        const bool recording = state == dexter::MicLoopState::Recording;
+        const bool hasLoop = state == dexter::MicLoopState::Ready ||
+                             state == dexter::MicLoopState::Playing;
+        if (micRecordButton_)
+            SetWindowTextW(micRecordButton_,
+                           recording ? L"Finish loop" : L"Record mic loop");
+        if (micPlayButton_)
+            EnableWindow(micPlayButton_, hasLoop ? TRUE : FALSE);
+        if (micStopButton_)
+            EnableWindow(micStopButton_,
+                         state != dexter::MicLoopState::Empty ? TRUE : FALSE);
+
+        const wchar_t* label = L"Mic loop: idle";
+        if (recording) {
+            label = host_->micLoopInputPeak() < 0.001f
+                ? L"Recording — no host input signal"
+                : L"Recording mic input (max 8 sec)";
+        } else if (state == dexter::MicLoopState::Ready) {
+            label = L"Mic loop ready";
+        } else if (state == dexter::MicLoopState::Playing) {
+            label = L"Mic loop playing";
+        }
+        if (micLoopStatus_)
+            SetWindowTextW(micLoopStatus_, label);
+    }
+
     void refreshStatus() {
         if (!host_ || !status_)
             return;
+        updateMicLoopUi();
         updateRunButtonState();
         const int gainPosition = static_cast<int>(
             std::lround(std::clamp(host_->masterOutputGain(), 0.0f,
@@ -3379,6 +3592,10 @@ private:
     HWND saveButton_ = nullptr;
     HWND saveAsButton_ = nullptr;
     HWND copyErrorButton_ = nullptr;
+    HWND micRecordButton_ = nullptr;
+    HWND micPlayButton_ = nullptr;
+    HWND micStopButton_ = nullptr;
+    HWND micLoopStatus_ = nullptr;
     HWND status_ = nullptr;
     HWND brand_ = nullptr;
     HWND fileName_ = nullptr;

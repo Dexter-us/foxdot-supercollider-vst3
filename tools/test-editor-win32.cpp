@@ -20,6 +20,8 @@ struct Host final : ICodeEditorHost {
     std::string sc = "// independent SC document\r\n1 + 1;\r\n";
     int submissions = 0;
     bool workerBusy = false;
+    dexter::MicLoopState micState = dexter::MicLoopState::Empty;
+    float micPeak = 0.0f;
     std::string editorSource() override { return python; }
     bool hasEditorSource() override { return true; }
     void setEditorSource(const std::string& value) override { python = value; }
@@ -36,6 +38,17 @@ struct Host final : ICodeEditorHost {
     std::string superColliderStatus() override { return "Idle, language not started"; }
     float masterOutputGain() override { return 1.0f; }
     void setMasterOutputGain(float) override {}
+    void toggleMicLoopRecording() override {
+        micState = micState == dexter::MicLoopState::Recording
+            ? dexter::MicLoopState::Ready : dexter::MicLoopState::Recording;
+    }
+    void playMicLoop() override { micState = dexter::MicLoopState::Playing; }
+    void stopMicLoop() override {
+        micState = micState == dexter::MicLoopState::Empty
+            ? dexter::MicLoopState::Empty : dexter::MicLoopState::Ready;
+    }
+    dexter::MicLoopState micLoopState() override { return micState; }
+    float micLoopInputPeak() override { return micPeak; }
     void editorPlayerStates(std::array<EditorPlayerState, 8>& states) override { states = {}; }
     std::vector<std::string> editorExternalSynthNames() override { return {}; }
     void stopEditorPlayer(int) override {}
@@ -96,6 +109,28 @@ int main() {
             require(window != nullptr, "Main editor window is missing");
             require(text(GetDlgItem(window, 101)) == expectedPython, "Python document changed on reopen");
             require(GetDlgItem(window, 102) != nullptr, "Run button is missing");
+            require(GetDlgItem(window, 2610) != nullptr,
+                    "Mic-loop record button is missing");
+            require(GetDlgItem(window, 2611) != nullptr,
+                    "Mic-loop playback button is missing");
+            require(GetDlgItem(window, 2612) != nullptr,
+                    "Mic-loop stop button is missing");
+            SendMessageW(window, WM_COMMAND, MAKEWPARAM(2610, BN_CLICKED),
+                         reinterpret_cast<LPARAM>(GetDlgItem(window, 2610)));
+            require(host.micState == dexter::MicLoopState::Recording,
+                    "Record button did not arm mic-loop capture");
+            SendMessageW(window, WM_COMMAND, MAKEWPARAM(2610, BN_CLICKED),
+                         reinterpret_cast<LPARAM>(GetDlgItem(window, 2610)));
+            require(host.micState == dexter::MicLoopState::Ready,
+                    "Record button did not finish mic-loop capture");
+            SendMessageW(window, WM_COMMAND, MAKEWPARAM(2611, BN_CLICKED),
+                         reinterpret_cast<LPARAM>(GetDlgItem(window, 2611)));
+            require(host.micState == dexter::MicLoopState::Playing,
+                    "Play button did not start mic-loop playback");
+            SendMessageW(window, WM_COMMAND, MAKEWPARAM(2612, BN_CLICKED),
+                         reinterpret_cast<LPARAM>(GetDlgItem(window, 2612)));
+            require(host.micState == dexter::MicLoopState::Ready,
+                    "Stop button did not stop mic-loop playback");
             host.workerBusy = true;
             SendMessageW(window, WM_TIMER, 1, 0);
             require(!IsWindowEnabled(GetDlgItem(window, 102)),

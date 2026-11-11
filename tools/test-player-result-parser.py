@@ -305,6 +305,36 @@ with tempfile.TemporaryDirectory() as directory:
                                  "229-seeded-random-per-note-delays.py") else ())
         if example.name == "230-pbindfx-style-ordered-note-effect-chains.py":
             user_synth_names = ("Chorus", "Phaser", "Flanger", "Tremolo")
+        if example.name == "232b-ported-wrapper-octave-check.py":
+            user_synth_names = ("PortedBLOsc",)
+        if example.name == "233-ported-modal-resonator-voices.py":
+            user_synth_names = (
+                "PortedRongs", "PortedPhasorModal", "PortedResonator")
+        if example.name == "234-ported-resonator-with-reverb.py":
+            user_synth_names = (
+                "PortedFverbFX", "PortedResonatorFX", "JPverb")
+        if example.name == "235-ported-analog-tape.py":
+            user_synth_names = ("PortedAnalogTapeFX",)
+        if example.name == "236-ported-analog-chew.py":
+            user_synth_names = ("PortedAnalogChewFX",)
+        if example.name == "237-ported-analog-degrade.py":
+            user_synth_names = ("PortedAnalogDegradeFX",)
+        if example.name == "238-ported-analog-loss.py":
+            user_synth_names = ("PortedAnalogLossFX",)
+        if example.name == "239-ported-analog-phaser.py":
+            user_synth_names = ("PortedAnalogPhaserFX",)
+        if example.name == "240-ported-vintage-distortion.py":
+            user_synth_names = ("PortedAnalogVintageDistortionFX",)
+        if example.name == "241-ported-lockhart-wavefolder.py":
+            user_synth_names = ("PortedLockhartWavefolderFX",)
+        if example.name == "242-ported-dcompressor.py":
+            user_synth_names = ("PortedDCompressorFX",)
+        if example.name in (
+                "243-granular-cloud-sample-player.py",
+                "244-granular-rhythmic-slicer.py",
+                "245-granular-freeze-texture.py",
+                "246-granular-live-player-input.py"):
+            user_synth_names = ("DexterGranularFX",)
         wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],

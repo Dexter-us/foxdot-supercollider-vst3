@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.196 adds a right-click `Scale.default` picker and a safe one-line
+copy fallback for sidebar effect insertion. The editor also offers an explicit
+stereo mic looper: route host audio into the VST, record a loop up to 8 seconds,
+then play or stop it. Capture is session-only in memory, never monitors the live
+input, and mixes under the master output gain. No external UGen pack is needed.
+
 Version 0.4.195 adds `DexterGranularFX`, a categorized stock-SuperCollider
 player insert with cloud, rhythmic slicer, freeze, and live-player modes.
 Its bounded controls appear under Effects → Granular. Portable Examples

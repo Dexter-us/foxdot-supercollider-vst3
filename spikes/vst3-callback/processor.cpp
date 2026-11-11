@@ -330,6 +330,7 @@ public:
         const auto result = SingleComponentEffect::initialize(context);
         if (result != kResultOk)
             return result;
+        addAudioInput(STR16("Mic / Loop In"), SpeakerArr::kStereo);
         addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
         addEventOutput(STR16("MIDI Out"), 16);
         return kResultOk;
@@ -474,6 +475,7 @@ public:
             return baseResult;
         if (!std::isfinite(setup.sampleRate) || setup.sampleRate <= 0.0)
             return kInvalidArgument;
+        micLoop_.prepare(setup.sampleRate);
         configureHostProcessing(setup.sampleRate);
         return kResultOk;
     }
@@ -507,11 +509,11 @@ public:
         // block rather than blocking the host's audio callback.
         std::unique_lock<std::mutex> worldLock(worldAccessMutex_, std::try_to_lock);
         if (!worldLock.owns_lock()) {
-            output.silenceFlags = ~uint64{0};
+            renderMicLoopOnly(data, output);
             return kResultOk;
         }
         if (!world_) {
-            output.silenceFlags = ~uint64{0};
+            renderMicLoopOnly(data, output);
             return kResultOk;
         }
 
@@ -741,20 +743,32 @@ public:
             masterGainCurrent_ = dexterMasterGainStep(
                 masterGainCurrent_,
                 masterGainTarget_.load(std::memory_order_relaxed), sampleRate_);
+            float micInputLeft = 0.0f;
+            float micInputRight = 0.0f;
+            readMicInputFrame(data, frame, micInputLeft, micInputRight);
+            float micLoopLeft = 0.0f;
+            float micLoopRight = 0.0f;
+            micLoop_.processFrame(micInputLeft, micInputRight,
+                                  micLoopLeft, micLoopRight);
             const float leftSample =
                 outputBlock_[0][outputSample] * masterGainCurrent_;
             const float rightSample =
                 outputBlock_[1][outputSample] * masterGainCurrent_;
-            diskIO_.captureSample(leftSample, rightSample);
+            const float mixedLeft =
+                leftSample + micLoopLeft * masterGainCurrent_;
+            const float mixedRight =
+                rightSample + micLoopRight * masterGainCurrent_;
+            diskIO_.captureSample(mixedLeft, mixedRight);
             for (int32 channel = 0; channel < output.numChannels; ++channel) {
                 if (!output.channelBuffers32[channel])
                     continue;
-                const float sample = channel == 0 ? leftSample
-                                    : channel == 1 ? rightSample
-                                                   : 0.5f * (leftSample + rightSample);
+                const float sample = channel == 0 ? mixedLeft
+                                    : channel == 1 ? mixedRight
+                                                   : 0.5f * (mixedLeft + mixedRight);
                 output.channelBuffers32[channel][frame] = sample;
             }
         }
+        micLoop_.finishBlock();
         sampleClock_ += static_cast<std::uint64_t>(data.numSamples);
         output.silenceFlags = 0;
         return kResultOk;
@@ -1239,6 +1253,26 @@ public:
                                 std::memory_order_release);
     }
 
+    void toggleMicLoopRecording() override {
+        micLoop_.requestRecordToggle();
+    }
+
+    void playMicLoop() override {
+        micLoop_.requestPlay();
+    }
+
+    void stopMicLoop() override {
+        micLoop_.requestStop();
+    }
+
+    dexter::MicLoopState micLoopState() override {
+        return micLoop_.state();
+    }
+
+    float micLoopInputPeak() override {
+        return micLoop_.inputPeak();
+    }
+
     void editorPlayerStates(
         std::array<EditorPlayerState, 8>& states) override {
         for (std::size_t player = 0; player < states.size(); ++player) {
@@ -1490,6 +1524,51 @@ public:
     REFCOUNT_METHODS(SingleComponentEffect)
 
 private:
+    static void readMicInputFrame(const ProcessData& data, int32 frame,
+                                  float& left, float& right) noexcept {
+        left = 0.0f;
+        right = 0.0f;
+        if (data.numInputs < 1 || !data.inputs ||
+            !data.inputs[0].channelBuffers32 ||
+            data.inputs[0].numChannels <= 0)
+            return;
+        const auto& input = data.inputs[0];
+        const auto* first = input.channelBuffers32[0];
+        if (!first)
+            return;
+        left = first[frame];
+        if (input.numChannels > 1 && input.channelBuffers32[1])
+            right = input.channelBuffers32[1][frame];
+        else
+            right = left;
+    }
+
+    void renderMicLoopOnly(const ProcessData& data,
+                           AudioBusBuffers& output) noexcept {
+        const float gain =
+            masterGainTarget_.load(std::memory_order_relaxed);
+        for (int32 frame = 0; frame < data.numSamples; ++frame) {
+            float inputLeft = 0.0f;
+            float inputRight = 0.0f;
+            float loopLeft = 0.0f;
+            float loopRight = 0.0f;
+            readMicInputFrame(data, frame, inputLeft, inputRight);
+            micLoop_.processFrame(inputLeft, inputRight,
+                                  loopLeft, loopRight);
+            for (int32 channel = 0; channel < output.numChannels; ++channel) {
+                if (!output.channelBuffers32[channel])
+                    continue;
+                output.channelBuffers32[channel][frame] =
+                    channel == 0 ? loopLeft * gain
+                    : channel == 1 ? loopRight * gain
+                                   : 0.5f * (loopLeft + loopRight) * gain;
+            }
+        }
+        micLoop_.finishBlock();
+        output.silenceFlags = micLoop_.state() == dexter::MicLoopState::Playing
+                                  ? 0 : ~uint64{0};
+    }
+
     static constexpr int kSCBlockSize = 64;
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kPlayerCount = 8;
@@ -6248,6 +6327,7 @@ private:
 
     std::string scriptNamespace_;
     double sampleRate_ = 48000.0;
+    dexter::MicLoopCapture micLoop_{};
     std::mutex worldAccessMutex_;
     bool hostProcessingConfigured_ = false;
     std::string worldInitializationError_;

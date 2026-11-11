@@ -51,7 +51,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.195' not in cmake_source or
+if ('VERSION 0.4.196' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -75,6 +75,11 @@ for live_panel_fragment in (
         'setEditorPlayerMuted(', 'stopEditorPlayer(',
         'WM_CONTEXTMENU', 'TrackPopupMenu', 'kContextCatalogSynthBaseId',
         'kContextCatalogEffectBaseId', 'setEditorPlayerControl(',
+        'showScaleContextMenu(', 'kContextScaleBaseId',
+        'scaleContextTargetAt(',
+        'Copy effect args for a pN call', 'catalogOneLineSnippet(',
+        'Record mic loop', 'Play loop', 'Stop loop',
+        'Mic loop: idle', 'toggleMicLoopRecording(',
         'setEditorPlayerEffectControl(', 'effectControlValues',
         'playerEffectControlSpecs(', 'expandedEffectChains_',
         'selectedEffectSlotIndex()', 'setPlayerEffectControl(',

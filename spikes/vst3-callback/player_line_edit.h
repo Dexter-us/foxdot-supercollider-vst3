@@ -736,4 +736,186 @@ inline bool setPlayerEffect(std::string& source,
                              "\"" + std::string(effect) + "\"");
 }
 
+inline constexpr std::string_view kEditorScaleNames[] = {
+    "chromatic", "major", "minor", "natural_minor", "aeolian", "dorian",
+    "dorian2", "mixolydian", "major_pentatonic", "majorPentatonic",
+    "minor_pentatonic", "minorPentatonic", "melodic_minor", "melodicMinor",
+    "melodic_major", "melodicMajor", "harmonic_minor", "harmonicMinor",
+    "harmonic_major", "harmonicMajor", "diminished", "egyptian", "yu", "zhi",
+    "phrygian", "prometheus", "indian", "locrian", "locrian_major",
+    "locrianMajor", "lydian", "lydian_minor", "lydianMinor", "custom",
+    "hungarian_minor", "hungarianMinor", "romanian_minor", "romanianMinor",
+    "chinese", "whole_tone", "wholeTone", "half_whole", "halfWhole",
+    "whole_half", "wholeHalf", "bebop_maj", "bebopMaj", "bebop_dorian",
+    "bebopDorian", "bebop_dom", "bebopDom", "bebop_mel_min", "bebopMelMin",
+    "blues", "min_maj", "minMaj", "susb9", "lydian_aug", "lydianAug",
+    "lydian_dom", "lydianDom", "mel_min5th", "melMin5th", "half_dim",
+    "halfDim", "altered"
+};
+
+inline bool isEditorScaleName(std::string_view name) {
+    for (const auto candidate : kEditorScaleNames)
+        if (candidate == name)
+            return true;
+    return false;
+}
+
+inline std::size_t pythonCommentStart(std::string_view source,
+                                      std::size_t start,
+                                      std::size_t end) {
+    char quote = 0;
+    bool escaped = false;
+    for (std::size_t index = start; index < end; ++index) {
+        const char value = source[index];
+        if (quote != 0) {
+            if (escaped)
+                escaped = false;
+            else if (value == '\\')
+                escaped = true;
+            else if (value == quote)
+                quote = 0;
+        } else if (value == '\'' || value == '"') {
+            quote = value;
+        } else if (value == '#') {
+            return index;
+        }
+    }
+    return end;
+}
+
+inline bool scaleDefaultLineAt(std::string_view source, std::size_t position,
+                               std::size_t& lineStart,
+                               std::size_t& lineEnd,
+                               std::size_t& statementStart) {
+    if (position > source.size())
+        return false;
+    if (position == 0) {
+        lineStart = 0;
+    } else {
+        const auto previousNewline = source.rfind('\n', position - 1);
+        lineStart = previousNewline == std::string_view::npos
+            ? 0 : previousNewline + 1;
+    }
+    lineEnd = source.find('\n', position);
+    if (lineEnd == std::string_view::npos)
+        lineEnd = source.size();
+    const auto codeEnd = pythonCommentStart(source, lineStart, lineEnd);
+    statementStart = skipSpace(source, lineStart, codeEnd);
+    constexpr std::string_view prefix = "Scale.default";
+    return codeEnd - statementStart >= prefix.size() &&
+           source.substr(statementStart, prefix.size()) == prefix &&
+           (statementStart + prefix.size() == codeEnd ||
+            !isIdentifierChar(source[statementStart + prefix.size()]));
+}
+
+inline bool scaleContextTargetAt(std::string_view source,
+                                 std::size_t position) {
+    std::size_t lineStart = 0;
+    std::size_t lineEnd = 0;
+    std::size_t statementStart = 0;
+    return scaleDefaultLineAt(source, position, lineStart, lineEnd,
+                              statementStart);
+}
+
+inline std::string scaleDefaultNameAt(std::string_view source,
+                                     std::size_t position) {
+    std::size_t lineStart = 0;
+    std::size_t lineEnd = 0;
+    std::size_t statementStart = 0;
+    if (!scaleDefaultLineAt(source, position, lineStart, lineEnd,
+                            statementStart))
+        return {};
+    const auto codeEnd = pythonCommentStart(source, lineStart, lineEnd);
+    constexpr std::string_view prefix = "Scale.default";
+    auto cursor = skipSpace(source, statementStart + prefix.size(), codeEnd);
+    std::size_t valueStart = 0;
+    if (cursor < codeEnd && source[cursor] == '=') {
+        cursor = skipSpace(source, cursor + 1, codeEnd);
+        valueStart = cursor;
+    } else if (source.substr(cursor, 5) == ".set(") {
+        cursor = skipSpace(source, cursor + 5, codeEnd);
+        if (cursor >= codeEnd)
+            return {};
+        if (source[cursor] == '\'' || source[cursor] == '"') {
+            const char quote = source[cursor++];
+            valueStart = cursor;
+            while (cursor < codeEnd && source[cursor] != quote)
+                ++cursor;
+            if (cursor >= codeEnd)
+                return {};
+            const auto name = source.substr(valueStart, cursor - valueStart);
+            return isEditorScaleName(name) ? std::string(name) : std::string{};
+        }
+        valueStart = cursor;
+    } else {
+        return {};
+    }
+
+    if (valueStart >= codeEnd)
+        return {};
+    constexpr std::string_view scalePrefix = "Scale.";
+    if (source.substr(valueStart, scalePrefix.size()) == scalePrefix)
+        valueStart += scalePrefix.size();
+    else if (source[valueStart] == '\'' || source[valueStart] == '"') {
+        const char quote = source[valueStart++];
+        const auto nameStart = valueStart;
+        while (valueStart < codeEnd && source[valueStart] != quote)
+            ++valueStart;
+        if (valueStart >= codeEnd)
+            return {};
+        const auto name = source.substr(nameStart, valueStart - nameStart);
+        return isEditorScaleName(name) ? std::string(name) : std::string{};
+    } else {
+        return {};
+    }
+
+    auto nameEnd = valueStart;
+    while (nameEnd < codeEnd && isIdentifierChar(source[nameEnd]))
+        ++nameEnd;
+    const auto name = source.substr(valueStart, nameEnd - valueStart);
+    return isEditorScaleName(name) ? std::string(name) : std::string{};
+}
+
+inline std::string currentEditorScale(std::string_view source) {
+    std::string current;
+    std::size_t lineStart = 0;
+    while (lineStart < source.size()) {
+        const auto lineEnd = source.find('\n', lineStart);
+        std::size_t statementStart = 0;
+        std::size_t ignoredStart = 0;
+        std::size_t ignoredEnd = 0;
+        if (scaleDefaultLineAt(source, lineStart, ignoredStart, ignoredEnd,
+                               statementStart))
+            current = scaleDefaultNameAt(source, lineStart);
+        if (lineEnd == std::string_view::npos)
+            break;
+        lineStart = lineEnd + 1;
+    }
+    return current;
+}
+
+inline bool setEditorScaleAt(std::string& source, std::size_t position,
+                             std::string_view scaleName) {
+    if (!isEditorScaleName(scaleName) || position > source.size())
+        return false;
+    std::size_t lineStart = 0;
+    std::size_t lineEnd = 0;
+    std::size_t statementStart = 0;
+    if (scaleDefaultLineAt(source, position, lineStart, lineEnd,
+                           statementStart)) {
+        const auto codeEnd = pythonCommentStart(source, lineStart, lineEnd);
+        auto replaceEnd = codeEnd;
+        while (replaceEnd > statementStart &&
+               std::isspace(static_cast<unsigned char>(
+                   source[replaceEnd - 1])) != 0)
+            --replaceEnd;
+        source.replace(statementStart, replaceEnd - statementStart,
+                       "Scale.default = Scale." + std::string(scaleName));
+        return true;
+    }
+    source.insert(0, "Scale.default = Scale." +
+                     std::string(scaleName) + "\n");
+    return true;
+}
+
 } // namespace dexter::editor

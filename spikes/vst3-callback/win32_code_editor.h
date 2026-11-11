@@ -3,6 +3,7 @@
 #include "pluginterfaces/base/funknown.h"
 #include "pluginterfaces/gui/iplugview.h"
 #include "live_player_controls.h"
+#include "mic_loop_capture.h"
 
 #include <array>
 #include <cstddef>
@@ -68,6 +69,11 @@ public:
     virtual std::string superColliderStatus() = 0;
     virtual float masterOutputGain() = 0;
     virtual void setMasterOutputGain(float gain) = 0;
+    virtual void toggleMicLoopRecording() = 0;
+    virtual void playMicLoop() = 0;
+    virtual void stopMicLoop() = 0;
+    virtual dexter::MicLoopState micLoopState() = 0;
+    virtual float micLoopInputPeak() = 0;
     virtual void editorPlayerStates(std::array<EditorPlayerState, 8>& states) = 0;
     virtual std::vector<std::string> editorExternalSynthNames() = 0;
     virtual void stopEditorPlayer(int playerIndex) = 0;

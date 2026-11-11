@@ -4,10 +4,12 @@
 #include "../user_synth_controls.h"
 #include "../user_synth_control_state.h"
 #include "../airwindows_control_smoothing.h"
+#include "../mic_loop_capture.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <limits>
 #include <string>
 
 using namespace dexter::editor;
@@ -511,11 +513,102 @@ int main() {
                 return item.name == "Chorus";
             });
         assert(chorus != effects.end());
+        assert(catalogOneLineSnippet(*chorus) ==
+               "effect=\"Chorus\", fx_mix=0.25");
         std::string source = "p1 >> pluck(P[0, 4])\n";
         std::string failure;
         assert(applyCatalogEntry(source, 0, *chorus, failure));
         assert(source.find("effect=\"Chorus\"") != std::string::npos);
         assert(source.find("fx_mix=0.25") != std::string::npos);
+        CatalogEntry pluck{CatalogKind::Instrument, "pluck", "Pluck",
+                           "Built-in instrument"};
+        assert(catalogOneLineSnippet(pluck) ==
+               "pluck(P[0, 2, 4, 7], dur=0.5, amp=0.25)");
+    }
+    {
+        assert(isEditorScaleName("major"));
+        assert(isEditorScaleName("minor"));
+        assert(isEditorScaleName("majorPentatonic"));
+        assert(isEditorScaleName("bebop_mel_min"));
+        assert(!isEditorScaleName("not_a_scale"));
+
+        std::string source =
+            "Scale.default = Scale.major  # selected from the editor\n"
+            "p1 >> pluck(P[0, 2, 4])\n";
+        const auto scalePosition = source.find("Scale.major") + 7;
+        assert(scaleContextTargetAt(source, scalePosition));
+        assert(scaleDefaultNameAt(source, scalePosition) == "major");
+        assert(currentEditorScale(source) == "major");
+        assert(setEditorScaleAt(source, scalePosition, "minor"));
+        assert(source.find(
+                   "Scale.default = Scale.minor  # selected from the editor") !=
+               std::string::npos);
+        assert(currentEditorScale(source) == "minor");
+
+        std::string setForm = "Scale.default.set(\"dorian\")\n";
+        assert(currentEditorScale(setForm) == "dorian");
+        assert(setEditorScaleAt(setForm, setForm.find("dorian"), "blues"));
+        assert(setForm == "Scale.default = Scale.blues\n");
+
+        std::string noScale = "p1 >> pluck(P[0, 2, 4])\n";
+        assert(!scaleContextTargetAt(noScale, noScale.find("pluck")));
+        assert(setEditorScaleAt(noScale, 0, "major"));
+        assert(noScale.find("Scale.default = Scale.major\n") == 0);
+
+        const auto unchanged = noScale;
+        assert(!setEditorScaleAt(noScale, 0, "not_a_scale"));
+        assert(noScale == unchanged);
+    }
+    {
+        dexter::MicLoopCapture loop;
+        float left = 1.0f;
+        float right = 1.0f;
+        loop.processFrame(0.0f, 0.0f, left, right);
+        assert(loop.state() == dexter::MicLoopState::Empty);
+        assert(left == 0.0f && right == 0.0f);
+
+        loop.requestRecordToggle();
+        loop.processFrame(0.1f, -0.1f, left, right);
+        assert(loop.state() == dexter::MicLoopState::Recording);
+        assert(left == 0.0f && right == 0.0f);
+        loop.processFrame(0.4f, -0.4f, left, right);
+        loop.finishBlock();
+        assert(std::abs(loop.inputPeak() - 0.4f) < 1e-6f);
+
+        loop.requestRecordToggle();
+        loop.processFrame(0.0f, 0.0f, left, right);
+        assert(loop.state() == dexter::MicLoopState::Ready);
+        assert(loop.recordedFrames() == 2);
+
+        loop.requestPlay();
+        loop.processFrame(0.0f, 0.0f, left, right);
+        assert(loop.state() == dexter::MicLoopState::Playing);
+        assert(std::abs(left - 0.1f) < 1e-6f);
+        assert(std::abs(right + 0.1f) < 1e-6f);
+        loop.processFrame(0.0f, 0.0f, left, right);
+        assert(std::abs(left - 0.4f) < 1e-6f);
+        assert(std::abs(right + 0.4f) < 1e-6f);
+        loop.processFrame(0.0f, 0.0f, left, right);
+        assert(std::abs(left - 0.1f) < 1e-6f);
+
+        loop.requestStop();
+        loop.processFrame(0.0f, 0.0f, left, right);
+        assert(loop.state() == dexter::MicLoopState::Ready);
+        assert(left == 0.0f && right == 0.0f);
+
+        dexter::MicLoopCapture bounded;
+        bounded.prepare(8000.0);
+        bounded.requestRecordToggle();
+        for (std::size_t frame = 0; frame <= 8 * 8000; ++frame)
+            bounded.processFrame(0.05f, 0.05f, left, right);
+        assert(bounded.state() == dexter::MicLoopState::Ready);
+        assert(bounded.recordedFrames() == 8 * 8000);
+        bounded.requestPlay();
+        bounded.processFrame(std::numeric_limits<float>::quiet_NaN(),
+                             std::numeric_limits<float>::infinity(),
+                             left, right);
+        assert(std::abs(left - 0.05f) < 1e-6f);
+        assert(std::abs(right - 0.05f) < 1e-6f);
     }
     {
         std::string source = "# blank player\np3 >>\n";

@@ -1,3 +1,10 @@
+0.4.196 adds a right-click `Scale.default` picker to the Python editor and a
+one-line copy fallback in the catalog's effect context menu. The editor also
+has an explicit stereo mic looper: route audio into the VST's input bus, click
+Record mic loop, finish at any time (maximum 8 seconds), then Play loop or Stop
+loop. It captures only on request, does not monitor live input, and keeps the
+loop in memory for the current plugin session; it does not export a WAV file.
+
 0.4.195 adds the stock-SuperCollider player insert `DexterGranularFX`. It is
 listed under Effects → Granular → Cloud / Slicer / Freeze / Live. The mode
 control selects 0=cloud, 1=stepped slicer, 2=capture/freeze, and 3=live

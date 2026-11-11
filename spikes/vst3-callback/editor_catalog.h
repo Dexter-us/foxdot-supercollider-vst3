@@ -627,6 +627,16 @@ inline std::string catalogInsertCall(const CatalogEntry& entry) {
     return {};
 }
 
+inline std::string catalogOneLineSnippet(const CatalogEntry& entry) {
+    if (entry.kind == CatalogKind::ExternalEffect) {
+        std::string snippet = "effect=\"" + entry.name + "\"";
+        for (const auto& argument : entry.arguments)
+            snippet += ", " + argument.name + "=" + argument.value;
+        return snippet;
+    }
+    return catalogInsertCall(entry);
+}
+
 inline bool applyCatalogEntryInPlace(std::string& source, std::size_t position,
                                      const CatalogEntry& entry,
                                      std::string& failure) {
