@@ -13,6 +13,8 @@ import tempfile
 if len(sys.argv) != 3:
     raise SystemExit('usage: test-pattern-api.py python_runtime.cpp Portable-directory')
 
+repo_root = os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[1])), '..', '..'))
 
 def read_cpp_source(path):
     # Some existing C++ comments in the merged test branch contain legacy
@@ -3132,7 +3134,7 @@ def test_embedded_synthdef():
 
 test_embedded_synthdef()
 
-ported_synthdef_dir = os.path.join(sys.argv[2], 'SynthDefs')
+ported_synthdef_dir = os.path.join(repo_root, 'UGens', 'PortedPlugins', 'SynthDefs')
 ported_wrappers = {
     'PortedAnalogBassDrum': ('AnalogBassDrum', 'accent tone decay attackfm selffm'),
     'PortedAnalogSnareDrum': ('AnalogSnareDrum', 'accent tone decay snappy'),
@@ -3143,9 +3145,14 @@ ported_wrappers = {
     'PortedZOsc': ('ZOsc', 'formantfreq shape mode'),
     'PortedStringVoice': ('StringVoice', 'accent structure brightness damping'),
 }
+portable_synthdef_dir = os.path.join(sys.argv[2], 'SynthDefs')
 for wrapper_name, (ugen_name, sidecar_controls) in ported_wrappers.items():
     wrapper_path = os.path.join(ported_synthdef_dir, wrapper_name + '.scsyndef')
     assert os.path.isfile(wrapper_path), 'Missing playable wrapper ' + wrapper_name
+    assert not os.path.exists(os.path.join(
+        portable_synthdef_dir, wrapper_name + '.scsyndef')), (
+            'Optional PortedPlugins wrapper must ship with its matching module, '
+            'not inside the base VST bundle: ' + wrapper_name)
     wrapper_bytes = open(wrapper_path, 'rb').read()
     wrapper_version, wrapper_graphs, wrapper_controls = read_synthdef_manifest(
         wrapper_bytes, validate_builtin_controls=False, return_controls=True)
@@ -3169,6 +3176,18 @@ for wrapper_name, (ugen_name, sidecar_controls) in ported_wrappers.items():
     else:
         assert not os.path.exists(sidecar_path), (
             wrapper_name, 'unexpected empty control sidecar')
+ported_example_path = os.path.join(
+    repo_root, 'UGens', 'PortedPlugins', 'Examples',
+    '232-portedplugins-players.py')
+ported_example_text = open(ported_example_path, encoding='utf-8').read()
+ported_example_names = tuple(ported_wrappers)
+ported_example_report = run_compatibility_check(
+    ported_example_text, ported_example_names)
+assert 'No unsupported constructs detected' in ported_example_report, (
+    ported_example_report)
+ported_player_rows = run_script(
+    ported_example_text, user_synth_names=ported_example_names)
+assert len(ported_player_rows) == 8, ported_player_rows
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
 assert len(legacy) == 1 and len(legacy[0]) == 24
@@ -4409,11 +4428,7 @@ for filename in os.listdir(sys.argv[2]):
              if filename == '229-seeded-random-per-note-delays.py' else
              ('Chorus', 'Phaser', 'Flanger', 'Tremolo')
              if filename == '230-pbindfx-style-ordered-note-effect-chains.py'
-              else
-              ('PortedAnalogBassDrum', 'PortedAnalogSnareDrum', 'PortedBLOsc',
-               'PortedAnalogFoldOsc', 'PortedNeoVarSawOsc', 'PortedVosimOsc',
-               'PortedZOsc', 'PortedStringVoice')
-              if filename == '232-portedplugins-players.py' else ())
+              else ())
         if filename == '201-sclork-insert-effects.py':
             example_names = (
                 'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',

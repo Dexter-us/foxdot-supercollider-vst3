@@ -5,7 +5,6 @@ on:
     paths:
       - "UGens/LimutFX/**"
       - "UGens/PortedPlugins/**"
-      - "spikes/vst3-callback/Portable/232-portedplugins-players.py"
       - "spikes/vst3-callback/python_runtime.cpp"
       - "spikes/vst3-callback/processor.cpp"
       - "spikes/vst3-callback/editor_catalog.h"
@@ -126,6 +125,18 @@ jobs:
           submodules: false
           fetch-depth: 1
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate the player wrappers and categorized example
+        shell: pwsh
+        run: |
+          python tools/test-pattern-api.py `
+            spikes/vst3-callback/python_runtime.cpp `
+            spikes/vst3-callback/Portable
+          if ($LASTEXITCODE -ne 0) { throw "PortedPlugins wrapper compatibility tests failed." }
+
       - name: Configure scsynth modules only
         shell: pwsh
         run: |
@@ -133,6 +144,7 @@ jobs:
             -DSC_PATH="$env:GITHUB_WORKSPACE\sc-source" `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\portedplugins-install" `
+            -DCMAKE_CXX_FLAGS="/D_USE_MATH_DEFINES" `
             -DSUPERNOVA=OFF -DSCSYNTH=ON -DNOVA_SIMD=OFF `
             -DUSE_DAISYSP_LIB=ON
           if ($LASTEXITCODE -ne 0) { throw "PortedPlugins CMake configuration failed." }
@@ -213,7 +225,7 @@ jobs:
           }
           Copy-Item "UGens\PortedPlugins\build-player-synthdefs.scd" `
             "$pack\Sources\PortedPlugins-SynthDef-source"
-          Copy-Item "spikes\vst3-callback\Portable\232-portedplugins-players.py" `
+          Copy-Item "UGens\PortedPlugins\Examples\232-portedplugins-players.py" `
             "$pack\Portable\Examples"
 
           $sourceArchive = "$pack\Sources\PortedPlugins-source.zip"

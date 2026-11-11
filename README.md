@@ -2,11 +2,12 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.192 adds eight curated PortedPlugins player wrappers: two analog
-drums, five oscillator voices, and a plucked-string voice. Their `.scsyndef`
-files and bounded `.controls` sidecars appear in categorized Players groups;
-Example 232 demonstrates the voices. The separate Windows add-on pack supplies
-the required PortedPlugins `.scx` modules.
+Version 0.4.192 adds support for eight curated PortedPlugins player wrappers:
+two analog drums, five oscillator voices, and a plucked-string voice. The
+separate Windows add-on keeps their `.scsyndef` files and bounded `.controls`
+sidecars together with the required PortedPlugins `.scx` modules. Install the
+pack before those entries appear in categorized Players; Example 232 is in the
+pack.
 
 Version 0.4.191 adds finite pattern-valued `sleep()` and Sardine-style
 oversleeping inside bounded `@swim`: `sleep(P[0.5, 1.25])` selects by cycle

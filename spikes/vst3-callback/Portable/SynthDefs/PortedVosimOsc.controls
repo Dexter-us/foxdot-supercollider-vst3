@@ -1,4 +1,0 @@
-# VOSIM formants and waveshape.
-form1freq 100.0 5000.0 700.0 log
-form2freq 100.0 8000.0 1400.0 log
-shape -1.0 1.0 0.0

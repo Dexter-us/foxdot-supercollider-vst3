@@ -1,4 +1,0 @@
-# ZOsc formant and contour controls.
-formantfreq 100.0 6000.0 900.0 log
-shape 0.0 1.0 0.5
-mode -1.0 1.0 0.0

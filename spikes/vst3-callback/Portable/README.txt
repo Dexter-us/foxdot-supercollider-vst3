@@ -1,7 +1,9 @@
-0.4.192 adds eight categorized PortedPlugins player voices: analog kick/snare,
-five oscillator types, and a plucked string model. Install the matching
-PortedPlugins `.scx` modules from the separate Windows pack; the player
-SynthDefs and seven bounded slider sidecars are in `SynthDefs`. See Example 232.
+0.4.192 adds support for eight PortedPlugins player voices: analog kick/snare,
+five oscillator types, and a plucked string model. They are not in the base VST
+bundle: the separate Windows add-on keeps their player SynthDefs and seven
+bounded slider sidecars together with the matching `.scx` modules. Install the
+entire pack before using these categorized Players entries. Example 232 is in
+the pack.
 
 0.4.191 adds Sardine-style pattern-valued and oversleeping `sleep()` inside
 bounded `@swim`. `sleep(P[0.5, 1.25])` selects the delay by the current cycle
