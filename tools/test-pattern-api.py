@@ -2891,14 +2891,10 @@ def test_embedded_synthdef():
     bundle_script = open(
         os.path.join(repo_root, 'tools', 'build-windows-vst3.ps1'),
         encoding='utf-8').read()
-    for required_granular_file in (
-            'DexterGranularFX.scd', 'DexterGranularFX.scsyndef',
-            '243-granular-cloud-sample-player.py',
-            '244-granular-rhythmic-slicer.py',
-            '245-granular-freeze-texture.py',
-            '246-granular-live-player-input.py'):
-        assert required_granular_file in bundle_script, (
-            'Windows packaging must include ' + required_granular_file)
+    assert ('Get-ChildItem -Path $portableSource -Force |' in bundle_script and
+            'Copy-Item -Destination $portableDirectory -Recurse -Force'
+            in bundle_script), (
+                'Windows packaging must recursively copy the full Portable tree')
     cmake_text = open(os.path.join(plugin_dir, 'CMakeLists.txt'), encoding='utf-8').read()
     version = re.search(r'project\([^\n]*\bVERSION\s+([0-9.]+)', cmake_text).group(1)
     factory_text = processor_source.split('BEGIN_FACTORY_DEF', 1)[1]
