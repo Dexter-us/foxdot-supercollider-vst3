@@ -127,7 +127,10 @@ the matching SynthDef/UGen pack is installed and the host restarted. Loaded
 player effects include Airwindows TapeDelay2 and Echojam, Chorus, Flanger,
 Phaser, Tremolo, JPverb, Greyhole, the SCLOrk-derived Phazer/Decimator/Crossover
 Distortion inserts, and optional LimutFX inserts such as LimutShifter,
-LimutShimmer, and LimutGatedVerb. A chain may contain up to four inserts.
+ LimutShimmer, and LimutGatedVerb. The optional PortedPlugins insert pack adds
+ AnalogTape, AnalogChew, AnalogDegrade, AnalogLoss, AnalogPhaser,
+ AnalogVintageDistortion, LockhartWavefolder and DCompressor. A chain may
+ contain up to four inserts.
 Use <code>effects=[("Chorus", {"fx_mix": 0.4}), ...]</code> for a chain or the
 legacy <code>effect="Chorus", fx_mix=0.4</code> form for one insert when that
  effect exposes <code>fx_mix</code>. TapeDelay2 and Echojam now expose a smoothed
@@ -184,6 +187,34 @@ center 150–1800 Hz, spread 0–1, feedback 0–0.85, tone 200–16000 Hz.</td>
 <code>fx_shape</code> 0–1, <code>fx_tone</code> 200–16000 Hz.</td></tr>
 <tr id="Tremolo"><td>Tremolo</td><td>mix, depth, shape, spread and phase 0–1;
 rate 0.05–20 Hz, tone 200–16000 Hz.</td></tr>
+<tr id="PortedAnalogTapeFX"><td>Analog Tape</td><td><code>fx_mix</code>,
+<code>fx_bias</code>, <code>fx_saturation</code>, <code>fx_drive</code>: 0–1.
+Oversampling is fixed at x2.</td></tr>
+<tr id="PortedAnalogChewFX"><td>Analog Chew</td><td><code>fx_mix</code>,
+<code>fx_depth</code>, <code>fx_frequency</code>, <code>fx_variance</code>: 0–1.</td></tr>
+<tr id="PortedAnalogDegradeFX"><td>Analog Degrade</td><td><code>fx_mix</code>,
+<code>fx_depth</code>, <code>fx_amount</code>, <code>fx_variance</code>,
+<code>fx_envelope</code>: 0–1.</td></tr>
+<tr id="PortedAnalogLossFX"><td>Analog Loss</td><td><code>fx_mix</code>,
+<code>fx_gap</code>, <code>fx_thick</code>, <code>fx_space</code>,
+<code>fx_speed</code>: 0–1. Use sparing automation; this UGen can use high CPU.</td></tr>
+<tr id="PortedAnalogPhaserFX"><td>Analog Phaser</td><td><code>fx_mix</code> 0–1;
+<code>fx_rate</code> 0.05–8 Hz; <code>fx_skew</code> −1–1;
+<code>fx_feedback</code> 0–0.95; <code>fx_modulation</code> 0–1;
+<code>fx_stages</code> 1–50.</td></tr>
+<tr id="PortedAnalogVintageDistortionFX"><td>Vintage Distortion</td>
+<td><code>fx_mix</code>, <code>fx_drivegain</code> 0–1;
+<code>fx_bias</code> 0–2.5; <code>fx_lowgain</code> 0.0001–0.3;
+<code>fx_highgain</code> 0.001–0.3; <code>fx_shelvingfreq</code> 20–20000 Hz.
+Oversampling is fixed off.</td></tr>
+<tr id="PortedLockhartWavefolderFX"><td>Lockhart Wavefolder</td>
+<td><code>fx_mix</code>, <code>fx_bias</code> 0–1;
+<code>fx_pregain</code> 1–20.</td></tr>
+<tr id="PortedDCompressorFX"><td>DCompressor</td><td><code>fx_mix</code> 0–1;
+<code>fx_ratio</code> 1–40; <code>fx_threshold</code> −80–0 dB;
+<code>fx_attack</code>, <code>fx_release</code> 0.001–10 s;
+<code>fx_makeup</code> 0–24; <code>fx_automakeup</code> 0–1.
+Uses its own signal for detection; no external sidechain input.</td></tr>
 </tbody></table>
 <p>The live FX Mix slider is shown only when the first chain insert exposes
 <code>fx_mix</code>. For Airwindows delays, edit the listed

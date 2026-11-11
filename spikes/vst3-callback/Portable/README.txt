@@ -1,3 +1,11 @@
+0.4.194 adds eight PortedPlugins player-effect inserts: AnalogTape, AnalogChew,
+AnalogDegrade, AnalogLoss, AnalogPhaser, AnalogVintageDistortion,
+LockhartWavefolder, and DCompressor. Their sliders are bounded and smoothed.
+Example 238 uses AnalogLoss conservatively because fast parameter modulation
+can cost more CPU. Example 242 uses DCompressor's internal detector; the player
+chain does not provide external sidechain routing. Examples 235–242 isolate
+one effect per file.
+
 0.4.193 adds Rongs, PhasorModal, and Resonator player voices plus a stereo
 Resonator insert and the PortedPlugins Fverb stereo reverb insert. The optional
 Windows add-on keeps their SynthDefs with the matching `.scx` modules. The

@@ -272,6 +272,18 @@ inline std::string effectCategory(const CatalogEntry& entry) {
         return "Resonators";
     if (name == "PortedFverbFX")
         return "Reverb";
+    if (name == "PortedAnalogChewFX" ||
+        name == "PortedAnalogDegradeFX" ||
+        name == "PortedAnalogLossFX" ||
+        name == "PortedAnalogTapeFX")
+        return "Tape and lo-fi";
+    if (name == "PortedAnalogPhaserFX")
+        return "Modulation and rhythm";
+    if (name == "PortedDCompressorFX")
+        return "Dynamics";
+    if (name == "PortedAnalogVintageDistortionFX" ||
+        name == "PortedLockhartWavefolderFX")
+        return "Distortion and reduction";
     if (name == "Echo" || name == "AirwindowsEchojam" ||
         name == "AirwindowsTapeDelay2" || name == "LimutPingPong")
         return "Delay";
@@ -315,6 +327,22 @@ inline std::string effectSubcategory(const CatalogEntry& entry) {
         return "Resonant body";
     if (name == "PortedFverbFX")
         return "Fverb / Dattorro";
+    if (name == "PortedAnalogTapeFX")
+        return "Tape saturation";
+    if (name == "PortedAnalogChewFX")
+        return "Tape chew";
+    if (name == "PortedAnalogDegradeFX")
+        return "Tape wear";
+    if (name == "PortedAnalogLossFX")
+        return "Tape head loss";
+    if (name == "PortedAnalogPhaserFX")
+        return "Analog phaser";
+    if (name == "PortedAnalogVintageDistortionFX")
+        return "Vintage EQ and distortion";
+    if (name == "PortedLockhartWavefolderFX")
+        return "Wavefolding";
+    if (name == "PortedDCompressorFX")
+        return "Self-keyed compression";
     if (entry.category == "Delay") {
         if (name == "AirwindowsTapeDelay2")
             return "Tape";
@@ -509,6 +537,37 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
         return {{"fx_mix", 0, 1}, {"fx_predelay", 0, 10},
                 {"fx_decay", 0, 100}, {"fx_damping", 10, 20000},
                 {"fx_mod_depth", 0, 1}};
+    if (effectName == "PortedAnalogTapeFX")
+        return {{"fx_mix", 0, 1}, {"fx_bias", 0, 1},
+                {"fx_saturation", 0, 1}, {"fx_drive", 0, 1}};
+    if (effectName == "PortedAnalogChewFX")
+        return {{"fx_mix", 0, 1}, {"fx_depth", 0, 1},
+                {"fx_frequency", 0, 1}, {"fx_variance", 0, 1}};
+    if (effectName == "PortedAnalogDegradeFX")
+        return {{"fx_mix", 0, 1}, {"fx_depth", 0, 1},
+                {"fx_amount", 0, 1}, {"fx_variance", 0, 1},
+                {"fx_envelope", 0, 1}};
+    if (effectName == "PortedAnalogLossFX")
+        return {{"fx_mix", 0, 1}, {"fx_gap", 0, 1},
+                {"fx_thick", 0, 1}, {"fx_space", 0, 1},
+                {"fx_speed", 0, 1}};
+    if (effectName == "PortedAnalogPhaserFX")
+        return {{"fx_mix", 0, 1}, {"fx_rate", 0.05f, 8},
+                {"fx_skew", -1, 1}, {"fx_feedback", 0, 0.95f},
+                {"fx_modulation", 0, 1}, {"fx_stages", 1, 50}};
+    if (effectName == "PortedAnalogVintageDistortionFX")
+        return {{"fx_mix", 0, 1}, {"fx_drivegain", 0, 1},
+                {"fx_bias", 0, 2.5f}, {"fx_lowgain", 0.0001f, 0.3f},
+                {"fx_highgain", 0.001f, 0.3f},
+                {"fx_shelvingfreq", 20, 20000}};
+    if (effectName == "PortedLockhartWavefolderFX")
+        return {{"fx_mix", 0, 1}, {"fx_bias", 0, 1},
+                {"fx_pregain", 1, 20}};
+    if (effectName == "PortedDCompressorFX")
+        return {{"fx_mix", 0, 1}, {"fx_ratio", 1, 40},
+                {"fx_threshold", -80, 0}, {"fx_attack", 0.001f, 10},
+                {"fx_release", 0.001f, 10}, {"fx_makeup", 0, 24},
+                {"fx_automakeup", 0, 1}};
     return {};
 }
 
@@ -526,7 +585,15 @@ inline int playerEffectMixControlIndex(std::string_view effectName) noexcept {
         effectName == "LimutDisperser" || effectName == "LimutFuzz" ||
         effectName == "LimutShifter" || effectName == "LimutShimmer" ||
         effectName == "LimutGatedVerb" || effectName == "LimutCompressor" ||
-        effectName == "PortedResonatorFX" || effectName == "PortedFverbFX")
+        effectName == "PortedResonatorFX" || effectName == "PortedFverbFX" ||
+        effectName == "PortedAnalogTapeFX" ||
+        effectName == "PortedAnalogChewFX" ||
+        effectName == "PortedAnalogDegradeFX" ||
+        effectName == "PortedAnalogLossFX" ||
+        effectName == "PortedAnalogPhaserFX" ||
+        effectName == "PortedAnalogVintageDistortionFX" ||
+        effectName == "PortedLockhartWavefolderFX" ||
+        effectName == "PortedDCompressorFX")
         return 0;
     return -1;
 }
@@ -707,7 +774,11 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         "LimutPingPong", "LimutShifter", "LimutVocoder",
         "LimutShimmer", "Phaser", "SCLOrkPhazerFX",
         "SCLOrkDecimatorFX", "SCLOrkCrossoverDistortionFX", "Tremolo",
-        "PortedResonatorFX", "PortedFverbFX"};
+        "PortedResonatorFX", "PortedFverbFX", "PortedAnalogTapeFX",
+        "PortedAnalogChewFX", "PortedAnalogDegradeFX",
+        "PortedAnalogLossFX", "PortedAnalogPhaserFX",
+        "PortedAnalogVintageDistortionFX", "PortedLockhartWavefolderFX",
+        "PortedDCompressorFX"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
                 bundledEffects.end() ||
@@ -834,7 +905,10 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         "LimutShifter", "LimutShimmer", "LimutVocoder", "Phaser",
         "SCLOrkPhazerFX", "SCLOrkDecimatorFX",
         "SCLOrkCrossoverDistortionFX", "Tremolo", "PortedResonatorFX",
-        "PortedFverbFX"};
+        "PortedFverbFX", "PortedAnalogTapeFX", "PortedAnalogChewFX",
+        "PortedAnalogDegradeFX", "PortedAnalogLossFX",
+        "PortedAnalogPhaserFX", "PortedAnalogVintageDistortionFX",
+        "PortedLockhartWavefolderFX", "PortedDCompressorFX"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
@@ -885,6 +959,36 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "PortedPlugins. Install Fverb_scsynth.scx and this "
                           "SynthDef. Sliders expose mix, predelay, decay, "
                           "damping frequency and modulation depth.";
+        else if (name == "PortedAnalogTapeFX")
+            description = "PortedPlugins analog tape saturation insert. "
+                          "Uses fixed x2 oversampling and the low-cost RK2 "
+                          "solver; sliders control mix, bias, saturation and drive.";
+        else if (name == "PortedAnalogChewFX")
+            description = "PortedPlugins tape-chew/dropout insert. Sliders "
+                          "control mix, chew depth, dropout spacing and variance.";
+        else if (name == "PortedAnalogDegradeFX")
+            description = "PortedPlugins tape-wear/degradation insert. Sliders "
+                          "control mix, depth, wear amount, variance and noise envelope.";
+        else if (name == "PortedAnalogLossFX")
+            description = "PortedPlugins tape-head-loss filter insert. Sliders "
+                          "control gap, tape thickness, spacing and speed. This "
+                          "UGen can use high CPU when parameters are modulated.";
+        else if (name == "PortedAnalogPhaserFX")
+            description = "PortedPlugins virtual-analog feedback phaser insert "
+                          "with an internal LFO. Sliders control rate, skew, "
+                          "feedback, modulation, stage count and mix.";
+        else if (name == "PortedAnalogVintageDistortionFX")
+            description = "PortedPlugins Baxandall EQ and vintage distortion "
+                          "insert. Oversampling is fixed off for lower CPU; "
+                          "sliders control drive, bias, EQ gains and shelf frequency.";
+        else if (name == "PortedLockhartWavefolderFX")
+            description = "PortedPlugins Lockhart wavefolder insert. Cell count "
+                          "is fixed at four; bias and pregain are bounded and "
+                          "smoothed, with a safety waveshaper on the wet signal.";
+        else if (name == "PortedDCompressorFX")
+            description = "PortedPlugins DCompressor insert using its internal "
+                          "self-keyed detector. The current player chain does not "
+                          "route an external sidechain input.";
         else
             description = "Loaded precompiled stereo player-effect SynthDef. "
                           "Its effect-specific fx_* controls are documented "
@@ -918,6 +1022,37 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                         Arg{"fx_decay", "50"},
                         Arg{"fx_damping", "5500"},
                         Arg{"fx_mod_depth", "0.5"}};
+        } else if (name == "PortedAnalogTapeFX") {
+            defaults = {Arg{"fx_mix", "0.25"}, Arg{"fx_bias", "0.5"},
+                        Arg{"fx_saturation", "0.3"}, Arg{"fx_drive", "0.25"}};
+        } else if (name == "PortedAnalogChewFX") {
+            defaults = {Arg{"fx_mix", "0.25"}, Arg{"fx_depth", "0.2"},
+                        Arg{"fx_frequency", "0.5"}, Arg{"fx_variance", "0.1"}};
+        } else if (name == "PortedAnalogDegradeFX") {
+            defaults = {Arg{"fx_mix", "0.25"}, Arg{"fx_depth", "0.2"},
+                        Arg{"fx_amount", "0.2"}, Arg{"fx_variance", "0.1"},
+                        Arg{"fx_envelope", "0.25"}};
+        } else if (name == "PortedAnalogLossFX") {
+            defaults = {Arg{"fx_mix", "0.25"}, Arg{"fx_gap", "0.25"},
+                        Arg{"fx_thick", "0.5"}, Arg{"fx_space", "0.35"},
+                        Arg{"fx_speed", "0.5"}};
+        } else if (name == "PortedAnalogPhaserFX") {
+            defaults = {Arg{"fx_mix", "0.3"}, Arg{"fx_rate", "0.25"},
+                        Arg{"fx_skew", "0"}, Arg{"fx_feedback", "0.25"},
+                        Arg{"fx_modulation", "0.5"}, Arg{"fx_stages", "8"}};
+        } else if (name == "PortedAnalogVintageDistortionFX") {
+            defaults = {Arg{"fx_mix", "0.3"}, Arg{"fx_drivegain", "0.25"},
+                        Arg{"fx_bias", "0"}, Arg{"fx_lowgain", "0.08"},
+                        Arg{"fx_highgain", "0.08"},
+                        Arg{"fx_shelvingfreq", "600"}};
+        } else if (name == "PortedLockhartWavefolderFX") {
+            defaults = {Arg{"fx_mix", "0.25"}, Arg{"fx_bias", "0.1"},
+                        Arg{"fx_pregain", "2"}};
+        } else if (name == "PortedDCompressorFX") {
+            defaults = {Arg{"fx_mix", "0.5"}, Arg{"fx_ratio", "4"},
+                        Arg{"fx_threshold", "-24"}, Arg{"fx_attack", "0.01"},
+                        Arg{"fx_release", "0.1"}, Arg{"fx_makeup", "0.5"},
+                        Arg{"fx_automakeup", "1"}};
         } else if (name == "LimutShimmer") {
             defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_ratio", "2"},
                         Arg{"fx_window", "0.12"}, Arg{"fx_room", "0.8"},
@@ -948,7 +1083,18 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         }
         const auto label = name == "PortedResonatorFX"
             ? std::string("Resonator (Ported)")
-            : name == "PortedFverbFX" ? std::string("Fverb (Ported)") : name;
+            : name == "PortedFverbFX" ? std::string("Fverb (Ported)")
+            : name == "PortedAnalogTapeFX" ? std::string("Analog Tape")
+            : name == "PortedAnalogChewFX" ? std::string("Analog Chew")
+            : name == "PortedAnalogDegradeFX" ? std::string("Analog Degrade")
+            : name == "PortedAnalogLossFX" ? std::string("Analog Loss")
+            : name == "PortedAnalogPhaserFX" ? std::string("Analog Phaser")
+            : name == "PortedAnalogVintageDistortionFX"
+                ? std::string("Vintage Distortion")
+            : name == "PortedLockhartWavefolderFX"
+                ? std::string("Lockhart Wavefolder")
+            : name == "PortedDCompressorFX" ? std::string("DCompressor")
+                                             : name;
         result.push_back({CatalogKind::ExternalEffect, name, label,
                           std::move(description), std::move(defaults), loaded});
     }

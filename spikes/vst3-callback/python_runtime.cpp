@@ -270,8 +270,37 @@ _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'PortedResonatorFX': {
         'fx_mix', 'fx_freq', 'fx_structure', 'fx_brightness', 'fx_damping'},
     'PortedFverbFX': {
-        'fx_mix', 'fx_predelay', 'fx_decay', 'fx_damping', 'fx_mod_depth'}
+        'fx_mix', 'fx_predelay', 'fx_decay', 'fx_damping', 'fx_mod_depth'},
+    'PortedAnalogTapeFX': {
+        'fx_mix', 'fx_bias', 'fx_saturation', 'fx_drive'},
+    'PortedAnalogChewFX': {
+        'fx_mix', 'fx_depth', 'fx_frequency', 'fx_variance'},
+    'PortedAnalogDegradeFX': {
+        'fx_mix', 'fx_depth', 'fx_amount', 'fx_variance', 'fx_envelope'},
+    'PortedAnalogLossFX': {
+        'fx_mix', 'fx_gap', 'fx_thick', 'fx_space', 'fx_speed'},
+    'PortedAnalogPhaserFX': {
+        'fx_mix', 'fx_rate', 'fx_skew', 'fx_feedback', 'fx_modulation',
+        'fx_stages'},
+    'PortedAnalogVintageDistortionFX': {
+        'fx_mix', 'fx_drivegain', 'fx_bias', 'fx_lowgain', 'fx_highgain',
+        'fx_shelvingfreq'},
+    'PortedLockhartWavefolderFX': {
+        'fx_mix', 'fx_bias', 'fx_pregain'},
+    'PortedDCompressorFX': {
+        'fx_mix', 'fx_ratio', 'fx_threshold', 'fx_attack', 'fx_release',
+        'fx_makeup', 'fx_automakeup'}
 }
+_PORTED_EFFECT_KEYWORDS = {
+    'fx_bias', 'fx_saturation', 'fx_amount', 'fx_variance', 'fx_envelope',
+    'fx_gap', 'fx_thick', 'fx_space', 'fx_speed', 'fx_skew',
+    'fx_modulation', 'fx_drivegain', 'fx_lowgain', 'fx_highgain',
+    'fx_shelvingfreq', 'fx_pregain', 'fx_makeup', 'fx_automakeup'
+}
+for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
+                         _COMPAT_SEQUENCE_KEYWORDS):
+    _effect_keywords.update(_PORTED_EFFECT_KEYWORDS)
+_COMPAT_NOTE_PLAY_KEYWORDS.update(_PORTED_EFFECT_KEYWORDS)
 for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
                          _COMPAT_SEQUENCE_KEYWORDS, _COMPAT_NOTE_PLAY_KEYWORDS):
     _effect_keywords.add('effects')
@@ -1336,7 +1365,12 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         'LimutFuzz', 'LimutShifter', 'LimutShimmer',
                         'LimutGatedVerb', 'LimutCompressor',
                         'LimutVocoder', 'PortedResonatorFX',
-                        'PortedFverbFX'}:
+                        'PortedFverbFX', 'PortedAnalogTapeFX',
+                        'PortedAnalogChewFX', 'PortedAnalogDegradeFX',
+                        'PortedAnalogLossFX', 'PortedAnalogPhaserFX',
+                        'PortedAnalogVintageDistortionFX',
+                        'PortedLockhartWavefolderFX',
+                        'PortedDCompressorFX'}:
                     self.add(keyword.lineno or node.lineno,
                              'effect= supports the bundled Airwindows, reverb, '
                              'modulation, and LimutFX player-effect SynthDefs.')
@@ -1482,7 +1516,14 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                                     'LimutFuzz', 'LimutShifter',
                                      'LimutShimmer', 'LimutGatedVerb',
                                      'LimutCompressor', 'PortedResonatorFX',
-                                     'PortedFverbFX'}):
+                                     'PortedFverbFX', 'PortedAnalogTapeFX',
+                                     'PortedAnalogChewFX',
+                                     'PortedAnalogDegradeFX',
+                                     'PortedAnalogLossFX',
+                                     'PortedAnalogPhaserFX',
+                                     'PortedAnalogVintageDistortionFX',
+                                     'PortedLockhartWavefolderFX',
+                                     'PortedDCompressorFX'}):
                             self.add(entry.lineno, 'Unsupported effect-chain name.')
                         elif effectName.value not in _USER_SYNTH_NAMES:
                             self.add(entry.lineno,
@@ -6572,7 +6613,10 @@ def userSynth(name, notes=0, **kwargs):
                 'Tremolo', 'LimutPingPong', 'LimutDuck', 'LimutDisperser',
                 'LimutFuzz', 'LimutShifter', 'LimutShimmer',
                 'LimutGatedVerb', 'LimutCompressor', 'PortedResonatorFX',
-                'PortedFverbFX'):
+                'PortedFverbFX', 'PortedAnalogTapeFX', 'PortedAnalogChewFX',
+                'PortedAnalogDegradeFX', 'PortedAnalogLossFX',
+                'PortedAnalogPhaserFX', 'PortedAnalogVintageDistortionFX',
+                'PortedLockhartWavefolderFX', 'PortedDCompressorFX'):
         raise ValueError(name + ' is an insert, not a note source; use effect="' +
                          name + '" on a synth or play() player')
     if (name in ('AirwindowsTapeDelay2', 'AirwindowsEchojam') and
@@ -7130,7 +7174,55 @@ _PLAYER_EFFECT_SPECS = {
         ('fx_predelay', 1, 0.0, 10.0, 0.0),
         ('fx_decay', 2, 0.0, 100.0, 50.0),
         ('fx_damping', 3, 10.0, 20000.0, 5500.0),
-        ('fx_mod_depth', 4, 0.0, 1.0, 0.5))
+        ('fx_mod_depth', 4, 0.0, 1.0, 0.5)),
+    'PortedAnalogTapeFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.25),
+        ('fx_bias', 1, 0.0, 1.0, 0.5),
+        ('fx_saturation', 2, 0.0, 1.0, 0.3),
+        ('fx_drive', 3, 0.0, 1.0, 0.25)),
+    'PortedAnalogChewFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.25),
+        ('fx_depth', 1, 0.0, 1.0, 0.2),
+        ('fx_frequency', 2, 0.0, 1.0, 0.5),
+        ('fx_variance', 3, 0.0, 1.0, 0.1)),
+    'PortedAnalogDegradeFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.25),
+        ('fx_depth', 1, 0.0, 1.0, 0.2),
+        ('fx_amount', 2, 0.0, 1.0, 0.2),
+        ('fx_variance', 3, 0.0, 1.0, 0.1),
+        ('fx_envelope', 4, 0.0, 1.0, 0.25)),
+    'PortedAnalogLossFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.25),
+        ('fx_gap', 1, 0.0, 1.0, 0.25),
+        ('fx_thick', 2, 0.0, 1.0, 0.5),
+        ('fx_space', 3, 0.0, 1.0, 0.35),
+        ('fx_speed', 4, 0.0, 1.0, 0.5)),
+    'PortedAnalogPhaserFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.3),
+        ('fx_rate', 1, 0.05, 8.0, 0.25),
+        ('fx_skew', 2, -1.0, 1.0, 0.0),
+        ('fx_feedback', 3, 0.0, 0.95, 0.25),
+        ('fx_modulation', 4, 0.0, 1.0, 0.5),
+        ('fx_stages', 5, 1.0, 50.0, 8.0)),
+    'PortedAnalogVintageDistortionFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.3),
+        ('fx_drivegain', 1, 0.0, 1.0, 0.25),
+        ('fx_bias', 2, 0.0, 2.5, 0.0),
+        ('fx_lowgain', 3, 0.0001, 0.3, 0.08),
+        ('fx_highgain', 4, 0.001, 0.3, 0.08),
+        ('fx_shelvingfreq', 5, 20.0, 20000.0, 600.0)),
+    'PortedLockhartWavefolderFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.25),
+        ('fx_bias', 1, 0.0, 1.0, 0.1),
+        ('fx_pregain', 2, 1.0, 20.0, 2.0)),
+    'PortedDCompressorFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.5),
+        ('fx_ratio', 1, 1.0, 40.0, 4.0),
+        ('fx_threshold', 2, -80.0, 0.0, -24.0),
+        ('fx_attack', 3, 0.001, 10.0, 0.01),
+        ('fx_release', 4, 0.001, 10.0, 0.1),
+        ('fx_makeup', 5, 0.0, 24.0, 0.5),
+        ('fx_automakeup', 6, 0.0, 1.0, 1.0))
 }
 def _player_effect_control_values(effect, controls):
     provided = [key for key in controls if key.startswith('fx_')]

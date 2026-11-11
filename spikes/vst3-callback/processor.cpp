@@ -4281,7 +4281,15 @@ private:
     static bool isPersistentPlayerEffectName(std::string_view name) {
         return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam" ||
                name == "JPverb" || name == "Greyhole" ||
-                name == "PortedResonatorFX" || name == "PortedFverbFX" ||
+                 name == "PortedResonatorFX" || name == "PortedFverbFX" ||
+                 name == "PortedAnalogTapeFX" ||
+                 name == "PortedAnalogChewFX" ||
+                 name == "PortedAnalogDegradeFX" ||
+                 name == "PortedAnalogLossFX" ||
+                 name == "PortedAnalogPhaserFX" ||
+                 name == "PortedAnalogVintageDistortionFX" ||
+                 name == "PortedLockhartWavefolderFX" ||
+                 name == "PortedDCompressorFX" ||
                name == "Chorus" || name == "Flanger" ||
                name == "Phaser" || name == "Tremolo" ||
                 name == "SCLOrkPhazerFX" ||
@@ -4518,6 +4526,22 @@ private:
                     userDefinition.name == "PortedResonatorFX";
                 const bool isPortedFverbFX =
                     userDefinition.name == "PortedFverbFX";
+                const bool isPortedAnalogTapeFX =
+                    userDefinition.name == "PortedAnalogTapeFX";
+                const bool isPortedAnalogChewFX =
+                    userDefinition.name == "PortedAnalogChewFX";
+                const bool isPortedAnalogDegradeFX =
+                    userDefinition.name == "PortedAnalogDegradeFX";
+                const bool isPortedAnalogLossFX =
+                    userDefinition.name == "PortedAnalogLossFX";
+                const bool isPortedAnalogPhaserFX =
+                    userDefinition.name == "PortedAnalogPhaserFX";
+                const bool isPortedAnalogVintageDistortionFX =
+                    userDefinition.name == "PortedAnalogVintageDistortionFX";
+                const bool isPortedLockhartWavefolderFX =
+                    userDefinition.name == "PortedLockhartWavefolderFX";
+                const bool isPortedDCompressorFX =
+                    userDefinition.name == "PortedDCompressorFX";
                 const bool isChorus = userDefinition.name == "Chorus";
                 const bool isFlanger = userDefinition.name == "Flanger";
                 const bool isPhaser = userDefinition.name == "Phaser";
@@ -4545,6 +4569,12 @@ private:
                 const uint32 expectedControlCount =
                     isTapeDelay ? 9u : isEchojam ? 7u :
                     (isPortedResonatorFX || isPortedFverbFX) ? 7u :
+                    (isPortedAnalogTapeFX || isPortedAnalogChewFX) ? 6u :
+                    (isPortedAnalogDegradeFX || isPortedAnalogLossFX) ? 7u :
+                    (isPortedAnalogPhaserFX ||
+                     isPortedAnalogVintageDistortionFX) ? 8u :
+                    isPortedLockhartWavefolderFX ? 5u :
+                    isPortedDCompressorFX ? 9u :
                     isLimutPingPong ? 5u : isLimutDuck ? 7u :
                     isLimutDisperser ? 6u : isLimutFuzz ? 5u :
                     isLimutShifter ? 5u : isLimutShimmer ? 7u :
@@ -4588,6 +4618,62 @@ private:
                     userDefinition.effectControlMaximum =
                         std::array<float, 7>{{1.0f, 10.0f, 100.0f,
                                               20000.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isPortedAnalogTapeFX ||
+                           isPortedAnalogChewFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f, 0.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 1.0f, 1.0f,
+                                              1.0f, 1.0f, 1.0f}};
+                } else if (isPortedAnalogDegradeFX ||
+                           isPortedAnalogLossFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f, 0.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 1.0f, 1.0f,
+                                              1.0f, 1.0f, 1.0f}};
+                } else if (isPortedAnalogPhaserFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, -1.0f, 0.0f,
+                                              0.0f, 1.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 8.0f, 1.0f, 0.95f,
+                                              1.0f, 50.0f, 1.0f}};
+                } else if (isPortedAnalogVintageDistortionFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f, 0.0001f,
+                                              0.001f, 20.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 2.5f, 0.3f,
+                                              0.3f, 20000.0f, 1.0f}};
+                } else if (isPortedLockhartWavefolderFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 1.0f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 20.0f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isPortedDCompressorFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 1.0f, -80.0f, 0.001f,
+                                              0.001f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 40.0f, 0.0f, 10.0f,
+                                              10.0f, 24.0f, 1.0f}};
                 } else if (isJPverb) {
                     userDefinition.effectControlIndices =
                         std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
@@ -4769,6 +4855,17 @@ private:
                     ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
                     : isPortedFverbFX
                     ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isPortedAnalogTapeFX || isPortedAnalogChewFX
+                    ? std::array<bool, 7>{{true, true, true, true, false, false, false}}
+                    : isPortedAnalogDegradeFX || isPortedAnalogLossFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isPortedAnalogPhaserFX ||
+                      isPortedAnalogVintageDistortionFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, true, false}}
+                    : isPortedLockhartWavefolderFX
+                    ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
+                    : isPortedDCompressorFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, true, true}}
                     : std::array<bool, 7>{{true, true, true, true, true, true, true}};
                 bool missingRequiredEffectControl = false;
                 for (std::size_t index = 0;

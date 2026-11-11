@@ -181,7 +181,11 @@ int main() {
             "PortedAnalogSnareDrum", "PortedAnalogFoldOsc", "PortedBLOsc",
             "PortedNeoVarSawOsc", "PortedStringVoice", "PortedVosimOsc",
             "PortedZOsc", "PortedRongs", "PortedPhasorModal",
-            "PortedResonator", "PortedResonatorFX", "PortedFverbFX"};
+            "PortedResonator", "PortedResonatorFX", "PortedFverbFX",
+            "PortedAnalogTapeFX", "PortedAnalogChewFX",
+            "PortedAnalogDegradeFX", "PortedAnalogLossFX",
+            "PortedAnalogPhaserFX", "PortedAnalogVintageDistortionFX",
+            "PortedLockhartWavefolderFX", "PortedDCompressorFX"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
@@ -216,7 +220,15 @@ int main() {
         assert(std::none_of(instruments.begin(), instruments.end(),
             [](const auto& entry) {
                 return entry.name == "PortedResonatorFX" ||
-                       entry.name == "PortedFverbFX";
+                       entry.name == "PortedFverbFX" ||
+                       entry.name == "PortedAnalogTapeFX" ||
+                       entry.name == "PortedAnalogChewFX" ||
+                       entry.name == "PortedAnalogDegradeFX" ||
+                       entry.name == "PortedAnalogLossFX" ||
+                       entry.name == "PortedAnalogPhaserFX" ||
+                       entry.name == "PortedAnalogVintageDistortionFX" ||
+                       entry.name == "PortedLockhartWavefolderFX" ||
+                       entry.name == "PortedDCompressorFX";
             }));
         assert(std::none_of(instruments.begin(), instruments.end(),
             [](const auto& entry) { return entry.name == "square"; }));
@@ -285,7 +297,7 @@ int main() {
                portedString->category == "Plucked & Stringed" &&
                portedString->subcategory == "String voices");
         const auto effects = makeEffectCatalog(external);
-        assert(effects.size() >= 28);
+        assert(effects.size() >= 36);
         assert(std::is_sorted(effects.begin(), effects.end(),
             [](const auto& left, const auto& right) {
                 return std::make_tuple(
@@ -317,6 +329,37 @@ int main() {
                        entry.subcategory == "Fverb / Dattorro" &&
                        entry.available;
             }));
+        const auto expectPortedEffect = [&](const char* name,
+                                            const char* category,
+                                            const char* subcategory) {
+            const auto entry = std::find_if(
+                effects.begin(), effects.end(), [name](const auto& item) {
+                    return item.name == name;
+                });
+            assert(entry != effects.end() && entry->available &&
+                   entry->category == category &&
+                   entry->subcategory == subcategory);
+            const auto specs = playerEffectControlSpecs(name);
+            assert(!specs.empty() && specs.front().name == "fx_mix" &&
+                   playerEffectMixControlIndex(name) == 0);
+        };
+        expectPortedEffect("PortedAnalogTapeFX", "Tape and lo-fi",
+                           "Tape saturation");
+        expectPortedEffect("PortedAnalogChewFX", "Tape and lo-fi",
+                           "Tape chew");
+        expectPortedEffect("PortedAnalogDegradeFX", "Tape and lo-fi",
+                           "Tape wear");
+        expectPortedEffect("PortedAnalogLossFX", "Tape and lo-fi",
+                           "Tape head loss");
+        expectPortedEffect("PortedAnalogPhaserFX", "Modulation and rhythm",
+                           "Analog phaser");
+        expectPortedEffect("PortedAnalogVintageDistortionFX",
+                           "Distortion and reduction",
+                           "Vintage EQ and distortion");
+        expectPortedEffect("PortedLockhartWavefolderFX",
+                           "Distortion and reduction", "Wavefolding");
+        expectPortedEffect("PortedDCompressorFX", "Dynamics",
+                           "Self-keyed compression");
         const auto loadedChorus = std::find_if(effects.begin(), effects.end(),
             [](const auto& entry) { return entry.name == "Chorus"; });
         const auto unloadedJPverb = std::find_if(effects.begin(), effects.end(),
@@ -383,6 +426,33 @@ int main() {
                fverbControls[3].maximum == 20000.0f &&
                fverbControls[4].name == "fx_mod_depth" &&
                playerEffectMixControlIndex("PortedFverbFX") == 0);
+        const auto analogTapeControls =
+            playerEffectControlSpecs("PortedAnalogTapeFX");
+        const auto phaserControls =
+            playerEffectControlSpecs("PortedAnalogPhaserFX");
+        const auto vintageControls =
+            playerEffectControlSpecs("PortedAnalogVintageDistortionFX");
+        const auto wavefolderControls =
+            playerEffectControlSpecs("PortedLockhartWavefolderFX");
+        const auto compressorControls =
+            playerEffectControlSpecs("PortedDCompressorFX");
+        assert(analogTapeControls.size() == 4 &&
+               analogTapeControls[1].name == "fx_bias" &&
+               analogTapeControls[1].maximum == 1.0f);
+        assert(phaserControls.size() == 6 &&
+               phaserControls[2].name == "fx_skew" &&
+               phaserControls[2].minimum == -1.0f &&
+               phaserControls[2].maximum == 1.0f);
+        assert(vintageControls.size() == 6 &&
+               vintageControls[5].name == "fx_shelvingfreq" &&
+               vintageControls[5].maximum == 20000.0f);
+        assert(wavefolderControls.size() == 3 &&
+               wavefolderControls[2].name == "fx_pregain" &&
+               wavefolderControls[2].maximum == 20.0f);
+        assert(compressorControls.size() == 7 &&
+               compressorControls[2].name == "fx_threshold" &&
+               compressorControls[2].minimum == -80.0f &&
+               compressorControls[2].maximum == 0.0f);
     }
     {
         const auto kick = sampleCategoryForFilename("00-test-kick.wav");

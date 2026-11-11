@@ -2,7 +2,16 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
-Version 0.4.193 adds three PortedPlugins resonator voices, a stereo Resonator
+Version 0.4.194 adds eight PortedPlugins effects as categorized player inserts:
+AnalogTape, AnalogChew, AnalogDegrade, AnalogLoss, AnalogPhaser,
+AnalogVintageDistortion, LockhartWavefolder, and DCompressor. Each gets bounded
+live controls and an isolated Portable example (235–242). DCompressor uses its
+internal detector because the player chain has no external sidechain bus;
+AnalogLoss controls are smoothed and should not be rapidly automated. Both
+Windows add-on workflows package the wrappers with their matching PortedPlugins
+modules and examples.
+
+Version 0.4.193 added three PortedPlugins resonator voices, a stereo Resonator
 insert, and the pack's Fverb stereo reverb insert. Examples 232b–234 cover safe
 octave checks, the modal voices, and the Resonator/Fverb inserts alongside
 JPverb. The optional Windows add-on includes the corresponding wrappers and

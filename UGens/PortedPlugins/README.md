@@ -16,12 +16,18 @@ The build produces 34 `scsynth` modules, including analog bass/snare drums,
 oscillators, tape/phaser/distortion, filters, resonators, string voices, and
 Fverb. The pack also includes each module's SuperCollider class and help file,
 eleven precompiled FoxDot player voices and bounded `.controls` sidecars, plus
-two stereo player-effect inserts. The player voices include Rongs,
+ten stereo player-effect inserts. The player voices include Rongs,
 PhasorModal, and Resonator. `PortedResonatorFX` exposes live-safe mix,
 frequency, structure, brightness, and damping controls; upstream init-only
 position/resolution are deliberately fixed. `PortedFverbFX` wraps the pack's
 stereo Dattorro-style Fverb and exposes mix, predelay, decay, damping, and
-modulation depth.
+modulation depth. Eight additional inserts wrap AnalogTape, AnalogChew,
+AnalogDegrade, AnalogLoss, AnalogPhaser, AnalogVintageDistortion,
+LockhartWavefolder, and DCompressor. Their bounded controls appear in the
+Effects index and live Players panel. AnalogLoss parameters are smoothed and
+should not be rapidly modulated; DCompressor uses its internal detector because
+the player chain does not expose an external sidechain bus. Examples 235–242
+demonstrate each insert separately, at a conservative level.
 
 ## Use with the VST
 
@@ -35,12 +41,13 @@ modulation depth.
    Percussion, Plucked & Stringed, and Waveforms.
 
 The VST loads compatible `.scx` modules from `Portable/SCPlugins` at engine
-startup. The eleven player SynthDef wrappers are selectable as `userSynth`
+startup. The eleven instrument SynthDef wrappers are selectable as `userSynth`
 entries and appear in their categorized Players groups. Other raw modules in
 the 34-module set are not automatically playable; additional curated wrappers
-are a separate step. Examples 232 and 232b cover the player wrappers and
-octave checks; Example 233 compares the resonator voices; Example 234 demos
-the new Resonator and Fverb inserts alongside JPverb.
+are a separate step. The ten insert wrappers are selected through `effect=`
+or `effects=`. Examples 232 and 232b cover the player wrappers and octave
+checks; Example 233 compares resonator voices; 234 demos Resonator and Fverb;
+235–242 isolate the eight new effects.
 
 ## Use with standalone SuperCollider/FoxDot
 

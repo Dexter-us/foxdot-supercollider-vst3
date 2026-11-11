@@ -51,7 +51,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.193' not in cmake_source or
+if ('VERSION 0.4.194' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -274,6 +274,9 @@ for snapshot_fragment in (
 for airwindows_layout_fragment in (
     'isTapeDelay ? 9u : isEchojam ? 7u :',
     '(isPortedResonatorFX || isPortedFverbFX) ? 7u :',
+    '(isPortedAnalogTapeFX || isPortedAnalogChewFX) ? 6u :',
+    '(isPortedAnalogDegradeFX || isPortedAnalogLossFX) ? 7u :',
+    'isPortedDCompressorFX ? 9u :',
     'isLimutPingPong ? 5u : isLimutDuck ? 7u :',
     'isLimutDisperser ? 6u : isLimutFuzz ? 5u :',
     'isLimutShifter ? 5u : isLimutShimmer ? 7u :',
@@ -301,6 +304,14 @@ for airwindows_layout_fragment in (
     'userDefinition.name == "LimutCompressor"',
     'userDefinition.name == "PortedResonatorFX"',
     'userDefinition.name == "PortedFverbFX"',
+    'userDefinition.name == "PortedAnalogTapeFX"',
+    'userDefinition.name == "PortedAnalogChewFX"',
+    'userDefinition.name == "PortedAnalogDegradeFX"',
+    'userDefinition.name == "PortedAnalogLossFX"',
+    'userDefinition.name == "PortedAnalogPhaserFX"',
+    'userDefinition.name == "PortedAnalogVintageDistortionFX"',
+    'userDefinition.name == "PortedLockhartWavefolderFX"',
+    'userDefinition.name == "PortedDCompressorFX"',
     'std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}}',
     'std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}}',
     'std::array<float, 7>{{0.0f, -60.0f, 0.0f, 0.0f,',
@@ -3201,6 +3212,16 @@ ported_pack_examples = {
         ('PortedRongs', 'PortedPhasorModal', 'PortedResonator'), 3),
     '234-ported-resonator-with-reverb.py': (
         ('PortedResonatorFX', 'PortedFverbFX', 'JPverb'), 3),
+    '235-ported-analog-tape.py': (('PortedAnalogTapeFX',), 1),
+    '236-ported-analog-chew.py': (('PortedAnalogChewFX',), 1),
+    '237-ported-analog-degrade.py': (('PortedAnalogDegradeFX',), 1),
+    '238-ported-analog-loss.py': (('PortedAnalogLossFX',), 1),
+    '239-ported-analog-phaser.py': (('PortedAnalogPhaserFX',), 1),
+    '240-ported-vintage-distortion.py': (
+        ('PortedAnalogVintageDistortionFX',), 1),
+    '241-ported-lockhart-wavefolder.py': (
+        ('PortedLockhartWavefolderFX',), 1),
+    '242-ported-dcompressor.py': (('PortedDCompressorFX',), 1),
 }
 for example_name, (example_names, expected_players) in ported_pack_examples.items():
     portable_path = os.path.join(sys.argv[2], example_name)
@@ -3220,6 +3241,32 @@ ported_effect_wrappers = {
     'PortedFverbFX': (
         'Fverb',
         'out inbus fx_mix fx_predelay fx_decay fx_damping fx_mod_depth'),
+    'PortedAnalogTapeFX': (
+        'AnalogTape',
+        'out inbus fx_mix fx_bias fx_saturation fx_drive'),
+    'PortedAnalogChewFX': (
+        'AnalogChew',
+        'out inbus fx_mix fx_depth fx_frequency fx_variance'),
+    'PortedAnalogDegradeFX': (
+        'AnalogDegrade',
+        'out inbus fx_mix fx_depth fx_amount fx_variance fx_envelope'),
+    'PortedAnalogLossFX': (
+        'AnalogLoss',
+        'out inbus fx_mix fx_gap fx_thick fx_space fx_speed'),
+    'PortedAnalogPhaserFX': (
+        'AnalogPhaser',
+        'out inbus fx_mix fx_rate fx_skew fx_feedback fx_modulation fx_stages'),
+    'PortedAnalogVintageDistortionFX': (
+        'AnalogVintageDistortion',
+        'out inbus fx_mix fx_drivegain fx_bias fx_lowgain fx_highgain '
+        'fx_shelvingfreq'),
+    'PortedLockhartWavefolderFX': (
+        'LockhartWavefolder',
+        'out inbus fx_mix fx_bias fx_pregain'),
+    'PortedDCompressorFX': (
+        'DCompressor',
+        'out inbus fx_mix fx_ratio fx_threshold fx_attack fx_release '
+        'fx_makeup fx_automakeup'),
 }
 for wrapper_name, (ugen_name, expected_controls) in ported_effect_wrappers.items():
     wrapper_path = os.path.join(ported_synthdef_dir, wrapper_name + '.scsyndef')
@@ -4487,6 +4534,22 @@ for filename in os.listdir(sys.argv[2]):
               if filename == '233-ported-modal-resonator-voices.py' else
               ('PortedResonatorFX', 'PortedFverbFX', 'JPverb')
               if filename == '234-ported-resonator-with-reverb.py'
+               else ('PortedAnalogTapeFX',)
+               if filename == '235-ported-analog-tape.py' else
+               ('PortedAnalogChewFX',)
+               if filename == '236-ported-analog-chew.py' else
+               ('PortedAnalogDegradeFX',)
+               if filename == '237-ported-analog-degrade.py' else
+               ('PortedAnalogLossFX',)
+               if filename == '238-ported-analog-loss.py' else
+               ('PortedAnalogPhaserFX',)
+               if filename == '239-ported-analog-phaser.py' else
+               ('PortedAnalogVintageDistortionFX',)
+               if filename == '240-ported-vintage-distortion.py' else
+               ('PortedLockhartWavefolderFX',)
+               if filename == '241-ported-lockhart-wavefolder.py' else
+               ('PortedDCompressorFX',)
+               if filename == '242-ported-dcompressor.py'
               else ())
         if filename == '201-sclork-insert-effects.py':
             example_names = (

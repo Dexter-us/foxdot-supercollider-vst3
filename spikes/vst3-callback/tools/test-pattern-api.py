@@ -95,7 +95,10 @@ example_synth_names = (
     'PortedAnalogSnareDrum', 'PortedAnalogFoldOsc', 'PortedBLOsc',
     'PortedNeoVarSawOsc', 'PortedStringVoice', 'PortedVosimOsc',
     'PortedZOsc', 'PortedRongs', 'PortedPhasorModal', 'PortedResonator',
-    'PortedResonatorFX', 'PortedFverbFX')
+    'PortedResonatorFX', 'PortedFverbFX', 'PortedAnalogTapeFX',
+    'PortedAnalogChewFX', 'PortedAnalogDegradeFX', 'PortedAnalogLossFX',
+    'PortedAnalogPhaserFX', 'PortedAnalogVintageDistortionFX',
+    'PortedLockhartWavefolderFX', 'PortedDCompressorFX')
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
@@ -402,7 +405,10 @@ portedWrapperNames = (
     'PortedAnalogFoldOsc', 'PortedBLOsc', 'PortedNeoVarSawOsc',
     'PortedStringVoice', 'PortedVosimOsc', 'PortedZOsc',
     'PortedRongs', 'PortedPhasorModal', 'PortedResonator',
-    'PortedResonatorFX', 'PortedFverbFX')
+    'PortedResonatorFX', 'PortedFverbFX', 'PortedAnalogTapeFX',
+    'PortedAnalogChewFX', 'PortedAnalogDegradeFX', 'PortedAnalogLossFX',
+    'PortedAnalogPhaserFX', 'PortedAnalogVintageDistortionFX',
+    'PortedLockhartWavefolderFX', 'PortedDCompressorFX')
 repositoryRoot = os.path.abspath(os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), '..', '..'))
 portedSynthDefDir = os.path.join(
@@ -420,6 +426,15 @@ resonatorInsert = os.path.join(
 assert b'PortedResonatorFX' in open(resonatorInsert, 'rb').read()
 fverbInsert = os.path.join(portedSynthDefDir, 'PortedFverbFX.scsyndef')
 assert b'PortedFverbFX' in open(fverbInsert, 'rb').read()
+for wrapper_name in (
+        'PortedAnalogTapeFX', 'PortedAnalogChewFX',
+        'PortedAnalogDegradeFX', 'PortedAnalogLossFX',
+        'PortedAnalogPhaserFX', 'PortedAnalogVintageDistortionFX',
+        'PortedLockhartWavefolderFX', 'PortedDCompressorFX'):
+    wrapper = open(os.path.join(
+        portedSynthDefDir, wrapper_name + '.scsyndef'), 'rb').read()
+    assert wrapper_name.encode('ascii') in wrapper
+    assert b'fx_mix' in wrapper
 userSynthRows = run_example('94-user-synthdef-loader.py', ('CustomPluck',))
 assert [int(row[6]) for row in userSynthRows] == [58, 58]
 for filename, expected_players in (
@@ -1292,6 +1307,12 @@ assert len(run_example('233-ported-modal-resonator-voices.py',
                        example_synth_names)) == 3
 assert len(run_example('234-ported-resonator-with-reverb.py',
                        example_synth_names)) == 3
+for filename in (
+        '235-ported-analog-tape.py', '236-ported-analog-chew.py',
+        '237-ported-analog-degrade.py', '238-ported-analog-loss.py',
+        '239-ported-analog-phaser.py', '240-ported-vintage-distortion.py',
+        '241-ported-lockhart-wavefolder.py', '242-ported-dcompressor.py'):
+    assert len(run_example(filename, example_synth_names)) == 1, filename
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name

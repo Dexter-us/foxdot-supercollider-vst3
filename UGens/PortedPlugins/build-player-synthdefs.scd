@@ -165,6 +165,130 @@ write.value(SynthDef(\PortedFverbFX, {
     Out.ar(out, XFade2.ar(dry, LeakDC.ar(wet), (mix * 2) - 1));
 }));
 
-"Wrote thirteen PortedPlugins player/insert SynthDefs.".postln;
+// Tape saturation. Oversampling and solver mode remain fixed at conservative
+// settings so live slider movement cannot change CPU cost abruptly.
+write.value(SynthDef(\PortedAnalogTapeFX, {
+    |out=0, inbus=0, fx_mix=0.25, fx_bias=0.5, fx_saturation=0.3,
+     fx_drive=0.25|
+    var dry = In.ar(inbus, 2);
+    var bias = Lag.kr(fx_bias.clip(0, 1), 0.04);
+    var saturation = Lag.kr(fx_saturation.clip(0, 1), 0.04);
+    var drive = Lag.kr(fx_drive.clip(0, 1), 0.04);
+    var wet = LeakDC.ar(AnalogTape.ar(dry, bias, saturation, drive, 1, 0));
+    var mix = Lag.kr(fx_mix.clip(0, 1), 0.04);
+    Out.ar(out, (dry * (1 - mix)) + (wet * mix));
+}));
+
+// Tape chew / dropouts.
+write.value(SynthDef(\PortedAnalogChewFX, {
+    |out=0, inbus=0, fx_mix=0.25, fx_depth=0.2, fx_frequency=0.5,
+     fx_variance=0.1|
+    var dry = In.ar(inbus, 2);
+    var depth = Lag.kr(fx_depth.clip(0, 1), 0.05);
+    var frequency = Lag.kr(fx_frequency.clip(0, 1), 0.05);
+    var variance = Lag.kr(fx_variance.clip(0, 1), 0.05);
+    var wet = LeakDC.ar(AnalogChew.ar(dry, depth, frequency, variance));
+    var mix = Lag.kr(fx_mix.clip(0, 1), 0.04);
+    Out.ar(out, (dry * (1 - mix)) + (wet * mix));
+}));
+
+// Tape wear and noisy degradation.
+write.value(SynthDef(\PortedAnalogDegradeFX, {
+    |out=0, inbus=0, fx_mix=0.25, fx_depth=0.2, fx_amount=0.2,
+     fx_variance=0.1, fx_envelope=0.25|
+    var dry = In.ar(inbus, 2);
+    var depth = Lag.kr(fx_depth.clip(0, 1), 0.05);
+    var amount = Lag.kr(fx_amount.clip(0, 1), 0.05);
+    var variance = Lag.kr(fx_variance.clip(0, 1), 0.05);
+    var envelope = Lag.kr(fx_envelope.clip(0, 1), 0.05);
+    var wet = LeakDC.ar(
+        AnalogDegrade.ar(dry, depth, amount, variance, envelope));
+    var mix = Lag.kr(fx_mix.clip(0, 1), 0.04);
+    Out.ar(out, (dry * (1 - mix)) + (wet * mix));
+}));
+
+// Tape-head loss. Slow parameter smoothing avoids abrupt coefficient jumps;
+// avoid fast modulation because this upstream UGen is CPU intensive.
+write.value(SynthDef(\PortedAnalogLossFX, {
+    |out=0, inbus=0, fx_mix=0.25, fx_gap=0.25, fx_thick=0.5,
+     fx_space=0.35, fx_speed=0.5|
+    var dry = In.ar(inbus, 2);
+    var gap = Lag.kr(fx_gap.clip(0, 1), 0.12);
+    var thick = Lag.kr(fx_thick.clip(0, 1), 0.12);
+    var space = Lag.kr(fx_space.clip(0, 1), 0.12);
+    var speed = Lag.kr(fx_speed.clip(0, 1), 0.12);
+    var wet = LeakDC.ar(AnalogLoss.ar(dry, gap, thick, space, speed));
+    var mix = Lag.kr(fx_mix.clip(0, 1), 0.05);
+    Out.ar(out, (dry * (1 - mix)) + (wet * mix));
+}));
+
+// Feedback phaser with an internal, bounded LFO.
+write.value(SynthDef(\PortedAnalogPhaserFX, {
+    |out=0, inbus=0, fx_mix=0.3, fx_rate=0.25, fx_skew=0,
+     fx_feedback=0.25, fx_modulation=0.5, fx_stages=8|
+    var dry = In.ar(inbus, 2);
+    var rate = Lag.kr(fx_rate.clip(0.05, 8), 0.05);
+    var skew = Lag.kr(fx_skew.clip(-1, 1), 0.05);
+    var feedback = Lag.kr(fx_feedback.clip(0, 0.95), 0.05);
+    var modulation = Lag.kr(fx_modulation.clip(0, 1), 0.05);
+    var stages = Lag.kr(fx_stages.round.clip(1, 50), 0.05);
+    var lfo = SinOsc.kr(rate).range(-1, 1);
+    var wet = LeakDC.ar(
+        AnalogPhaser.ar(dry, lfo, skew, feedback, modulation, stages));
+    var mix = Lag.kr(fx_mix.clip(0, 1), 0.04);
+    Out.ar(out, (dry * (1 - mix)) + (wet * mix));
+}));
+
+// Baxandall-style EQ plus vintage drive. Oversampling stays disabled to keep
+// the default insert inexpensive; it is not a live control.
+write.value(SynthDef(\PortedAnalogVintageDistortionFX, {
+    |out=0, inbus=0, fx_mix=0.3, fx_drivegain=0.25, fx_bias=0,
+     fx_lowgain=0.08, fx_highgain=0.08, fx_shelvingfreq=600|
+    var dry = In.ar(inbus, 2);
+    var drivegain = Lag.kr(fx_drivegain.clip(0, 1), 0.05);
+    var bias = Lag.kr(fx_bias.clip(0, 2.5), 0.05);
+    var lowgain = Lag.kr(fx_lowgain.clip(0.0001, 0.3), 0.05);
+    var highgain = Lag.kr(fx_highgain.clip(0.001, 0.3), 0.05);
+    var shelf = Lag.kr(fx_shelvingfreq.clip(20, 20000), 0.05);
+    var wet = LeakDC.ar(
+        AnalogVintageDistortion.ar(
+            dry, drivegain, bias, lowgain, highgain, shelf, 0));
+    var mix = Lag.kr(fx_mix.clip(0, 1), 0.04);
+    Out.ar(out, (dry * (1 - mix)) + (wet * mix));
+}));
+
+// Lockhart wavefolder: the number of cells is fixed; bias and pregain are
+// smoothed and bounded to stay within the upstream UGen's safe operating zone.
+write.value(SynthDef(\PortedLockhartWavefolderFX, {
+    |out=0, inbus=0, fx_mix=0.25, fx_bias=0.1, fx_pregain=2|
+    var dry = In.ar(inbus, 2);
+    var bias = Lag.kr(fx_bias.clip(0, 1), 0.05);
+    var pregain = Lag.kr(fx_pregain.clip(1, 20), 0.05);
+    var folded = LockhartWavefolder.ar((dry * pregain) + bias, 4);
+    var wet = LeakDC.ar(folded).tanh;
+    var mix = Lag.kr(fx_mix.clip(0, 1), 0.04);
+    Out.ar(out, (dry * (1 - mix)) + (wet * mix));
+}));
+
+// Self-keyed compressor. The player chain has no external sidechain bus, so
+// DCompressor's built-in detector follows the signal being compressed.
+write.value(SynthDef(\PortedDCompressorFX, {
+    |out=0, inbus=0, fx_mix=0.5, fx_ratio=4, fx_threshold=(-24),
+     fx_attack=0.01, fx_release=0.1, fx_makeup=0.5, fx_automakeup=1|
+    var dry = In.ar(inbus, 2);
+    var ratio = Lag.kr(fx_ratio.clip(1, 40), 0.04);
+    var threshold = Lag.kr(fx_threshold.clip(-80, 0), 0.04);
+    var attack = Lag.kr(fx_attack.clip(0.001, 10), 0.04);
+    var release = Lag.kr(fx_release.clip(0.001, 10), 0.04);
+    var makeup = Lag.kr(fx_makeup.clip(0, 24), 0.04);
+    var automakeup = Lag.kr(fx_automakeup.round.clip(0, 1), 0.04);
+    var wet = LeakDC.ar(
+        DCompressor.ar(
+            dry, 0, 0, ratio, threshold, attack, release, makeup, automakeup));
+    var mix = Lag.kr(fx_mix.clip(0, 1), 0.04);
+    Out.ar(out, (dry * (1 - mix)) + (wet * mix));
+}));
+
+"Wrote twenty-one PortedPlugins player/insert SynthDefs.".postln;
 0.exit;
 )

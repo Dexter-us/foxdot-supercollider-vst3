@@ -115,7 +115,11 @@ jobs:
             "PortedAnalogFoldOsc", "PortedBLOsc", "PortedNeoVarSawOsc",
             "PortedStringVoice", "PortedVosimOsc", "PortedZOsc",
             "PortedRongs", "PortedPhasorModal", "PortedResonator",
-            "PortedResonatorFX", "PortedFverbFX"
+            "PortedResonatorFX", "PortedFverbFX",
+            "PortedAnalogTapeFX", "PortedAnalogChewFX",
+            "PortedAnalogDegradeFX", "PortedAnalogLossFX",
+            "PortedAnalogPhaserFX", "PortedAnalogVintageDistortionFX",
+            "PortedLockhartWavefolderFX", "PortedDCompressorFX"
           )
           $wrapperSource = "$env:GITHUB_WORKSPACE\UGens\PortedPlugins\SynthDefs"
           foreach ($name in $wrapperNames) {
@@ -136,7 +140,15 @@ jobs:
           Copy-Item "UGens\PortedPlugins\Examples\232-portedplugins-players.py", `
             "UGens\PortedPlugins\Examples\232b-ported-wrapper-octave-check.py", `
             "UGens\PortedPlugins\Examples\233-ported-modal-resonator-voices.py", `
-            "UGens\PortedPlugins\Examples\234-ported-resonator-with-reverb.py" `
+            "UGens\PortedPlugins\Examples\234-ported-resonator-with-reverb.py", `
+            "UGens\PortedPlugins\Examples\235-ported-analog-tape.py", `
+            "UGens\PortedPlugins\Examples\236-ported-analog-chew.py", `
+            "UGens\PortedPlugins\Examples\237-ported-analog-degrade.py", `
+            "UGens\PortedPlugins\Examples\238-ported-analog-loss.py", `
+            "UGens\PortedPlugins\Examples\239-ported-analog-phaser.py", `
+            "UGens\PortedPlugins\Examples\240-ported-vintage-distortion.py", `
+            "UGens\PortedPlugins\Examples\241-ported-lockhart-wavefolder.py", `
+            "UGens\PortedPlugins\Examples\242-ported-dcompressor.py" `
             "$pack\Portable\Examples"
 
           $sourceArchive = "$pack\Sources\PortedPlugins-source.zip"
