@@ -1,0 +1,7 @@
+# Position is sampled at SynthDef creation by the upstream UGen. It is
+# available per note, while the remaining sliders safely affect live voices.
+position 0.0 1.0 0.15
+structure 0.0 1.0 0.4
+brightness 0.0 1.0 0.35
+damping 0.0 1.0 0.55
+excite 0.0 1.0 0.3

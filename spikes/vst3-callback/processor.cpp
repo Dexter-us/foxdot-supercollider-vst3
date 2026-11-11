@@ -4281,6 +4281,7 @@ private:
     static bool isPersistentPlayerEffectName(std::string_view name) {
         return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam" ||
                name == "JPverb" || name == "Greyhole" ||
+                name == "PortedResonatorFX" || name == "PortedFverbFX" ||
                name == "Chorus" || name == "Flanger" ||
                name == "Phaser" || name == "Tremolo" ||
                 name == "SCLOrkPhazerFX" ||
@@ -4513,6 +4514,10 @@ private:
                     userDefinition.name == "AirwindowsEchojam";
                 const bool isJPverb = userDefinition.name == "JPverb";
                 const bool isGreyhole = userDefinition.name == "Greyhole";
+                const bool isPortedResonatorFX =
+                    userDefinition.name == "PortedResonatorFX";
+                const bool isPortedFverbFX =
+                    userDefinition.name == "PortedFverbFX";
                 const bool isChorus = userDefinition.name == "Chorus";
                 const bool isFlanger = userDefinition.name == "Flanger";
                 const bool isPhaser = userDefinition.name == "Phaser";
@@ -4539,6 +4544,7 @@ private:
                     userDefinition.name == "LimutCompressor";
                 const uint32 expectedControlCount =
                     isTapeDelay ? 9u : isEchojam ? 7u :
+                    (isPortedResonatorFX || isPortedFverbFX) ? 7u :
                     isLimutPingPong ? 5u : isLimutDuck ? 7u :
                     isLimutDisperser ? 6u : isLimutFuzz ? 5u :
                     isLimutShifter ? 5u : isLimutShimmer ? 7u :
@@ -4564,6 +4570,24 @@ private:
                 } else if (isEchojam) {
                     userDefinition.effectControlIndices =
                         std::array<int, 7>{{2, 3, 4, -1, -1, 6, 5}};
+                } else if (isPortedResonatorFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 35.0f, 0.0f, 0.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 6000.0f, 1.0f, 1.0f,
+                                              1.0f, 1.0f, 1.0f}};
+                } else if (isPortedFverbFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f, 10.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 10.0f, 100.0f,
+                                              20000.0f, 1.0f, 1.0f, 1.0f}};
                 } else if (isJPverb) {
                     userDefinition.effectControlIndices =
                         std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
@@ -4741,6 +4765,10 @@ private:
                     ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
                     : isSCLOrkCrossover
                     ? std::array<bool, 7>{{true, true, true, true, false, false, false}}
+                    : isPortedResonatorFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isPortedFverbFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
                     : std::array<bool, 7>{{true, true, true, true, true, true, true}};
                 bool missingRequiredEffectControl = false;
                 for (std::size_t index = 0;

@@ -69,6 +69,9 @@ inline std::pair<std::string, std::string> portableSynthGrouping(
         return {"Drums & Percussion", "Snare"};
     if (name == "PortedStringVoice")
         return {"Plucked & Stringed", "String voices"};
+    if (name == "PortedRongs" || name == "PortedPhasorModal" ||
+        name == "PortedResonator")
+        return {"Keys & Mallets", "Bells and resonators"};
     if (name == "PortedAnalogFoldOsc" || name == "PortedBLOsc" ||
         name == "PortedNeoVarSawOsc" || name == "PortedVosimOsc" ||
         name == "PortedZOsc")
@@ -141,7 +144,7 @@ inline std::pair<std::string, std::string> portableSynthGrouping(
 
 inline std::string portableSynthDisplayLabel(std::string_view name) {
     static constexpr std::array<
-        std::pair<std::string_view, std::string_view>, 8> portedLabels{{
+        std::pair<std::string_view, std::string_view>, 11> portedLabels{{
         {"PortedAnalogBassDrum", "Analog bass drum"},
         {"PortedAnalogSnareDrum", "Analog snare drum"},
         {"PortedAnalogFoldOsc", "Analog wavefolder oscillator"},
@@ -149,7 +152,10 @@ inline std::string portableSynthDisplayLabel(std::string_view name) {
         {"PortedNeoVarSawOsc", "Variable-slope saw"},
         {"PortedStringVoice", "Karplus–Strong string"},
         {"PortedVosimOsc", "VOSIM oscillator"},
-        {"PortedZOsc", "Z oscillator"}
+        {"PortedZOsc", "Z oscillator"},
+        {"PortedRongs", "Rongs modal resonator"},
+        {"PortedPhasorModal", "Phasor-modal voice"},
+        {"PortedResonator", "Resonant body voice"}
     }};
     for (const auto& item : portedLabels) {
         if (name == item.first)
@@ -262,6 +268,10 @@ inline std::string instrumentSubcategory(const CatalogEntry& entry) {
 
 inline std::string effectCategory(const CatalogEntry& entry) {
     const auto& name = entry.name;
+    if (name == "PortedResonatorFX")
+        return "Resonators";
+    if (name == "PortedFverbFX")
+        return "Reverb";
     if (name == "Echo" || name == "AirwindowsEchojam" ||
         name == "AirwindowsTapeDelay2" || name == "LimutPingPong")
         return "Delay";
@@ -301,6 +311,10 @@ inline std::string effectCategory(const CatalogEntry& entry) {
 
 inline std::string effectSubcategory(const CatalogEntry& entry) {
     const auto& name = entry.name;
+    if (name == "PortedResonatorFX")
+        return "Resonant body";
+    if (name == "PortedFverbFX")
+        return "Fverb / Dattorro";
     if (entry.category == "Delay") {
         if (name == "AirwindowsTapeDelay2")
             return "Tape";
@@ -487,6 +501,14 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
         return {{"fx_mix", 0, 1}, {"fx_threshold", -60, 0},
                 {"fx_ratio", 0, 20}, {"fx_attack", 0, 1},
                 {"fx_release", 0.001f, 3}, {"fx_knee", 0, 24}};
+    if (effectName == "PortedResonatorFX")
+        return {{"fx_mix", 0, 1}, {"fx_freq", 35, 6000},
+                {"fx_structure", 0, 1}, {"fx_brightness", 0, 1},
+                {"fx_damping", 0, 1}};
+    if (effectName == "PortedFverbFX")
+        return {{"fx_mix", 0, 1}, {"fx_predelay", 0, 10},
+                {"fx_decay", 0, 100}, {"fx_damping", 10, 20000},
+                {"fx_mod_depth", 0, 1}};
     return {};
 }
 
@@ -503,7 +525,8 @@ inline int playerEffectMixControlIndex(std::string_view effectName) noexcept {
         effectName == "LimutPingPong" || effectName == "LimutDuck" ||
         effectName == "LimutDisperser" || effectName == "LimutFuzz" ||
         effectName == "LimutShifter" || effectName == "LimutShimmer" ||
-        effectName == "LimutGatedVerb" || effectName == "LimutCompressor")
+        effectName == "LimutGatedVerb" || effectName == "LimutCompressor" ||
+        effectName == "PortedResonatorFX" || effectName == "PortedFverbFX")
         return 0;
     return -1;
 }
@@ -683,7 +706,8 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         "LimutCompressor", "LimutFuzz", "LimutGatedVerb",
         "LimutPingPong", "LimutShifter", "LimutVocoder",
         "LimutShimmer", "Phaser", "SCLOrkPhazerFX",
-        "SCLOrkDecimatorFX", "SCLOrkCrossoverDistortionFX", "Tremolo"};
+        "SCLOrkDecimatorFX", "SCLOrkCrossoverDistortionFX", "Tremolo",
+        "PortedResonatorFX", "PortedFverbFX"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
                 bundledEffects.end() ||
@@ -809,7 +833,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         "LimutCompressor", "LimutGatedVerb", "LimutPingPong",
         "LimutShifter", "LimutShimmer", "LimutVocoder", "Phaser",
         "SCLOrkPhazerFX", "SCLOrkDecimatorFX",
-        "SCLOrkCrossoverDistortionFX", "Tremolo"};
+        "SCLOrkCrossoverDistortionFX", "Tremolo", "PortedResonatorFX",
+        "PortedFverbFX"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
@@ -849,6 +874,17 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "its Portable/SynthDefs file and required SCPlugins "
                           "module, then restart the DAW. FX Mix controls the "
                           "first insert in a chain.";
+        else if (name == "PortedResonatorFX")
+            description = "Stereo resonant-body insert from PortedPlugins. "
+                          "Install Resonator_scsynth.scx and this SynthDef, "
+                          "then restart the DAW. Position and resolution are "
+                          "fixed to safe values; the live sliders control mix, "
+                          "frequency, structure, brightness and damping.";
+        else if (name == "PortedFverbFX")
+            description = "Stereo Dattorro-style Fverb insert from "
+                          "PortedPlugins. Install Fverb_scsynth.scx and this "
+                          "SynthDef. Sliders expose mix, predelay, decay, "
+                          "damping frequency and modulation depth.";
         else
             description = "Loaded precompiled stereo player-effect SynthDef. "
                           "Its effect-specific fx_* controls are documented "
@@ -871,6 +907,17 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         } else if (name == "LimutShifter") {
             defaults = {Arg{"fx_mix", "0.5"}, Arg{"fx_ratio", "1.5"},
                         Arg{"fx_window", "0.12"}};
+        } else if (name == "PortedResonatorFX") {
+            defaults = {Arg{"fx_mix", "0.28"}, Arg{"fx_freq", "220"},
+                        Arg{"fx_structure", "0.45"},
+                        Arg{"fx_brightness", "0.35"},
+                        Arg{"fx_damping", "0.55"}};
+        } else if (name == "PortedFverbFX") {
+            defaults = {Arg{"fx_mix", "0.3"},
+                        Arg{"fx_predelay", "0"},
+                        Arg{"fx_decay", "50"},
+                        Arg{"fx_damping", "5500"},
+                        Arg{"fx_mod_depth", "0.5"}};
         } else if (name == "LimutShimmer") {
             defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_ratio", "2"},
                         Arg{"fx_window", "0.12"}, Arg{"fx_room", "0.8"},
@@ -899,7 +946,10 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         } else if (hasMixControl) {
             defaults.push_back(Arg{"fx_mix", "0.25"});
         }
-        result.push_back({CatalogKind::ExternalEffect, name, name,
+        const auto label = name == "PortedResonatorFX"
+            ? std::string("Resonator (Ported)")
+            : name == "PortedFverbFX" ? std::string("Fverb (Ported)") : name;
+        result.push_back({CatalogKind::ExternalEffect, name, label,
                           std::move(description), std::move(defaults), loaded});
     }
     for (auto& entry : result) {

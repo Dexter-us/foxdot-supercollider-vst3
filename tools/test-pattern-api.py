@@ -51,7 +51,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.192' not in cmake_source or
+if ('VERSION 0.4.193' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -273,6 +273,7 @@ for snapshot_fragment in (
         raise AssertionError('Live player snapshot is missing: ' + snapshot_fragment)
 for airwindows_layout_fragment in (
     'isTapeDelay ? 9u : isEchojam ? 7u :',
+    '(isPortedResonatorFX || isPortedFverbFX) ? 7u :',
     'isLimutPingPong ? 5u : isLimutDuck ? 7u :',
     'isLimutDisperser ? 6u : isLimutFuzz ? 5u :',
     'isLimutShifter ? 5u : isLimutShimmer ? 7u :',
@@ -298,7 +299,10 @@ for airwindows_layout_fragment in (
     'userDefinition.name == "LimutShimmer"',
     'userDefinition.name == "LimutGatedVerb"',
     'userDefinition.name == "LimutCompressor"',
+    'userDefinition.name == "PortedResonatorFX"',
+    'userDefinition.name == "PortedFverbFX"',
     'std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}}',
+    'std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}}',
     'std::array<float, 7>{{0.0f, -60.0f, 0.0f, 0.0f,',
         'std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}}',
         'std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}}',
@@ -3144,6 +3148,9 @@ ported_wrappers = {
     'PortedVosimOsc': ('VosimOsc', 'form1freq form2freq shape'),
     'PortedZOsc': ('ZOsc', 'formantfreq shape mode'),
     'PortedStringVoice': ('StringVoice', 'accent structure brightness damping'),
+    'PortedRongs': ('Rongs', 'structure brightness damping accent stretch position loss'),
+    'PortedPhasorModal': ('PhasorModal', 'decay damp modalamp phase excite'),
+    'PortedResonator': ('Resonator', 'position structure brightness damping excite'),
 }
 portable_synthdef_dir = os.path.join(sys.argv[2], 'SynthDefs')
 for wrapper_name, (ugen_name, sidecar_controls) in ported_wrappers.items():
@@ -3188,6 +3195,52 @@ assert 'No unsupported constructs detected' in ported_example_report, (
 ported_player_rows = run_script(
     ported_example_text, user_synth_names=ported_example_names)
 assert len(ported_player_rows) == 8, ported_player_rows
+ported_pack_examples = {
+    '232b-ported-wrapper-octave-check.py': (('PortedBLOsc',), 1),
+    '233-ported-modal-resonator-voices.py': (
+        ('PortedRongs', 'PortedPhasorModal', 'PortedResonator'), 3),
+    '234-ported-resonator-with-reverb.py': (
+        ('PortedResonatorFX', 'PortedFverbFX', 'JPverb'), 3),
+}
+for example_name, (example_names, expected_players) in ported_pack_examples.items():
+    portable_path = os.path.join(sys.argv[2], example_name)
+    pack_path = os.path.join(
+        repo_root, 'UGens', 'PortedPlugins', 'Examples', example_name)
+    portable_text = open(portable_path, encoding='utf-8').read()
+    pack_text = open(pack_path, encoding='utf-8').read()
+    assert portable_text == pack_text, (
+        'Portable VST and add-on pack copies differ: ' + example_name)
+    report = run_compatibility_check(portable_text, example_names)
+    assert 'No unsupported constructs detected' in report, report
+    assert len(run_script(portable_text, user_synth_names=example_names)) == expected_players
+ported_effect_wrappers = {
+    'PortedResonatorFX': (
+        'Resonator',
+        'out inbus fx_mix fx_freq fx_structure fx_brightness fx_damping'),
+    'PortedFverbFX': (
+        'Fverb',
+        'out inbus fx_mix fx_predelay fx_decay fx_damping fx_mod_depth'),
+}
+for wrapper_name, (ugen_name, expected_controls) in ported_effect_wrappers.items():
+    wrapper_path = os.path.join(ported_synthdef_dir, wrapper_name + '.scsyndef')
+    assert os.path.isfile(wrapper_path), 'Missing player-effect wrapper ' + wrapper_name
+    assert not os.path.exists(os.path.join(
+        portable_synthdef_dir, wrapper_name + '.scsyndef')), (
+            'Optional PortedPlugins insert must ship with its module: ' +
+            wrapper_name)
+    wrapper_bytes = open(wrapper_path, 'rb').read()
+    version, graphs, controls = read_synthdef_manifest(
+        wrapper_bytes, validate_builtin_controls=False, return_controls=True)
+    assert version in (1, 2) and set(graphs) == {wrapper_name}
+    ugen_records = graphs[wrapper_name]
+    ugen_names = [ugen[0] for ugen in ugen_records]
+    assert ugen_name in ugen_names and 'In' in ugen_names and 'Out' in ugen_names
+    assert any(name == 'In' and input_count == 1 and rate == 2
+               for name, input_count, rate in ugen_records)
+    assert any(name == 'Out' and input_count == 3
+               for name, input_count, rate in ugen_records), (
+                   wrapper_name, 'must route a stereo signal to Out')
+    assert set(expected_controls.split()).issubset(controls[wrapper_name])
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
 assert len(legacy) == 1 and len(legacy[0]) == 24
@@ -4428,6 +4481,12 @@ for filename in os.listdir(sys.argv[2]):
              if filename == '229-seeded-random-per-note-delays.py' else
              ('Chorus', 'Phaser', 'Flanger', 'Tremolo')
              if filename == '230-pbindfx-style-ordered-note-effect-chains.py'
+              else tuple(ported_wrappers)
+              if filename == '232b-ported-wrapper-octave-check.py' else
+              ('PortedRongs', 'PortedPhasorModal', 'PortedResonator')
+              if filename == '233-ported-modal-resonator-voices.py' else
+              ('PortedResonatorFX', 'PortedFverbFX', 'JPverb')
+              if filename == '234-ported-resonator-with-reverb.py'
               else ())
         if filename == '201-sclork-insert-effects.py':
             example_names = (
@@ -4443,6 +4502,17 @@ for filename in os.listdir(sys.argv[2]):
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
+portedOctaveExample = run_example(
+    '232b-ported-wrapper-octave-check.py', user_synth_names=('PortedBLOsc',))
+assert len(portedOctaveExample) == 1
+portedModalExample = run_example(
+    '233-ported-modal-resonator-voices.py',
+    user_synth_names=('PortedRongs', 'PortedPhasorModal', 'PortedResonator'))
+assert len(portedModalExample) == 3
+portedReverbExample = run_example(
+    '234-ported-resonator-with-reverb.py',
+    user_synth_names=('PortedResonatorFX', 'PortedFverbFX', 'JPverb'))
+assert len(portedReverbExample) == 3
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name

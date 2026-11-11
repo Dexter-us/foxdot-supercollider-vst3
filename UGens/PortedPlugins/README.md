@@ -15,8 +15,13 @@ corresponding source archives and license notices.
 The build produces 34 `scsynth` modules, including analog bass/snare drums,
 oscillators, tape/phaser/distortion, filters, resonators, string voices, and
 Fverb. The pack also includes each module's SuperCollider class and help file,
-plus eight precompiled FoxDot player SynthDefs and the seven applicable
-bounded `.controls` files.
+eleven precompiled FoxDot player voices and bounded `.controls` sidecars, plus
+two stereo player-effect inserts. The player voices include Rongs,
+PhasorModal, and Resonator. `PortedResonatorFX` exposes live-safe mix,
+frequency, structure, brightness, and damping controls; upstream init-only
+position/resolution are deliberately fixed. `PortedFverbFX` wraps the pack's
+stereo Dattorro-style Fverb and exposes mix, predelay, decay, damping, and
+modulation depth.
 
 ## Use with the VST
 
@@ -30,10 +35,12 @@ bounded `.controls` files.
    Percussion, Plucked & Stringed, and Waveforms.
 
 The VST loads compatible `.scx` modules from `Portable/SCPlugins` at engine
-startup. The eight included SynthDef wrappers are selectable as `userSynth`
+startup. The eleven player SynthDef wrappers are selectable as `userSynth`
 entries and appear in their categorized Players groups. Other raw modules in
 the 34-module set are not automatically playable; additional curated wrappers
-are a separate step. Example 232 demonstrates the installed player voices.
+are a separate step. Examples 232 and 232b cover the player wrappers and
+octave checks; Example 233 compares the resonator voices; Example 234 demos
+the new Resonator and Fverb inserts alongside JPverb.
 
 ## Use with standalone SuperCollider/FoxDot
 

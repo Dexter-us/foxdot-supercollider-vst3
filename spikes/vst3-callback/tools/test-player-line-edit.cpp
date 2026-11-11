@@ -180,7 +180,8 @@ int main() {
             "KickDrum", "JazzKitBrushKick", "PortedAnalogBassDrum",
             "PortedAnalogSnareDrum", "PortedAnalogFoldOsc", "PortedBLOsc",
             "PortedNeoVarSawOsc", "PortedStringVoice", "PortedVosimOsc",
-            "PortedZOsc"};
+            "PortedZOsc", "PortedRongs", "PortedPhasorModal",
+            "PortedResonator", "PortedResonatorFX", "PortedFverbFX"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
@@ -197,11 +198,25 @@ int main() {
                        entry.category == "Bass" &&
                        entry.subcategory == "Saw bass";
             }));
+        for (const auto* name : {"PortedRongs", "PortedPhasorModal",
+                                 "PortedResonator"}) {
+            assert(std::any_of(instruments.begin(), instruments.end(),
+                [&](const auto& entry) {
+                    return entry.name == name &&
+                           entry.category == "Keys & Mallets" &&
+                           entry.subcategory == "Bells and resonators";
+                }));
+        }
         assert(std::any_of(instruments.begin(), instruments.end(),
             [](const auto& entry) {
                 return entry.name == "play" &&
                        entry.category == "Drums & Percussion" &&
                        entry.subcategory == "WAV sample player";
+            }));
+        assert(std::none_of(instruments.begin(), instruments.end(),
+            [](const auto& entry) {
+                return entry.name == "PortedResonatorFX" ||
+                       entry.name == "PortedFverbFX";
             }));
         assert(std::none_of(instruments.begin(), instruments.end(),
             [](const auto& entry) { return entry.name == "square"; }));
@@ -286,6 +301,22 @@ int main() {
                        entry.category == "Delay" &&
                        entry.subcategory == "Multi-tap echo";
             }));
+        assert(std::any_of(effects.begin(), effects.end(),
+            [](const auto& entry) {
+                return entry.name == "PortedResonatorFX" &&
+                       entry.label == "Resonator (Ported)" &&
+                       entry.category == "Resonators" &&
+                       entry.subcategory == "Resonant body" &&
+                       entry.available;
+            }));
+        assert(std::any_of(effects.begin(), effects.end(),
+            [](const auto& entry) {
+                return entry.name == "PortedFverbFX" &&
+                       entry.label == "Fverb (Ported)" &&
+                       entry.category == "Reverb" &&
+                       entry.subcategory == "Fverb / Dattorro" &&
+                       entry.available;
+            }));
         const auto loadedChorus = std::find_if(effects.begin(), effects.end(),
             [](const auto& entry) { return entry.name == "Chorus"; });
         const auto unloadedJPverb = std::find_if(effects.begin(), effects.end(),
@@ -331,6 +362,27 @@ int main() {
                reverbControls[1].name == "fx_t60" &&
                reverbControls[1].minimum == 0.1f &&
                reverbControls[1].maximum == 60.0f);
+        const auto resonatorControls =
+            playerEffectControlSpecs("PortedResonatorFX");
+        assert(resonatorControls.size() == 5 &&
+               resonatorControls[0].name == "fx_mix" &&
+               resonatorControls[1].name == "fx_freq" &&
+               resonatorControls[1].minimum == 35.0f &&
+               resonatorControls[1].maximum == 6000.0f &&
+               playerEffectMixControlIndex("PortedResonatorFX") == 0);
+        const auto fverbControls = playerEffectControlSpecs("PortedFverbFX");
+        assert(fverbControls.size() == 5 &&
+               fverbControls[0].name == "fx_mix" &&
+               fverbControls[1].name == "fx_predelay" &&
+               fverbControls[1].minimum == 0.0f &&
+               fverbControls[1].maximum == 10.0f &&
+               fverbControls[2].name == "fx_decay" &&
+               fverbControls[2].maximum == 100.0f &&
+               fverbControls[3].name == "fx_damping" &&
+               fverbControls[3].minimum == 10.0f &&
+               fverbControls[3].maximum == 20000.0f &&
+               fverbControls[4].name == "fx_mod_depth" &&
+               playerEffectMixControlIndex("PortedFverbFX") == 0);
     }
     {
         const auto kick = sampleCategoryForFilename("00-test-kick.wav");

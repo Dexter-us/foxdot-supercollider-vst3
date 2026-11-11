@@ -91,7 +91,11 @@ example_synth_names = (
     'SCL_organ_organTonewheel0', 'SCL_pads_sawSynth',
     'SCL_percussion_kalimba', 'SCL_percussion_marimba1',
     'SCL_strings_violin', 'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
-    'SCLOrkCrossoverDistortionFX')
+    'SCLOrkCrossoverDistortionFX', 'PortedAnalogBassDrum',
+    'PortedAnalogSnareDrum', 'PortedAnalogFoldOsc', 'PortedBLOsc',
+    'PortedNeoVarSawOsc', 'PortedStringVoice', 'PortedVosimOsc',
+    'PortedZOsc', 'PortedRongs', 'PortedPhasorModal', 'PortedResonator',
+    'PortedResonatorFX', 'PortedFverbFX')
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
@@ -393,6 +397,29 @@ userSynthBinary = open(os.path.join(userSynthDir, 'CustomPluck.scsyndef'), 'rb')
 assert b'CustomPluck' in userSynthBinary
 assert b'DexterPluck' not in userSynthBinary
 assert not os.path.exists(os.path.join(userSynthDir, 'DexterPluck.scsyndef'))
+portedWrapperNames = (
+    'PortedAnalogBassDrum', 'PortedAnalogSnareDrum',
+    'PortedAnalogFoldOsc', 'PortedBLOsc', 'PortedNeoVarSawOsc',
+    'PortedStringVoice', 'PortedVosimOsc', 'PortedZOsc',
+    'PortedRongs', 'PortedPhasorModal', 'PortedResonator',
+    'PortedResonatorFX', 'PortedFverbFX')
+repositoryRoot = os.path.abspath(os.path.join(
+    os.path.dirname(os.path.abspath(sys.argv[1])), '..', '..'))
+portedSynthDefDir = os.path.join(
+    repositoryRoot, 'UGens', 'PortedPlugins', 'SynthDefs')
+for wrapper_name in portedWrapperNames:
+    wrapper_path = os.path.join(portedSynthDefDir, wrapper_name + '.scsyndef')
+    assert os.path.isfile(wrapper_path), 'missing PortedPlugins wrapper: ' + wrapper_name
+    wrapper_bytes = open(wrapper_path, 'rb').read()
+    assert wrapper_name.encode('ascii') in wrapper_bytes
+for wrapper_name in ('PortedRongs', 'PortedPhasorModal', 'PortedResonator'):
+    controls_path = os.path.join(portedSynthDefDir, wrapper_name + '.controls')
+    assert os.path.isfile(controls_path), 'missing resonator slider sidecar: ' + wrapper_name
+resonatorInsert = os.path.join(
+    portedSynthDefDir, 'PortedResonatorFX.scsyndef')
+assert b'PortedResonatorFX' in open(resonatorInsert, 'rb').read()
+fverbInsert = os.path.join(portedSynthDefDir, 'PortedFverbFX.scsyndef')
+assert b'PortedFverbFX' in open(fverbInsert, 'rb').read()
 userSynthRows = run_example('94-user-synthdef-loader.py', ('CustomPluck',))
 assert [int(row[6]) for row in userSynthRows] == [58, 58]
 for filename, expected_players in (
@@ -506,6 +533,34 @@ def read_synthdef_manifest(data):
         graphs[name] = ugens
     assert offset == len(data), 'SynthDef parser did not consume the complete file'
     return version, graphs
+
+
+for wrapper_name in portedWrapperNames:
+    wrapper_bytes = open(os.path.join(
+        portedSynthDefDir, wrapper_name + '.scsyndef'), 'rb').read()
+    synthdef_version, wrapper_graphs = read_synthdef_manifest(wrapper_bytes)
+    assert synthdef_version in (1, 2)
+    assert set(wrapper_graphs) == {wrapper_name}
+    assert any(ugen[0] == 'Out' for ugen in wrapper_graphs[wrapper_name])
+for wrapper_name, required_ugen in (
+        ('PortedRongs', 'Rongs'),
+        ('PortedPhasorModal', 'PhasorModal'),
+        ('PortedResonator', 'Resonator'),
+        ('PortedResonatorFX', 'Resonator'),
+        ('PortedFverbFX', 'Fverb')):
+    wrapper_bytes = open(os.path.join(
+        portedSynthDefDir, wrapper_name + '.scsyndef'), 'rb').read()
+    _, wrapper_graphs = read_synthdef_manifest(wrapper_bytes)
+    ugen_names = [ugen[0] for ugen in wrapper_graphs[wrapper_name]]
+    assert required_ugen in ugen_names, (
+        wrapper_name + ' is missing its compiled UGen node')
+for control_name in (
+        b'fx_mix', b'fx_freq', b'fx_structure',
+        b'fx_brightness', b'fx_damping'):
+    assert control_name in open(resonatorInsert, 'rb').read()
+for control_name in (b'fx_mix', b'fx_predelay', b'fx_decay',
+                     b'fx_damping', b'fx_mod_depth'):
+    assert control_name in open(fverbInsert, 'rb').read()
 
 
 def test_embedded_synthdef():
@@ -1231,6 +1286,12 @@ for filename in os.listdir(sys.argv[2]):
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_synth_names)
         assert 'No unsupported constructs detected' in example_report, (filename, example_report)
+assert len(run_example('232b-ported-wrapper-octave-check.py',
+                       example_synth_names)) == 1
+assert len(run_example('233-ported-modal-resonator-voices.py',
+                       example_synth_names)) == 3
+assert len(run_example('234-ported-resonator-with-reverb.py',
+                       example_synth_names)) == 3
 for scale_name in namespace['_SCALES']:
     namespace['Scale'].default.set(scale_name)
     assert namespace['Scale'].__dict__[scale_name] == scale_name

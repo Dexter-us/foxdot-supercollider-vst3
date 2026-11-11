@@ -113,7 +113,9 @@ jobs:
           $wrapperNames = @(
             "PortedAnalogBassDrum", "PortedAnalogSnareDrum",
             "PortedAnalogFoldOsc", "PortedBLOsc", "PortedNeoVarSawOsc",
-            "PortedStringVoice", "PortedVosimOsc", "PortedZOsc"
+            "PortedStringVoice", "PortedVosimOsc", "PortedZOsc",
+            "PortedRongs", "PortedPhasorModal", "PortedResonator",
+            "PortedResonatorFX", "PortedFverbFX"
           )
           $wrapperSource = "$env:GITHUB_WORKSPACE\UGens\PortedPlugins\SynthDefs"
           foreach ($name in $wrapperNames) {
@@ -131,7 +133,10 @@ jobs:
           }
           Copy-Item "$env:GITHUB_WORKSPACE\UGens\PortedPlugins\build-player-synthdefs.scd" `
             "$pack\Sources\PortedPlugins-SynthDef-source"
-          Copy-Item "UGens\PortedPlugins\Examples\232-portedplugins-players.py" `
+          Copy-Item "UGens\PortedPlugins\Examples\232-portedplugins-players.py", `
+            "UGens\PortedPlugins\Examples\232b-ported-wrapper-octave-check.py", `
+            "UGens\PortedPlugins\Examples\233-ported-modal-resonator-voices.py", `
+            "UGens\PortedPlugins\Examples\234-ported-resonator-with-reverb.py" `
             "$pack\Portable\Examples"
 
           $sourceArchive = "$pack\Sources\PortedPlugins-source.zip"
@@ -169,7 +174,7 @@ jobs:
             throw "The VST Portable/SynthDefs payload is incomplete."
           }
           $controlFiles = Get-ChildItem "$pack\Portable\SynthDefs" -Filter "*.controls"
-          if ($controlFiles.Count -lt 7 -or $controlFiles.Count -gt $wrapperNames.Count) {
+          if ($controlFiles.Count -lt 10 -or $controlFiles.Count -gt $wrapperNames.Count) {
             throw "The userSynth control sidecar set is incomplete."
           }
           Compress-Archive -Path "$pack\*" `
