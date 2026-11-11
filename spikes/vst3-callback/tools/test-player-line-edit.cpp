@@ -146,6 +146,18 @@ int main() {
             std::string("shape 0 1 0.5\n") + '\0', controls, error));
         assert(!dexter::parsePortableUserSynthControls(
             "shape 0 1 0.5\nshape 0 1 0.5\n", controls, error));
+        assert(dexter::parsePortableUserSynthControls(
+            "pulsewidth 0.02 0.98 0.5\nwaveform 0 2 0\n", controls,
+            error));
+        assert(controls.size() == 2 &&
+               controls[0].name == "pulsewidth" &&
+               std::abs(controls[1].maximum - 2.0f) < 1e-6f);
+        assert(dexter::parsePortableUserSynthControls(
+            "form1freq 100 5000 700 log\nform2freq 100 8000 1400 log\n"
+            "shape -1 1 0\n",
+            controls, error));
+        assert(controls.size() == 3 && controls[0].logarithmic &&
+               controls[2].minimum == -1.0f);
         assert(!dexter::parsePortableUserSynthControls(
             std::string(dexter::kMaxPortableUserSynthControlFileBytes + 1,
                         'x'),
@@ -165,7 +177,10 @@ int main() {
             "sine", "square", "pluck", "sample", "sawbass"};
         std::vector<std::string> external{
             "CustomPluck", "CustomTone", "Chorus", "LimutVocoder",
-            "KickDrum", "JazzKitBrushKick"};
+            "KickDrum", "JazzKitBrushKick", "PortedAnalogBassDrum",
+            "PortedAnalogSnareDrum", "PortedAnalogFoldOsc", "PortedBLOsc",
+            "PortedNeoVarSawOsc", "PortedStringVoice", "PortedVosimOsc",
+            "PortedZOsc"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
@@ -228,6 +243,32 @@ int main() {
                brushKick->category == "Drums & Percussion" &&
                brushKick->subcategory == "Jazz Kit" &&
                brushKick->label == "Brush kick");
+        const auto portedKick = std::find_if(
+            instruments.begin(), instruments.end(), [](const auto& entry) {
+                return entry.name == "PortedAnalogBassDrum";
+            });
+        assert(portedKick != instruments.end() &&
+               portedKick->kind == CatalogKind::UserSynth &&
+               portedKick->category == "Drums & Percussion" &&
+               portedKick->subcategory == "Kick" &&
+               portedKick->label == "Analog bass drum");
+        const auto portedOsc = std::find_if(
+            instruments.begin(), instruments.end(), [](const auto& entry) {
+                return entry.name == "PortedBLOsc";
+            });
+        assert(portedOsc != instruments.end() &&
+               portedOsc->kind == CatalogKind::UserSynth &&
+               portedOsc->category == "Waveforms" &&
+               portedOsc->subcategory == "Ported oscillators" &&
+               portedOsc->label == "Band-limited oscillator");
+        const auto portedString = std::find_if(
+            instruments.begin(), instruments.end(), [](const auto& entry) {
+                return entry.name == "PortedStringVoice";
+            });
+        assert(portedString != instruments.end() &&
+               portedString->kind == CatalogKind::UserSynth &&
+               portedString->category == "Plucked & Stringed" &&
+               portedString->subcategory == "String voices");
         const auto effects = makeEffectCatalog(external);
         assert(effects.size() >= 28);
         assert(std::is_sorted(effects.begin(), effects.end(),

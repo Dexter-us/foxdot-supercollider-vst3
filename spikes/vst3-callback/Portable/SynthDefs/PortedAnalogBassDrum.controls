@@ -1,0 +1,6 @@
+# PortedPlugins virtual-analog bass drum.
+accent 0.0 1.0 0.7
+tone 0.0 1.0 0.45
+decay 0.0 1.0 0.45
+attackfm 0.0 1.0 0.45
+selffm 0.0 1.0 0.25

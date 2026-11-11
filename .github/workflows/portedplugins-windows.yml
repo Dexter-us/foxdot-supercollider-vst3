@@ -84,7 +84,9 @@ jobs:
           $extension = "$pack\Extensions\PortedPlugins"
           New-Item -ItemType Directory -Force `
             "$pack\Portable\SCPlugins", $extension, `
-            "$pack\Sources", "$pack\Licenses" | Out-Null
+            "$pack\Portable\SynthDefs", "$pack\Portable\Examples", `
+            "$pack\Sources\PortedPlugins-SynthDef-source", `
+            "$pack\Licenses" | Out-Null
           Copy-Item "$installed\*" $extension -Recurse -Force
           foreach ($name in $expected) {
             $module = Get-ChildItem $build -Filter "${name}_scsynth.scx" `
@@ -95,6 +97,29 @@ jobs:
             }
             Copy-Item $module.FullName "$pack\Portable\SCPlugins"
           }
+          $wrapperNames = @(
+            "PortedAnalogBassDrum", "PortedAnalogSnareDrum",
+            "PortedAnalogFoldOsc", "PortedBLOsc", "PortedNeoVarSawOsc",
+            "PortedStringVoice", "PortedVosimOsc", "PortedZOsc"
+          )
+          $wrapperSource = "$env:GITHUB_WORKSPACE\UGens\PortedPlugins\SynthDefs"
+          foreach ($name in $wrapperNames) {
+            $binary = Join-Path $wrapperSource ($name + ".scsyndef")
+            if (-not (Test-Path $binary)) {
+              throw "Missing precompiled player wrapper: $name.scsyndef"
+            }
+            Copy-Item $binary "$pack\Portable\SynthDefs"
+            Copy-Item $binary "$pack\Sources\PortedPlugins-SynthDef-source"
+            $sidecar = Join-Path $wrapperSource ($name + ".controls")
+            if (Test-Path $sidecar) {
+              Copy-Item $sidecar "$pack\Portable\SynthDefs"
+              Copy-Item $sidecar "$pack\Sources\PortedPlugins-SynthDef-source"
+            }
+          }
+          Copy-Item "$env:GITHUB_WORKSPACE\UGens\PortedPlugins\build-player-synthdefs.scd" `
+            "$pack\Sources\PortedPlugins-SynthDef-source"
+          Copy-Item "spikes\vst3-callback\Portable\232-portedplugins-players.py" `
+            "$pack\Portable\Examples"
 
           $sourceArchive = "$pack\Sources\PortedPlugins-source.zip"
           git -C "$env:GITHUB_WORKSPACE\portedplugins-source" archive `
@@ -126,6 +151,13 @@ jobs:
 
           if ((Get-ChildItem "$pack\Portable\SCPlugins" -Filter "*.scx").Count -ne $expected.Count) {
             throw "The VST Portable/SCPlugins payload is incomplete."
+          }
+          if ((Get-ChildItem "$pack\Portable\SynthDefs" -Filter "*.scsyndef").Count -ne $wrapperNames.Count) {
+            throw "The VST Portable/SynthDefs payload is incomplete."
+          }
+          $controlFiles = Get-ChildItem "$pack\Portable\SynthDefs" -Filter "*.controls"
+          if ($controlFiles.Count -lt 7 -or $controlFiles.Count -gt $wrapperNames.Count) {
+            throw "The userSynth control sidecar set is incomplete."
           }
           Compress-Archive -Path "$pack\*" `
             -DestinationPath "$env:RUNNER_TEMP\dexter-portedplugins-win-x64.zip" -Force

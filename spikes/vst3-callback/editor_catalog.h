@@ -63,6 +63,16 @@ inline std::pair<std::string, std::string> portableSynthGrouping(
     std::string_view name) {
     // Put precompiled voices beside comparable built-ins, with instrument-level
     // subcategories instead of a generic "Precompiled ..." bucket.
+    if (name == "PortedAnalogBassDrum")
+        return {"Drums & Percussion", "Kick"};
+    if (name == "PortedAnalogSnareDrum")
+        return {"Drums & Percussion", "Snare"};
+    if (name == "PortedStringVoice")
+        return {"Plucked & Stringed", "String voices"};
+    if (name == "PortedAnalogFoldOsc" || name == "PortedBLOsc" ||
+        name == "PortedNeoVarSawOsc" || name == "PortedVosimOsc" ||
+        name == "PortedZOsc")
+        return {"Waveforms", "Ported oscillators"};
     if (name == "CustomPluck")
         return {"Plucked & Stringed", "Custom plucked voices"};
     if (name == "CustomTone")
@@ -130,6 +140,21 @@ inline std::pair<std::string, std::string> portableSynthGrouping(
 }
 
 inline std::string portableSynthDisplayLabel(std::string_view name) {
+    static constexpr std::array<
+        std::pair<std::string_view, std::string_view>, 8> portedLabels{{
+        {"PortedAnalogBassDrum", "Analog bass drum"},
+        {"PortedAnalogSnareDrum", "Analog snare drum"},
+        {"PortedAnalogFoldOsc", "Analog wavefolder oscillator"},
+        {"PortedBLOsc", "Band-limited oscillator"},
+        {"PortedNeoVarSawOsc", "Variable-slope saw"},
+        {"PortedStringVoice", "Karplus–Strong string"},
+        {"PortedVosimOsc", "VOSIM oscillator"},
+        {"PortedZOsc", "Z oscillator"}
+    }};
+    for (const auto& item : portedLabels) {
+        if (name == item.first)
+            return std::string(item.second);
+    }
     static constexpr std::array<
         std::pair<std::string_view, std::string_view>, 10> jazzLabels{{
         {"JazzKitKick", "Kick"},

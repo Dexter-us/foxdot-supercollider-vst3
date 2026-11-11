@@ -1,5 +1,6 @@
 import ast
 import builtins
+import math
 import os
 import re
 import struct
@@ -91,7 +92,10 @@ example_synth_names = (
     'SCL_organ_organTonewheel0', 'SCL_pads_sawSynth',
     'SCL_percussion_kalimba', 'SCL_percussion_marimba1',
     'SCL_strings_violin', 'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
-    'SCLOrkCrossoverDistortionFX')
+    'SCLOrkCrossoverDistortionFX',
+    'PortedAnalogBassDrum', 'PortedAnalogSnareDrum',
+    'PortedAnalogFoldOsc', 'PortedBLOsc', 'PortedNeoVarSawOsc',
+    'PortedStringVoice', 'PortedVosimOsc', 'PortedZOsc')
 namespace = {
     '_dexter_events': [], '_dexter_bpm': 120.0, '_dexter_length': 1.0,
     '_dexter_slots': 0, '_dexter_scale': (0, 2, 4, 5, 7, 9, 11),
@@ -451,6 +455,7 @@ def run_compatibility_check(script_text, user_synth_names=()):
 
 def read_synthdef_manifest(data):
     offset = 0
+    version = None
 
     def read(fmt):
         nonlocal offset
@@ -468,29 +473,33 @@ def read_synthdef_manifest(data):
     assert data[:4] == b'SCgf'
     offset = 4
     version = read('>i')
+    if version not in (1, 2):
+        raise AssertionError('unsupported SynthDef file version: ' + str(version))
+    count_format = '>H' if version == 1 else '>i'
+    index_format = '>h' if version == 1 else '>i'
     graph_count = read('>H')
     graphs = {}
     for _ in range(graph_count):
         name = read_string()
-        constant_count = read('>H')
+        constant_count = read(count_format)
         offset += constant_count * 4
-        parameter_count = read('>H')
+        parameter_count = read(count_format)
         offset += parameter_count * 4
-        parameter_name_count = read('>H')
+        parameter_name_count = read(count_format)
         for _ in range(parameter_name_count):
             read_string()
-            read('>H')
-        ugen_count = read('>H')
+            read(index_format)
+        ugen_count = read(count_format)
         ugens = []
         for _ in range(ugen_count):
             ugen_name = read_string()
             rate = read('>B')
-            input_count = read('>H')
-            output_count = read('>H')
+            input_count = read(count_format)
+            output_count = read(count_format)
             read('>h')
             for _ in range(input_count):
-                source_index = read('>h')
-                read('>h')
+                source_index = read(index_format)
+                read(index_format)
                 assert source_index >= -1 and (source_index == -1 or source_index < len(ugens)), (
                     'SynthDef UGen input refers to an invalid or forward graph node: ' +
                     name + '/' + ugen_name)
@@ -501,6 +510,67 @@ def read_synthdef_manifest(data):
         graphs[name] = ugens
     assert offset == len(data), 'SynthDef parser did not consume the complete file'
     return version, graphs
+
+
+portedSynthUgens = {
+    'PortedAnalogBassDrum': 'AnalogBassDrum',
+    'PortedAnalogSnareDrum': 'AnalogSnareDrum',
+    'PortedAnalogFoldOsc': 'AnalogFoldOsc',
+    'PortedBLOsc': 'BLOsc',
+    'PortedNeoVarSawOsc': 'NeoVarSawOsc',
+    'PortedStringVoice': 'StringVoice',
+    'PortedVosimOsc': 'VosimOsc',
+    'PortedZOsc': 'ZOsc',
+}
+for synth_name, ugen_name in portedSynthUgens.items():
+    path = os.path.join(userSynthDir, synth_name + '.scsyndef')
+    assert os.path.isfile(path), 'missing PortedPlugins player wrapper: ' + synth_name
+    version, graphs = read_synthdef_manifest(open(path, 'rb').read())
+    assert version == 2 and synth_name in graphs, (synth_name, version, graphs)
+    graph_ugens = [item[0] for item in graphs[synth_name]]
+    assert ugen_name in graph_ugens, (synth_name, ugen_name, graph_ugens)
+    assert 'Out' in graph_ugens and 'EnvGen' in graph_ugens, (
+        synth_name, graph_ugens)
+assert len([name for name in os.listdir(userSynthDir)
+            if name.startswith('Ported') and name.endswith('.controls')]) == 7
+portedControlNames = {
+    'PortedAnalogBassDrum': {'accent', 'tone', 'decay', 'attackfm', 'selffm'},
+    'PortedAnalogSnareDrum': {'accent', 'tone', 'decay', 'snappy'},
+    'PortedBLOsc': {'pulsewidth', 'waveform'},
+    'PortedNeoVarSawOsc': {'pw', 'waveshape'},
+    'PortedStringVoice': {'accent', 'structure', 'brightness', 'damping'},
+    'PortedVosimOsc': {'form1freq', 'form2freq', 'shape'},
+    'PortedZOsc': {'formantfreq', 'shape', 'mode'},
+}
+for synth_name, expected_controls in portedControlNames.items():
+    path = os.path.join(userSynthDir, synth_name + '.controls')
+    controls = set()
+    for line_number, line in enumerate(
+            open(path, encoding='utf-8').read().splitlines(), start=1):
+        line = line.split('#', 1)[0].strip()
+        if not line:
+            continue
+        fields = line.split()
+        assert len(fields) in (4, 5), (path, line_number, fields)
+        control_name = fields[0]
+        minimum, maximum, default = map(float, fields[1:4])
+        scale = fields[4] if len(fields) == 5 else 'linear'
+        assert re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', control_name)
+        assert control_name not in {
+            'out', 'inbus', 'freq', 'amp', 'pan', 'gate', 'atk',
+            'rel', 'sus', 'sustain'
+        } and not control_name.startswith('fx_')
+        assert all(map(math.isfinite, (minimum, maximum, default)))
+        assert minimum < maximum and minimum <= default <= maximum
+        assert scale in ('linear', 'log')
+        if scale == 'log':
+            assert minimum > 0
+        assert control_name not in controls, (path, control_name)
+        controls.add(control_name)
+    assert controls == expected_controls, (synth_name, controls)
+portedPlayerRows = run_example('232-portedplugins-players.py',
+                               example_synth_names)
+assert len(portedPlayerRows) == 8, portedPlayerRows
 
 
 def test_embedded_synthdef():
@@ -850,9 +920,12 @@ def bad_sleep(p=0.5, i=0):
     p1 >> saw([i], dur=0.25)
     again(bad_sleep, p=p, i=i + 1)
 """
-badSleepError = run_error_script(bad_sleep_timing)
-assert 'sleep offsets may not exceed the current cycle period' in \
-       badSleepError, badSleepError
+badSleepRows, badSleepEvents = run_script(
+    bad_sleep_timing, include_events=True)
+assert len(badSleepRows) == 1 and len(badSleepEvents) == 2, (
+    badSleepRows, badSleepEvents)
+assert [round(float(event[1]), 2) for event in badSleepEvents] == [0.6, 1.1], (
+    badSleepEvents)
 outsideSleepCheck = run_compatibility_check('sleep(0.25)\n')
 assert 'sleep() is supported only inside a bounded @swim function' in \
        outsideSleepCheck, outsideSleepCheck
@@ -934,7 +1007,7 @@ def oversized_sleep(p=1, i=0):
     p1 >> saw([0], dur=0.25)
 """):
     sleepError = run_compatibility_check(invalid_sleep_script)
-    assert '@swim sleep() requires one literal beat value from 0 to 4096' \
+    assert '@swim sleep() requires a beat value or finite P/list/tuple of' \
            in sleepError, sleepError
 for invalid_every_script, expected_every_error in (
         ("""@swim(cycles=2, period=1)

@@ -1,5 +1,11 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.192 adds eight curated PortedPlugins player wrappers: analog kick
+and snare, five oscillator voices, and a plucked string voice. The `.scsyndef`
+files and bounded slider sidecars are sorted into Players categories; Example
+232 demonstrates the full set. The optional Windows PortedPlugins add-on pack
+provides their required `.scx` modules.
+
 Version 0.4.191 adds finite pattern-valued `sleep()` and Sardine-style
 oversleeping inside bounded `@swim`: `sleep(P[0.5, 1.25])` selects by cycle
 iterator `i`, and later events may land after the next cycle starts. Events are

@@ -14,7 +14,9 @@ corresponding source archives and license notices.
 
 The build produces 34 `scsynth` modules, including analog bass/snare drums,
 oscillators, tape/phaser/distortion, filters, resonators, string voices, and
-Fverb. The pack also includes each module's SuperCollider class and help file.
+Fverb. The pack also includes each module's SuperCollider class and help file,
+plus eight precompiled FoxDot player SynthDefs and the seven applicable
+bounded `.controls` files.
 
 ## Use with the VST
 
@@ -22,12 +24,16 @@ Fverb. The pack also includes each module's SuperCollider class and help file.
 2. Back up the existing `Portable/SCPlugins` folder.
 3. Copy the pack's `Portable/SCPlugins/*.scx` files into the existing folder.
    Merge the files; do not delete other plugins already there.
-4. Restart the DAW and then start the VST engine.
+4. Copy the pack's `Portable/SynthDefs/*.scsyndef` and matching `.controls`
+   into the existing VST `Portable/SynthDefs` folder.
+5. Restart the DAW, open the VST Players index, and look under Drums &
+   Percussion, Plucked & Stringed, and Waveforms.
 
 The VST loads compatible `.scx` modules from `Portable/SCPlugins` at engine
-startup. Adding a module does not automatically create a FoxDot synth or
-effect: using its UGens in a new sound still requires a SynthDef wrapper and
-an example/catalog entry.
+startup. The eight included SynthDef wrappers are selectable as `userSynth`
+entries and appear in their categorized Players groups. Other raw modules in
+the 34-module set are not automatically playable; additional curated wrappers
+are a separate step. Example 232 demonstrates the installed player voices.
 
 ## Use with standalone SuperCollider/FoxDot
 

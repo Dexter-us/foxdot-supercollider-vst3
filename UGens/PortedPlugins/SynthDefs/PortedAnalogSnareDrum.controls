@@ -1,0 +1,5 @@
+# PortedPlugins virtual-analog snare drum.
+accent 0.0 1.0 0.65
+tone 0.0 1.0 0.55
+decay 0.02 1.0 0.4
+snappy 0.0 1.0 0.7

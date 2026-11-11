@@ -49,7 +49,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.191' not in cmake_source or
+if ('VERSION 0.4.192' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3132,6 +3132,44 @@ def test_embedded_synthdef():
 
 test_embedded_synthdef()
 
+ported_synthdef_dir = os.path.join(sys.argv[2], 'SynthDefs')
+ported_wrappers = {
+    'PortedAnalogBassDrum': ('AnalogBassDrum', 'accent tone decay attackfm selffm'),
+    'PortedAnalogSnareDrum': ('AnalogSnareDrum', 'accent tone decay snappy'),
+    'PortedBLOsc': ('BLOsc', 'pulsewidth waveform'),
+    'PortedAnalogFoldOsc': ('AnalogFoldOsc', ''),
+    'PortedNeoVarSawOsc': ('NeoVarSawOsc', 'pw waveshape'),
+    'PortedVosimOsc': ('VosimOsc', 'form1freq form2freq shape'),
+    'PortedZOsc': ('ZOsc', 'formantfreq shape mode'),
+    'PortedStringVoice': ('StringVoice', 'accent structure brightness damping'),
+}
+for wrapper_name, (ugen_name, sidecar_controls) in ported_wrappers.items():
+    wrapper_path = os.path.join(ported_synthdef_dir, wrapper_name + '.scsyndef')
+    assert os.path.isfile(wrapper_path), 'Missing playable wrapper ' + wrapper_name
+    wrapper_bytes = open(wrapper_path, 'rb').read()
+    wrapper_version, wrapper_graphs, wrapper_controls = read_synthdef_manifest(
+        wrapper_bytes, validate_builtin_controls=False, return_controls=True)
+    assert wrapper_version in (1, 2) and set(wrapper_graphs) == {wrapper_name}, (
+        wrapper_name, 'invalid SynthDef graph name or version')
+    graph_ugens = {ugen[0] for ugen in wrapper_graphs[wrapper_name]}
+    assert ugen_name in graph_ugens and 'Out' in graph_ugens and 'EnvGen' in graph_ugens, (
+        wrapper_name, 'must use its module UGen with an envelope and Out')
+    required_controls = {'out', 'freq', 'amp', 'gate', 'atk', 'rel'}
+    required_controls.update(sidecar_controls.split())
+    assert required_controls.issubset(wrapper_controls[wrapper_name]), (
+        wrapper_name, 'wrapper is missing expected controls',
+        required_controls - set(wrapper_controls[wrapper_name]))
+    sidecar_path = os.path.join(ported_synthdef_dir, wrapper_name + '.controls')
+    if sidecar_controls:
+        assert os.path.isfile(sidecar_path), 'Missing live slider sidecar ' + wrapper_name
+        sidecar_text = open(sidecar_path, encoding='utf-8').read()
+        for control_name in sidecar_controls.split():
+            assert re.search(r'^\s*' + re.escape(control_name) + r'\s+', sidecar_text,
+                             re.MULTILINE), (wrapper_name, 'missing slider', control_name)
+    else:
+        assert not os.path.exists(sidecar_path), (
+            wrapper_name, 'unexpected empty control sidecar')
+
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
 assert len(legacy) == 1 and len(legacy[0]) == 24
 namespace['tempo'](10000)
@@ -4371,7 +4409,11 @@ for filename in os.listdir(sys.argv[2]):
              if filename == '229-seeded-random-per-note-delays.py' else
              ('Chorus', 'Phaser', 'Flanger', 'Tremolo')
              if filename == '230-pbindfx-style-ordered-note-effect-chains.py'
-             else ())
+              else
+              ('PortedAnalogBassDrum', 'PortedAnalogSnareDrum', 'PortedBLOsc',
+               'PortedAnalogFoldOsc', 'PortedNeoVarSawOsc', 'PortedVosimOsc',
+               'PortedZOsc', 'PortedStringVoice')
+              if filename == '232-portedplugins-players.py' else ())
         if filename == '201-sclork-insert-effects.py':
             example_names = (
                 'SCLOrkPhazerFX', 'SCLOrkDecimatorFX',
