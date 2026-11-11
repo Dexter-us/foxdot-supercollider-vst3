@@ -2,6 +2,12 @@
 
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
+Version 0.4.195 adds `DexterGranularFX`, a stock-SuperCollider player insert
+with four selectable modes: grain cloud, rhythmic slicing, captured freeze, and
+live-player granulation. Its bounded controls appear in the Effects panel under
+Granular → Cloud / Slicer / Freeze / Live. Portable Examples 243–246 show one
+mode each. No external UGen pack is needed.
+
 Version 0.4.194 adds eight PortedPlugins effects as categorized player inserts:
 AnalogTape, AnalogChew, AnalogDegrade, AnalogLoss, AnalogPhaser,
 AnalogVintageDistortion, LockhartWavefolder, and DCompressor. Each gets bounded

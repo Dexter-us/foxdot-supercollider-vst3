@@ -1,3 +1,24 @@
+0.4.195 adds the stock-SuperCollider player insert `DexterGranularFX`. It is
+listed under Effects → Granular → Cloud / Slicer / Freeze / Live. The mode
+control selects 0=cloud, 1=stepped slicer, 2=capture/freeze, and 3=live
+granulation of that player's signal. The insert uses only built-in
+SuperCollider UGens; there is no optional `.scx` dependency.
+
+Controls and bounds:
+  fx_mix       0..1       dry/wet
+  fx_mode      0..3       0 cloud, 1 slicer, 2 freeze, 3 live input
+  fx_density   1..40      grains per second
+  fx_size      0.01..0.25 grain duration in seconds
+  fx_pitch     0.5..2     playback pitch ratio
+  fx_position  0..1       read position in captured-buffer modes 0–2
+  fx_freeze    0..1       mode 2 only; 1 holds the captured buffer
+
+Examples 243–246 demonstrate the four modes. Example 246 granulates the
+selected player's signal; it does not read an external audio input. In mode 3,
+fx_position and fx_freeze are unused. For Example 245, let the source run at
+least four beats at 120 BPM before freezing, and allow enough time to fill the
+selected fx_position at other tempos.
+
 0.4.194 adds eight PortedPlugins player-effect inserts: AnalogTape, AnalogChew,
 AnalogDegrade, AnalogLoss, AnalogPhaser, AnalogVintageDistortion,
 LockhartWavefolder, and DCompressor. Their sliders are bounded and smoothed.

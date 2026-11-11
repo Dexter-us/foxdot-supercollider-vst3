@@ -268,6 +268,8 @@ inline std::string instrumentSubcategory(const CatalogEntry& entry) {
 
 inline std::string effectCategory(const CatalogEntry& entry) {
     const auto& name = entry.name;
+    if (name == "DexterGranularFX")
+        return "Granular";
     if (name == "PortedResonatorFX")
         return "Resonators";
     if (name == "PortedFverbFX")
@@ -323,6 +325,8 @@ inline std::string effectCategory(const CatalogEntry& entry) {
 
 inline std::string effectSubcategory(const CatalogEntry& entry) {
     const auto& name = entry.name;
+    if (name == "DexterGranularFX")
+        return "Cloud / Slicer / Freeze / Live";
     if (name == "PortedResonatorFX")
         return "Resonant body";
     if (name == "PortedFverbFX")
@@ -568,6 +572,11 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
                 {"fx_threshold", -80, 0}, {"fx_attack", 0.001f, 10},
                 {"fx_release", 0.001f, 10}, {"fx_makeup", 0, 24},
                 {"fx_automakeup", 0, 1}};
+    if (effectName == "DexterGranularFX")
+        return {{"fx_mix", 0, 1}, {"fx_mode", 0, 3},
+                {"fx_density", 1, 40}, {"fx_size", 0.01f, 0.25f},
+                {"fx_pitch", 0.5f, 2}, {"fx_position", 0, 1},
+                {"fx_freeze", 0, 1}};
     return {};
 }
 
@@ -593,7 +602,8 @@ inline int playerEffectMixControlIndex(std::string_view effectName) noexcept {
         effectName == "PortedAnalogPhaserFX" ||
         effectName == "PortedAnalogVintageDistortionFX" ||
         effectName == "PortedLockhartWavefolderFX" ||
-        effectName == "PortedDCompressorFX")
+        effectName == "PortedDCompressorFX" ||
+        effectName == "DexterGranularFX")
         return 0;
     return -1;
 }
@@ -778,7 +788,7 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         "PortedAnalogChewFX", "PortedAnalogDegradeFX",
         "PortedAnalogLossFX", "PortedAnalogPhaserFX",
         "PortedAnalogVintageDistortionFX", "PortedLockhartWavefolderFX",
-        "PortedDCompressorFX"};
+        "PortedDCompressorFX", "DexterGranularFX"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
                 bundledEffects.end() ||
@@ -908,7 +918,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         "PortedFverbFX", "PortedAnalogTapeFX", "PortedAnalogChewFX",
         "PortedAnalogDegradeFX", "PortedAnalogLossFX",
         "PortedAnalogPhaserFX", "PortedAnalogVintageDistortionFX",
-        "PortedLockhartWavefolderFX", "PortedDCompressorFX"};
+        "PortedLockhartWavefolderFX", "PortedDCompressorFX",
+        "DexterGranularFX"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
@@ -989,6 +1000,14 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
             description = "PortedPlugins DCompressor insert using its internal "
                           "self-keyed detector. The current player chain does not "
                           "route an external sidechain input.";
+        else if (name == "DexterGranularFX")
+            description = "Stock-SuperCollider granular insert with four modes: "
+                          "0=cloud, 1=stepped slicer, 2=captured freeze, "
+                          "3=live-player granulation. "
+                          "It processes the selected player's signal; it is not "
+                          "an external hardware-input recorder. fx_density is "
+                          "grains/second and the freeze mode holds its local "
+                          "record buffer when fx_freeze reaches 1.";
         else
             description = "Loaded precompiled stereo player-effect SynthDef. "
                           "Its effect-specific fx_* controls are documented "
@@ -1053,6 +1072,11 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                         Arg{"fx_threshold", "-24"}, Arg{"fx_attack", "0.01"},
                         Arg{"fx_release", "0.1"}, Arg{"fx_makeup", "0.5"},
                         Arg{"fx_automakeup", "1"}};
+        } else if (name == "DexterGranularFX") {
+            defaults = {Arg{"fx_mix", "0.3"}, Arg{"fx_mode", "0"},
+                        Arg{"fx_density", "12"}, Arg{"fx_size", "0.08"},
+                        Arg{"fx_pitch", "1"}, Arg{"fx_position", "0.5"},
+                        Arg{"fx_freeze", "0"}};
         } else if (name == "LimutShimmer") {
             defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_ratio", "2"},
                         Arg{"fx_window", "0.12"}, Arg{"fx_room", "0.8"},
@@ -1094,6 +1118,7 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
             : name == "PortedLockhartWavefolderFX"
                 ? std::string("Lockhart Wavefolder")
             : name == "PortedDCompressorFX" ? std::string("DCompressor")
+            : name == "DexterGranularFX" ? std::string("Granular FX")
                                              : name;
         result.push_back({CatalogKind::ExternalEffect, name, label,
                           std::move(description), std::move(defaults), loaded});

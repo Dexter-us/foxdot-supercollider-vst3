@@ -88,6 +88,16 @@ needed. Restart the DAW after copying the .scsyndef files here.
 The required packaging/ABI check is tools/test-sclork-synthdefs.py; the
 optional native dry/wet audio render is tools/test-sclork-synthdefs-audio.py.
 
+Stock-SuperCollider granular insert
+-----------------------------------
+`DexterGranularFX.scsyndef` is a built-in player effect, not a custom note
+instrument. It appears in the Effects index under Granular, with four modes:
+cloud, rhythmic slicer, captured freeze, and live-player granulation. The
+Effects panel exposes `fx_mix`, `fx_mode`, `fx_density`, `fx_size`, `fx_pitch`,
+`fx_position`, and `fx_freeze`; the Portable README documents their bounds.
+Examples 243–246 demonstrate the modes. It uses stock SuperCollider UGens only,
+so no extra `.scx` module is required.
+
 
 Editor Synths index
 -------------------

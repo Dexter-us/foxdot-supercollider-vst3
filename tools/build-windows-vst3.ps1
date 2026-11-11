@@ -297,13 +297,23 @@ if (-not (Test-Path (Join-Path $portableUgenDirectory "README.txt"))) {
     throw "The VST3 bundle is missing its Portable UGen module folder and loader instructions"
 }
 $portableSynthDefDirectory = Join-Path $portableDirectory "SynthDefs"
-foreach ($requiredSynthDefFile in @("README.txt", "CustomPluck.scd", "CustomPluck.scsyndef")) {
+foreach ($requiredSynthDefFile in @("README.txt", "CustomPluck.scd", "CustomPluck.scsyndef",
+        "DexterGranularFX.scd", "DexterGranularFX.scsyndef")) {
     if (-not (Test-Path (Join-Path $portableSynthDefDirectory $requiredSynthDefFile))) {
         throw "The VST3 bundle is missing Portable/SynthDefs/$requiredSynthDefFile"
     }
 }
 if (-not (Test-Path (Join-Path $portableDirectory "94-user-synthdef-loader.py"))) {
     throw "The VST3 bundle is missing Portable example 94 for the user SynthDef loader"
+}
+foreach ($requiredExample in @(
+        "243-granular-cloud-sample-player.py",
+        "244-granular-rhythmic-slicer.py",
+        "245-granular-freeze-texture.py",
+        "246-granular-live-player-input.py")) {
+    if (-not (Test-Path (Join-Path $portableDirectory $requiredExample))) {
+        throw "The VST3 bundle is missing Portable/$requiredExample"
+    }
 }
 $bundledUgenCount = @(Get-ChildItem -Path (Join-Path $resourceRoot "SCPlugins") -Filter "*.scx" -File).Count
 if ($bundledUgenCount -ne $requiredModules.Count) {

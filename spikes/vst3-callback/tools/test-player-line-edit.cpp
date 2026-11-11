@@ -185,7 +185,8 @@ int main() {
             "PortedAnalogTapeFX", "PortedAnalogChewFX",
             "PortedAnalogDegradeFX", "PortedAnalogLossFX",
             "PortedAnalogPhaserFX", "PortedAnalogVintageDistortionFX",
-            "PortedLockhartWavefolderFX", "PortedDCompressorFX"};
+            "PortedLockhartWavefolderFX", "PortedDCompressorFX",
+            "DexterGranularFX"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
@@ -366,6 +367,27 @@ int main() {
             [](const auto& entry) { return entry.name == "JPverb"; });
         assert(loadedChorus != effects.end() && loadedChorus->available);
         assert(unloadedJPverb != effects.end() && !unloadedJPverb->available);
+        const auto granularEffect = std::find_if(
+            effects.begin(), effects.end(), [](const auto& entry) {
+                return entry.name == "DexterGranularFX";
+            });
+        assert(granularEffect != effects.end() &&
+               granularEffect->kind == CatalogKind::ExternalEffect &&
+               granularEffect->available &&
+               granularEffect->category == "Granular" &&
+               granularEffect->subcategory ==
+                   "Cloud / Slicer / Freeze / Live" &&
+               granularEffect->label == "Granular FX");
+        const auto granularControls =
+            playerEffectControlSpecs("DexterGranularFX");
+        assert(granularControls.size() == 7 &&
+               granularControls[0].name == "fx_mix" &&
+               granularControls[1].name == "fx_mode" &&
+               granularControls[1].minimum == 0.0f &&
+               granularControls[1].maximum == 3.0f &&
+               granularControls[2].name == "fx_density" &&
+               granularControls[2].minimum == 1.0f &&
+               granularControls[2].maximum == 40.0f);
         const auto chorusControls = playerEffectControlSpecs("Chorus");
         assert(chorusControls.size() == 7);
         assert(chorusControls[0].name == "fx_mix" &&

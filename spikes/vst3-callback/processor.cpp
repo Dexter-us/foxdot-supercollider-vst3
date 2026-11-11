@@ -4290,6 +4290,7 @@ private:
                  name == "PortedAnalogVintageDistortionFX" ||
                  name == "PortedLockhartWavefolderFX" ||
                  name == "PortedDCompressorFX" ||
+                 name == "DexterGranularFX" ||
                name == "Chorus" || name == "Flanger" ||
                name == "Phaser" || name == "Tremolo" ||
                 name == "SCLOrkPhazerFX" ||
@@ -4542,6 +4543,8 @@ private:
                     userDefinition.name == "PortedLockhartWavefolderFX";
                 const bool isPortedDCompressorFX =
                     userDefinition.name == "PortedDCompressorFX";
+                const bool isDexterGranularFX =
+                    userDefinition.name == "DexterGranularFX";
                 const bool isChorus = userDefinition.name == "Chorus";
                 const bool isFlanger = userDefinition.name == "Flanger";
                 const bool isPhaser = userDefinition.name == "Phaser";
@@ -4575,6 +4578,7 @@ private:
                      isPortedAnalogVintageDistortionFX) ? 8u :
                     isPortedLockhartWavefolderFX ? 5u :
                     isPortedDCompressorFX ? 9u :
+                    isDexterGranularFX ? 9u :
                     isLimutPingPong ? 5u : isLimutDuck ? 7u :
                     isLimutDisperser ? 6u : isLimutFuzz ? 5u :
                     isLimutShifter ? 5u : isLimutShimmer ? 7u :
@@ -4674,6 +4678,15 @@ private:
                     userDefinition.effectControlMaximum =
                         std::array<float, 7>{{1.0f, 40.0f, 0.0f, 10.0f,
                                               10.0f, 24.0f, 1.0f}};
+                } else if (isDexterGranularFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 1.0f, 0.01f,
+                                              0.5f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 3.0f, 40.0f, 0.25f,
+                                              2.0f, 1.0f, 1.0f}};
                 } else if (isJPverb) {
                     userDefinition.effectControlIndices =
                         std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
@@ -4865,6 +4878,8 @@ private:
                     : isPortedLockhartWavefolderFX
                     ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
                     : isPortedDCompressorFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, true, true}}
+                    : isDexterGranularFX
                     ? std::array<bool, 7>{{true, true, true, true, true, true, true}}
                     : std::array<bool, 7>{{true, true, true, true, true, true, true}};
                 bool missingRequiredEffectControl = false;

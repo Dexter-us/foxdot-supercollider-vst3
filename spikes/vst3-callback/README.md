@@ -1,5 +1,10 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
+Version 0.4.195 adds `DexterGranularFX`, a categorized stock-SuperCollider
+player insert with cloud, rhythmic slicer, freeze, and live-player modes.
+Its bounded controls appear under Effects → Granular. Portable Examples
+243–246 cover the four modes; no external UGen pack is required.
+
 Version 0.4.194 adds eight PortedPlugins effects as categorized player inserts:
 AnalogTape, AnalogChew, AnalogDegrade, AnalogLoss, AnalogPhaser,
 AnalogVintageDistortion, LockhartWavefolder, and DCompressor. Each gets bounded

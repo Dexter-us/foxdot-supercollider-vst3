@@ -289,7 +289,10 @@ _COMPAT_PLAYER_EFFECT_CONTROLS = {
         'fx_mix', 'fx_bias', 'fx_pregain'},
     'PortedDCompressorFX': {
         'fx_mix', 'fx_ratio', 'fx_threshold', 'fx_attack', 'fx_release',
-        'fx_makeup', 'fx_automakeup'}
+        'fx_makeup', 'fx_automakeup'},
+    'DexterGranularFX': {
+        'fx_mix', 'fx_mode', 'fx_density', 'fx_size',
+        'fx_pitch', 'fx_position', 'fx_freeze'}
 }
 _PORTED_EFFECT_KEYWORDS = {
     'fx_bias', 'fx_saturation', 'fx_amount', 'fx_variance', 'fx_envelope',
@@ -297,10 +300,16 @@ _PORTED_EFFECT_KEYWORDS = {
     'fx_modulation', 'fx_drivegain', 'fx_lowgain', 'fx_highgain',
     'fx_shelvingfreq', 'fx_pregain', 'fx_makeup', 'fx_automakeup'
 }
+_GRANULAR_EFFECT_KEYWORDS = {
+    'fx_mode', 'fx_density', 'fx_size', 'fx_pitch',
+    'fx_position', 'fx_freeze'
+}
 for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
                          _COMPAT_SEQUENCE_KEYWORDS):
     _effect_keywords.update(_PORTED_EFFECT_KEYWORDS)
+    _effect_keywords.update(_GRANULAR_EFFECT_KEYWORDS)
 _COMPAT_NOTE_PLAY_KEYWORDS.update(_PORTED_EFFECT_KEYWORDS)
+_COMPAT_NOTE_PLAY_KEYWORDS.update(_GRANULAR_EFFECT_KEYWORDS)
 for _effect_keywords in (_COMPAT_WAVE_KEYWORDS, _USER_SYNTH_KEYWORDS,
                          _COMPAT_SEQUENCE_KEYWORDS, _COMPAT_NOTE_PLAY_KEYWORDS):
     _effect_keywords.add('effects')
@@ -1370,7 +1379,7 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         'PortedAnalogLossFX', 'PortedAnalogPhaserFX',
                         'PortedAnalogVintageDistortionFX',
                         'PortedLockhartWavefolderFX',
-                        'PortedDCompressorFX'}:
+                        'PortedDCompressorFX', 'DexterGranularFX'}:
                     self.add(keyword.lineno or node.lineno,
                              'effect= supports the bundled Airwindows, reverb, '
                              'modulation, and LimutFX player-effect SynthDefs.')
@@ -1523,7 +1532,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                                      'PortedAnalogPhaserFX',
                                      'PortedAnalogVintageDistortionFX',
                                      'PortedLockhartWavefolderFX',
-                                     'PortedDCompressorFX'}):
+                                     'PortedDCompressorFX',
+                                     'DexterGranularFX'}):
                             self.add(entry.lineno, 'Unsupported effect-chain name.')
                         elif effectName.value not in _USER_SYNTH_NAMES:
                             self.add(entry.lineno,
@@ -7222,7 +7232,15 @@ _PLAYER_EFFECT_SPECS = {
         ('fx_attack', 3, 0.001, 10.0, 0.01),
         ('fx_release', 4, 0.001, 10.0, 0.1),
         ('fx_makeup', 5, 0.0, 24.0, 0.5),
-        ('fx_automakeup', 6, 0.0, 1.0, 1.0))
+        ('fx_automakeup', 6, 0.0, 1.0, 1.0)),
+    'DexterGranularFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.3),
+        ('fx_mode', 1, 0.0, 3.0, 0.0),
+        ('fx_density', 2, 1.0, 40.0, 12.0),
+        ('fx_size', 3, 0.01, 0.25, 0.08),
+        ('fx_pitch', 4, 0.5, 2.0, 1.0),
+        ('fx_position', 5, 0.0, 1.0, 0.5),
+        ('fx_freeze', 6, 0.0, 1.0, 0.0))
 }
 def _player_effect_control_values(effect, controls):
     provided = [key for key in controls if key.startswith('fx_')]

@@ -51,7 +51,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.194' not in cmake_source or
+if ('VERSION 0.4.195' not in cmake_source or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -232,7 +232,11 @@ for example_name in ('181-finite-pattern-generator-pack.py',
                           '213-triangle-click-check.py',
                           '214-jazz-brush-kit.py',
                       '215-sardine-span-until.py',
-                      '216-sardine-chance-loaf-on.py'):
+                      '216-sardine-chance-loaf-on.py',
+                      '243-granular-cloud-sample-player.py',
+                      '244-granular-rhythmic-slicer.py',
+                      '245-granular-freeze-texture.py',
+                      '246-granular-live-player-input.py'):
     if not os.path.isfile(os.path.join(os.path.abspath(sys.argv[2]),
                                        example_name)):
         raise AssertionError('Portable example is missing: ' + example_name)
@@ -2884,6 +2888,17 @@ assert not os.path.exists(os.path.join(
 def test_embedded_synthdef():
     plugin_dir = os.path.dirname(os.path.abspath(sys.argv[1]))
     repo_root = os.path.abspath(os.path.join(plugin_dir, '..', '..'))
+    bundle_script = open(
+        os.path.join(repo_root, 'tools', 'build-windows-vst3.ps1'),
+        encoding='utf-8').read()
+    for required_granular_file in (
+            'DexterGranularFX.scd', 'DexterGranularFX.scsyndef',
+            '243-granular-cloud-sample-player.py',
+            '244-granular-rhythmic-slicer.py',
+            '245-granular-freeze-texture.py',
+            '246-granular-live-player-input.py'):
+        assert required_granular_file in bundle_script, (
+            'Windows packaging must include ' + required_granular_file)
     cmake_text = open(os.path.join(plugin_dir, 'CMakeLists.txt'), encoding='utf-8').read()
     version = re.search(r'project\([^\n]*\bVERSION\s+([0-9.]+)', cmake_text).group(1)
     factory_text = processor_source.split('BEGIN_FACTORY_DEF', 1)[1]
@@ -3288,6 +3303,72 @@ for wrapper_name, (ugen_name, expected_controls) in ported_effect_wrappers.items
                for name, input_count, rate in ugen_records), (
                    wrapper_name, 'must route a stereo signal to Out')
     assert set(expected_controls.split()).issubset(controls[wrapper_name])
+
+granular_synthdef_path = os.path.join(
+    portable_synthdef_dir, 'DexterGranularFX.scsyndef')
+granular_version, granular_graphs, granular_controls = read_synthdef_manifest(
+    open(granular_synthdef_path, 'rb').read(),
+    validate_builtin_controls=False, return_controls=True)
+assert granular_version in (1, 2)
+assert set(granular_graphs) == {'DexterGranularFX'}
+assert granular_controls['DexterGranularFX'] == {
+    'out': 0, 'inbus': 1, 'fx_mix': 2, 'fx_mode': 3,
+    'fx_density': 4, 'fx_size': 5, 'fx_pitch': 6,
+    'fx_position': 7, 'fx_freeze': 8}
+assert 'isDexterGranularFX ? 9u' in processor_source
+assert 'name == "DexterGranularFX"' in processor_source
+granular_ugen_names = {
+    name for name, _, _ in granular_graphs['DexterGranularFX']}
+assert {'In', 'Out', 'LocalBuf', 'RecordBuf', 'GrainBuf',
+        'GrainIn', 'PitchShift'}.issubset(granular_ugen_names)
+assert 'effectCategory' in catalog_source and 'return "Granular";' in catalog_source
+assert 'Cloud / Slicer / Freeze / Live' in catalog_source
+granular_examples = {
+    '243-granular-cloud-sample-player.py': 0,
+    '244-granular-rhythmic-slicer.py': 1,
+    '245-granular-freeze-texture.py': 2,
+    '246-granular-live-player-input.py': 3,
+}
+for example_name, expected_mode in granular_examples.items():
+    example_path = os.path.join(os.path.abspath(sys.argv[2]), example_name)
+    example_text = open(example_path, encoding='utf-8').read()
+    example_report = run_compatibility_check(
+        example_text, ('DexterGranularFX',))
+    assert 'No unsupported constructs detected' in example_report, (
+        example_name, example_report)
+    player_rows, effect_values = run_example(
+        example_name, ('DexterGranularFX',),
+        include_player_effect_values=True)
+    assert player_rows and all(row[0] == 'P' for row in player_rows), (
+        example_name, player_rows)
+    effect_row = next(row for row in effect_values if row[1] == '0')
+    assert abs(float(effect_row[3]) - expected_mode / 3.0) < 1e-9, (
+        example_name, effect_row)
+for control, bad_value in (
+        ('fx_mode', 4), ('fx_density', 0), ('fx_size', 0.001),
+        ('fx_pitch', 3), ('fx_position', -0.1), ('fx_freeze', 2)):
+    error = run_error_script(
+        'p1 >> play("x", effect="DexterGranularFX", ' +
+        control + '=' + repr(bad_value) + ')\n',
+        ('DexterGranularFX',))
+    assert control in error and 'between' in error, (control, error)
+granular_chain_script = (
+    'p1 >> sine([0, 3, 7], effects=[("DexterGranularFX", '
+    '{"fx_mode": 1, "fx_density": var([2, 8], 4), '
+    '"fx_size": 0.1, "fx_pitch": 1.25})])\n')
+assert 'No unsupported constructs detected' in run_compatibility_check(
+    granular_chain_script, ('DexterGranularFX',))
+_, granular_chain_rows = run_script(
+    granular_chain_script, user_synth_names=('DexterGranularFX',),
+    include_effect_chains=True)
+assert len(granular_chain_rows) == 1
+assert granular_chain_rows[0] == ['J', '0', '0'], granular_chain_rows
+_, granular_effect_rows = run_script(
+    granular_chain_script, user_synth_names=('DexterGranularFX',),
+    include_player_effects=True)
+assert granular_effect_rows == [['A', '0', '0']], granular_effect_rows
+print('PASS DexterGranularFX stock-UGen ABI, categorized effect controls, '
+      'four modes/examples, bounded validation and effect-chain routing')
 
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
 assert len(legacy) == 1 and len(legacy[0]) == 24
@@ -4557,6 +4638,8 @@ for filename in os.listdir(sys.argv[2]):
                 'SCLOrkCrossoverDistortionFX')
         if filename == '199-limut-compressor.py':
             example_names = ('LimutCompressor',)
+        if filename in granular_examples:
+            example_names = ('DexterGranularFX',)
         if filename in ('214-jazz-brush-kit.py',
                         '217-jazz-kit-core-groove.py',
                         '218-jazz-kit-kick-compare.py'):
