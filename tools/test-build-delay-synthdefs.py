@@ -4,6 +4,7 @@ from pathlib import Path
 import contextlib
 import importlib.util
 import io
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -14,9 +15,64 @@ SCRIPT = Path(__file__).with_name("build-delay-synthdefs.py")
 SPEC = importlib.util.spec_from_file_location("build_delay_synthdefs", SCRIPT)
 BUILDER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILDER)
+VALIDATOR_SCRIPT = Path(__file__).with_name("validate-delay-synthdefs.py")
+VALIDATOR_SPEC = importlib.util.spec_from_file_location(
+    "validate_delay_synthdefs", VALIDATOR_SCRIPT)
+VALIDATOR = importlib.util.module_from_spec(VALIDATOR_SPEC)
+VALIDATOR_SPEC.loader.exec_module(VALIDATOR)
 
 
 class DelaySynthDefBuilderTests(unittest.TestCase):
+    @staticmethod
+    def _v3_fixture():
+        def pstring(value):
+            data = value.encode("utf-8")
+            return struct.pack(">B", len(data)) + data
+
+        body = (
+            pstring("Fixture")
+            + struct.pack(">i", 0)  # constant count
+            + struct.pack(">i", 0)  # control/default-value count
+            + struct.pack(">i", 0)  # named-control count
+            + struct.pack(">i", 0)  # UGen count
+            + struct.pack(">H", 0)  # variant count
+            + struct.pack(">ii", 0, 0)  # default Reblock
+            + struct.pack(">fi", 1.0, 0)  # default Resample
+        )
+        graph = struct.pack(">i", len(body) + 4) + body
+        return b"SCgf" + struct.pack(">iH", 3, 1) + graph
+
+    @staticmethod
+    def _v2_fixture():
+        def pstring(value):
+            data = value.encode("utf-8")
+            return struct.pack(">B", len(data)) + data
+
+        graph = (
+            pstring("Fixture")
+            + struct.pack(">iiiiH", 0, 0, 0, 0, 0)
+        )
+        return b"SCgf" + struct.pack(">iH", 2, 1) + graph
+
+    def test_validator_still_parses_v2_layout(self):
+        graphs = VALIDATOR.parse_synthdef(self._v2_fixture())
+        self.assertEqual(set(graphs), {"Fixture"})
+        self.assertEqual(graphs["Fixture"], ({}, []))
+
+    def test_validator_parses_v3_size_and_reblock_resample_fields(self):
+        graphs = VALIDATOR.parse_synthdef(self._v3_fixture())
+        self.assertEqual(set(graphs), {"Fixture"})
+        controls, ugens = graphs["Fixture"]
+        self.assertEqual(controls, {})
+        self.assertEqual(ugens, [])
+
+    def test_validator_rejects_incorrect_v3_graph_size(self):
+        data = bytearray(self._v3_fixture())
+        declared = struct.unpack_from(">i", data, 10)[0]
+        struct.pack_into(">i", data, 10, declared + 1)
+        with self.assertRaisesRegex(ValueError, "v3 graph size mismatch"):
+            VALIDATOR.parse_synthdef(bytes(data))
+
     def test_build_script_combines_both_sources_and_one_exit(self):
         with tempfile.TemporaryDirectory() as temp:
             source_dir = Path(temp) / "sources"

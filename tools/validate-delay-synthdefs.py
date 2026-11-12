@@ -47,16 +47,21 @@ def parse_synthdef(data):
         raise ValueError("invalid SynthDef magic")
     offset = 4
     version = read(">i")
-    if version not in (1, 2):
+    if version not in (1, 2, 3):
         raise ValueError(f"unsupported SynthDef format version {version}")
-    count_fmt = ">i" if version == 2 else ">H"
-    index_fmt = ">i" if version == 2 else ">h"
+    count_fmt = ">i" if version >= 2 else ">H"
+    index_fmt = ">i" if version >= 2 else ">h"
     result = {}
     for _ in range(read(">H")):
+        graph_start = offset
+        graph_size = read(">i") if version >= 3 else None
+        if graph_size is not None and graph_size < 4:
+            raise ValueError(f"invalid SynthDef graph size {graph_size}")
         name = read_string()
         constants = read(count_fmt)
         offset += constants * 4
-        offset += read(count_fmt) * 4
+        parameter_count = read(count_fmt)
+        offset += parameter_count * 4
         controls = {}
         for _ in range(read(count_fmt)):
             control_name = read_string()
@@ -75,8 +80,21 @@ def parse_synthdef(data):
             for _ in range(output_count):
                 read(">B")
             ugens.append((ugen, input_count, rate))
-        if read(">H") != 0:
+        variants = read(">H")
+        if variants != 0:
             raise ValueError(f"{name} contains unexpected variants")
+        if version >= 3:
+            # SynthDef v3 appends Reblock (two int32 fields) and Resample
+            # (float factor plus int32 control index) after the variants.
+            read(">i")
+            read(">i")
+            read(">f")
+            read(">i")
+            expected_end = graph_start + graph_size
+            if offset != expected_end:
+                raise ValueError(
+                    f"{name} v3 graph size mismatch: declared {graph_size} "
+                    f"bytes, parsed {offset - graph_start}")
         result[name] = (controls, ugens)
     if offset != len(data):
         raise ValueError("trailing data after SynthDef graphs")

@@ -1,12 +1,13 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.199 fixes the delay SynthDef mode selectors: they now pass integer
-indices to SuperCollider `Select` rather than Boolean comparisons. The Windows
-retry exposed a real graph-build error that had previously hidden behind the
-sclang process waiting after the failed definition.
-Version 0.4.198 sends both delay SynthDefs to one pinned sclang session,
-avoiding a second class-library startup, and reports partial sclang output if
-startup or compilation stalls.
+Version 0.4.200 updates the delay SynthDef validator for SuperCollider's v3 file
+format, including its per-graph size field and Reblock/Resample suffix. The
+Windows retry confirmed both delay definitions compile with sclang 3.15; the
+previous validator only accepted formats 1 and 2.
+Version 0.4.199 fixes the delay SynthDef mode selectors to pass numeric indices
+to SuperCollider `Select`, not Boolean comparisons. Version 0.4.198 sends both
+delay definitions through one pinned sclang session and preserves partial
+output at the bounded timeout.
 `DexterMultiTapDelayFX` provides beat-synced, free-seconds, and per-tap
 probability modes; `DexterFeedbackDelayFX` provides filtered, saturated,
 pitch-shifted, stereo cross-feedback, and seconds-based chance-gated feedback
