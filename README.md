@@ -1,5 +1,19 @@
 # Dexter U.S. FoxDot VST3
 
+## User manual (offline HTML)
+
+[Download the HTML manual](https://raw.githubusercontent.com/Dexter-us/foxdot-supercollider-vst3/refs/heads/spike/airwindows-timevar-controls/spikes/vst3-callback/Portable/Dexter-US-FoxDot-Manual.html) · [View the manual source](spikes/vst3-callback/Portable/Dexter-US-FoxDot-Manual.html)
+
+The revised v0.4.201 manual includes a first-15-minutes tutorial, categorized
+instrument/effect directory, bounded control ranges, troubleshooting, embedded
+examples, and author/GitHub/Patreon information. It is self-contained and works
+offline. The Windows packager includes it as
+`dexter_sc_tone.vst3/Portable/Dexter-US-FoxDot-Manual.html`; open that file in a
+web browser, not in the Python or SuperCollider Run tab. The directory is a
+reference catalog: optional instrument/effect entries still require their matching
+add-on packs. Documentation-only update; the VST version remains 0.4.201.
+
+
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
 
 Version 0.4.195 adds `DexterGranularFX`, a stock-SuperCollider player insert
