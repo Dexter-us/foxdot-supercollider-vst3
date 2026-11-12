@@ -4,8 +4,18 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <string_view>
 
 inline constexpr std::size_t kMaxPlayerEffectChain = 4;
+
+inline int playerEffectFeedbackControlSlot(
+    std::string_view effectName) noexcept {
+    if (effectName == "DexterMultiTapDelayFX")
+        return 4;
+    if (effectName == "DexterFeedbackDelayFX")
+        return 2;
+    return -1;
+}
 
 inline double foxDotCutSustainSeconds(double sustainSeconds,
                                       double cut) noexcept {

@@ -5,6 +5,7 @@
 #include "../user_synth_control_state.h"
 #include "../airwindows_control_smoothing.h"
 #include "../mic_loop_capture.h"
+#include "../player_effect_chain.h"
 
 #include <algorithm>
 #include <cassert>
@@ -15,6 +16,9 @@
 using namespace dexter::editor;
 
 int main() {
+    assert(playerEffectFeedbackControlSlot("DexterMultiTapDelayFX") == 4);
+    assert(playerEffectFeedbackControlSlot("DexterFeedbackDelayFX") == 2);
+    assert(playerEffectFeedbackControlSlot("JPverb") == -1);
     {
         std::array<float, 8> previousValues{};
         previousValues[1] = 0.73f;

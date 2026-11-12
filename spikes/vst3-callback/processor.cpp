@@ -4778,7 +4778,7 @@ private:
                         std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
                     userDefinition.effectControlMinimum =
                         std::array<float, 7>{{0.0f, 0.0f, 0.015f, 1.0f,
-                                              0.0f, 0.0f, 30.0f}};
+                                              0.0f, 0.0f, 0.001f}};
                     userDefinition.effectControlMaximum =
                         std::array<float, 7>{{1.0f, 2.0f, 1.0f, 4.0f,
                                               0.92f, 1.0f, 300.0f}};
@@ -6020,10 +6020,19 @@ private:
                 auto* graph = playerEffectGraphs_[player][slot];
                 if (!graph)
                     continue;
+                const auto graphUserIndex =
+                    playerEffectDefinitionIndices_[player][slot];
+                if (graphUserIndex < 0 ||
+                    static_cast<std::size_t>(graphUserIndex) >=
+                        userSynthDefinitions_.size())
+                    continue;
+                const auto& graphDefinition =
+                    userSynthDefinitions_[static_cast<std::size_t>(
+                        graphUserIndex)];
                 const bool slotSelected = effectSelected &&
                     slot < pattern.playerEffectCount &&
                     pattern.playerEffects[slot].userSynthIndex ==
-                        playerEffectDefinitionIndices_[player][slot];
+                        graphUserIndex;
                 if (!slotSelected)
                     playerEffectControlEffectIndices_[player][slot] = -1;
                 if (slotSelected) {
@@ -6065,6 +6074,21 @@ private:
                     }
                     playerEffectControlEffectIndices_[player][slot] =
                         pattern.playerEffects[slot].userSynthIndex;
+                } else {
+                    const int feedbackControl =
+                        playerEffectFeedbackControlSlot(graphDefinition.name);
+                    // Stop new feedback regeneration as soon as the player
+                    // stops. The SynthDef smooths this control and lets the
+                    // already-buffered final echo pass once.
+                    if (feedbackControl >= 0 &&
+                        graphDefinition.effectControlIndices[
+                            static_cast<std::size_t>(feedbackControl)] >= 0)
+                        Graph_SetControl(
+                            graph,
+                            graphDefinition.effectControlIndices[
+                                static_cast<std::size_t>(feedbackControl)],
+                            graphDefinition.effectControlMinimum[
+                                static_cast<std::size_t>(feedbackControl)]);
                 }
                 // The paused insert graph is advanced once after its source or
                 // previous insert's return bus is ready.

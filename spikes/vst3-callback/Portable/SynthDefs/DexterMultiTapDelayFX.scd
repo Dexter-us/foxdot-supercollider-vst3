@@ -6,31 +6,37 @@ SynthDef(\DexterMultiTapDelayFX, {
     var dry = In.ar(inbus, 2);
     var mono = (dry[0] + dry[1]) * 0.5;
     var mode = fx_mode.round.clip(0, 2);
-    var beatSeconds = 60 / fx_bpm.clip(30, 300);
+    var beatSeconds = 60 / fx_bpm.clip(0.001, 300);
     var baseTime = Select.kr(mode, [
         fx_time.clip(1/32, 1) * beatSeconds,
         fx_time.clip(0.015, 1),
         fx_time.clip(1/32, 1) * beatSeconds
     ]);
     var taps = fx_taps.round.clip(1, 4);
-    var feedback = fx_feedback.clip(0, 0.92);
-    var decay = (baseTime * (feedback / (1 - feedback.max(0.02))))
-        .clip(0.01, 4);
+    var feedback = Lag.kr(fx_feedback.clip(0, 0.92), 0.025);
     var envelope = Amplitude.kr(mono, 0.005, 0.04);
     var onset = HPZ1.kr(envelope > 0.012).max(0);
     var probability = fx_probability.clip(0, 1);
+    var randomGate = Lag.kr(
+        (TRand.kr(0, 1, onset) < probability), 0.025);
+    var gate = Select.kr(mode, [1, 1, randomGate]);
+    var loop = LocalIn.ar(1);
+    var source = mono + loop;
+    var wetTaps;
+    var feedbackTap;
     var wet;
 
-    wet = Array.fill(4, { |index|
+    wetTaps = Array.fill(4, { |index|
         var active = Lag.kr((taps >= (index + 1)), 0.02);
-        var randomGate = Lag.kr(
-            (TRand.kr(0, 1, onset) < probability), 0.025);
-        var gate = Select.kr(mode, [1, 1, randomGate]);
         var tapTime = (baseTime * (index + 1)).clip(0.01, 7.95);
-        var tap = CombC.ar(mono, 8.1, tapTime, decay);
+        var tap = DelayC.ar(source, 8.1, tapTime);
         var pan = ((index % 2) * 2 - 1) * 0.6;
-        Pan2.ar(tap * active * gate, pan)
-    }).sum / taps.sqrt;
+        Pan2.ar(tap * active, pan)
+    });
+    wet = wetTaps.sum * gate / taps.sqrt;
+    feedbackTap = DelayC.ar(
+        source, 8.1, (baseTime * taps).clip(0.01, 7.95));
+    LocalOut.ar(LeakDC.ar((feedbackTap * feedback * gate).clip2(0.95)));
 
     Out.ar(out, XFade2.ar(dry, LeakDC.ar(wet), (fx_mix.clip(0, 1) * 2) - 1));
 }).writeDefFile(thisProcess.nowExecutingPath.dirname);

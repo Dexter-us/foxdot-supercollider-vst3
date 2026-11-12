@@ -7260,7 +7260,7 @@ _PLAYER_EFFECT_SPECS = {
         ('fx_taps', 3, 1.0, 4.0, 4.0),
         ('fx_feedback', 4, 0.0, 0.92, 0.35),
         ('fx_probability', 5, 0.0, 1.0, 0.7),
-        ('fx_bpm', 6, 30.0, 300.0, 120.0)),
+        ('fx_bpm', 6, 0.001, 300.0, 120.0)),
     'DexterFeedbackDelayFX': (
         ('fx_mix', 0, 0.0, 1.0, 0.3),
         ('fx_time', 1, 0.015, 3.8, 0.28),

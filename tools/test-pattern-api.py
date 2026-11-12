@@ -3395,14 +3395,31 @@ for name, expected in delay_sources.items():
 multi_tap_source = open(
     os.path.join(delay_synthdef_dir, 'DexterMultiTapDelayFX.scd'),
     encoding='utf-8').read()
+assert 'fx_bpm.clip(0.001, 300)' in multi_tap_source
+assert "('fx_bpm', 6, 0.001, 300.0, 120.0)" in api
+assert '{"fx_bpm", 0.001f, 300}' in catalog_source
+processor_bpm = open(
+    os.path.join(repo_root, 'spikes/vst3-callback/processor.cpp'),
+    encoding='utf-8').read()
+assert '0.001f}};' in processor_bpm[
+    processor_bpm.index('} else if (isDexterMultiTapDelayFX)'):
+    processor_bpm.index('} else if (isDexterFeedbackDelayFX)')]
 assert all(ugen in multi_tap_source for ugen in
-           ('CombC', 'TRand', 'HPZ1', 'Amplitude'))
+           ('DelayC', 'LocalIn', 'LocalOut', 'TRand', 'HPZ1', 'Amplitude'))
+assert 'CombC.ar' not in multi_tap_source
+assert 'Lag.kr(fx_feedback.clip(0, 0.92), 0.025)' in multi_tap_source
 feedback_delay_source = open(
     os.path.join(delay_synthdef_dir, 'DexterFeedbackDelayFX.scd'),
     encoding='utf-8').read()
 assert all(ugen in feedback_delay_source for ugen in
            ('LocalIn', 'LocalOut', 'LPF', 'PitchShift', 'DelayC',
             'Impulse', 'TRand'))
+assert 'playerEffectFeedbackControlSlot(graphDefinition.name)' in processor_bpm
+effect_chain_header = open(
+    os.path.join(repo_root, 'spikes/vst3-callback/player_effect_chain.h'),
+    encoding='utf-8').read()
+assert 'effectName == "DexterMultiTapDelayFX"' in effect_chain_header
+assert 'effectName == "DexterFeedbackDelayFX"' in effect_chain_header
 for filename, effect_name, expected_players in (
         ('249-multitap-delay-modes.py', 'DexterMultiTapDelayFX', 3),
         ('250-feedback-delay-processing.py', 'DexterFeedbackDelayFX', 4)):
@@ -3416,7 +3433,8 @@ for filename, effect_name, expected_players in (
     assert len(effect_values) == expected_players, (filename, effect_values)
 for bad_control, bad_value in (
         ('fx_mode', 3), ('fx_time', 0.001), ('fx_taps', 5),
-        ('fx_feedback', 1.0), ('fx_probability', 1.5)):
+        ('fx_feedback', 1.0), ('fx_probability', 1.5),
+        ('fx_bpm', 0.0)):
     error = run_error_script(
         'p1 >> pluck(P[0, 3, 7], effect="DexterMultiTapDelayFX", ' +
         bad_control + '=' + repr(bad_value) + ')\n',

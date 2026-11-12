@@ -19,7 +19,10 @@ EXPECTED = {
     },
 }
 REQUIRED_UGENS = {
-    "DexterMultiTapDelayFX": {"In", "Out", "CombC", "Amplitude", "HPZ1", "TRand"},
+    "DexterMultiTapDelayFX": {
+        "In", "Out", "LocalIn", "LocalOut", "DelayC",
+        "Amplitude", "HPZ1", "TRand",
+    },
     "DexterFeedbackDelayFX": {
         "In", "Out", "LocalIn", "LocalOut", "LPF", "PitchShift",
         "DelayC", "Impulse", "TRand",

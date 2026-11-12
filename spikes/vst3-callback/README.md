@@ -1,6 +1,9 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.200 updates the delay SynthDef validator for SuperCollider's v3 file
+Version 0.4.201 makes multi-tap repeats more distinct, supports beat-sync down
+to 0.001 BPM, and stops feedback regeneration when a player stops. Buffered
+echoes drain once; Example 249 uses 24 BPM. Version 0.4.200 updates the delay
+SynthDef validator for SuperCollider's v3 file
 format, including its per-graph size field and Reblock/Resample suffix. The
 Windows retry confirmed both delay definitions compile with sclang 3.15; the
 previous validator only accepted formats 1 and 2.

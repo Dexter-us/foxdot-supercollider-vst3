@@ -144,6 +144,26 @@ class DelaySynthDefBuilderTests(unittest.TestCase):
             "Select.kr(fx_mode.round.clip(0, 4), [1, 1, 1, 1, chance])",
             feedback)
         self.assertNotIn("Select.kr(mode == ", multi + feedback)
+        self.assertIn("var loop = LocalIn.ar(1)", multi)
+        self.assertIn("DelayC.ar(source, 8.1, tapTime)", multi)
+        self.assertNotIn("CombC.ar", multi)
+        self.assertIn("LocalOut.ar(LeakDC.ar", multi)
+        self.assertIn("fx_bpm.clip(0.001, 300)", multi)
+        self.assertIn("Lag.kr(fx_feedback.clip(0, 0.92), 0.025)", multi)
+
+    def test_feedback_delay_disables_regeneration_when_player_stops(self):
+        processor = (
+            BUILDER.ROOT / "spikes/vst3-callback/processor.cpp"
+        ).read_text(encoding="utf-8")
+        helper = (
+            BUILDER.ROOT / "spikes/vst3-callback/player_effect_chain.h"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "playerEffectFeedbackControlSlot(graphDefinition.name)", processor)
+        self.assertIn(
+            'effectName == "DexterMultiTapDelayFX"', helper)
+        self.assertIn(
+            'effectName == "DexterFeedbackDelayFX"', helper)
 
 
 if __name__ == "__main__":

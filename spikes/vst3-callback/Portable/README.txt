@@ -1,3 +1,7 @@
+0.4.201 changes multi-tap repeats to distinct spaced taps, allows beat-sync
+tempo down to 0.001 BPM, and stops feedback regeneration when the player stops.
+Buffered echoes may drain once. Example 249 uses 24 BPM to exercise slow sync.
+
 0.4.200 updates the delay SynthDef validator for SuperCollider's v3 file format:
 it reads each graph's byte size and the appended Reblock/Resample fields. The
 Windows retry confirmed the definitions compile with bundled sclang 3.15.
@@ -17,12 +21,13 @@ sclang.
 
 DexterMultiTapDelayFX controls:
   fx_mix         0..1       dry/wet
-  fx_mode        0..2       beat-synced / free seconds / chance per tap
+  fx_mode        0..2       beat-synced / free seconds / chance per hit
   fx_time        0.015..1   beat unit or tap spacing in seconds
   fx_taps        1..4       active taps
-  fx_feedback    0..0.92    repeat decay
-  fx_probability 0..1       per-tap chance in mode 2
-  fx_bpm         30..300    beat-sync tempo; use fx_bpm=Clock.bpm
+  fx_feedback    0..0.92    feedback amount; Stop ends regeneration and lets
+                            the final buffered tap drain once
+  fx_probability 0..1       per-hit chance to pass taps in mode 2
+  fx_bpm         0.001..300 beat-sync tempo; use fx_bpm=Clock.bpm
 
 DexterFeedbackDelayFX controls:
   fx_mix         0..1       dry/wet
@@ -34,7 +39,13 @@ DexterFeedbackDelayFX controls:
   fx_interval    0.1..60    fixed real-time seconds between chance decisions
   fx_probability 0..1       chance of feedback at each interval in mode 4
 
-Examples 249–250 demonstrate all modes. Each effect is an insert on a player
+The taps are discrete, spaced repeats rather than four parallel comb-feedback
+lines. On Stop, both delay inserts set regeneration to zero while allowing the
+already-buffered delay to drain once.
+
+Examples 249–250 demonstrate all modes. Example 250 continuously plays until
+the VST Stop button is pressed; the insert then stops generating new repeats.
+Each effect is an insert on a player
 (`effect="DexterMultiTapDelayFX"` or `effect="DexterFeedbackDelayFX"`), not a
 new synth voice. The probabilistic feedback timer uses real seconds, independent
 of tempo. These definitions use built-in SuperCollider UGens only.

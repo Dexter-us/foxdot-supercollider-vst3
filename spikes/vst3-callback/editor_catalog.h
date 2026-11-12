@@ -626,7 +626,7 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
         return {{"fx_mix", 0, 1}, {"fx_mode", 0, 2},
                 {"fx_time", 0.015f, 1}, {"fx_taps", 1, 4},
                 {"fx_feedback", 0, 0.92f}, {"fx_probability", 0, 1},
-                {"fx_bpm", 30, 300}};
+                {"fx_bpm", 0.001f, 300}};
     if (effectName == "DexterFeedbackDelayFX")
         return {{"fx_mix", 0, 1}, {"fx_time", 0.015f, 3.8f},
                 {"fx_feedback", 0, 0.92f}, {"fx_mode", 0, 4},
@@ -1094,8 +1094,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         else if (name == "DexterMultiTapDelayFX")
             description = "Stock-SuperCollider multi-tap insert. fx_mode 0 "
                           "tracks fx_bpm using beat units, 1 uses seconds, and "
-                          "2 makes an independent probability decision for each "
-                          "tap on detected input attacks.";
+                          "2 makes one probability decision per detected hit, "
+                          "passing the selected taps together.";
         else if (name == "DexterFeedbackDelayFX")
             description = "Stock-SuperCollider feedback delay. Modes select "
                           "filtered, saturated, pitch-shifted, or stereo "
