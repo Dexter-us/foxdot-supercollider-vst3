@@ -1,12 +1,15 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.197 adds two stock-UGen player inserts compiled with the bundled,
-pinned SuperCollider 3.15 runtime during Windows packaging. `DexterMultiTapDelayFX`
-provides beat-synced, free-seconds, and per-tap probability modes;
-`DexterFeedbackDelayFX` provides filtered, saturated, pitch-shifted, stereo
-cross-feedback, and seconds-based chance-gated feedback modes. Both appear in
-Effects → Delay with bounded live controls. Examples 249–250 demonstrate them.
-This compile step does not rebuild SuperCollider or its UGen modules.
+Version 0.4.198 fixes packaging compilation for the 0.4.197 delay inserts:
+both SynthDefs are now sent to one pinned sclang session, avoiding a second class
+library startup. The bounded timeout reports partial sclang output if startup or
+compilation stalls, so a Windows failure identifies the actual stage.
+`DexterMultiTapDelayFX` provides beat-synced, free-seconds, and per-tap
+probability modes; `DexterFeedbackDelayFX` provides filtered, saturated,
+pitch-shifted, stereo cross-feedback, and seconds-based chance-gated feedback
+modes. Both appear in Effects → Delay with bounded live controls. Examples
+249–250 demonstrate them. This compile step does not rebuild SuperCollider or its
+UGen modules.
 
 Version 0.4.196 adds a right-click `Scale.default` picker and a safe one-line
 copy fallback for sidebar effect insertion. The editor also offers an explicit
