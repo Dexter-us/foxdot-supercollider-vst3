@@ -1,6 +1,12 @@
 Portable user SynthDefs
 =======================
 
+The base Windows build compiles the bundled stock-UGen effect sources
+DexterMultiTapDelayFX.scd and DexterFeedbackDelayFX.scd with the pinned
+SuperCollider 3.15 sclang after the plugin bundle is assembled. The resulting
+.scsyndef files are generated in this folder for the downloadable artifact;
+there is no external UGen module dependency for these effects.
+
 Place one precompiled SuperCollider .scsyndef file in this folder for each
 custom sound. Its filename (without .scsyndef) must exactly match the
 SynthDef's internal name. Names are case-sensitive Python identifiers using

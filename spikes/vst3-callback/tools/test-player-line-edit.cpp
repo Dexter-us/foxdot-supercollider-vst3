@@ -176,9 +176,16 @@ int main() {
            1e-6f);
     {
         std::vector<std::string> embedded{
-            "sine", "square", "pluck", "sample", "sawbass"};
+            "sine", "square", "pluck", "sample", "sawbass", "keys",
+            "klank", "marimba", "bell", "glass", "gong"};
         std::vector<std::string> external{
             "CustomPluck", "CustomTone", "Chorus", "LimutVocoder",
+            "scl_keyboards", "scl_organ",
+            "FMRhodes1", "FMRhodes2", "cheapPiano1", "cs80leadMH",
+            "defaultB", "everythingRhodes", "harpsichord1",
+            "harpsichord2", "organDonor", "organReed",
+            "organTonewheel0", "organTonewheel1", "organTonewheel2",
+            "organTonewheel3", "organTonewheel4",
             "KickDrum", "JazzKitBrushKick", "PortedAnalogBassDrum",
             "PortedAnalogSnareDrum", "PortedAnalogFoldOsc", "PortedBLOsc",
             "PortedNeoVarSawOsc", "PortedStringVoice", "PortedVosimOsc",
@@ -188,7 +195,8 @@ int main() {
             "PortedAnalogDegradeFX", "PortedAnalogLossFX",
             "PortedAnalogPhaserFX", "PortedAnalogVintageDistortionFX",
             "PortedLockhartWavefolderFX", "PortedDCompressorFX",
-            "DexterGranularFX"};
+            "DexterGranularFX", "DexterMultiTapDelayFX",
+            "DexterFeedbackDelayFX"};
         const auto instruments = makeInstrumentCatalog(embedded, external);
         assert(std::is_sorted(instruments.begin(), instruments.end(),
             [](const auto& left, const auto& right) {
@@ -220,6 +228,45 @@ int main() {
                        entry.category == "Drums & Percussion" &&
                        entry.subcategory == "WAV sample player";
             }));
+        for (const auto* name : {"keys", "klank", "marimba", "bell", "glass",
+                                 "gong"}) {
+            assert(std::any_of(instruments.begin(), instruments.end(),
+                [&](const auto& entry) {
+                    return entry.name == name &&
+                           entry.category == "Keys & Mallets";
+                }));
+        }
+        for (const auto* name : {
+                 "scl_keyboards", "scl_organ", "FMRhodes1", "FMRhodes2",
+                 "cheapPiano1", "cs80leadMH", "defaultB", "everythingRhodes",
+                 "harpsichord1", "harpsichord2", "organDonor", "organReed",
+                 "organTonewheel0", "organTonewheel1", "organTonewheel2",
+                 "organTonewheel3", "organTonewheel4"}) {
+            assert(std::any_of(instruments.begin(), instruments.end(),
+                [&](const auto& entry) {
+                    return entry.name == name && entry.category == "Piano";
+                }));
+        }
+        assert(std::any_of(instruments.begin(), instruments.end(),
+            [](const auto& entry) {
+                return entry.kind == CatalogKind::Tool &&
+                       entry.name == "MicrophoneLoop" &&
+                       entry.category == "Tools" &&
+                       entry.subcategory == "Microphone and loop tools";
+            }));
+        {
+            std::string source = "p1 >> pluck(P[0, 3, 7])\n";
+            const auto before = source;
+            std::string failure;
+            const auto microphone = std::find_if(
+                instruments.begin(), instruments.end(), [](const auto& entry) {
+                    return entry.name == "MicrophoneLoop";
+                });
+            assert(microphone != instruments.end());
+            assert(!applyCatalogEntry(source, 0, *microphone, failure));
+            assert(!failure.empty() && source == before);
+            assert(catalogOneLineSnippet(*microphone).find("# Microphone loop") == 0);
+        }
         assert(std::none_of(instruments.begin(), instruments.end(),
             [](const auto& entry) {
                 return entry.name == "PortedResonatorFX" ||
@@ -390,6 +437,24 @@ int main() {
                granularControls[2].name == "fx_density" &&
                granularControls[2].minimum == 1.0f &&
                granularControls[2].maximum == 40.0f);
+        for (const auto* name : {"DexterMultiTapDelayFX",
+                                 "DexterFeedbackDelayFX"}) {
+            const auto found = std::find_if(effects.begin(), effects.end(),
+                [&](const auto& entry) { return entry.name == name; });
+            assert(found != effects.end() && found->available &&
+                   found->category == "Delay" &&
+                   playerEffectControlSpecs(name).size() == 7);
+        }
+        const auto pitchDelayControls =
+            playerEffectControlSpecs("DexterFeedbackDelayFX");
+        assert(pitchDelayControls[4].name == "fx_pitch" &&
+               pitchDelayControls[4].minimum == 0.5f &&
+               pitchDelayControls[4].maximum == 2.0f);
+        const auto timedDelayControls =
+            playerEffectControlSpecs("DexterFeedbackDelayFX");
+        assert(timedDelayControls[5].name == "fx_interval" &&
+               timedDelayControls[5].minimum == 0.1f &&
+               timedDelayControls[5].maximum == 60.0f);
         const auto chorusControls = playerEffectControlSpecs("Chorus");
         assert(chorusControls.size() == 7);
         assert(chorusControls[0].name == "fx_mix" &&

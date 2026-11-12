@@ -17,6 +17,7 @@ enum class CatalogKind {
     Instrument,
     SamplePlayer,
     UserSynth,
+    Tool,
     NativeControls,
     ExternalEffect
 };
@@ -83,6 +84,18 @@ inline std::pair<std::string, std::string> portableSynthGrouping(
     const auto lowered = catalogLower(name);
     if (lowered.rfind("jazzkit", 0) == 0)
         return {"Drums & Percussion", "Jazz Kit"};
+    if (lowered.find("keyboard") != std::string::npos ||
+        lowered.find("piano") != std::string::npos ||
+        lowered.find("organ") != std::string::npos ||
+        lowered.find("rhodes") != std::string::npos ||
+        lowered.find("wurli") != std::string::npos ||
+        lowered.find("clav") != std::string::npos ||
+        lowered.find("harpsichord") != std::string::npos ||
+        lowered.find("cs80lead") != std::string::npos ||
+        lowered == "defaultb")
+        return {"Piano",
+                lowered.find("organ") != std::string::npos
+                    ? "Organs" : "Pianos and keyboards"};
     const auto has = [&lowered](std::string_view token) {
         return lowered.find(token) != std::string::npos;
     };
@@ -182,6 +195,8 @@ inline std::string portableSynthDisplayLabel(std::string_view name) {
 }
 
 inline std::string instrumentCategory(const CatalogEntry& entry) {
+    if (entry.kind == CatalogKind::Tool)
+        return "Tools";
     if (entry.kind == CatalogKind::SamplePlayer)
         return "Drums & Percussion";
     if (entry.kind == CatalogKind::UserSynth)
@@ -192,6 +207,8 @@ inline std::string instrumentCategory(const CatalogEntry& entry) {
         "bass", "dbass", "jbass", "sawbass"};
     static const std::vector<std::string> keys{
         "bell", "glass", "gong", "keys", "klank", "marimba"};
+    static const std::vector<std::string> piano{
+        "clav", "organ", "piano", "rhodes", "wurli"};
     static const std::vector<std::string> plucked{
         "donk", "karp", "nylon", "pluck", "sitar", "squish", "twang",
         "viola"};
@@ -207,6 +224,8 @@ inline std::string instrumentCategory(const CatalogEntry& entry) {
         return "Bass";
     if (std::find(keys.begin(), keys.end(), entry.name) != keys.end())
         return "Keys & Mallets";
+    if (std::find(piano.begin(), piano.end(), entry.name) != piano.end())
+        return "Piano";
     if (std::find(plucked.begin(), plucked.end(), entry.name) != plucked.end())
         return "Plucked & Stringed";
     if (std::find(pads.begin(), pads.end(), entry.name) != pads.end())
@@ -218,6 +237,8 @@ inline std::string instrumentCategory(const CatalogEntry& entry) {
 
 inline std::string instrumentSubcategory(const CatalogEntry& entry) {
     const auto& name = entry.name;
+    if (entry.kind == CatalogKind::Tool)
+        return "Microphone and loop tools";
     if (entry.kind == CatalogKind::SamplePlayer)
         return "WAV sample player";
     if (entry.kind == CatalogKind::UserSynth)
@@ -232,6 +253,24 @@ inline std::string instrumentSubcategory(const CatalogEntry& entry) {
         if (name == "sawbass")
             return "Saw bass";
         return "Synth bass";
+    }
+    if (entry.category == "Piano") {
+        const auto lowered = catalogLower(name);
+        if (lowered.find("organ") != std::string::npos)
+            return "Organs";
+        if (lowered.find("harpsichord") != std::string::npos)
+            return "Harpsichords";
+        if (lowered.find("cs80lead") != std::string::npos)
+            return "Synth keyboards";
+        if (lowered == "defaultb")
+            return "General keyboards";
+        if (lowered.find("bell") != std::string::npos ||
+            lowered.find("gong") != std::string::npos ||
+            lowered.find("glass") != std::string::npos)
+            return "Bells and resonators";
+        if (lowered.find("marimba") != std::string::npos)
+            return "Mallets";
+        return "Pianos and keyboards";
     }
     if (entry.category == "Keys & Mallets") {
         if (name == "bell" || name == "gong" || name == "glass")
@@ -287,7 +326,9 @@ inline std::string effectCategory(const CatalogEntry& entry) {
         name == "PortedLockhartWavefolderFX")
         return "Distortion and reduction";
     if (name == "Echo" || name == "AirwindowsEchojam" ||
-        name == "AirwindowsTapeDelay2" || name == "LimutPingPong")
+        name == "AirwindowsTapeDelay2" || name == "LimutPingPong" ||
+        name == "DexterMultiTapDelayFX" ||
+        name == "DexterFeedbackDelayFX")
         return "Delay";
     if (name == "Freeverb" || name == "Freeverb2" || name == "GVerb" ||
         name == "Greyhole" || name == "JPverb" ||
@@ -327,6 +368,10 @@ inline std::string effectSubcategory(const CatalogEntry& entry) {
     const auto& name = entry.name;
     if (name == "DexterGranularFX")
         return "Cloud / Slicer / Freeze / Live";
+    if (name == "DexterMultiTapDelayFX")
+        return "Tempo / Free / Chance taps";
+    if (name == "DexterFeedbackDelayFX")
+        return "Filtered / Saturated / Pitch / Timed chance";
     if (name == "PortedResonatorFX")
         return "Resonant body";
     if (name == "PortedFverbFX")
@@ -577,6 +622,16 @@ inline std::vector<PlayerEffectControlSpec> playerEffectControlSpecs(
                 {"fx_density", 1, 40}, {"fx_size", 0.01f, 0.25f},
                 {"fx_pitch", 0.5f, 2}, {"fx_position", 0, 1},
                 {"fx_freeze", 0, 1}};
+    if (effectName == "DexterMultiTapDelayFX")
+        return {{"fx_mix", 0, 1}, {"fx_mode", 0, 2},
+                {"fx_time", 0.015f, 1}, {"fx_taps", 1, 4},
+                {"fx_feedback", 0, 0.92f}, {"fx_probability", 0, 1},
+                {"fx_bpm", 30, 300}};
+    if (effectName == "DexterFeedbackDelayFX")
+        return {{"fx_mix", 0, 1}, {"fx_time", 0.015f, 3.8f},
+                {"fx_feedback", 0, 0.92f}, {"fx_mode", 0, 4},
+                {"fx_pitch", 0.5f, 2}, {"fx_interval", 0.1f, 60},
+                {"fx_probability", 0, 1}};
     return {};
 }
 
@@ -603,7 +658,9 @@ inline int playerEffectMixControlIndex(std::string_view effectName) noexcept {
         effectName == "PortedAnalogVintageDistortionFX" ||
         effectName == "PortedLockhartWavefolderFX" ||
         effectName == "PortedDCompressorFX" ||
-        effectName == "DexterGranularFX")
+        effectName == "DexterGranularFX" ||
+        effectName == "DexterMultiTapDelayFX" ||
+        effectName == "DexterFeedbackDelayFX")
         return 0;
     return -1;
 }
@@ -624,10 +681,14 @@ inline std::string catalogInsertCall(const CatalogEntry& entry) {
     if (entry.kind == CatalogKind::UserSynth)
         return "userSynth(\"" + entry.name +
                "\", P[0, 2, 4, 7], dur=0.5, amp=0.25)";
+    if (entry.kind == CatalogKind::Tool)
+        return "# Microphone loop: use the editor's Record, Play, and Stop loop buttons.";
     return {};
 }
 
 inline std::string catalogOneLineSnippet(const CatalogEntry& entry) {
+    if (entry.kind == CatalogKind::Tool)
+        return catalogInsertCall(entry);
     if (entry.kind == CatalogKind::ExternalEffect) {
         std::string snippet = "effect=\"" + entry.name + "\"";
         for (const auto& argument : entry.arguments)
@@ -640,6 +701,11 @@ inline std::string catalogOneLineSnippet(const CatalogEntry& entry) {
 inline bool applyCatalogEntryInPlace(std::string& source, std::size_t position,
                                      const CatalogEntry& entry,
                                      std::string& failure) {
+    if (entry.kind == CatalogKind::Tool) {
+        failure = "Microphone Loop is an editor tool: use its Record, Play, "
+                  "and Stop buttons instead of inserting it on a player line.";
+        return false;
+    }
     PlayerAssignment assignment;
     if (!entry.available) {
         failure = "This effect requires its optional SynthDef pack.";
@@ -787,6 +853,11 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         "FoxDot sample player. Uses WAV files installed under Portable/Samples; "
         "a letter bank can be selected with sample= or per-hit selectors.",
         {}, true});
+    result.push_back({CatalogKind::Tool, "MicrophoneLoop", "Microphone loop",
+        "Stereo input loop recorder. Route host audio to the VST input, record "
+        "up to 8 seconds, then play or stop the in-memory loop from the editor "
+        "toolbar. No live monitoring or WAV export.",
+        {}, true, "Tools", "Microphone and loop tools"});
     static const std::vector<std::string> bundledEffects{
         "AirwindowsEchojam", "AirwindowsTapeDelay2", "Chorus", "Flanger",
         "Greyhole", "JPverb", "LimutDisperser", "LimutDuck",
@@ -798,7 +869,8 @@ inline std::vector<CatalogEntry> makeInstrumentCatalog(
         "PortedAnalogChewFX", "PortedAnalogDegradeFX",
         "PortedAnalogLossFX", "PortedAnalogPhaserFX",
         "PortedAnalogVintageDistortionFX", "PortedLockhartWavefolderFX",
-        "PortedDCompressorFX", "DexterGranularFX"};
+        "PortedDCompressorFX", "DexterGranularFX",
+        "DexterMultiTapDelayFX", "DexterFeedbackDelayFX"};
     for (const auto& name : external) {
         if (std::find(bundledEffects.begin(), bundledEffects.end(), name) !=
                 bundledEffects.end() ||
@@ -929,7 +1001,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
         "PortedAnalogDegradeFX", "PortedAnalogLossFX",
         "PortedAnalogPhaserFX", "PortedAnalogVintageDistortionFX",
         "PortedLockhartWavefolderFX", "PortedDCompressorFX",
-        "DexterGranularFX"};
+        "DexterGranularFX", "DexterMultiTapDelayFX",
+        "DexterFeedbackDelayFX"};
     for (const auto& name : knownExternal) {
         const bool loaded = std::find(external.begin(), external.end(), name) !=
                             external.end();
@@ -1018,6 +1091,16 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                           "an external hardware-input recorder. fx_density is "
                           "grains/second and the freeze mode holds its local "
                           "record buffer when fx_freeze reaches 1.";
+        else if (name == "DexterMultiTapDelayFX")
+            description = "Stock-SuperCollider multi-tap insert. fx_mode 0 "
+                          "tracks fx_bpm using beat units, 1 uses seconds, and "
+                          "2 makes an independent probability decision for each "
+                          "tap on detected input attacks.";
+        else if (name == "DexterFeedbackDelayFX")
+            description = "Stock-SuperCollider feedback delay. Modes select "
+                          "filtered, saturated, pitch-shifted, or stereo "
+                          "cross-feedback repeats; mode 4 chance-gates the "
+                          "feedback loop at fx_interval seconds.";
         else
             description = "Loaded precompiled stereo player-effect SynthDef. "
                           "Its effect-specific fx_* controls are documented "
@@ -1087,6 +1170,16 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                         Arg{"fx_density", "12"}, Arg{"fx_size", "0.08"},
                         Arg{"fx_pitch", "1"}, Arg{"fx_position", "0.5"},
                         Arg{"fx_freeze", "0"}};
+        } else if (name == "DexterMultiTapDelayFX") {
+            defaults = {Arg{"fx_mix", "0.3"}, Arg{"fx_mode", "0"},
+                        Arg{"fx_time", "0.25"}, Arg{"fx_taps", "4"},
+                        Arg{"fx_feedback", "0.35"},
+                        Arg{"fx_probability", "0.7"}, Arg{"fx_bpm", "120"}};
+        } else if (name == "DexterFeedbackDelayFX") {
+            defaults = {Arg{"fx_mix", "0.3"}, Arg{"fx_time", "0.28"},
+                        Arg{"fx_feedback", "0.55"}, Arg{"fx_mode", "0"},
+                        Arg{"fx_pitch", "1.25"},
+                        Arg{"fx_interval", "1"}, Arg{"fx_probability", "0.65"}};
         } else if (name == "LimutShimmer") {
             defaults = {Arg{"fx_mix", "0.35"}, Arg{"fx_ratio", "2"},
                         Arg{"fx_window", "0.12"}, Arg{"fx_room", "0.8"},
@@ -1129,6 +1222,8 @@ inline std::vector<CatalogEntry> makeEffectCatalog(
                 ? std::string("Lockhart Wavefolder")
             : name == "PortedDCompressorFX" ? std::string("DCompressor")
             : name == "DexterGranularFX" ? std::string("Granular FX")
+            : name == "DexterMultiTapDelayFX" ? std::string("Multi-tap Delay")
+            : name == "DexterFeedbackDelayFX" ? std::string("Feedback Delay")
                                              : name;
         result.push_back({CatalogKind::ExternalEffect, name, label,
                           std::move(description), std::move(defaults), loaded});

@@ -51,7 +51,7 @@ cmake_source = open(cmake_path, encoding='utf-8').read()
 version_template_path = os.path.join(
     os.path.dirname(os.path.abspath(sys.argv[1])), 'plugin_version.h.in')
 version_template = open(version_template_path, encoding='utf-8').read()
-if ('VERSION 0.4.196' not in cmake_source or
+if (not re.search(r'\bVERSION\s+[0-9]+\.[0-9]+\.[0-9]+', cmake_source) or
         '@PROJECT_VERSION@' not in version_template or
         'DEXTER_PLUGIN_VERSION' not in processor_source or
         'DEXTER_PLUGIN_VERSION' not in editor_source):
@@ -3371,6 +3371,69 @@ assert granular_effect_rows == [['A', '0', '0']], granular_effect_rows
 print('PASS DexterGranularFX stock-UGen ABI, categorized effect controls, '
       'four modes/examples, bounded validation and effect-chain routing')
 
+delay_sources = {
+    'DexterMultiTapDelayFX': {
+        'fx_mix', 'fx_mode', 'fx_time', 'fx_taps', 'fx_feedback',
+        'fx_probability', 'fx_bpm'},
+    'DexterFeedbackDelayFX': {
+        'fx_mix', 'fx_time', 'fx_feedback', 'fx_mode', 'fx_pitch',
+        'fx_interval', 'fx_probability'},
+}
+delay_synthdef_dir = os.path.join(
+    os.path.abspath(sys.argv[2]), 'SynthDefs')
+for name, expected in delay_sources.items():
+    source_path = os.path.join(delay_synthdef_dir, name + '.scd')
+    source_text = open(source_path, encoding='utf-8').read()
+    declared = set(re.findall(r'\bfx_[A-Za-z0-9_]+(?=\s*=)', source_text))
+    assert expected.issubset(declared), (name, expected - declared)
+    assert 'SynthDef(\\' + name in source_text
+    assert '.writeDefFile(' in source_text
+    assert name in open(os.path.join(repo_root, 'tools/build-delay-synthdefs.py'),
+                        encoding='utf-8').read()
+    assert name in processor_source and name in catalog_source
+    assert name in api
+multi_tap_source = open(
+    os.path.join(delay_synthdef_dir, 'DexterMultiTapDelayFX.scd'),
+    encoding='utf-8').read()
+assert all(ugen in multi_tap_source for ugen in
+           ('CombC', 'TRand', 'HPZ1', 'Amplitude'))
+feedback_delay_source = open(
+    os.path.join(delay_synthdef_dir, 'DexterFeedbackDelayFX.scd'),
+    encoding='utf-8').read()
+assert all(ugen in feedback_delay_source for ugen in
+           ('LocalIn', 'LocalOut', 'LPF', 'PitchShift', 'DelayC',
+            'Impulse', 'TRand'))
+for filename, effect_name, expected_players in (
+        ('249-multitap-delay-modes.py', 'DexterMultiTapDelayFX', 3),
+        ('250-feedback-delay-processing.py', 'DexterFeedbackDelayFX', 4)):
+    compat = run_compatibility_check(
+        open(os.path.join(os.path.abspath(sys.argv[2]), filename),
+             encoding='utf-8').read(), (effect_name,))
+    assert 'No unsupported constructs detected' in compat, (filename, compat)
+    player_rows, effect_values = run_example(
+        filename, (effect_name,), include_player_effect_values=True)
+    assert len(player_rows) == expected_players, (filename, player_rows)
+    assert len(effect_values) == expected_players, (filename, effect_values)
+for bad_control, bad_value in (
+        ('fx_mode', 3), ('fx_time', 0.001), ('fx_taps', 5),
+        ('fx_feedback', 1.0), ('fx_probability', 1.5)):
+    error = run_error_script(
+        'p1 >> pluck(P[0, 3, 7], effect="DexterMultiTapDelayFX", ' +
+        bad_control + '=' + repr(bad_value) + ')\n',
+        ('DexterMultiTapDelayFX',))
+    assert bad_control in error and 'between' in error, (
+        bad_control, error)
+for bad_control, bad_value in (
+        ('fx_mode', 5), ('fx_time', 4.0), ('fx_pitch', 2.1),
+        ('fx_interval', 60.1), ('fx_probability', -0.1)):
+    error = run_error_script(
+        'p1 >> pluck(P[0, 3, 7], effect="DexterFeedbackDelayFX", ' +
+        bad_control + '=' + repr(bad_value) + ')\n',
+        ('DexterFeedbackDelayFX',))
+    assert bad_control in error and 'between' in error, (
+        bad_control, error)
+print('PASS stock-UGen multi-tap and processed feedback delay APIs/examples')
+
 legacy = run_script('tempo(120)\nplay([60, 64], step=0.5, duration=0.4)\n')
 assert len(legacy) == 1 and len(legacy[0]) == 24
 namespace['tempo'](10000)
@@ -4645,6 +4708,10 @@ for filename in os.listdir(sys.argv[2]):
                         '217-jazz-kit-core-groove.py',
                         '218-jazz-kit-kick-compare.py'):
             example_names = jazz_synth_names
+        if filename == '249-multitap-delay-modes.py':
+            example_names = ('DexterMultiTapDelayFX',)
+        if filename == '250-feedback-delay-processing.py':
+            example_names = ('DexterFeedbackDelayFX',)
         example_report = run_compatibility_check(
             open(os.path.join(sys.argv[2], filename), encoding='utf-8').read(),
             example_names)

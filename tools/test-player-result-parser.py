@@ -335,6 +335,10 @@ with tempfile.TemporaryDirectory() as directory:
                 "245-granular-freeze-texture.py",
                 "246-granular-live-player-input.py"):
             user_synth_names = ("DexterGranularFX",)
+        if example.name == "249-multitap-delay-modes.py":
+            user_synth_names = ("DexterMultiTapDelayFX",)
+        if example.name == "250-feedback-delay-processing.py":
+            user_synth_names = ("DexterFeedbackDelayFX",)
         wrapper = api_tests["make_wrapper"](str(example), str(result), user_synth_names)
         exec(wrapper, {"__name__": "__main__"})
         parsed = subprocess.run([str(binary), str(result), str(len(user_synth_names))],

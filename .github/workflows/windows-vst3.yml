@@ -6,6 +6,7 @@ on:
       - "spikes/vst3-callback/**"
       - "tools/build-windows-vst3.ps1"
       - "tools/build-sclang-runtime-windows.ps1"
+      - "tools/build-delay-synthdefs.py"
       - "tools/package-sclang-runtime.cmake"
       - "tools/install-sclang-runtime-windows.ps1"
       - "tools/test-sclang-osc.cpp"
@@ -176,9 +177,21 @@ jobs:
             throw "Bundled sclang did not report version 3.15 successfully."
           }
 
+      - name: Compile player delay SynthDefs with pinned SuperCollider 3.15
+        id: compile_delay_defs
+        if: steps.verify_sclang.outcome == 'success'
+        shell: pwsh
+        run: |
+          $bundle = Join-Path "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3" "Contents\Resources\SuperCollider"
+          $sclang = Join-Path $bundle "sclang.exe"
+          $definitions = Join-Path "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3" "Portable\SynthDefs"
+          if (-not (Test-Path $sclang)) { throw "Pinned sclang.exe is missing from the VST3 bundle." }
+          python tools/build-delay-synthdefs.py --sclang $sclang --output $definitions
+          if ($LASTEXITCODE -ne 0) { throw "Pinned delay SynthDef compilation failed ($LASTEXITCODE)." }
+
       - name: Required actual VST3 startup editor and first-Run audio test
         id: startup_smoke
-        if: steps.verify_sclang.outcome == 'success' && steps.editor_smoke.outcome == 'success'
+        if: steps.compile_delay_defs.outcome == 'success' && steps.editor_smoke.outcome == 'success'
         shell: pwsh
         run: |
           $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
@@ -224,7 +237,7 @@ jobs:
 
       - name: Required VST3 validator (five-minute limit)
         id: validate_vst3
-        if: always() && steps.build_vst3.outcome == 'success' && steps.install_sclang.outcome == 'success' && steps.verify_sclang.outcome == 'success'
+        if: always() && steps.build_vst3.outcome == 'success' && steps.install_sclang.outcome == 'success' && steps.verify_sclang.outcome == 'success' && steps.compile_delay_defs.outcome == 'success'
         shell: pwsh
         run: |
           $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
@@ -288,7 +301,7 @@ jobs:
 
       - name: Upload Windows VST3 diagnostic bundle
         uses: actions/upload-artifact@v4
-        if: steps.validate_vst3.outcome == 'success' && steps.editor_smoke.outcome == 'success' && steps.startup_smoke.outcome == 'success' && steps.sclang_bridge.outcome == 'success'
+        if: steps.compile_delay_defs.outcome == 'success' && steps.validate_vst3.outcome == 'success' && steps.editor_smoke.outcome == 'success' && steps.startup_smoke.outcome == 'success' && steps.sclang_bridge.outcome == 'success'
         with:
           name: dexter-foxdot-live-vst3-windows-x64
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3

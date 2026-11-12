@@ -183,7 +183,8 @@ _COMPAT_WAVE_KEYWORDS = {
     'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold',
     'fx_hold', 'fx_release', 'fx_knee', 'fx_bits',
     'fx_freq', 'fx_structure', 'fx_brightness', 'fx_damping',
-    'fx_predelay', 'fx_decay', 'fx_mod_depth'
+    'fx_predelay', 'fx_decay', 'fx_mod_depth',
+    'fx_taps', 'fx_probability', 'fx_bpm', 'fx_character', 'fx_interval'
 }
 _USER_SYNTH_KEYWORDS = {
     'notes', 'dur', 'oct', 'sus', 'scale', 'root', 'amp', 'pan', 'cutoff',
@@ -203,6 +204,7 @@ _USER_SYNTH_KEYWORDS = {
     'fx_hold', 'fx_release', 'fx_knee', 'fx_bits',
     'fx_freq', 'fx_structure', 'fx_brightness', 'fx_damping',
     'fx_predelay', 'fx_decay', 'fx_mod_depth',
+    'fx_taps', 'fx_probability', 'fx_bpm', 'fx_character', 'fx_interval',
 }
 _COMPAT_SEQUENCE_KEYWORDS = {
     'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'synth',
@@ -218,9 +220,10 @@ _COMPAT_SEQUENCE_KEYWORDS = {
     'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio',
     'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release',
     'fx_knee', 'fx_bits', 'fx_freq', 'fx_structure', 'fx_brightness',
-    'fx_damping', 'fx_predelay', 'fx_decay', 'fx_mod_depth'
+    'fx_damping', 'fx_predelay', 'fx_decay', 'fx_mod_depth',
+    'fx_taps', 'fx_probability', 'fx_bpm', 'fx_character', 'fx_interval'
 }
-_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'span', 'until', 'chance', 'loaf', 'on', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'effects', 'fx_event', 'fx_event_mix', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee', 'fx_bits', 'fx_freq', 'fx_structure', 'fx_brightness', 'fx_damping', 'fx_predelay', 'fx_decay', 'fx_mod_depth'}
+_COMPAT_NOTE_PLAY_KEYWORDS = {'notes', 'step', 'duration', 'velocity', 'offset', 'degrees', 'span', 'until', 'chance', 'loaf', 'on', 'strum', 'pshift', 'bits', 'crush', 'shape', 'drive', 'chop', 'spin', 'cut', 'coarse', 'formant', 'effect', 'effects', 'fx_event', 'fx_event_mix', 'fx_vib', 'fx_depth', 'fx_lforate', 'fx_lfowidth', 'fx_rq', 'fx_blur', 'fx_mix', 'fx_t60', 'fx_damp', 'fx_size', 'fx_earlydiff', 'fx_moddepth', 'fx_modfreq', 'fx_delay', 'fx_diff', 'fx_feedback', 'fx_rate', 'fx_spread', 'fx_tone', 'fx_center', 'fx_shape', 'fx_phase', 'fx_time', 'fx_period', 'fx_length', 'fx_attack', 'fx_frequency', 'fx_q', 'fx_stages', 'fx_drive', 'fx_ratio', 'fx_window', 'fx_room', 'fx_threshold', 'fx_hold', 'fx_release', 'fx_knee', 'fx_bits', 'fx_freq', 'fx_structure', 'fx_brightness', 'fx_damping', 'fx_predelay', 'fx_decay', 'fx_mod_depth', 'fx_taps', 'fx_probability', 'fx_bpm', 'fx_character', 'fx_interval'}
 _COMPAT_PLAYER_EFFECT_CONTROLS = {
     'AirwindowsTapeDelay2': {
         'fx_mix', 'fx_vib', 'fx_depth', 'fx_lforate',
@@ -292,7 +295,13 @@ _COMPAT_PLAYER_EFFECT_CONTROLS = {
         'fx_makeup', 'fx_automakeup'},
     'DexterGranularFX': {
         'fx_mix', 'fx_mode', 'fx_density', 'fx_size',
-        'fx_pitch', 'fx_position', 'fx_freeze'}
+        'fx_pitch', 'fx_position', 'fx_freeze'},
+    'DexterMultiTapDelayFX': {
+        'fx_mix', 'fx_mode', 'fx_time', 'fx_taps', 'fx_feedback',
+        'fx_probability', 'fx_bpm'},
+    'DexterFeedbackDelayFX': {
+        'fx_mix', 'fx_time', 'fx_feedback', 'fx_mode', 'fx_pitch',
+        'fx_interval', 'fx_probability'}
 }
 _PORTED_EFFECT_KEYWORDS = {
     'fx_bias', 'fx_saturation', 'fx_amount', 'fx_variance', 'fx_envelope',
@@ -1379,7 +1388,8 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                         'PortedAnalogLossFX', 'PortedAnalogPhaserFX',
                         'PortedAnalogVintageDistortionFX',
                         'PortedLockhartWavefolderFX',
-                        'PortedDCompressorFX', 'DexterGranularFX'}:
+                        'PortedDCompressorFX', 'DexterGranularFX',
+                        'DexterMultiTapDelayFX', 'DexterFeedbackDelayFX'}:
                     self.add(keyword.lineno or node.lineno,
                              'effect= supports the bundled Airwindows, reverb, '
                              'modulation, and LimutFX player-effect SynthDefs.')
@@ -1533,7 +1543,9 @@ class _DexterFoxDotCompatibilityVisitor(ast.NodeVisitor):
                                      'PortedAnalogVintageDistortionFX',
                                      'PortedLockhartWavefolderFX',
                                      'PortedDCompressorFX',
-                                     'DexterGranularFX'}):
+                                      'DexterGranularFX',
+                                      'DexterMultiTapDelayFX',
+                                      'DexterFeedbackDelayFX'}):
                             self.add(entry.lineno, 'Unsupported effect-chain name.')
                         elif effectName.value not in _USER_SYNTH_NAMES:
                             self.add(entry.lineno,
@@ -7240,7 +7252,23 @@ _PLAYER_EFFECT_SPECS = {
         ('fx_size', 3, 0.01, 0.25, 0.08),
         ('fx_pitch', 4, 0.5, 2.0, 1.0),
         ('fx_position', 5, 0.0, 1.0, 0.5),
-        ('fx_freeze', 6, 0.0, 1.0, 0.0))
+        ('fx_freeze', 6, 0.0, 1.0, 0.0)),
+    'DexterMultiTapDelayFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.3),
+        ('fx_mode', 1, 0.0, 2.0, 0.0),
+        ('fx_time', 2, 0.015, 1.0, 0.25),
+        ('fx_taps', 3, 1.0, 4.0, 4.0),
+        ('fx_feedback', 4, 0.0, 0.92, 0.35),
+        ('fx_probability', 5, 0.0, 1.0, 0.7),
+        ('fx_bpm', 6, 30.0, 300.0, 120.0)),
+    'DexterFeedbackDelayFX': (
+        ('fx_mix', 0, 0.0, 1.0, 0.3),
+        ('fx_time', 1, 0.015, 3.8, 0.28),
+        ('fx_feedback', 2, 0.0, 0.92, 0.55),
+        ('fx_mode', 3, 0.0, 4.0, 0.0),
+        ('fx_pitch', 4, 0.5, 2.0, 1.25),
+        ('fx_interval', 5, 0.1, 60.0, 1.0),
+        ('fx_probability', 6, 0.0, 1.0, 0.65))
 }
 def _player_effect_control_values(effect, controls):
     provided = [key for key in controls if key.startswith('fx_')]

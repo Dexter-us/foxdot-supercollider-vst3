@@ -1,9 +1,42 @@
+0.4.197 adds two built-in player delay effects to Effects → Delay:
+DexterMultiTapDelayFX and DexterFeedbackDelayFX. Windows packaging compiles
+their .scd sources into Portable/SynthDefs with the bundled SuperCollider 3.15
+sclang; it does not rebuild SuperCollider or any UGen modules.
+
+DexterMultiTapDelayFX controls:
+  fx_mix         0..1       dry/wet
+  fx_mode        0..2       beat-synced / free seconds / chance per tap
+  fx_time        0.015..1   beat unit or tap spacing in seconds
+  fx_taps        1..4       active taps
+  fx_feedback    0..0.92    repeat decay
+  fx_probability 0..1       per-tap chance in mode 2
+  fx_bpm         30..300    beat-sync tempo; use fx_bpm=Clock.bpm
+
+DexterFeedbackDelayFX controls:
+  fx_mix         0..1       dry/wet
+  fx_time        0.015..3.8 delay time in seconds
+  fx_feedback    0..0.92    feedback amount
+  fx_mode        0..4       filtered / saturated / pitch / stereo cross /
+                             timed chance cross-feedback
+  fx_pitch       0.5..2     repeat pitch ratio in mode 2
+  fx_interval    0.1..60    fixed real-time seconds between chance decisions
+  fx_probability 0..1       chance of feedback at each interval in mode 4
+
+Examples 249–250 demonstrate all modes. Each effect is an insert on a player
+(`effect="DexterMultiTapDelayFX"` or `effect="DexterFeedbackDelayFX"`), not a
+new synth voice. The probabilistic feedback timer uses real seconds, independent
+of tempo. These definitions use built-in SuperCollider UGens only.
+
 0.4.196 adds a right-click `Scale.default` picker to the Python editor and a
 one-line copy fallback in the catalog's effect context menu. The editor also
 has an explicit stereo mic looper: route audio into the VST's input bus, click
 Record mic loop, finish at any time (maximum 8 seconds), then Play loop or Stop
 loop. It captures only on request, does not monitor live input, and keeps the
 loop in memory for the current plugin session; it does not export a WAV file.
+Example 247 is a short scale-picker test: right-click its `Scale.default` line
+to choose a built-in scale, then run the melody. Example 248 walks through the
+mic-loop buttons with a quiet reference pattern. The mic loop is recorded and
+played by the editor controls, not by Python code.
 
 0.4.195 adds the stock-SuperCollider player insert `DexterGranularFX`. It is
 listed under Effects → Granular → Cloud / Slicer / Freeze / Live. The mode

@@ -4370,6 +4370,8 @@ private:
                  name == "PortedLockhartWavefolderFX" ||
                  name == "PortedDCompressorFX" ||
                  name == "DexterGranularFX" ||
+                  name == "DexterMultiTapDelayFX" ||
+                  name == "DexterFeedbackDelayFX" ||
                name == "Chorus" || name == "Flanger" ||
                name == "Phaser" || name == "Tremolo" ||
                 name == "SCLOrkPhazerFX" ||
@@ -4624,6 +4626,10 @@ private:
                     userDefinition.name == "PortedDCompressorFX";
                 const bool isDexterGranularFX =
                     userDefinition.name == "DexterGranularFX";
+                const bool isDexterMultiTapDelayFX =
+                    userDefinition.name == "DexterMultiTapDelayFX";
+                const bool isDexterFeedbackDelayFX =
+                    userDefinition.name == "DexterFeedbackDelayFX";
                 const bool isChorus = userDefinition.name == "Chorus";
                 const bool isFlanger = userDefinition.name == "Flanger";
                 const bool isPhaser = userDefinition.name == "Phaser";
@@ -4658,6 +4664,7 @@ private:
                     isPortedLockhartWavefolderFX ? 5u :
                     isPortedDCompressorFX ? 9u :
                     isDexterGranularFX ? 9u :
+                    (isDexterMultiTapDelayFX || isDexterFeedbackDelayFX) ? 9u :
                     isLimutPingPong ? 5u : isLimutDuck ? 7u :
                     isLimutDisperser ? 6u : isLimutFuzz ? 5u :
                     isLimutShifter ? 5u : isLimutShimmer ? 7u :
@@ -4766,6 +4773,24 @@ private:
                     userDefinition.effectControlMaximum =
                         std::array<float, 7>{{1.0f, 3.0f, 40.0f, 0.25f,
                                               2.0f, 1.0f, 1.0f}};
+                } else if (isDexterMultiTapDelayFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.015f, 1.0f,
+                                              0.0f, 0.0f, 30.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 2.0f, 1.0f, 4.0f,
+                                              0.92f, 1.0f, 300.0f}};
+                } else if (isDexterFeedbackDelayFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.015f, 0.0f, 0.0f,
+                                              0.5f, 0.1f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 3.8f, 0.92f, 4.0f,
+                                              2.0f, 60.0f, 1.0f}};
                 } else if (isJPverb) {
                     userDefinition.effectControlIndices =
                         std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
