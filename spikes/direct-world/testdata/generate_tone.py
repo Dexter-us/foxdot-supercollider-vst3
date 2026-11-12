@@ -62,7 +62,9 @@ for name, index in parameter_names:
 u16(20)  # Controls, oscillators, selectors, Mouse UI, and reverb send
 ugen("Control", 1, [], [1, 1, 1, 1, 1, 1, 1, 1, 1])
 ugen("SinOsc", 2, [(0, 1), (-1, 2)], [2])
-ugen("LFTri", 2, [(0, 1), (-1, 2)], [2])
+# Use the band-limited variable saw at its symmetric width for a triangle.
+# LFTri aliases more at high pitches, which can sound like ticks/clicks.
+ugen("VarSaw", 2, [(0, 1), (-1, 0), (-1, 3)], [2])
 ugen("Saw", 2, [(0, 1)], [2])
 ugen("Pulse", 2, [(0, 1), (-1, 3)], [2])
 ugen("BinaryOpUGen", 2, [(1, 0), (0, 2)], [2], 2)

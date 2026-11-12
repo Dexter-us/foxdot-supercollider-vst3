@@ -1,0 +1,24 @@
+Limut-inspired effects for Dexter U.S. FoxDot
+
+The PingPong and Duck effect behavior is adapted from the effect definitions
+named "pingpong" and "duck" in:
+  Limut, by sdclibbery
+  https://github.com/sdclibbery/limut/blob/main/lib/effects.limut
+
+The Compressor control model and Vocoder node topology are adapted from Limut:
+  https://github.com/sdclibbery/limut/blob/main/lib/effects.limut
+  https://github.com/sdclibbery/limut/blob/main/lib/nodes.limut
+
+Limut's Licensed Material is available under the Creative Commons
+Attribution-ShareAlike 4.0 International Public License (CC BY-SA 4.0):
+  https://creativecommons.org/licenses/by-sa/4.0/
+  Legal code: https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+The PingPong and Duck adaptations are distributed under CC BY-SA 4.0. The
+Compressor and Vocoder DSP implementations were authored for this pack from
+the Limut-compatible control/topology descriptions; they do not copy Limut
+implementation code. The Disperser, Fuzz, Shifter, Shimmer, and GatedVerb DSP
+algorithms are also independent implementations of compatible effect concepts.
+All files in the pack are distributed under CC BY-SA 4.0. The UGen wrappers and
+DSP are implemented in C++; no Limut runtime, server, or source package is
+required.

@@ -5,8 +5,21 @@ on:
     paths:
       - "spikes/vst3-callback/**"
       - "tools/build-windows-vst3.ps1"
+      - "tools/build-sclang-runtime-windows.ps1"
+      - "tools/build-delay-synthdefs.py"
+      - "tools/package-sclang-runtime.cmake"
+      - "tools/install-sclang-runtime-windows.ps1"
+      - "tools/test-sclang-osc.cpp"
+      - "tools/test-vst-startup-win32.cpp"
+      - "tools/test-sclang-host-bridge.cpp"
       - ".github/workflows/windows-vst3.yml"
   workflow_dispatch:
+    inputs:
+      allow_cold_build:
+        description: 'Allow a one-time full SuperCollider and UGen build when caches miss'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -14,7 +27,7 @@ permissions:
 jobs:
   windows-vst3:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Check out the project
         uses: actions/checkout@v4
@@ -31,19 +44,42 @@ jobs:
           "major=$major" >> $env:GITHUB_OUTPUT
 
       - name: Restore SuperCollider build cache
+        id: sc_cache
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\dexter-windows-vst3\supercollider-build
           key: windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-${{ hashFiles('tools/build-windows-vst3.ps1') }}
           restore-keys: |
             windows-sc-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-
-      - name: Build VST3 from cached SuperCollider outputs
+
+      - name: Restore pinned headless sclang runtime cache
+        id: sclang_cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\dexter-sclang-runtime
+          key: windows-sclang-${{ runner.os }}-vs${{ steps.vs_generator.outputs.major }}-ef5771bce3d1c9c780cafd58cf032ec4a3f36d10-server-off-${{ hashFiles('tools/build-sclang-runtime-windows.ps1', 'tools/package-sclang-runtime.cmake') }}
+
+      - name: Build VST3 only (requires existing SuperCollider cache)
         id: build_vst3
         shell: pwsh
         run: |
           $buildLog = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3-build.log"
+          $buildParameters = @{
+            BuildRoot = "$env:RUNNER_TEMP\dexter-windows-vst3"
+            SkipValidator = $true
+          }
+          if ("${{ steps.sc_cache.outputs.cache-hit }}" -eq "true") {
+            Write-Host "SuperCollider build cache hit; compiling the VST3 only."
+            $buildParameters["UseCachedSuperColliderBuild"] = $true
+          }
+          elseif ("${{ inputs.allow_cold_build }}" -eq "true") {
+            Write-Host "Explicitly approved cold build; compiling SuperCollider and bundled UGens."
+          }
+          else {
+            throw "SuperCollider cache miss: stopping rather than rebuilding the engine/UGens. Reuse the populated PR cache or obtain explicit approval for another one-time cold build."
+          }
           try {
-            & .\tools\build-windows-vst3.ps1 -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" -UseCachedSuperColliderBuild -SkipValidator *>&1 |
+            & .\tools\build-windows-vst3.ps1 @buildParameters *>&1 |
               Tee-Object -FilePath $buildLog
             if ($LASTEXITCODE -ne 0) {
               throw "Build script exited with code $LASTEXITCODE"
@@ -57,8 +93,167 @@ jobs:
             throw
           }
 
+      - name: Build and test loopback OSC packet helper
+        if: steps.build_vst3.outcome == 'success'
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          & cmake --build $pluginBuild --config Release --target dexter_sclang_osc_test
+          if ($LASTEXITCODE -ne 0) { throw "OSC helper test target build failed ($LASTEXITCODE)." }
+          $test = Join-Path $pluginBuild "Release\dexter_sclang_osc_test.exe"
+          if (-not (Test-Path $test)) { throw "OSC helper test executable not found: $test" }
+          & $test
+          if ($LASTEXITCODE -ne 0) { throw "OSC helper tests failed ($LASTEXITCODE)." }
+          & cmake --build $pluginBuild --config Release --target dexter_sclang_host_bridge_test
+          if ($LASTEXITCODE -ne 0) { throw "Host OSC bridge test target failed to build." }
+          & (Join-Path $pluginBuild "Release\dexter_sclang_host_bridge_test.exe")
+          if ($LASTEXITCODE -ne 0) { throw "Host OSC bridge regression tests failed." }
+
+      - name: Required Win32 editor open switch and reopen test
+        id: editor_smoke
+        if: steps.build_vst3.outcome == 'success'
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          & cmake --build $pluginBuild --config Release --target dexter_editor_smoke_test
+          if ($LASTEXITCODE -ne 0) { throw "Editor smoke target failed to build ($LASTEXITCODE)." }
+          $test = Join-Path $pluginBuild "Release\dexter_editor_smoke_test.exe"
+          $process = Start-Process -FilePath $test -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\editor-smoke.stdout.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\editor-smoke.stderr.log"
+          if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            throw "Editor smoke test timed out after 30 seconds."
+          }
+          $process.Refresh()
+          Get-Content "$env:RUNNER_TEMP\editor-smoke.stdout.log"
+          Get-Content "$env:RUNNER_TEMP\editor-smoke.stderr.log"
+          if ($process.ExitCode -ne 0) { throw "Editor smoke test failed ($($process.ExitCode))." }
+
+      - name: Build headless sclang from the pinned cached SC 3.15 source
+        id: build_sclang
+        if: steps.build_vst3.outcome == 'success' && steps.sclang_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          & .\tools\build-sclang-runtime-windows.ps1 `
+            -BuildRoot "$env:RUNNER_TEMP\dexter-windows-vst3" `
+            -RuntimeRoot "$env:RUNNER_TEMP\dexter-sclang-runtime"
+          if ($LASTEXITCODE -ne 0) { throw "Headless sclang package build failed ($LASTEXITCODE)." }
+
+      - name: Install headless sclang into the VST3 resources
+        id: install_sclang
+        if: steps.build_vst3.outcome == 'success'
+        shell: pwsh
+        run: |
+          & .\tools\install-sclang-runtime-windows.ps1 `
+            -RuntimeRoot "$env:RUNNER_TEMP\dexter-sclang-runtime" `
+            -Bundle "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3"
+
+      - name: Verify bundled headless sclang is pinned and runnable
+        id: verify_sclang
+        if: steps.install_sclang.outcome == 'success'
+        shell: pwsh
+        run: |
+          $runtime = Join-Path "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3" "Contents\Resources\SuperCollider"
+          $manifestPath = Join-Path $runtime "SC_RUNTIME_VERSION.txt"
+          $manifest = Get-Content $manifestPath -Raw
+          if ($manifest -notmatch 'Version: 3\.15' -or
+              $manifest -notmatch 'Source commit: ef5771bce3d1c9c780cafd58cf032ec4a3f36d10' -or
+              $manifest -notmatch 'API generation: 7' -or
+              $manifest -notmatch 'SCLANG_SERVER=OFF') {
+            throw "Bundled language runtime is not the pinned SC 3.15/API-7 no-server build."
+          }
+          if (-not (Test-Path (Join-Path $runtime "SCClassLibrary"))) {
+            throw "Bundled sclang class library is missing."
+          }
+          if (Get-ChildItem -Path $runtime -Filter "*scsynth*" -File -Recurse) {
+            throw "A second SuperCollider audio server must not be shipped in the language helper folder."
+          }
+          $stdout = Join-Path $env:RUNNER_TEMP "sclang-version.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "sclang-version.stderr.log"
+          $process = Start-Process -FilePath (Join-Path $runtime "sclang.exe") `
+            -ArgumentList "-v" -WorkingDirectory $runtime -NoNewWindow `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          if (-not $process.WaitForExit(30000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "Bundled sclang -v did not exit within 30 seconds."
+          }
+          $versionOutput = ''
+          if (Test-Path $stdout) { $versionOutput += Get-Content $stdout -Raw }
+          if (Test-Path $stderr) { $versionOutput += Get-Content $stderr -Raw }
+          Write-Host $versionOutput
+          if ($process.ExitCode -ne 0 -or $versionOutput -notmatch '3\.15') {
+            throw "Bundled sclang did not report version 3.15 successfully."
+          }
+
+      - name: Test bounded delay SynthDef build script
+        id: test_delay_builder
+        if: steps.verify_sclang.outcome == 'success'
+        shell: pwsh
+        run: |
+          python tools/test-build-delay-synthdefs.py
+
+      - name: Compile player delay SynthDefs with pinned SuperCollider 3.15
+        id: compile_delay_defs
+        if: steps.verify_sclang.outcome == 'success' && steps.test_delay_builder.outcome == 'success'
+        shell: pwsh
+        run: |
+          $bundle = Join-Path "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3" "Contents\Resources\SuperCollider"
+          $sclang = Join-Path $bundle "sclang.exe"
+          $definitions = Join-Path "$env:RUNNER_TEMP\dexter-windows-vst3\plugin-build\VST3\Release\dexter_sc_tone.vst3" "Portable\SynthDefs"
+          if (-not (Test-Path $sclang)) { throw "Pinned sclang.exe is missing from the VST3 bundle." }
+          python tools/build-delay-synthdefs.py --sclang $sclang --output $definitions
+          if ($LASTEXITCODE -ne 0) { throw "Pinned delay SynthDef compilation failed ($LASTEXITCODE)." }
+
+      - name: Required actual VST3 startup editor and first-Run audio test
+        id: startup_smoke
+        if: steps.compile_delay_defs.outcome == 'success' && steps.editor_smoke.outcome == 'success'
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          & cmake --build $pluginBuild --config Release --target dexter_vst_startup_test
+          if ($LASTEXITCODE -ne 0) { throw "VST3 startup test target failed to build ($LASTEXITCODE)." }
+          $test = Join-Path $pluginBuild "Release\dexter_vst_startup_test.exe"
+          $binary = Join-Path $pluginBuild "VST3\Release\dexter_sc_tone.vst3\Contents\x86_64-win\dexter_sc_tone.vst3"
+          $process = Start-Process -FilePath $test -ArgumentList ('"' + $binary + '"') `
+            -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\startup-smoke.stdout.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\startup-smoke.stderr.log"
+          if (-not $process.WaitForExit(60000)) {
+            $process.Kill()
+            throw "VST3 startup/editor/audio test timed out after sixty seconds."
+          }
+          $process.Refresh()
+          Get-Content "$env:RUNNER_TEMP\startup-smoke.stdout.log"
+          Get-Content "$env:RUNNER_TEMP\startup-smoke.stderr.log"
+          if ($process.ExitCode -ne 0) { throw "VST3 startup/editor/audio test failed ($($process.ExitCode))." }
+
+      - name: Required bundled sclang handshake audio coexistence and Stop test
+        id: sclang_bridge
+        if: steps.startup_smoke.outcome == 'success'
+        shell: pwsh
+        run: |
+          $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
+          $test = Join-Path $pluginBuild "Release\dexter_vst_startup_test.exe"
+          $binary = Join-Path $pluginBuild "VST3\Release\dexter_sc_tone.vst3\Contents\x86_64-win\dexter_sc_tone.vst3"
+          $process = Start-Process -FilePath $test -ArgumentList ('"' + $binary + '" --sclang') `
+            -PassThru -NoNewWindow `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\sclang-bridge.stdout.log" `
+            -RedirectStandardError "$env:RUNNER_TEMP\sclang-bridge.stderr.log"
+          if (-not $process.WaitForExit(90000)) {
+            $process.Kill()
+            Get-Content "$env:RUNNER_TEMP\sclang-bridge.stdout.log" -Tail 60
+            Get-Content "$env:RUNNER_TEMP\sclang-bridge.stderr.log" -Tail 80
+            throw "Actual sclang/VST3 bridge test timed out after ninety seconds."
+          }
+          $process.Refresh()
+          Get-Content "$env:RUNNER_TEMP\sclang-bridge.stdout.log"
+          Get-Content "$env:RUNNER_TEMP\sclang-bridge.stderr.log"
+          if ($process.ExitCode -ne 0) { throw "Actual sclang bridge/audio test failed ($($process.ExitCode))." }
+
       - name: Required VST3 validator (five-minute limit)
-        if: always() && steps.build_vst3.outcome == 'success'
+        id: validate_vst3
+        if: always() && steps.build_vst3.outcome == 'success' && steps.install_sclang.outcome == 'success' && steps.verify_sclang.outcome == 'success' && steps.compile_delay_defs.outcome == 'success'
         shell: pwsh
         run: |
           $pluginBuild = Join-Path $env:RUNNER_TEMP "dexter-windows-vst3\plugin-build"
@@ -85,6 +280,25 @@ jobs:
           if (Test-Path $stderr) { Get-Content $stderr }
           if ($process.ExitCode -ne 0) { throw "VST3 validator failed with exit code $($process.ExitCode)." }
 
+      - name: Collect persistent lifecycle logs
+        if: always()
+        shell: pwsh
+        run: |
+          $tempFolder = [IO.Path]::GetTempPath()
+          if ([IO.Path]::GetFullPath($tempFolder).TrimEnd('\') -ne [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')) {
+            Get-ChildItem -Path $tempFolder -Filter 'Dexter-VST-lifecycle-*.log' -File |
+              Copy-Item -Destination $env:RUNNER_TEMP -Force
+          }
+          $destination = Join-Path $env:RUNNER_TEMP "sclang-session-logs"
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          Get-ChildItem -Path $tempFolder -Filter 'Dexter-SC-*' -Directory |
+            ForEach-Object {
+              $log = Join-Path $_.FullName "sclang.log"
+              if (Test-Path $log) {
+                Copy-Item $log (Join-Path $destination ($_.Name + ".log")) -Force
+              }
+            }
+
       - name: Upload lifecycle diagnostics
         uses: actions/upload-artifact@v4
         if: always()
@@ -93,12 +307,17 @@ jobs:
           path: |
             ${{ runner.temp }}/vst3-validator.stdout.log
             ${{ runner.temp }}/vst3-validator.stderr.log
+            ${{ runner.temp }}/editor-smoke.*.log
+            ${{ runner.temp }}/startup-smoke.*.log
+            ${{ runner.temp }}/sclang-bridge.*.log
+            ${{ runner.temp }}/sclang-session-logs/*.log
+            ${{ runner.temp }}/Dexter-VST-lifecycle-*.log
           if-no-files-found: warn
           retention-days: 14
 
       - name: Upload Windows VST3 diagnostic bundle
         uses: actions/upload-artifact@v4
-        if: always() && steps.build_vst3.outcome == 'success'
+        if: steps.compile_delay_defs.outcome == 'success' && steps.validate_vst3.outcome == 'success' && steps.editor_smoke.outcome == 'success' && steps.startup_smoke.outcome == 'success' && steps.sclang_bridge.outcome == 'success'
         with:
           name: dexter-foxdot-live-vst3-windows-x64
           path: ${{ runner.temp }}/dexter-windows-vst3/plugin-build/VST3/Release/dexter_sc_tone.vst3

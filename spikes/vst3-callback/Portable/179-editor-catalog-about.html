@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dexter U.S. FoxDot — Editor Catalog</title>
+<style>
+:root{color-scheme:light dark;font:16px/1.55 system-ui,sans-serif}
+body{max-width:1000px;margin:auto;padding:2rem}
+h1,h2{line-height:1.2} nav{position:sticky;top:0;padding:1rem;background:Canvas;border:1px solid #888;display:flex;gap:1rem;flex-wrap:wrap}
+a{color:#3986d3}section{padding:1rem 0;border-bottom:1px solid #888}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:.5rem;border:1px solid #888;vertical-align:top}
+code{white-space:nowrap} .note{padding:.8rem;border-left:4px solid #3986d3;background:color-mix(in srgb,CanvasText 6%,Canvas)}
+</style>
+<script>
+function openTarget(){
+  const id=decodeURIComponent(location.hash.slice(1));
+  if(!id)return;
+  let el=document.getElementById(id);
+  if(!el){
+    const name=document.createElement("h3");name.id=id;name.textContent=id;
+    const text=document.createElement("p");
+    if(id==="play"){
+      text.textContent="WAV sample player. It reads the selected WAV from "
+        +"Portable/Samples; see OPTIONAL-SAMPLE-SETUP.html.";
+    }else if(/^(ambi|arpy|bass|bell|blip|bug|charm|creep|crunch|dab|dbass|dirt|donk|dub|feel|fuzz|glass|gong|growl|jbass|karp|keys|klank|lazer|marimba|noise|nylon|orient|pads|pasha|pluck|prophet|pulse|quin|rave|razz|ripple|saw|sawbass|scatter|scratch|sine|sinepad|sitar|snick|soft|soprano|space|spark|squish|star|swell|triangle|twang|varsaw|viola|zap)$/.test(id)){
+      text.textContent=id+" is a bundled instrument call in the embedded "
+        +"FoxDot-style API. Its notes are rendered by the VST's local engine.";
+    }else{
+      text.textContent=id+" is a precompiled Portable SynthDef. It needs its "
+        +"matching .scsyndef in Portable/SynthDefs; definitions that call "
+        +"external UGens also need the matching installed SCPlugins module.";
+    }
+    document.getElementById("generated-about").append(name,text);
+    el=name;
+  }
+  el.scrollIntoView();
+}
+window.addEventListener("DOMContentLoaded",openTarget);
+</script>
+</head>
+<body>
+<h1>Dexter U.S. FoxDot editor catalog</h1>
+<p>This About page opens from the Synths or Effects list. It describes what each
+entry inserts and what it needs. Catalog edits change the script, not the running
+audio; click <b>Run</b> to apply. You can also drag an available row onto a
+<code>p1 &gt;&gt;</code> through <code>p8 &gt;&gt;</code> line. Right-click a row
+for <b>Insert at editor caret</b> or <b>About this item</b>.</p>
+<p class="note">Built-in sounds run in the VST's local engine. There is no
+SuperCollider server or <code>sclang</code> process. A precompiled
+<code>.scsyndef</code> is a synth/effect definition, not a loader for additional
+UGen DLLs. Optional UGens need their matching plugin module installed and the DAW
+restarted.</p>
+<nav><a href="#instruments">Instruments</a><a href="#effects">Effects</a>
+<a href="#optional">Optional packs</a><a href="#drag">Editing workflow</a></nav>
+<section id="instruments"><h2>Instruments</h2>
+<p>The menu groups the bundled calls by family. The labels map to functions
+accepted by the embedded Python API; “square” is shown as its actual call name,
+<code>pulse</code>. To create a new voice, right-click an empty
+<code>p3 &gt;&gt;</code> line, or drag a catalog item onto that line. A small
+starter pattern is inserted so it can run immediately.</p>
+<p>Bundled calls: <code>ambi</code>, <code>arpy</code>, <code>bass</code>,
+<code>bell</code>, <code>blip</code>, <code>bug</code>, <code>charm</code>,
+<code>creep</code>, <code>crunch</code>, <code>dab</code>, <code>dbass</code>,
+<code>dirt</code>, <code>donk</code>, <code>dub</code>, <code>feel</code>,
+<code>fuzz</code>, <code>glass</code>, <code>gong</code>, <code>growl</code>,
+<code>jbass</code>, <code>karp</code>, <code>keys</code>, <code>klank</code>,
+<code>lazer</code>, <code>marimba</code>, <code>noise</code>, <code>nylon</code>,
+<code>orient</code>, <code>pads</code>, <code>pasha</code>, <code>pluck</code>,
+<code>prophet</code>, <code>pulse</code>, <code>quin</code>, <code>rave</code>,
+<code>razz</code>, <code>ripple</code>, <code>saw</code>, <code>sawbass</code>,
+<code>scatter</code>, <code>scratch</code>, <code>sine</code>, <code>sinepad</code>,
+<code>sitar</code>, <code>snick</code>, <code>soft</code>, <code>soprano</code>,
+<code>space</code>, <code>spark</code>, <code>squish</code>, <code>star</code>,
+<code>swell</code>, <code>triangle</code>, <code>twang</code>,
+<code>varsaw</code>, <code>viola</code>, <code>zap</code>.</p>
+<p><b>Waveforms</b> contains <code>sine</code>, <code>saw</code>,
+<code>pulse</code> (including the square alias) and <code>triangle</code>.</p>
+<div id="generated-about"></div>
+<p><code>play</code> is the WAV sample player and is listed separately. It keeps
+its sample-string syntax. External precompiled SynthDefs appear as
+<code>userSynth("Name", ...)</code> entries. Select a custom SynthDef from a
+blank player line; don't replace a sample-pattern or existing custom-player call
+with an ordinary pitched synth.</p>
+</section>
+<section id="effects"><h2>Native effects and controls</h2>
+<table><thead><tr><th>Catalog item</th><th>Inserted controls and bounds</th></tr></thead><tbody>
+<tr id="Echo"><td>Echo / delay</td><td><code>echo</code> 0–64 beats;
+<code>delay</code> 0–8 beats; <code>delaytime</code> 0–4 seconds;
+<code>decay</code> 0–64 beats;
+<code>echomix</code> 0–1.</td></tr>
+<tr id="Freeverb"><td>Freeverb / <span id="Freeverb2">Freeverb2</span> /
+<span id="GVerb">GVerb</span></td><td><code>reverb</code>
+selects algorithm; <code>room</code>, <code>mix</code>, <code>damp</code> 0–1;
+<code>revtime</code> 0.1–10 seconds; <code>spread</code> 0–100.</td></tr>
+<tr id="Low-pass"><td>Low-pass</td><td><code>lpf</code> 20–20,000 Hz (0 disables);
+<code>lpr</code> Q 0.05–1.</td></tr>
+<tr id="High-pass"><td>High-pass</td><td><code>hpf</code> 20–20,000 Hz (0 disables);
+<code>hpr</code> Q 0.05–1.</td></tr>
+<tr id="Band-pass"><td>Band-pass</td><td><code>bpf</code> 20–20,000 Hz (0 disables);
+<code>bpr</code> Q 0.05–1.</td></tr>
+<tr id="Vibrato"><td>Vibrato</td><td><code>vib</code> 0–100 rate;
+<code>depth</code> / <code>vibdepth</code> are pitch-depth controls bounded 0–10.</td></tr>
+<tr id="Slide"><td>Pitch slide</td><td><code>slide</code>, <code>slidefrom</code>
+−1–4; <code>slidedelay</code> 0–1 event fraction.</td></tr>
+<tr id="Bend"><td>Pitch bend</td><td><code>bend</code> −1–4;
+<code>benddelay</code> 0–1 event fraction.</td></tr>
+<tr id="PShift"><td>PShift</td><td><code>pshift</code> −24–24 semitones.</td></tr>
+<tr id="Bits / Crush"><td>Bits / Crush</td><td><code>bits</code> 0–24;
+<code>crush</code> 1–128.</td></tr>
+<tr id="Shape"><td>Shape / <span id="Drive">Drive</span></td><td>Native amount 0–1 each.</td></tr>
+<tr id="Chop"><td>Chop</td><td>0–32 gate pulses per note.</td></tr>
+<tr id="Spin"><td>Spin</td><td>0–40 stereo motion rate.</td></tr>
+<tr id="Coarse"><td>Coarse</td><td>0–32 pulse-gate rate.</td></tr>
+<tr id="Formant"><td>Formant</td><td>−1 bypass; 0–7 formant positions.</td></tr>
+<tr id="Cut"><td>Cut</td><td>0–1 fraction of each note's sustain.</td></tr>
+<tr id="Blur"><td>Blur</td><td>0.01–8 beats of extended sustain.</td></tr>
+<tr id="FMod"><td>FMod</td><td>−2000–2000 Hz frequency-modulation offset.</td></tr>
+<tr id="LFO filter"><td>Filter LFO</td><td><code>lforate</code> 0–100;
+<code>lfowidth</code> 0–1.</td></tr>
+</tbody></table>
+</section>
+<section id="optional"><h2>Loaded player-effect SynthDefs</h2>
+<p>Only effects already loaded into the VST appear as insertable. Unavailable
+optional entries remain visible for information but cannot be inserted until
+the matching SynthDef/UGen pack is installed and the host restarted. Loaded
+player effects include Airwindows TapeDelay2 and Echojam, Chorus, Flanger,
+Phaser, Tremolo, JPverb, Greyhole, the SCLOrk-derived Phazer/Decimator/Crossover
+Distortion inserts, and optional LimutFX inserts such as LimutShifter,
+ LimutShimmer, and LimutGatedVerb. The optional PortedPlugins insert pack adds
+ AnalogTape, AnalogChew, AnalogDegrade, AnalogLoss, AnalogPhaser,
+ AnalogVintageDistortion, LockhartWavefolder and DCompressor. A chain may
+ contain up to four inserts.
+Use <code>effects=[("Chorus", {"fx_mix": 0.4}), ...]</code> for a chain or the
+legacy <code>effect="Chorus", fx_mix=0.4</code> form for one insert when that
+ effect exposes <code>fx_mix</code>. TapeDelay2 and Echojam now expose a smoothed
+ <code>fx_mix</code> dry/wet control from 0 to 1, with 1 preserving the prior
+ full-effect default.</p>
+<table><thead><tr><th>Insert</th><th>Controls (inclusive bounds)</th></tr></thead><tbody>
+<tr id="AirwindowsTapeDelay2"><td>TapeDelay2</td><td><code>fx_mix</code>,
+<code>fx_vib</code>,
+<code>fx_depth</code>, <code>fx_lforate</code>, <code>fx_lfowidth</code>,
+<code>fx_rq</code>, <code>fx_blur</code>: each 0–1.</td></tr>
+<tr id="AirwindowsEchojam"><td>Echojam</td><td><code>fx_mix</code>,
+<code>fx_vib</code>,
+<code>fx_depth</code>, <code>fx_lforate</code>, <code>fx_blur</code>: each 0–1.</td></tr>
+<tr id="JPverb"><td>JPverb</td><td><code>fx_mix</code>, <code>fx_damp</code>,
+<code>fx_earlydiff</code>, <code>fx_moddepth</code>: 0–1;
+<code>fx_t60</code>: 0.1–60 seconds; <code>fx_size</code>: 0.5–3;
+<code>fx_modfreq</code>: 0–10 Hz.</td></tr>
+<tr id="Greyhole"><td>Greyhole</td><td><code>fx_mix</code>,
+<code>fx_damp</code>, <code>fx_diff</code>, <code>fx_moddepth</code>: 0–1;
+<code>fx_delay</code>: 0.001–1.45 seconds; <code>fx_size</code>: 0.5–3;
+<code>fx_feedback</code>: 0–0.98.</td></tr>
+<tr id="LimutShifter"><td>LimutShifter</td><td><code>fx_mix</code>: 0–1;
+<code>fx_ratio</code>: 0.5–2; <code>fx_window</code>: 0.02–0.5 seconds.</td></tr>
+<tr id="LimutShimmer"><td>LimutShimmer</td><td><code>fx_mix</code>,
+<code>fx_room</code>, <code>fx_damp</code>: 0–1; <code>fx_ratio</code>: 0.5–2;
+<code>fx_window</code>: 0.02–0.5 seconds.</td></tr>
+<tr id="LimutGatedVerb"><td>LimutGatedVerb</td><td><code>fx_mix</code>,
+<code>fx_room</code>, <code>fx_damp</code>: 0–1;
+<code>fx_threshold</code>: 0.001–0.25; <code>fx_hold</code>: 0–2 seconds;
+<code>fx_attack</code>: 0.001–0.25 seconds;
+<code>fx_release</code>: 0.01–1 second.</td></tr>
+<tr id="LimutCompressor"><td>LimutCompressor</td><td><code>fx_mix</code> 0–1;
+<code>fx_threshold</code> −60–0 dB; <code>fx_ratio</code> 0–20 dB;
+<code>fx_attack</code> 0–1 s; <code>fx_release</code> 0.001–3 s;
+<code>fx_knee</code> 0–24 dB.</td></tr>
+<tr id="LimutVocoder"><td>LimutVocoder (not yet insertable)</td><td>True
+two-input UGen; requires separate carrier and modulator buses. The embedded
+player-effect chain currently provides no second bus.</td></tr>
+<tr id="Chorus"><td>Chorus</td><td>mix 0–1, rate 0.05–5 Hz, depth 0–1,
+delay 0.005–0.04 seconds, spread 0–1, feedback 0–0.75, tone 200–16000 Hz.</td></tr>
+<tr id="Flanger"><td>Flanger</td><td>mix 0–1, rate 0.05–4 Hz, depth 0–1,
+delay 0.0005–0.015 seconds, spread 0–1, feedback 0–0.95, tone 200–16000 Hz.</td></tr>
+<tr id="Phaser"><td>Phaser</td><td>mix 0–1, rate 0.05–8 Hz, depth 0–1,
+center 150–1800 Hz, spread 0–1, feedback 0–0.85, tone 200–16000 Hz.</td></tr>
+<tr id="SCLOrkPhazerFX"><td>SCLOrk Phazer</td><td><code>fx_mix</code> 0–1,
+<code>fx_rate</code> 0.05–8 Hz, <code>fx_depth</code> 0–1,
+<code>fx_center</code> 150–1800 Hz, <code>fx_spread</code> 0–1,
+<code>fx_q</code> 0.05–1, <code>fx_tone</code> 200–16000 Hz.</td></tr>
+<tr id="SCLOrkDecimatorFX"><td>SCLOrk Decimator</td><td><code>fx_mix</code> 0–1,
+<code>fx_rate</code> 80–22000 Hz, <code>fx_bits</code> 1–16,
+<code>fx_drive</code> 0.5–8, <code>fx_tone</code> 200–16000 Hz.</td></tr>
+<tr id="SCLOrkCrossoverDistortionFX"><td>SCLOrk Crossover Distortion</td>
+<td><code>fx_mix</code> 0–1, <code>fx_drive</code> 0.5–8,
+<code>fx_shape</code> 0–1, <code>fx_tone</code> 200–16000 Hz.</td></tr>
+<tr id="Tremolo"><td>Tremolo</td><td>mix, depth, shape, spread and phase 0–1;
+rate 0.05–20 Hz, tone 200–16000 Hz.</td></tr>
+<tr id="PortedAnalogTapeFX"><td>Analog Tape</td><td><code>fx_mix</code>,
+<code>fx_bias</code>, <code>fx_saturation</code>, <code>fx_drive</code>: 0–1.
+Oversampling is fixed at x2.</td></tr>
+<tr id="PortedAnalogChewFX"><td>Analog Chew</td><td><code>fx_mix</code>,
+<code>fx_depth</code>, <code>fx_frequency</code>, <code>fx_variance</code>: 0–1.</td></tr>
+<tr id="PortedAnalogDegradeFX"><td>Analog Degrade</td><td><code>fx_mix</code>,
+<code>fx_depth</code>, <code>fx_amount</code>, <code>fx_variance</code>,
+<code>fx_envelope</code>: 0–1.</td></tr>
+<tr id="PortedAnalogLossFX"><td>Analog Loss</td><td><code>fx_mix</code>,
+<code>fx_gap</code>, <code>fx_thick</code>, <code>fx_space</code>,
+<code>fx_speed</code>: 0–1. Use sparing automation; this UGen can use high CPU.</td></tr>
+<tr id="PortedAnalogPhaserFX"><td>Analog Phaser</td><td><code>fx_mix</code> 0–1;
+<code>fx_rate</code> 0.05–8 Hz; <code>fx_skew</code> −1–1;
+<code>fx_feedback</code> 0–0.95; <code>fx_modulation</code> 0–1;
+<code>fx_stages</code> 1–50.</td></tr>
+<tr id="PortedAnalogVintageDistortionFX"><td>Vintage Distortion</td>
+<td><code>fx_mix</code>, <code>fx_drivegain</code> 0–1;
+<code>fx_bias</code> 0–2.5; <code>fx_lowgain</code> 0.0001–0.3;
+<code>fx_highgain</code> 0.001–0.3; <code>fx_shelvingfreq</code> 20–20000 Hz.
+Oversampling is fixed off.</td></tr>
+<tr id="PortedLockhartWavefolderFX"><td>Lockhart Wavefolder</td>
+<td><code>fx_mix</code>, <code>fx_bias</code> 0–1;
+<code>fx_pregain</code> 1–20.</td></tr>
+<tr id="PortedDCompressorFX"><td>DCompressor</td><td><code>fx_mix</code> 0–1;
+<code>fx_ratio</code> 1–40; <code>fx_threshold</code> −80–0 dB;
+<code>fx_attack</code>, <code>fx_release</code> 0.001–10 s;
+<code>fx_makeup</code> 0–24; <code>fx_automakeup</code> 0–1.
+Uses its own signal for detection; no external sidechain input.</td></tr>
+</tbody></table>
+<p>The live FX Mix slider is shown only when the first chain insert exposes
+<code>fx_mix</code>. For Airwindows delays, edit the listed
+<code>fx_*</code> values in code; releasing a supported slider replaces the
+edited parameter with a scalar.</p>
+</section>
+<section id="drag"><h2>Insert, drag, and edit</h2>
+<ol><li>Type <code>p3 &gt;&gt;</code> and right-click that line, or drag an
+available Synths/Effects row onto it.</li>
+<li>A new voice starts as a small sine pattern. Selecting an instrument or
+effect on an existing supported player edits its call/chain.</li>
+<li>Right-click a sidebar row and choose About to jump to its details here.</li>
+<li>Changes are code edits only. Click Run to execute; Undo reverses the
+catalog insertion. A four-insert chain limit is enforced.</li></ol>
+</section>
+</body></html>

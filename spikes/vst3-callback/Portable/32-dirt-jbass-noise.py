@@ -3,7 +3,7 @@ Clock.bpm = 84
 Scale.default.set("minor")
 
 # A defined low-end riff so the bass line is easy to hear and follow.
-p1 >> jbass(P[0, None, 0, 3, 5, None, 3, 2], dur=0.5, sus=0.38, oct=2,
+p1 >> jbass(P[0, None, 0, 3, 5, None, 3, 2], dur=0.5, sus=0.38, oct=5,
             atk=0.015, rel=0.10, amp=0.30, pan=-0.12)
 
 # Dirt is meant to be rough and unstable; use it as a quiet upper accent.

@@ -160,10 +160,20 @@ def evaluate(script_text: str, synth_names: tuple[str, ...]) -> tuple[list[list[
 
 examples = (
     ("95-airwindows-tape-delay2.py", ("AirwindowsTapeDelay2",), "TapeDelay2",
-     (0.94, 0.28, 0.72, 0.28, 0.12, 0.0, 0.5)),
+     (0.94, 0.28, 0.72, 0.28, 0.12, 0.78, 0.5)),
     ("96-airwindows-echojam.py", ("AirwindowsEchojam",), "Echojam",
-     (0.29, 0.32, 0.48, 0.5, 0.5, 0.0, 0.62)),
+     (0.29, 0.32, 0.48, 0.5, 0.5, 0.68, 0.62)),
 )
+for filename in ("AirwindowsTapeDelay2.scd", "AirwindowsEchojam.scd"):
+    synth_source = (portable_path / "SynthDefs" / filename).read_text(
+        encoding="utf-8")
+    if ("fx_mix=1.0" not in synth_source or
+            "Lag.kr(fx_mix.clip(0, 1), 0.02)" not in synth_source or
+            "stereo * (1 - wetMix)" not in synth_source or
+            "processed * wetMix" not in synth_source):
+        raise AssertionError(
+            f"{filename} must preserve full-wet default and smooth a linear dry/wet blend."
+        )
 for filename, synth_names, ugen_name, expected_controls in examples:
     synth_name = synth_names[0]
     if (not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", synth_name) or
@@ -180,17 +190,17 @@ for filename, synth_names, ugen_name, expected_controls in examples:
         binary_path.read_bytes()
     )
     expected_control_names = (
-        "out inbus vib depth lforate lfowidth rq blur"
+        "out inbus vib depth lforate lfowidth rq blur fx_mix"
         if synth_name == "AirwindowsTapeDelay2"
-        else "out inbus vib depth lforate blur"
+        else "out inbus vib depth lforate blur fx_mix"
     ).split()
     if binary_name_in_file != synth_name:
         raise AssertionError(f"SynthDef name mismatch: {binary_name_in_file}")
     if controls != {name: index for index, name in enumerate(expected_control_names)}:
         raise AssertionError(f"{synth_name} does not match the VST's control-index ABI: {controls}")
-    if not {ugen_name, "In", "Out"}.issubset(ugen_names):
+    if not {ugen_name, "In", "Out", "Lag", "BinaryOpUGen"}.issubset(ugen_names):
         raise AssertionError(
-            f"{synth_name} must read stereo input and contain {ugen_name} plus Out: {ugen_names}"
+            f"{synth_name} must contain stereo I/O, {ugen_name}, smoothed mix and Out: {ugen_names}"
         )
     if unit_inputs.get("Out") != 3:
         raise AssertionError(
@@ -221,8 +231,8 @@ combined_rows, combined_controls = evaluate(combined_script, combined_names)
 if len(combined_rows) != 2 or [int(row[6]) for row in combined_rows] != [58, 59]:
     raise AssertionError(f"Combined example did not start both independent effect players: {combined_rows}")
 expected_by_player = {
-    0: (0.94, 0.28, 0.72, 0.28, 0.12, 0.0, 0.5),
-    1: (0.29, 0.32, 0.48, 0.5, 0.5, 0.0, 0.62),
+    0: (0.94, 0.28, 0.72, 0.28, 0.12, 0.78, 0.5),
+    1: (0.29, 0.32, 0.48, 0.5, 0.5, 0.68, 0.62),
 }
 for player, expected in expected_by_player.items():
     actual = combined_controls.get(player, ())
@@ -246,8 +256,10 @@ for required in (
     "Graph_Calc(graph)",
     "kAirwindowsInputBusBase",
     "playerLeftBlock[player]",
-    "std::array<bool, 7>{{true, true, true, true, true, false, true}}",
-    "std::array<bool, 7>{{true, true, true, false, false, false, true}}",
+    "std::array<bool, 7>{{true, true, true, true, true, true, true}}",
+    "std::array<bool, 7>{{true, true, true, false, false, true, true}}",
+    'name == "AirwindowsTapeDelay2"',
+    'name == "AirwindowsEchojam"',
 ):
     if required not in processor_source:
         raise AssertionError(f"Persistent stereo insert path is missing {required!r}.")
@@ -261,7 +273,7 @@ if "No unsupported constructs detected" not in drum_report:
 drum_rows, drum_controls = evaluate(drum_script, ("AirwindowsEchojam",))
 if len(drum_rows) != 2 or int(drum_rows[0][6]) != 58:
     raise AssertionError(f"Drum-delay demo did not start the delayed voice and dry tick: {drum_rows}")
-expected_echojam_controls = (0.29, 0.62, 0.48, 0.5, 0.5, 0.0, 0.82)
+expected_echojam_controls = (0.29, 0.62, 0.48, 0.5, 0.5, 0.72, 0.82)
 actual_echojam_controls = drum_controls.get(0, ())
 if (len(actual_echojam_controls) != len(expected_echojam_controls) or
         any(abs(actual - expected) > 1e-9

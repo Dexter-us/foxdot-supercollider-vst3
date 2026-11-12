@@ -1,0 +1,5 @@
+# Jazz Kit: pitched metallic partials plus a high-frequency wash.
+tune 180.0 900.0 310.0 log
+decay 0.2 4.0 1.15 log
+bell 0.0 1.0 0.2
+noise 0.0 1.0 0.42

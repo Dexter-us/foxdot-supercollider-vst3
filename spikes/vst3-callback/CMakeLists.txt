@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.25)
-project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.78)
+project(DexterSCTonePlugin LANGUAGES C CXX VERSION 0.4.201)
+
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/plugin_version.h.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/plugin_version.h"
+  @ONLY)
 
 set(VST3_SDK_ROOT "" CACHE PATH "Path to Steinberg VST3 SDK checkout")
 set(SC_SOURCE_DIR "" CACHE PATH "Path to SuperCollider source checkout")
@@ -139,6 +145,8 @@ endif()
 smtg_add_vst3plugin(dexter_sc_tone
   processor.cpp
   python_runtime.cpp
+  sclang_runtime_win32.cpp
+  sclang_host_bridge.cpp
   win32_code_editor.cpp
   "${SDK_ROOT}/public.sdk/source/vst/vstsinglecomponenteffect.cpp")
 smtg_target_add_plugin_resources(dexter_sc_tone
@@ -156,6 +164,7 @@ smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Lice
 smtg_target_add_plugin_resource(dexter_sc_tone "${CMAKE_CURRENT_SOURCE_DIR}/Licenses/Scintilla-Lexilla-License.txt" "Licenses")
 target_compile_features(dexter_sc_tone PRIVATE cxx_std_17)
 target_include_directories(dexter_sc_tone PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}/generated"
   "${SC_SOURCE_DIR}/include/common" "${SC_SOURCE_DIR}/common"
   "${SC_SOURCE_DIR}/include/server" "${SC_SOURCE_DIR}/include/plugin_interface"
   "${SC_SOURCE_DIR}/server/scsynth" "${SC_SOURCE_DIR}/external_libraries"
@@ -172,10 +181,45 @@ if(WIN32)
   target_include_directories(dexter_sc_tone PRIVATE
     "${scintilla_SOURCE_DIR}/include" "${lexilla_SOURCE_DIR}/include")
   target_link_libraries(dexter_sc_tone PRIVATE dexter_scintilla dexter_sc_lexilla
-    shell32 comdlg32 comctl32 winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
+    shell32 shlwapi comdlg32 comctl32 winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
 elseif(UNIX AND NOT APPLE)
   target_link_libraries(dexter_sc_tone PRIVATE m rt pthread)
 endif()
 
+add_executable(dexter_sclang_osc_test EXCLUDE_FROM_ALL
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/test-sclang-osc.cpp")
+target_include_directories(dexter_sclang_osc_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(dexter_sclang_osc_test PRIVATE cxx_std_17)
+
+add_executable(dexter_sclang_host_bridge_test EXCLUDE_FROM_ALL
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/test-sclang-host-bridge.cpp"
+  sclang_host_bridge.cpp)
+target_compile_features(dexter_sclang_host_bridge_test PRIVATE cxx_std_17)
+if(WIN32)
+  target_link_libraries(dexter_sclang_host_bridge_test PRIVATE ws2_32)
+elseif(UNIX)
+  target_link_libraries(dexter_sclang_host_bridge_test PRIVATE pthread)
+endif()
+
+if(WIN32)
+  add_executable(dexter_vst_startup_test EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/test-vst-startup-win32.cpp")
+  target_include_directories(dexter_vst_startup_test PRIVATE
+    "${scintilla_SOURCE_DIR}/include")
+  target_compile_features(dexter_vst_startup_test PRIVATE cxx_std_17)
+  target_link_libraries(dexter_vst_startup_test PRIVATE sdk user32)
+
+  add_executable(dexter_editor_smoke_test EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/test-editor-win32.cpp"
+    win32_code_editor.cpp)
+  target_include_directories(dexter_editor_smoke_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    "${scintilla_SOURCE_DIR}/include" "${lexilla_SOURCE_DIR}/include")
+  target_compile_features(dexter_editor_smoke_test PRIVATE cxx_std_17)
+  target_link_libraries(dexter_editor_smoke_test PRIVATE sdk
+    dexter_scintilla dexter_sc_lexilla shell32 shlwapi comdlg32 comctl32
+    winmm ole32 oleaut32 uuid ws2_32 gdi32 imm32 advapi32)
+endif()
 
 smtg_target_configure_version_file(dexter_sc_tone)

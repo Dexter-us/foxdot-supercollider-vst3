@@ -16,17 +16,36 @@
 #include "SC_Group.h"
 #include "SC_Graph.h"
 #include "SC_Lib_Cintf.h"
+#include "SC_HiddenWorld.h"
+#include "SC_ReplyImpl.hpp"
 #include "tone_synthdef.h"
 #include "foxdot_synthdefs.h"
 #include "sample_synthdef.h"
 #include "portable_samples.h"
+#include "plugin_version.h"
 #include "reverb_synthdef.h"
 #include "python_runtime.h"
+#include "portable_diskio.h"
 #include "clock_swing.h"
+#include "clock_tempo_map.h"
+#include "airwindows_control_smoothing.h"
 #include "master_output_gain.h"
+#include "native_player_effects.h"
+#include "foxdot_note_effects.h"
+#include "event_effect_tail.h"
+#include "foxdot_bitcrusher.h"
+#include "player_effect_chain.h"
+#include "editor_catalog.h"
 #include "win32_code_editor.h"
 #include "lifecycle_trace.h"
 #include "sc_pool_capacity.h"
+#include "user_synth_routing.h"
+#include "user_synth_controls.h"
+#include "user_synth_control_state.h"
+#include "sardine_pattern_gates.h"
+#include "sclang_runtime_win32.h"
+#include "sclang_host_bridge.h"
+#include "sclang_host_protocol.h"
 
 #include <algorithm>
 #include <array>
@@ -38,9 +57,11 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <string_view>
 #include <sstream>
@@ -58,6 +79,9 @@
 
 #include "SC_UnitDef.h"
 #include "SC_UnitSpec.h"
+
+// Pinned libscsynth's synchronous dispatch does not require an audio driver.
+int PerformOSCMessage(World*, int, char*, ReplyAddress*);
 
 namespace {
 std::mutex scLibraryLifecycleMutex;
@@ -255,6 +279,29 @@ std::filesystem::path bundledPythonPath() {
         return {};
     return binaryPath.parent_path().parent_path() / "Resources" / "Python";
 }
+
+std::filesystem::path bundledSuperColliderLanguagePath() {
+    const auto binaryPath = pluginBinaryPath();
+    if (binaryPath.empty())
+        return {};
+    return binaryPath.parent_path().parent_path() / "Resources" / "SuperCollider";
+}
+
+std::string defaultSuperColliderSource() {
+    return
+        "// Full SuperCollider language tab; sclang talks to the VST's embedded engine.\r\n"
+        "// Run the code only if you recognize and trust it. It can execute system commands.\r\n"
+        "(\r\n"
+        "Routine({\r\n"
+        "    SynthDef(\\dexterSclangDemo, { |out=0, freq=440, amp=0.12, gate=1|\r\n"
+        "        var env = EnvGen.kr(Env.asr(0.01, 1, 0.15), gate, doneAction: 2);\r\n"
+        "        Out.ar(out, (SinOsc.ar(freq) * amp * env) ! 2);\r\n"
+        "    }).add;\r\n"
+        "    s.sync;\r\n"
+        "    x = Synth(\\dexterSclangDemo);\r\n"
+        "}).play(SystemClock);\r\n"
+        ")\r\n";
+}
 }
 
 namespace Steinberg::Vst {
@@ -273,6 +320,8 @@ public:
     ~DexterSCTone() override {
         LifecycleTrace trace("processor destructor", this);
         joinScriptThread();
+        joinCatalogThread();
+        diskIO_.shutdown();
         stopWorld();
     }
 
@@ -281,6 +330,7 @@ public:
         const auto result = SingleComponentEffect::initialize(context);
         if (result != kResultOk)
             return result;
+        addAudioInput(STR16("Mic / Loop In"), SpeakerArr::kStereo);
         addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
         addEventOutput(STR16("MIDI Out"), 16);
         return kResultOk;
@@ -290,6 +340,7 @@ public:
         LifecycleTrace trace("createView", this);
         if (!name || std::strcmp(name, ViewType::kEditor) != 0)
             return nullptr;
+        discoverEditorCatalogAsync();
         return createCodeEditorView(
             this, static_cast<IEditController*>(this));
     }
@@ -299,16 +350,22 @@ public:
             return kInvalidArgument;
 
         std::string source;
+        std::string superColliderSource;
         {
             std::lock_guard<std::mutex> lock(editorStateMutex_);
             source = editorSource_;
+            superColliderSource = superColliderSource_;
         }
-        if (source.size() > kMaxEditorSourceBytes)
+        if (source.size() > kMaxEditorSourceBytes ||
+            superColliderSource.size() > kMaxEditorSourceBytes)
             return kResultFalse;
 
-        std::array<char, 4> magic{'D', 'X', 'C', '2'};
+        std::array<char, 4> magic{'D', 'X', 'C', '3'};
         std::array<char, 4> length{};
+        std::array<char, 4> superColliderLength{};
         encodeUint32(static_cast<std::uint32_t>(source.size()), length);
+        encodeUint32(static_cast<std::uint32_t>(superColliderSource.size()),
+                     superColliderLength);
         std::array<char, 4> gainBytes{};
         const float gain = masterGainTarget_.load(std::memory_order_acquire);
         std::uint32_t gainBits = 0;
@@ -319,6 +376,11 @@ public:
             !writeStreamBytes(stream, length.data(), static_cast<int32>(length.size())) ||
             (!source.empty() &&
              !writeStreamBytes(stream, source.data(), static_cast<int32>(source.size()))) ||
+            !writeStreamBytes(stream, superColliderLength.data(),
+                              static_cast<int32>(superColliderLength.size())) ||
+            (!superColliderSource.empty() &&
+             !writeStreamBytes(stream, superColliderSource.data(),
+                               static_cast<int32>(superColliderSource.size()))) ||
             !writeStreamBytes(stream, gainBytes.data(),
                               static_cast<int32>(gainBytes.size())))
             return kResultFalse;
@@ -342,8 +404,10 @@ public:
             bytesRead += chunkRead;
         }
         const bool oldState = magic == std::array<char, 4>{'D', 'X', 'C', '1'};
-        const bool hasGain = magic == std::array<char, 4>{'D', 'X', 'C', '2'};
-        if (!oldState && !hasGain)
+        const bool stateV2 = magic == std::array<char, 4>{'D', 'X', 'C', '2'};
+        const bool stateV3 = magic == std::array<char, 4>{'D', 'X', 'C', '3'};
+        const bool hasGain = stateV2 || stateV3;
+        if (!oldState && !stateV2 && !stateV3)
             return kResultFalse;
 
         std::array<char, 4> length{};
@@ -359,6 +423,24 @@ public:
             return kResultFalse;
         if (source.find('\0') != std::string::npos)
             return kResultFalse;
+
+        std::string superColliderSource = defaultSuperColliderSource();
+        if (stateV3) {
+            std::array<char, 4> superColliderLengthBytes{};
+            if (!readStreamBytes(stream, superColliderLengthBytes.data(),
+                                 static_cast<int32>(superColliderLengthBytes.size())))
+                return kResultFalse;
+            const auto superColliderLength = decodeUint32(superColliderLengthBytes);
+            if (superColliderLength > kMaxEditorSourceBytes)
+                return kResultFalse;
+            superColliderSource.assign(superColliderLength, '\0');
+            if (!superColliderSource.empty() &&
+                !readStreamBytes(stream, superColliderSource.data(),
+                                 static_cast<int32>(superColliderSource.size())))
+                return kResultFalse;
+            if (superColliderSource.find('\0') != std::string::npos)
+                return kResultFalse;
+        }
 
         float restoredGain = 1.0f;
         if (hasGain) {
@@ -376,10 +458,13 @@ public:
         {
             std::lock_guard<std::mutex> lock(editorStateMutex_);
             editorSource_ = std::move(source);
+            superColliderSource_ = std::move(superColliderSource);
             hasEditorSource_ = true;
+            hasSuperColliderSource_ = true;
         }
         masterGainTarget_.store(restoredGain, std::memory_order_release);
         stopPattern();
+        stopSuperCollider();
         return kResultOk;
     }
 
@@ -390,12 +475,16 @@ public:
             return baseResult;
         if (!std::isfinite(setup.sampleRate) || setup.sampleRate <= 0.0)
             return kInvalidArgument;
-        return initializeWorld(setup.sampleRate) ? kResultOk : kResultFalse;
+        micLoop_.prepare(setup.sampleRate);
+        configureHostProcessing(setup.sampleRate);
+        return kResultOk;
     }
 
     tresult PLUGIN_API terminate() override {
         LifecycleTrace trace("processor terminate", this);
         joinScriptThread();
+        joinCatalogThread();
+        diskIO_.shutdown();
         stopWorld();
         return SingleComponentEffect::terminate();
     }
@@ -420,11 +509,13 @@ public:
         // block rather than blocking the host's audio callback.
         std::unique_lock<std::mutex> worldLock(worldAccessMutex_, std::try_to_lock);
         if (!worldLock.owns_lock()) {
-            output.silenceFlags = 1;
+            renderMicLoopOnly(data, output);
             return kResultOk;
         }
-        if (!world_)
-            return kResultFalse;
+        if (!world_) {
+            renderMicLoopOnly(data, output);
+            return kResultOk;
+        }
 
         std::unique_lock<std::mutex> patternLock(patternMutex_, std::try_to_lock);
         if (patternLock.owns_lock()) {
@@ -439,7 +530,31 @@ public:
                     stopPlayerMidiNotes(data.outputEvents, 0, static_cast<int>(player));
                     stopAudioVoices(static_cast<int>(player));
                     const auto previous = activePatterns_[player];
-                    activePatterns_[player] = pendingPatterns_[player];
+                    auto next = pendingPatterns_[player];
+                    const auto pendingUserSynthControls =
+                        pendingEditorUserSynthControls_[player];
+                    dexter::preserveUserSynthControlOverrides(
+                        previous.synthIndex, next.synthIndex,
+                        static_cast<int>(kSynthIndexToGraphIndex.size()),
+                        previous.userSynthControlDefinitionIndex,
+                        previous.userSynthControlOverrideMask,
+                        previous.userSynthControlValues,
+                        pendingUserSynthControls.mask,
+                        pendingUserSynthControls.values,
+                        next.userSynthControlDefinitionIndex,
+                        next.userSynthControlOverrideMask,
+                        next.userSynthControlValues);
+                    activePatterns_[player] = next;
+                    activePatterns_[player].editorAmpOverride = false;
+                    editorAmplitudeCurrent_[player] =
+                        activePatterns_[player].amplitude;
+                    editorCutoffCurrent_[player] =
+                        activePatterns_[player].cutoffHz;
+                    pendingEditorControls_[player] = {};
+                    pendingEditorEffectControls_[player] = {};
+                    pendingEditorUserSynthControls_[player] = {};
+                    activePatterns_[player].editorPanOverride = false;
+                    activePatterns_[player].editorCutoffOverride = false;
                     if (!activePatterns_[player].active) {
                         activePatterns_[player].echoMix = previous.echoMix;
                         activePatterns_[player].echoBeats = previous.echoBeats;
@@ -477,6 +592,121 @@ public:
                     }
                     patternStartSamples_[player] = newStart;
                     updatePlayerReverb(player);
+                    publishEditorPlayerState(player);
+                }
+            }
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                auto& live = pendingEditorControls_[player];
+                auto& pattern = activePatterns_[player];
+                if ((live.mask & 1u) != 0) {
+                    pattern.amplitude = live.amplitude;
+                    pattern.ampControl = {};
+                    pattern.editorAmpOverride = true;
+                }
+                if ((live.mask & 2u) != 0) {
+                    pattern.pan = live.pan;
+                    pattern.panControl = {};
+                    pattern.editorPanOverride = true;
+                    pattern.editorPan = live.pan;
+                }
+                if ((live.mask & 4u) != 0) {
+                    pattern.cutoffHz = live.cutoff;
+                    pattern.cutoffControl = {};
+                    pattern.editorCutoffOverride = true;
+                    pattern.editorCutoffHz = live.cutoff;
+                }
+                if ((live.mask & 8u) != 0 && pattern.playerEffectCount > 0) {
+                    auto& effect = pattern.playerEffects[0];
+                    std::size_t mixControl = 0;
+                    const int userSynthIndex = effect.userSynthIndex;
+                    if (userSynthIndex >= 0 &&
+                        static_cast<std::size_t>(userSynthIndex) <
+                            userSynthDefinitions_.size()) {
+                        const auto mixIndex =
+                            dexter::editor::playerEffectMixControlIndex(
+                            userSynthDefinitions_[static_cast<std::size_t>(
+                                userSynthIndex)].name);
+                        if (mixIndex >= 0)
+                            mixControl = static_cast<std::size_t>(mixIndex);
+                    }
+                    effect.controlValues[mixControl] = live.effectMix;
+                    effect.controlVariables[mixControl] = {};
+                    pattern.playerEffectControlValues[mixControl] =
+                        live.effectMix;
+                    pattern.effectControlVariables[mixControl] = {};
+                }
+                if ((live.mask & 16u) != 0) {
+                    pattern.bits = live.bits;
+                    pattern.bitsControl = {};
+                    pattern.bitsEnabled = live.bits > 0.0f;
+                }
+                if ((live.mask & 32u) != 0) {
+                    pattern.crush = live.crush;
+                    pattern.crushControl = {};
+                }
+                if ((live.mask & 64u) != 0) {
+                    pattern.editorPshift = live.pshift;
+                    pattern.editorPshiftOverride = true;
+                    pattern.noteEffectControls[11] = {};
+                    pattern.pshiftEnabled = true;
+                }
+                if (live.mask != 0) {
+                    live.mask = 0;
+                    publishEditorPlayerState(player);
+                }
+                auto& effectPending = pendingEditorEffectControls_[player];
+                if (effectPending.any()) {
+                    for (std::size_t slot = 0;
+                         slot < pattern.playerEffectCount; ++slot) {
+                        for (std::size_t control = 0; control < 7; ++control) {
+                            if ((effectPending.masks[slot] &
+                                 static_cast<std::uint8_t>(1u << control)) == 0)
+                                continue;
+                            auto& effect = pattern.playerEffects[slot];
+                            effect.controlValues[control] =
+                                effectPending.values[slot][control];
+                            effect.controlVariables[control] = {};
+                            if (slot == 0) {
+                                pattern.playerEffectControlValues[control] =
+                                    effectPending.values[slot][control];
+                                pattern.effectControlVariables[control] = {};
+                            }
+                        }
+                    }
+                    effectPending = {};
+                    publishEditorPlayerState(player);
+                }
+                auto& userSynthPending =
+                    pendingEditorUserSynthControls_[player];
+                if (userSynthPending.mask != 0) {
+                    const int userIndex =
+                        pattern.synthIndex -
+                        static_cast<int>(kSynthIndexToGraphIndex.size());
+                    if (pattern.active && userIndex >= 0 &&
+                        static_cast<std::size_t>(userIndex) <
+                            userSynthDefinitions_.size()) {
+                        const auto& definition =
+                            userSynthDefinitions_[static_cast<std::size_t>(
+                                userIndex)];
+                        if (!definition.persistentPlayerEffect) {
+                            pattern.userSynthControlDefinitionIndex =
+                                userIndex;
+                            for (std::size_t control = 0;
+                                 control < definition.liveControlCount;
+                                 ++control) {
+                                if ((userSynthPending.mask &
+                                     static_cast<std::uint8_t>(
+                                         1u << control)) == 0)
+                                    continue;
+                                pattern.userSynthControlValues[control] =
+                                    userSynthPending.values[control];
+                                pattern.userSynthControlOverrideMask |=
+                                    static_cast<std::uint8_t>(1u << control);
+                            }
+                            publishEditorPlayerState(player);
+                        }
+                    }
+                    userSynthPending = {};
                 }
             }
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
@@ -486,6 +716,7 @@ public:
                 mutedPlayers_[player] = pendingMuteStates_[player];
                 if (!wasMuted && mutedPlayers_[player])
                     stopPlayerMidiNotes(data.outputEvents, 0, static_cast<int>(player));
+                publishEditorPlayerState(player);
             }
             pendingPlayerMask_ = 0;
             pendingMuteMask_ = 0;
@@ -495,8 +726,10 @@ public:
         if (stopRequested_.exchange(false, std::memory_order_acq_rel)) {
             stopActiveMidiNotes(data.outputEvents, 0);
             stopAudioVoices();
-            for (auto& pattern : activePatterns_)
-                pattern.active = false;
+            for (std::size_t player = 0; player < kPlayerCount; ++player) {
+                activePatterns_[player].active = false;
+                publishEditorPlayerState(player);
+            }
         }
 
         emitPatternMidi(data);
@@ -510,19 +743,32 @@ public:
             masterGainCurrent_ = dexterMasterGainStep(
                 masterGainCurrent_,
                 masterGainTarget_.load(std::memory_order_relaxed), sampleRate_);
+            float micInputLeft = 0.0f;
+            float micInputRight = 0.0f;
+            readMicInputFrame(data, frame, micInputLeft, micInputRight);
+            float micLoopLeft = 0.0f;
+            float micLoopRight = 0.0f;
+            micLoop_.processFrame(micInputLeft, micInputRight,
+                                  micLoopLeft, micLoopRight);
             const float leftSample =
                 outputBlock_[0][outputSample] * masterGainCurrent_;
             const float rightSample =
                 outputBlock_[1][outputSample] * masterGainCurrent_;
+            const float mixedLeft =
+                leftSample + micLoopLeft * masterGainCurrent_;
+            const float mixedRight =
+                rightSample + micLoopRight * masterGainCurrent_;
+            diskIO_.captureSample(mixedLeft, mixedRight);
             for (int32 channel = 0; channel < output.numChannels; ++channel) {
                 if (!output.channelBuffers32[channel])
                     continue;
-                const float sample = channel == 0 ? leftSample
-                                    : channel == 1 ? rightSample
-                                                   : 0.5f * (leftSample + rightSample);
+                const float sample = channel == 0 ? mixedLeft
+                                    : channel == 1 ? mixedRight
+                                                   : 0.5f * (mixedLeft + mixedRight);
                 output.channelBuffers32[channel][frame] = sample;
             }
         }
+        micLoop_.finishBlock();
         sampleClock_ += static_cast<std::uint64_t>(data.numSamples);
         output.silenceFlags = 0;
         return kResultOk;
@@ -533,7 +779,8 @@ public:
             return "Code is limited to 64 KB in this prototype.";
         std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
         if (scriptRunning_.load(std::memory_order_acquire))
-            return "Python is evaluating another script; wait for it to finish, then check again.";
+            return "The Python script worker is still processing the previous Run. "
+                   "Wait until the Run button is ready, then try again.";
         if (scriptThread_.joinable())
             scriptThread_.join();
 
@@ -555,7 +802,8 @@ public:
     void submitCode(const std::string& source) override {
         std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
         if (scriptRunning_.load(std::memory_order_acquire)) {
-            setEditorStatus("Python is still evaluating the previous script.");
+            setEditorStatus("The Python script worker is still processing the previous Run. "
+                            "Wait until the Run button is ready, then try again.");
             return;
         }
         if (scriptThread_.joinable())
@@ -595,7 +843,7 @@ public:
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
                     }
-                    if (pattern.players.empty() && pattern.mutes.empty()) {
+                    if (pattern.players.empty() && pattern.mutes.empty() && pattern.diskCommands.empty()) {
                         setEditorStatus("No players changed.");
                         scriptRunning_.store(false, std::memory_order_release);
                         return;
@@ -615,12 +863,56 @@ public:
                         auto& next = updates[static_cast<std::size_t>(player.playerIndex)];
                         next.active = !player.stopped;
                         next.bpm = player.bpm;
+                        if (!parseTimeVarControl(player.bpmControlToken, 0.001,
+                                                 std::numeric_limits<double>::max(),
+                                                 next.bpmControl) ||
+                            !next.tempoMap.prepare(next.bpmControl, next.bpm)) {
+                            setEditorStatus("Python returned invalid Clock.bpm timevar data.");
+                            scriptRunning_.store(false, std::memory_order_release);
+                            return;
+                        }
                         next.swingSeconds = player.swingSeconds;
+                        for (std::size_t value = 0; value < next.bpmControl.count; ++value) {
+                            if (std::abs(next.swingSeconds *
+                                         next.bpmControl.values[value] / 60.0) >= 0.49) {
+                                setEditorStatus("Clock.swing is too large for the automated tempo.");
+                                scriptRunning_.store(false, std::memory_order_release);
+                                return;
+                            }
+                        }
                         next.lengthBeats = player.lengthBeats;
+                        next.untilCycles = static_cast<std::uint16_t>(
+                            player.untilCycles);
+                        next.chanceProbability = player.chanceProbability;
+                        next.chanceSeed = player.chanceSeed;
+                        next.barLoaf = player.barLoaf;
+                        next.barOnMask = player.barOnMask;
                         next.synthIndex = player.synthIndex;
                         next.playerEffectUserIndex = player.playerEffectUserIndex;
                         next.synthRate = static_cast<float>(player.synthRate);
                         next.synthControls = player.synthControls;
+                        next.playerEffectControlValues =
+                            player.playerEffectControlValues;
+                        if (player.playerEffects.size() > kMaxPlayerEffectChain)
+                            throw std::runtime_error(
+                                "Python returned too many player effects.");
+                        next.playerEffectCount = player.playerEffects.size();
+                        for (std::size_t effectIndex = 0;
+                             effectIndex < next.playerEffectCount; ++effectIndex) {
+                            auto& effect = next.playerEffects[effectIndex];
+                            const auto& source = player.playerEffects[effectIndex];
+                            effect.userSynthIndex = source.userSynthIndex;
+                            effect.controlValues = source.controlValues;
+                            for (std::size_t control = 0;
+                                 control < effect.controlVariables.size(); ++control) {
+                                if (!parseTimeVarControl(
+                                        source.controlTokens[control], 0.0, 1.0,
+                                        effect.controlVariables[control])) {
+                                    throw std::runtime_error(
+                                        "Invalid chained-effect fx_* var/linvar control from Python.");
+                                }
+                            }
+                        }
                         next.amplitude = static_cast<float>(player.amplitude);
                         next.pan = static_cast<float>(player.pan);
                         next.cutoffHz = static_cast<float>(player.cutoffHz);
@@ -644,8 +936,29 @@ public:
                             !parseTimeVarControl(player.bpfControlToken, 0.0, 20000.0, next.bpfControl) ||
                             !parseTimeVarControl(player.bprControlToken, 0.05, 1.0, next.bprControl) ||
                             !parseTimeVarControl(player.bpnoiseControlToken, 0.0, 10.0, next.bpnoiseControl) ||
-                            !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl))
+                            !parseTimeVarControl(player.swellControlToken, 0.0, 4.0, next.swellControl) ||
+                            !parseTimeVarControl(player.shapeControlToken, 0.0, 4.0, next.shapeControl) ||
+                            !parseTimeVarControl(player.driveControlToken, 0.0, 4.0, next.driveControl) ||
+                            !parseTimeVarControl(player.bitsControlToken, 0.0, 24.0, next.bitsControl) ||
+                            !parseTimeVarControl(player.crushControlToken, 1.0, 128.0, next.crushControl))
                             throw std::runtime_error("Invalid var/linvar control from Python.");
+                        next.effectControlVariables = next.playerEffectCount > 0
+                            ? next.playerEffects[0].controlVariables
+                            : std::array<TimeVarControl, 7>{};
+                        constexpr std::array<double, 12> noteEffectMinimum{
+                            0.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, -24.0};
+                        constexpr std::array<double, 12> noteEffectMaximum{
+                            10.0, 4.0, 4.0, 1.0, 4.0, 1.0, 32.0, 40.0, 1.0, 32.0, 7.0, 24.0};
+                        for (std::size_t control = 0;
+                             control < next.noteEffectControls.size(); ++control) {
+                            if (!parseTimeVarControl(
+                                    player.noteEffectControlTokens[control],
+                                    noteEffectMinimum[control],
+                                    noteEffectMaximum[control],
+                                    next.noteEffectControls[control]))
+                                throw std::runtime_error(
+                                    "Invalid FoxDot note-effect var control from Python.");
+                        }
                         if (next.synthIndex == 57) {
                             if (!parseTimeVarControl(player.sampleControlToken, -1000000.0, 1000000.0,
                                                      next.sampleControl) ||
@@ -676,8 +989,47 @@ public:
                         next.bpr = static_cast<float>(player.bpr);
                         next.bpnoise = static_cast<float>(player.bpnoise);
                         next.swell = static_cast<float>(player.swell);
+                        next.shape = static_cast<float>(player.shape);
+                        next.drive = static_cast<float>(player.drive);
                         next.eventCount = player.events.size();
                         std::copy(player.events.begin(), player.events.end(), next.events.begin());
+                        next.chopEnabled = next.noteEffectControls[6].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.chop > 0.0;
+                                });
+                        next.spinEnabled = next.noteEffectControls[7].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.spin > 0.0;
+                                });
+                        next.coarseEnabled = next.noteEffectControls[9].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.coarse > 0.0;
+                                });
+                        next.formantEnabled = next.noteEffectControls[10].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.formant >= 0.0;
+                                });
+                        next.pshiftEnabled = next.noteEffectControls[11].active ||
+                            std::any_of(player.events.begin(), player.events.end(),
+                                [](const PythonNoteEvent& event) {
+                                    return event.pshift != 0.0;
+                                });
+                        next.editorPshiftCurrent =
+                            next.noteEffectControls[11].active &&
+                                    next.noteEffectControls[11].count > 0
+                                ? static_cast<float>(
+                                      next.noteEffectControls[11].values[0])
+                                : next.eventCount > 0
+                                      ? static_cast<float>(next.events[0].pshift)
+                                      : 0.0f;
+                        next.bits = static_cast<float>(player.bits);
+                        next.crush = static_cast<float>(player.crush);
+                        next.bitsEnabled = next.bits > 0.0f ||
+                                           next.bitsControl.active;
                         totalNotes += player.events.size();
                         updateMask |= static_cast<std::uint8_t>(1u << player.playerIndex);
                     }
@@ -697,6 +1049,12 @@ public:
                             return;
                         }
                     }
+                    if (!pattern.diskCommands.empty() && !initializeWorld()) {
+                        setEditorStatus("DiskIO could not start the embedded engine. Enable host audio and press Run again.");
+                        scriptRunning_.store(false, std::memory_order_release);
+                        return;
+                    }
+                    std::string diskStatus;
                     {
                         std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
                         if (scriptGeneration_.load(std::memory_order_acquire) != generation) {
@@ -708,6 +1066,17 @@ public:
                             if ((updateMask & (1u << player)) && updates[player].sampleWorld != 0 &&
                                 updates[player].sampleWorld != sampleWorldGeneration_)
                                 throw std::runtime_error("The audio engine restarted while loading samples. Press Run to retry.");
+                        }
+                        if (!pattern.diskCommands.empty()) {
+                            diskIO_.startMaintenance(worldAccessMutex_,
+                                [this](const std::string& message) { setEditorStatus(message); });
+                            std::string diskError;
+                            const auto portable = pluginBinaryPath().parent_path().parent_path().parent_path() / "Portable";
+                            if (!diskIO_.execute(world_, portable, pattern.diskCommands, diskStatus, diskError)) {
+                                setEditorStatus("DiskIO: " + diskError);
+                                scriptRunning_.store(false, std::memory_order_release);
+                                return;
+                            }
                         }
                         std::lock_guard<std::mutex> lock(patternMutex_);
                         for (std::size_t player = 0; player < kPlayerCount; ++player) {
@@ -729,12 +1098,17 @@ public:
                     std::ostringstream status;
                     if (!pattern.players.empty()) {
                         status << "Updated " << pattern.players.size() << " player(s), "
-                               << totalNotes << " notes at " << pattern.players.front().bpm << " BPM.";
+                               << totalNotes << " notes";
+                        if (pattern.players.front().bpmControlToken != "-")
+                            status << " with automated BPM.";
+                        else
+                            status << " at " << pattern.players.front().bpm << " BPM.";
                     } else {
                         status << "Player control updated.";
                     }
                     for (const auto& mute : pattern.mutes)
                         status << " p" << mute.playerIndex + 1 << (mute.muted ? " muted." : " unmuted.");
+                    if (!diskStatus.empty()) status << " " << diskStatus;
                     setEditorStatus(status.str());
                 } catch (const std::exception& exception) {
                     setEditorStatus(std::string("Python worker error: ") + exception.what());
@@ -749,9 +1123,14 @@ public:
         }
     }
 
+    bool scriptWorkerBusy() override {
+        return scriptRunning_.load(std::memory_order_acquire);
+    }
+
     void stopPattern() override {
         scriptGeneration_.fetch_add(1, std::memory_order_acq_rel);
         stopRequested_.store(true, std::memory_order_release);
+        diskIO_.requestStop();
         setEditorStatus("Stopping pattern...");
     }
 
@@ -773,9 +1152,94 @@ public:
         hasEditorSource_ = true;
     }
 
+    std::string superColliderSource() override {
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        return superColliderSource_;
+    }
+
+    bool hasSuperColliderSource() override {
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        return hasSuperColliderSource_;
+    }
+
+    void setSuperColliderSource(const std::string& source) override {
+        if (source.size() > kMaxEditorSourceBytes)
+            return;
+        std::lock_guard<std::mutex> lock(editorStateMutex_);
+        superColliderSource_ = source;
+        hasSuperColliderSource_ = true;
+    }
+
     std::string editorStatus() override {
         std::lock_guard<std::mutex> lock(statusMutex_);
         return editorStatus_;
+    }
+
+    void submitSuperColliderCode(const std::string& source) override {
+        if (source.size() > kMaxEditorSourceBytes ||
+            source.find('\0') != std::string::npos) {
+            scPreparationStatusOverride_.store(true, std::memory_order_release);
+            setEditorStatus("SuperCollider source is invalid or exceeds 256 KB.");
+            return;
+        }
+        std::lock_guard<std::mutex> threadLock(scriptThreadMutex_);
+        if (scriptRunning_.load(std::memory_order_acquire)) {
+            setEditorStatus("The script worker is still preparing the previous request.");
+            return;
+        }
+        if (scriptThread_.joinable())
+            scriptThread_.join(); // Only a completed worker can reach this point.
+        const auto generation =
+            scSourceGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        scriptRunning_.store(true, std::memory_order_release);
+        scPreparationStatusOverride_.store(true, std::memory_order_release);
+        setEditorStatus("Preparing the embedded engine on the script worker...");
+        try {
+            scriptThread_ = std::thread([this, source, generation] {
+                struct Finished {
+                    std::atomic<bool>& running;
+                    ~Finished() { running.store(false, std::memory_order_release); }
+                } finished{scriptRunning_};
+                try {
+                    if (scSourceGeneration_.load(std::memory_order_acquire) != generation)
+                        return;
+                    if (!initializeWorld())
+                        return; // initializeWorld preserves the specific startup error.
+                    std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+                    if (scSourceGeneration_.load(std::memory_order_acquire) != generation)
+                        return;
+                    if (!world_ || scLanguageServerPort_ <= 0) {
+                        setEditorStatus("The embedded engine's private host-driven OSC bridge endpoint is unavailable.");
+                        return;
+                    }
+                    // Keep the endpoint/sample-rate snapshot valid through queueing.
+                    // Runtime::submit starts its own language worker, not sclang here.
+                    scLanguageRuntime_.submit(
+                        bundledSuperColliderLanguagePath(), scLanguageServerPort_,
+                        kSclangFirstAllocatableAudioBus, sampleRate_, source);
+                    scPreparationStatusOverride_.store(false, std::memory_order_release);
+                } catch (const std::exception& exception) {
+                    setEditorStatus(std::string("SuperCollider worker error: ") + exception.what());
+                } catch (...) {
+                    setEditorStatus("SuperCollider preparation failed unexpectedly.");
+                }
+            });
+        } catch (const std::exception& exception) {
+            scriptRunning_.store(false, std::memory_order_release);
+            setEditorStatus(std::string("Could not start SuperCollider worker: ") + exception.what());
+        }
+    }
+
+    void stopSuperCollider() override {
+        scSourceGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        scPreparationStatusOverride_.store(false, std::memory_order_release);
+        scLanguageRuntime_.stop();
+    }
+
+    std::string superColliderStatus() override {
+        if (scPreparationStatusOverride_.load(std::memory_order_acquire))
+            return editorStatus();
+        return scLanguageRuntime_.status();
     }
 
     float masterOutputGain() override {
@@ -789,15 +1253,331 @@ public:
                                 std::memory_order_release);
     }
 
+    void toggleMicLoopRecording() override {
+        micLoop_.requestRecordToggle();
+    }
+
+    void playMicLoop() override {
+        micLoop_.requestPlay();
+    }
+
+    void stopMicLoop() override {
+        micLoop_.requestStop();
+    }
+
+    dexter::MicLoopState micLoopState() override {
+        return micLoop_.state();
+    }
+
+    float micLoopInputPeak() override {
+        return micLoop_.inputPeak();
+    }
+
+    void editorPlayerStates(
+        std::array<EditorPlayerState, 8>& states) override {
+        for (std::size_t player = 0; player < states.size(); ++player) {
+            const auto packed =
+                editorPlayerState_[player].load(std::memory_order_acquire);
+            auto& state = states[player];
+            state.userSynthControlCount = 0;
+            state.active = (packed & 1u) != 0;
+            state.muted = (packed & 2u) != 0;
+            state.effectMixAvailable = (packed & (1u << 30)) != 0;
+            state.synthIndex = static_cast<int>((packed >> 2) & 0xffu);
+            state.effectIndex =
+                static_cast<int>((packed >> 10) & 0xffu) - 1;
+            const auto chain = editorPlayerEffectChain_[player].load(
+                std::memory_order_acquire);
+            for (std::size_t slot = 0; slot < state.effectIndices.size(); ++slot)
+                state.effectIndices[slot] =
+                    static_cast<int>((chain >> (slot * 16)) & 0xffffu) - 1;
+            state.reverbIndex = static_cast<int>((packed >> 18) & 0x03u);
+            state.echoEnabled = (packed & (1u << 20)) != 0;
+            state.reverbEnabled = (packed & (1u << 21)) != 0;
+            state.shapeEnabled = (packed & (1u << 22)) != 0;
+            state.driveEnabled = (packed & (1u << 23)) != 0;
+            state.chopEnabled = (packed & (1u << 24)) != 0;
+            state.spinEnabled = (packed & (1u << 25)) != 0;
+            state.coarseEnabled = (packed & (1u << 26)) != 0;
+            state.formantEnabled = (packed & (1u << 27)) != 0;
+            state.pshiftEnabled = (packed & (1u << 28)) != 0;
+            state.bitcrusherEnabled = (packed & (1u << 29)) != 0;
+            state.amplitude =
+                editorPlayerValues_[player][0].load(std::memory_order_acquire);
+            state.pan =
+                editorPlayerValues_[player][1].load(std::memory_order_acquire);
+            state.cutoffHz =
+                editorPlayerValues_[player][2].load(std::memory_order_acquire);
+            state.effectMix =
+                editorPlayerValues_[player][3].load(std::memory_order_acquire);
+            state.bits =
+                editorPlayerValues_[player][4].load(std::memory_order_acquire);
+            state.crush =
+                editorPlayerValues_[player][5].load(std::memory_order_acquire);
+            state.pshift =
+                editorPlayerValues_[player][6].load(std::memory_order_acquire);
+            for (std::size_t slot = 0;
+                 slot < state.effectControlValues.size(); ++slot) {
+                for (std::size_t control = 0;
+                     control < state.effectControlValues[slot].size();
+                     ++control) {
+                    state.effectControlValues[slot][control] =
+                        editorPlayerEffectValues_[player][slot][control].load(
+                            std::memory_order_acquire);
+                }
+            }
+            const int userIndex =
+                state.synthIndex -
+                static_cast<int>(kSynthIndexToGraphIndex.size());
+            if (userIndex >= 0) {
+                std::lock_guard<std::mutex> catalogLock(editorCatalogMutex_);
+                if (static_cast<std::size_t>(userIndex) <
+                    editorUserSynthControlSpecs_.size()) {
+                    const auto& specs =
+                        editorUserSynthControlSpecs_[static_cast<std::size_t>(
+                            userIndex)];
+                    state.userSynthControlCount = std::min(
+                        specs.size(), state.userSynthControls.size());
+                    for (std::size_t control = 0;
+                         control < state.userSynthControlCount; ++control) {
+                        const auto& spec = specs[control];
+                        auto& visible = state.userSynthControls[control];
+                        visible.name = spec.name;
+                        visible.minimum = spec.minimum;
+                        visible.maximum = spec.maximum;
+                        visible.logarithmic = spec.logarithmic;
+                        visible.normalizedValue =
+                            editorPlayerUserSynthValues_[player][control].load(
+                                std::memory_order_acquire);
+                    }
+                }
+            }
+        }
+    }
+
+    std::vector<std::string> editorExternalSynthNames() override {
+        std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+        return editorExternalSynthNames_;
+    }
+
+    void stopEditorPlayer(int playerIndex) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        const auto mask = static_cast<std::uint8_t>(1u << player);
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            auto next = (pendingPlayerMask_ & mask) != 0
+                            ? pendingPatterns_[player]
+                            : activePatterns_[player];
+            next.active = false;
+            pendingPatterns_[player] = next;
+            pendingPlayerMask_ |= mask;
+        }
+        setEditorStatus("Stopping p" + std::to_string(playerIndex + 1) + ".");
+    }
+
+    void setEditorPlayerMuted(int playerIndex, bool muted) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            pendingMuteStates_[player] = muted;
+            pendingMuteMask_ |= static_cast<std::uint8_t>(1u << player);
+        }
+        setEditorStatus("p" + std::to_string(playerIndex + 1) +
+                        (muted ? " mute queued." : " unmute queued."));
+    }
+
+    void setEditorPlayerControl(int playerIndex,
+                                EditorPlayerControl control,
+                                float value) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount) ||
+            !std::isfinite(value))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        std::uint8_t bit = 0;
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            const auto& pattern = activePatterns_[player];
+            if (!pattern.active ||
+                !editorPlayerControlAvailable(
+                    control, pattern.playerEffectCount > 0,
+                    pattern.bitsEnabled, pattern.pshiftEnabled))
+                return;
+            auto& pending = pendingEditorControls_[player];
+            switch (control) {
+            case EditorPlayerControl::Amplitude:
+                pending.amplitude =
+                    clampEditorPlayerControl(control, value);
+                bit = 1u;
+                break;
+            case EditorPlayerControl::Pan:
+                pending.pan = clampEditorPlayerControl(control, value);
+                bit = 2u;
+                break;
+            case EditorPlayerControl::Cutoff:
+                pending.cutoff = clampEditorPlayerControl(control, value);
+                bit = 4u;
+                break;
+            case EditorPlayerControl::EffectMix:
+                pending.effectMix = clampEditorPlayerControl(control, value);
+                bit = 8u;
+                break;
+            case EditorPlayerControl::BitDepth:
+                pending.bits = clampEditorPlayerControl(control, value);
+                bit = 16u;
+                break;
+            case EditorPlayerControl::CrushRate:
+                pending.crush = clampEditorPlayerControl(control, value);
+                bit = 32u;
+                break;
+            case EditorPlayerControl::PShift:
+                pending.pshift = clampEditorPlayerControl(control, value);
+                bit = 64u;
+                break;
+            }
+            pending.mask |= bit;
+        }
+        setEditorStatus("Live control queued for p" +
+                        std::to_string(playerIndex + 1) + ".");
+    }
+
+    void setEditorPlayerEffectControl(int playerIndex, int effectSlot,
+                                      int controlIndex,
+                                      float normalizedValue) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount) ||
+            effectSlot < 0 ||
+            effectSlot >= static_cast<int>(kMaxPlayerEffectChain) ||
+            controlIndex < 0 || controlIndex >= 7 ||
+            !std::isfinite(normalizedValue))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        const auto slot = static_cast<std::size_t>(effectSlot);
+        const auto control = static_cast<std::size_t>(controlIndex);
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            const auto& pattern = activePatterns_[player];
+            if (!pattern.active || slot >= pattern.playerEffectCount)
+                return;
+            const auto definitionIndex =
+                pattern.playerEffects[slot].userSynthIndex;
+            if (definitionIndex < 0 ||
+                static_cast<std::size_t>(definitionIndex) >=
+                    userSynthDefinitions_.size() ||
+                userSynthDefinitions_[static_cast<std::size_t>(
+                    definitionIndex)].effectControlIndices[control] < 0)
+                return;
+            auto& pending = pendingEditorEffectControls_[player];
+            pending.values[slot][control] =
+                std::clamp(normalizedValue, 0.0f, 1.0f);
+            pending.masks[slot] |=
+                static_cast<std::uint8_t>(1u << control);
+        }
+        setEditorStatus("Live effect control queued for p" +
+                        std::to_string(playerIndex + 1) + ".");
+    }
+
+    void setEditorPlayerUserSynthControl(int playerIndex, int controlIndex,
+                                         float normalizedValue) override {
+        if (playerIndex < 0 ||
+            playerIndex >= static_cast<int>(kPlayerCount) ||
+            controlIndex < 0 ||
+            controlIndex >= static_cast<int>(
+                dexter::kMaxPortableUserSynthControls) ||
+            !std::isfinite(normalizedValue))
+            return;
+        const auto player = static_cast<std::size_t>(playerIndex);
+        {
+            std::lock_guard<std::mutex> lock(patternMutex_);
+            const auto& pattern = activePatterns_[player];
+            if (!pattern.active)
+                return;
+            const int userIndex =
+                pattern.synthIndex -
+                static_cast<int>(kSynthIndexToGraphIndex.size());
+            if (userIndex < 0 ||
+                static_cast<std::size_t>(userIndex) >=
+                    userSynthDefinitions_.size())
+                return;
+            const auto& definition =
+                userSynthDefinitions_[static_cast<std::size_t>(userIndex)];
+            const auto control = static_cast<std::size_t>(controlIndex);
+            if (definition.persistentPlayerEffect ||
+                control >= definition.liveControlCount)
+                return;
+            auto& pending = pendingEditorUserSynthControls_[player];
+            pending.values[control] =
+                std::clamp(normalizedValue, 0.0f, 1.0f);
+            pending.mask |= static_cast<std::uint8_t>(1u << control);
+        }
+        setEditorStatus("Live SynthDef control queued for p" +
+                        std::to_string(playerIndex + 1) + ".");
+    }
+
     OBJ_METHODS(DexterSCTone, SingleComponentEffect)
     REFCOUNT_METHODS(SingleComponentEffect)
 
 private:
+    static void readMicInputFrame(const ProcessData& data, int32 frame,
+                                  float& left, float& right) noexcept {
+        left = 0.0f;
+        right = 0.0f;
+        if (data.numInputs < 1 || !data.inputs ||
+            !data.inputs[0].channelBuffers32 ||
+            data.inputs[0].numChannels <= 0)
+            return;
+        const auto& input = data.inputs[0];
+        const auto* first = input.channelBuffers32[0];
+        if (!first)
+            return;
+        left = first[frame];
+        if (input.numChannels > 1 && input.channelBuffers32[1])
+            right = input.channelBuffers32[1][frame];
+        else
+            right = left;
+    }
+
+    void renderMicLoopOnly(const ProcessData& data,
+                           AudioBusBuffers& output) noexcept {
+        const float gain =
+            masterGainTarget_.load(std::memory_order_relaxed);
+        for (int32 frame = 0; frame < data.numSamples; ++frame) {
+            float inputLeft = 0.0f;
+            float inputRight = 0.0f;
+            float loopLeft = 0.0f;
+            float loopRight = 0.0f;
+            readMicInputFrame(data, frame, inputLeft, inputRight);
+            micLoop_.processFrame(inputLeft, inputRight,
+                                  loopLeft, loopRight);
+            for (int32 channel = 0; channel < output.numChannels; ++channel) {
+                if (!output.channelBuffers32[channel])
+                    continue;
+                output.channelBuffers32[channel][frame] =
+                    channel == 0 ? loopLeft * gain
+                    : channel == 1 ? loopRight * gain
+                                   : 0.5f * (loopLeft + loopRight) * gain;
+            }
+        }
+        micLoop_.finishBlock();
+        output.silenceFlags = micLoop_.state() == dexter::MicLoopState::Playing
+                                  ? 0 : ~uint64{0};
+    }
+
     static constexpr int kSCBlockSize = 64;
     static constexpr std::size_t kMaxPatternEvents = 256;
     static constexpr std::size_t kPlayerCount = 8;
     static constexpr std::size_t kMaxPolyphony = 8;
-    static constexpr std::size_t kVoiceSlotsPerPlayer = kMaxPolyphony * 2 + 1;
+    static constexpr std::size_t kMaxNoteEventEffectChain =
+        ::kMaxNoteEventEffectChain;
+    static constexpr std::size_t kVoiceSlotsPerPlayer =
+        kMaxPolyphony * 2 + 1 +
+        dexter::kMaxEventEffectTailVoicesPerPlayer;
     static constexpr std::size_t kAudioVoiceCount =
         kPlayerCount * kVoiceSlotsPerPlayer;
     static constexpr std::size_t kMaxCachedSynthGraphsPerVoice = 2;
@@ -831,7 +1611,9 @@ private:
     static constexpr std::size_t kReverbGraphCount = 3;
     static constexpr std::size_t kCalculatedWorldNodeCapacity =
         kAudioVoiceCount * kMaxCachedSynthGraphsPerVoice +
-        kPlayerCount * (kReverbGraphCount + 1) + 1;
+        kPlayerCount * (kReverbGraphCount + 1) +
+        kPlayerCount * kMaxPlayerEffectChain +
+        kAudioVoiceCount * kMaxNoteEventEffectChain + 1;
     // Preserve the known-good headroom; graph definitions are registered
     // independently, while active voice graphs are created lazily and cached.
     static constexpr std::size_t kWorldNodeCapacity =
@@ -845,24 +1627,64 @@ private:
     static constexpr int kFirstAudioBus = 2;
     static constexpr int kAudioBusStride = 3; // audio, MouseX, MouseY
     static constexpr int kReverbBusStride = 4; // stereo send, stereo return
-    static constexpr int kReverbBaseBus = kFirstAudioBus + static_cast<int>(kAudioVoiceCount) * kAudioBusStride;
+    static constexpr int kStereoSynthOutputBaseBus =
+        kFirstAudioBus + static_cast<int>(kAudioVoiceCount) * kAudioBusStride;
+    static constexpr int kReverbBaseBus =
+        kStereoSynthOutputBaseBus + static_cast<int>(kAudioVoiceCount) * 2;
     static constexpr int kAirwindowsInputBusBase =
         kReverbBaseBus + static_cast<int>(kPlayerCount) * kReverbBusStride;
     static constexpr int kAirwindowsOutputBusBase =
         kAirwindowsInputBusBase + static_cast<int>(kPlayerCount) * 2;
-    static constexpr int kNumAudioBusChannels = 512;
+    static constexpr int kEventEffectInputBusBase =
+        kAirwindowsOutputBusBase +
+        static_cast<int>(kPlayerCount * kMaxPlayerEffectChain * 2);
+    static constexpr int kEventEffectOutputBusBase =
+        kEventEffectInputBusBase + static_cast<int>(kAudioVoiceCount * 2);
+    static constexpr int kNumAudioBusChannels =
+        dexter::sclang::kAudioBusChannelCount;
+    // Present plugin-reserved buses as the ServerOptions output prefix to
+    // sclang's client-side Bus allocator. User Bus.audio allocations then begin
+    // after the VST's voice/reverb/effect-chain buses instead of overlapping.
+    static constexpr int kSclangFirstAllocatableAudioBus =
+        kEventEffectOutputBusBase +
+        static_cast<int>(kAudioVoiceCount * kMaxNoteEventEffectChain * 2);
     static constexpr double kAttackSeconds = 0.010;
     static constexpr double kReleaseSeconds = 0.040;
     static constexpr double kReverbSendReleaseSeconds = 0.015;
     static constexpr double kMixSmoothingSeconds = 0.010;
     static constexpr std::size_t kMaxEchoBufferSamples = 96000;
     static constexpr double kPi = 3.14159265358979323846;
-    static_assert(kFirstAudioBus + kAudioVoiceCount * kAudioBusStride <= kNumAudioBusChannels,
+    static_assert(kStereoSynthOutputBaseBus + kAudioVoiceCount * 2 <=
+                      kNumAudioBusChannels,
+                  "The SuperCollider world needs a private stereo output pair per voice.");
+    static_assert(kFirstAudioBus + kAudioVoiceCount * kAudioBusStride <=
+                      kStereoSynthOutputBaseBus,
                   "The SuperCollider world needs three private buses per synth voice.");
+    static_assert(dexter::synthOutputChannelsFromOutInputCount(2) == 1 &&
+                      dexter::synthOutputChannelsFromOutInputCount(3) == 2 &&
+                      dexter::synthOutputChannelsFromOutInputCount(4) == 0,
+                  "User SynthDefs support only mono or stereo Out units.");
+    static_assert(dexter::userSynthOutputBus(
+                      1, 2, kFirstAudioBus, kAudioBusStride,
+                      kStereoSynthOutputBaseBus) ==
+                      kFirstAudioBus + 2 * kAudioBusStride &&
+                  dexter::userSynthOutputBus(
+                      2, 2, kFirstAudioBus, kAudioBusStride,
+                      kStereoSynthOutputBaseBus) ==
+                      kStereoSynthOutputBaseBus + 4,
+                  "Mono and stereo user SynthDefs must use their reserved buses.");
     static_assert(kReverbBaseBus + kPlayerCount * kReverbBusStride <= kNumAudioBusChannels,
                   "The SuperCollider world needs three private buses per player reverb.");
-    static_assert(kAirwindowsOutputBusBase + kPlayerCount * 2 <= kNumAudioBusChannels,
-                  "The SuperCollider world needs stereo Airwindows input and return buses per player.");
+    static_assert(kAirwindowsOutputBusBase +
+                      kPlayerCount * kMaxPlayerEffectChain * 2 <=
+                      kNumAudioBusChannels,
+                  "The SuperCollider world needs private stereo buses for each player effect-chain stage.");
+    static_assert(kEventEffectOutputBusBase +
+                      kAudioVoiceCount * kMaxNoteEventEffectChain * 2 <=
+                      kNumAudioBusChannels,
+                  "The SuperCollider world needs private stereo output buses for each per-note effect-chain stage.");
+    static_assert(kSclangFirstAllocatableAudioBus < kNumAudioBusChannels,
+                  "The sclang bus allocator must have some free audio buses.");
     static_assert(kWorldNodeCapacity <= 0xffffffffu,
                   "The SuperCollider world node capacity must fit WorldOptions.");
     static_assert(kWorldNodeCapacity >= 2048,
@@ -916,9 +1738,45 @@ private:
     struct TimeVarControl {
         bool active = false;
         bool linear = false;
+        bool oneShot = false;
+        bool smoothNoise = false;
         std::size_t count = 0;
         std::array<double, 8> values{};
         std::array<double, 8> durations{};
+        double noisePeriod = 0.0;
+        double noiseSeed = 0.0;
+    };
+
+    struct PlayerEffectState {
+        int userSynthIndex = -1;
+        std::array<double, 7> controlValues{0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0};
+        std::array<TimeVarControl, 7> controlVariables{};
+    };
+
+    struct PendingEditorControl {
+        std::uint8_t mask = 0;
+        float amplitude = 1.0f;
+        float pan = 0.0f;
+        float cutoff = 20000.0f;
+        float effectMix = 0.0f;
+        float bits = 0.0f;
+        float crush = 1.0f;
+        float pshift = 0.0f;
+    };
+
+    struct PendingEditorEffectControls {
+        std::array<std::array<float, 7>, kMaxPlayerEffectChain> values{};
+        std::array<std::uint8_t, kMaxPlayerEffectChain> masks{};
+
+        bool any() const {
+            return std::any_of(masks.begin(), masks.end(),
+                               [](std::uint8_t mask) { return mask != 0; });
+        }
+    };
+
+    struct PendingEditorUserSynthControls {
+        std::array<float, dexter::kMaxPortableUserSynthControls> values{};
+        std::uint8_t mask = 0;
     };
 
     struct PatternState {
@@ -927,16 +1785,46 @@ private:
         std::uint64_t sampleWorld = 0;
         TimeVarControl sampleControl;
         TimeVarControl sampleRateControl;
+        TimeVarControl bpmControl;
+        ClockTempoMap tempoMap;
         double bpm = 120.0;
         double swingSeconds = 0.0;
         double lengthBeats = 1.0;
+        std::uint16_t untilCycles = 0;
+        double chanceProbability = 1.0;
+        std::uint32_t chanceSeed = 0;
+        std::uint16_t barLoaf = 0;
+        std::uint32_t barOnMask = 0;
         int synthIndex = 0;
         int playerEffectUserIndex = -1;
         float synthRate = 0.0f;
         std::array<double, 7> synthControls{0, 0.5, 1, 0.5, 0.5, 0, 1};
+        std::array<double, 7> playerEffectControlValues{0, 0.5, 1, 0.5, 0.5, 0, 1};
+        std::array<TimeVarControl, 7> effectControlVariables{};
+        std::array<PlayerEffectState, kMaxPlayerEffectChain> playerEffects{};
+        std::size_t playerEffectCount = 0;
+        int userSynthControlDefinitionIndex = -1;
+        std::array<float, dexter::kMaxPortableUserSynthControls>
+            userSynthControlValues{};
+        std::uint8_t userSynthControlOverrideMask = 0;
+        std::array<TimeVarControl, 12> noteEffectControls{};
+        bool chopEnabled = false;
+        bool spinEnabled = false;
+        bool coarseEnabled = false;
+        bool formantEnabled = false;
+        bool pshiftEnabled = false;
+        bool editorPshiftOverride = false;
+        float editorPshift = 0.0f;
+        float editorPshiftCurrent = 0.0f;
+        bool bitsEnabled = false;
         float amplitude = 1.0f;
+        bool editorAmpOverride = false;
         float pan = 0.0f;
+        bool editorPanOverride = false;
+        float editorPan = 0.0f;
         float cutoffHz = 20000.0f;
+        bool editorCutoffOverride = false;
+        float editorCutoffHz = 20000.0f;
         bool mousePan = false;
         bool mouseCutoff = false;
         double attackSeconds = kAttackSeconds;
@@ -952,6 +1840,10 @@ private:
         TimeVarControl bprControl;
         TimeVarControl bpnoiseControl;
         TimeVarControl swellControl;
+        TimeVarControl shapeControl;
+        TimeVarControl driveControl;
+        TimeVarControl bitsControl;
+        TimeVarControl crushControl;
         TimeVarControl echoControl;
         TimeVarControl delayControl;
         TimeVarControl echoMixControl;
@@ -977,13 +1869,159 @@ private:
         float bpr = 1.0f;
         float bpnoise = 0.0f;
         float swell = 0.0f;
+        float shape = 0.0f;
+        float drive = 0.0f;
+        float bits = 0.0f;
+        float crush = 1.0f;
         bool active = false;
     };
+
+    void publishEditorPlayerState(std::size_t player) {
+        if (player >= kPlayerCount)
+            return;
+        const auto& pattern = activePatterns_[player];
+        const auto synthIndex = static_cast<std::uint32_t>(
+            std::clamp(pattern.synthIndex, 0, 255));
+        const auto effectIndex = static_cast<std::uint32_t>(
+            std::clamp(pattern.playerEffectUserIndex + 1, 0, 255));
+        const auto reverbIndex = static_cast<std::uint32_t>(
+            std::clamp(pattern.reverbIndex, 0, 3));
+        const bool echoEnabled = pattern.echoBeats > 0.0 ||
+                                 pattern.delayTimeSeconds > 0.0 ||
+                                 pattern.echoControl.active ||
+                                 pattern.delayControl.active ||
+                                 pattern.echoMixControl.active;
+        const bool reverbEnabled = pattern.reverbMix > 0.0001f &&
+                                   pattern.reverbIndex > 0;
+        const bool shapeEnabled = pattern.shape > 0.0001f ||
+                                  pattern.shapeControl.active;
+        const bool driveEnabled = pattern.drive > 0.0001f ||
+                                  pattern.driveControl.active;
+        const bool chopEnabled = pattern.chopEnabled;
+        const bool spinEnabled = pattern.spinEnabled;
+        const bool coarseEnabled = pattern.coarseEnabled;
+        const bool formantEnabled = pattern.formantEnabled;
+        bool effectMixAvailable = false;
+        std::size_t effectMixControlIndex = 0;
+        if (pattern.playerEffectCount > 0) {
+            const auto userSynthIndex =
+                pattern.playerEffects[0].userSynthIndex;
+            if (userSynthIndex >= 0 &&
+                static_cast<std::size_t>(userSynthIndex) <
+                    userSynthDefinitions_.size()) {
+                const auto& effectName =
+                    userSynthDefinitions_[static_cast<std::size_t>(
+                        userSynthIndex)].name;
+                const auto mixIndex =
+                    dexter::editor::playerEffectMixControlIndex(effectName);
+                effectMixAvailable = mixIndex >= 0;
+                if (mixIndex >= 0)
+                    effectMixControlIndex =
+                        static_cast<std::size_t>(mixIndex);
+            }
+        }
+        const auto packed =
+            (pattern.active ? 1u : 0u) |
+            (mutedPlayers_[player] ? 2u : 0u) |
+            (synthIndex << 2) |
+            (effectIndex << 10) |
+            (reverbIndex << 18) |
+            (echoEnabled ? (1u << 20) : 0u) |
+            (reverbEnabled ? (1u << 21) : 0u) |
+            (shapeEnabled ? (1u << 22) : 0u) |
+            (driveEnabled ? (1u << 23) : 0u) |
+            (chopEnabled ? (1u << 24) : 0u) |
+            (spinEnabled ? (1u << 25) : 0u) |
+            (coarseEnabled ? (1u << 26) : 0u) |
+            (formantEnabled ? (1u << 27) : 0u) |
+            (pattern.pshiftEnabled ? (1u << 28) : 0u) |
+            (pattern.bitsEnabled ? (1u << 29) : 0u) |
+            (effectMixAvailable ? (1u << 30) : 0u);
+        editorPlayerState_[player].store(packed, std::memory_order_release);
+        editorPlayerValues_[player][0].store(
+            std::clamp(pattern.amplitude, 0.0f, 1.0f),
+            std::memory_order_release);
+        editorPlayerValues_[player][1].store(
+            std::clamp(pattern.pan, -1.0f, 1.0f),
+            std::memory_order_release);
+        editorPlayerValues_[player][2].store(
+            std::clamp(pattern.cutoffHz, 20.0f, 20000.0f),
+            std::memory_order_release);
+        const double effectMix = pattern.playerEffectCount > 0
+            ? pattern.playerEffects[0].controlValues[effectMixControlIndex]
+            : pattern.playerEffectControlValues[effectMixControlIndex];
+        editorPlayerValues_[player][3].store(
+            static_cast<float>(std::clamp(effectMix, 0.0, 1.0)),
+            std::memory_order_release);
+        editorPlayerValues_[player][4].store(
+            std::clamp(pattern.bits, 0.0f, 24.0f),
+            std::memory_order_release);
+        editorPlayerValues_[player][5].store(
+            std::clamp(pattern.crush, 1.0f, 128.0f),
+            std::memory_order_release);
+        float pshift = pattern.editorPshiftOverride
+            ? pattern.editorPshift
+            : pattern.eventCount > 0
+                ? static_cast<float>(pattern.events[0].pshift)
+                : 0.0f;
+        if (!pattern.editorPshiftOverride &&
+            pattern.noteEffectControls[11].active &&
+            pattern.noteEffectControls[11].count > 0)
+            pshift = static_cast<float>(
+                pattern.noteEffectControls[11].values[0]);
+        editorPlayerValues_[player][6].store(
+            std::clamp(pshift, -24.0f, 24.0f),
+            std::memory_order_release);
+        const int userIndex =
+            pattern.synthIndex -
+            static_cast<int>(kSynthIndexToGraphIndex.size());
+        for (std::size_t control = 0;
+             control < dexter::kMaxPortableUserSynthControls; ++control) {
+            float normalized = 0.0f;
+            if (userIndex >= 0 &&
+                static_cast<std::size_t>(userIndex) <
+                    userSynthDefinitions_.size()) {
+                const auto& definition =
+                    userSynthDefinitions_[static_cast<std::size_t>(userIndex)];
+                if (!definition.persistentPlayerEffect &&
+                    control < definition.liveControlCount) {
+                    const bool hasOverride =
+                        pattern.userSynthControlDefinitionIndex == userIndex &&
+                        (pattern.userSynthControlOverrideMask &
+                         static_cast<std::uint8_t>(1u << control)) != 0;
+                    normalized = hasOverride
+                        ? pattern.userSynthControlValues[control]
+                        : definition.liveControls[control].defaultNormalized();
+                }
+            }
+            editorPlayerUserSynthValues_[player][control].store(
+                std::clamp(normalized, 0.0f, 1.0f),
+                std::memory_order_release);
+        }
+        for (std::size_t slot = 0;
+             slot < pattern.playerEffects.size(); ++slot) {
+            for (std::size_t control = 0; control < 7; ++control) {
+                const double value = slot < pattern.playerEffectCount
+                    ? pattern.playerEffects[slot].controlValues[control]
+                    : 0.0;
+                editorPlayerEffectValues_[player][slot][control].store(
+                    static_cast<float>(std::clamp(value, 0.0, 1.0)),
+                    std::memory_order_release);
+            }
+        }
+        std::uint64_t chain = 0;
+        for (std::size_t slot = 0; slot < pattern.playerEffectCount; ++slot)
+            chain |= static_cast<std::uint64_t>(std::clamp(
+                pattern.playerEffects[slot].userSynthIndex + 1, 0, 65535))
+                << (slot * 16);
+        editorPlayerEffectChain_[player].store(chain, std::memory_order_release);
+    }
 
     struct UserSynthDefinition {
         std::string name;
         GraphDef* definition = nullptr;
         bool persistentPlayerEffect = false;
+        int outputChannels = 1;
         int outControl = -1;
         int inputBusControl = -1;
         int frequencyControl = -1;
@@ -993,7 +2031,13 @@ private:
         int attackControl = -1;
         int releaseControl = -1;
         int sustainControl = -1;
+        int hostManagedFreeControl = -1;
         std::array<int, 7> effectControlIndices{};
+        std::array<float, 7> effectControlMinimum{};
+        std::array<float, 7> effectControlMaximum{{1, 1, 1, 1, 1, 1, 1}};
+        std::array<dexter::PortableUserSynthControlSpec,
+                   dexter::kMaxPortableUserSynthControls> liveControls{};
+        std::size_t liveControlCount = 0;
     };
 
     struct TimedMidiEvent {
@@ -1037,17 +2081,38 @@ private:
         std::array<Graph*, kSynthGraphCount> synthGraphs{};
         std::vector<Graph*> userSynthGraphs;
         Graph* activeSynth = nullptr;
+        std::array<Graph*, kMaxNoteEventEffectChain> eventEffectGraphs{};
         int playerIndex = -1;
+        int32 noteId = -1;
         int midiNote = -1;
         int velocity = 0;
         int synthIndex = 0;
+        NoteEventEffectIndexChain eventEffectUserSynthIndices{-1, -1};
+        std::uint8_t eventEffectChainCount = 0;
+        int userSynthControlDefinitionIndex = -1;
+        std::array<float, dexter::kMaxPortableUserSynthControls>
+            userSynthControlSmoothed{};
+        bool userSynthControlSmoothingInitialized = false;
         float amplitude = 1.0f;
         float pan = 0.0f;
+        float vibDepth = 0.5f;
+        float slide = 0.0f;
+        float slideFrom = 0.0f;
+        float slideDelay = 0.0f;
+        float bend = 0.0f;
+        float bendDelay = 0.0f;
+        float chop = 0.0f;
+        float spin = 0.0f;
+        float coarse = 0.0f;
+        float formant = -1.0f;
+        float pshift = 0.0f;
+        dexter::FoxDotFormantState formantState{};
         float leftGain = 0.70710678f;
         float rightGain = 0.70710678f;
         float cutoffHz = 20000.0f;
         float frequencyHz = 440.0f;
         float filterState = 0.0f;
+        float filterStateRight = 0.0f;
         float filterCoefficient = 1.0f;
         float lpfHz = 0.0f;
         float lpr = 1.0f;
@@ -1062,10 +2127,16 @@ private:
         float swellCutoffHz = 0.0f;
         ModulationNoiseState bpfNoise;
         ModulationNoiseState bprNoise;
+        dexter::FoxDotFormantState formantStateRight{};
         BiquadState lpfState;
         BiquadState hpfState;
         BiquadState bpfState;
         BiquadState swellState;
+        BiquadState lpfRightState;
+        BiquadState hpfRightState;
+        BiquadState bpfRightState;
+        BiquadState swellRightState;
+        bool stereoUserSynth = false;
         bool mousePan = false;
         bool mouseCutoff = false;
         double attackSeconds = kAttackSeconds;
@@ -1077,6 +2148,7 @@ private:
         bool userSynthGateReleased = false;
         bool releasing = false;
         bool reverbTail = false;
+        dexter::EventEffectTailState eventEffectTail;
         std::uint64_t releaseStartSample = 0;
         std::uint64_t releaseEndSample = 0;
         float releaseStartGain = 0.0f;
@@ -1085,6 +2157,7 @@ private:
 
     struct ScheduledAudioNote {
         int playerIndex = 0;
+        int32 noteId = -1;
         int midiNote = -1;
         int velocity = 0;
         int synthIndex = 0;
@@ -1110,6 +2183,26 @@ private:
         double sampleStart = 0.0;
         double sampleEnd = 1.0;
         bool sampleLoop = false;
+        double beatDurationSeconds = 0.5;
+        float vibDepth = 0.5f;
+        float slide = 0.0f;
+        float slideFrom = 0.0f;
+        float slideDelay = 0.0f;
+        float bend = 0.0f;
+        float bendDelay = 0.0f;
+        float chop = 0.0f;
+        float spin = 0.0f;
+        float coarse = 0.0f;
+        float formant = -1.0f;
+        float pshift = 0.0f;
+        NoteEventEffectIndexChain eventEffectUserSynthIndices{-1, -1};
+        std::uint8_t eventEffectChainCount = 0;
+        NoteEventEffectControlChain eventEffectControlValues{
+            NoteEventEffectControls{
+                0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0},
+            NoteEventEffectControls{
+                0.0, 0.5, 1.0, 0.5, 0.5, 0.0, 1.0}
+        };
     };
 
     static bool parseTimeVarControl(const std::string& token, double minimum,
@@ -1118,7 +2211,8 @@ private:
         if (token == "-")
             return true;
         if (token.size() > 256 || token.size() < 5 || token[1] != ':' ||
-            (token[0] != 'v' && token[0] != 'l'))
+            (token[0] != 'v' && token[0] != 'l' && token[0] != 'r' &&
+             token[0] != 'w'))
             return false;
         const auto middle = token.find(':', 2);
         if (middle == std::string::npos || middle == 2 || middle + 1 >= token.size())
@@ -1149,16 +2243,57 @@ private:
         std::array<double, 8> durations{};
         std::size_t valueCount = 0;
         std::size_t durationCount = 0;
-        if (!parseList(token.substr(2, middle - 2), values, valueCount,
-                       minimum, maximum, false) ||
-            !parseList(token.substr(middle + 1), durations, durationCount,
-                       0.0, 4096.0, true) ||
-            (durationCount != 1 && durationCount != valueCount))
+        const bool oneShot = token[0] == 'r';
+        const bool smoothNoise = token[0] == 'w';
+        double noisePeriod = 0.0;
+        double noiseSeed = 0.0;
+        if (smoothNoise) {
+            const auto seedSeparator = token.find(':', middle + 1);
+            if (seedSeparator == std::string::npos ||
+                seedSeparator + 1 >= token.size() ||
+                !parseList(token.substr(2, middle - 2), values, valueCount,
+                           minimum, maximum, false) ||
+                valueCount != 2)
+                return false;
+            try {
+                std::size_t usedPeriod = 0;
+                std::size_t usedSeed = 0;
+                noisePeriod = std::stod(
+                    token.substr(middle + 1, seedSeparator - middle - 1),
+                    &usedPeriod);
+                const auto periodText =
+                    token.substr(middle + 1, seedSeparator - middle - 1);
+                const auto seedText = token.substr(seedSeparator + 1);
+                noiseSeed = std::stod(seedText, &usedSeed);
+                if (usedPeriod != periodText.size() ||
+                    usedSeed != seedText.size() ||
+                    !std::isfinite(noisePeriod) || noisePeriod < 0.125 ||
+                    noisePeriod > 4096.0 || !std::isfinite(noiseSeed) ||
+                    std::abs(noiseSeed) > 2147483647.0 ||
+                    std::trunc(noiseSeed) != noiseSeed)
+                    return false;
+            } catch (...) {
+                return false;
+            }
+            durations[0] = noisePeriod;
+            durationCount = 1;
+        } else if (!parseList(token.substr(2, middle - 2), values, valueCount,
+                              minimum, maximum, false) ||
+                   !parseList(token.substr(middle + 1), durations, durationCount,
+                              0.0, 4096.0, true)) {
+            return false;
+        }
+        if ((durationCount != 1 && durationCount != valueCount) ||
+            (oneShot && (valueCount != 2 || durationCount != 1)))
             return false;
         result.active = true;
-        result.linear = token[0] == 'l';
+        result.linear = token[0] == 'l' || oneShot || smoothNoise;
+        result.oneShot = oneShot;
+        result.smoothNoise = smoothNoise;
         result.count = valueCount;
         result.values = values;
+        result.noisePeriod = noisePeriod;
+        result.noiseSeed = noiseSeed;
         for (std::size_t i = 0; i < valueCount; ++i)
             result.durations[i] = durations[durationCount == 1 ? 0 : i];
         return true;
@@ -1168,11 +2303,45 @@ private:
                                  float fallback) {
         if (!control.active || control.count == 0)
             return fallback;
+        if (control.smoothNoise) {
+            if (control.count != 2 || control.noisePeriod <= 0.0)
+                return fallback;
+            const double value = std::max(0.0, beat) + control.noiseSeed;
+            const auto hash = [](double index) {
+                double shifted = index + 213.43254;
+                shifted *= shifted;
+                return std::fmod(shifted * shifted * shifted * shifted,
+                                 951.135664) /
+                       951.135664;
+            };
+            const auto bnoise = [&hash](double input) {
+                const double integer = std::trunc(input);
+                const double fraction = std::fmod(input, 1.0);
+                const double key = hash(integer);
+                return fraction * (fraction - 1.0) *
+                       ((16.0 * key - 4.0) * fraction * (fraction - 1.0) -
+                        1.0);
+            };
+            const double position = value / control.noisePeriod;
+            const double noise =
+                (bnoise(position) * 2.0 +
+                 (1.0 - bnoise(position * 2.3))) /
+                3.0;
+            return static_cast<float>(
+                control.values[0] +
+                (control.values[1] - control.values[0]) * noise);
+        }
         double cycle = 0.0;
         for (std::size_t i = 0; i < control.count; ++i)
             cycle += control.durations[i];
         if (cycle <= 0.0)
             return fallback;
+        if (control.oneShot) {
+            const double duration = control.durations[0];
+            const double progress = std::clamp(std::max(0.0, beat) / duration, 0.0, 1.0);
+            return static_cast<float>(control.values[0] +
+                                      (control.values[1] - control.values[0]) * progress);
+        }
         double position = std::fmod(std::max(0.0, beat), cycle);
         for (std::size_t i = 0; i < control.count; ++i) {
             const double duration = control.durations[i];
@@ -1253,6 +2422,45 @@ private:
         if (thread.joinable())
             thread.join();
         scriptRunning_.store(false, std::memory_order_release);
+    }
+
+    void discoverEditorCatalogAsync() {
+        // Keep installed instruments visible before the first Run, without
+        // loading a World or scanning files on the host/editor thread.
+        std::lock_guard<std::mutex> lock(catalogThreadMutex_);
+        if (catalogDiscoveryStarted_) return;
+        try {
+            catalogThread_ = std::thread([this] {
+                LifecycleTrace trace("discover editor catalog without engine", this);
+                try {
+                    std::string error;
+                    const auto files = discoverUserSynthFiles(error);
+                    if (!error.empty()) {
+                        setEditorStatus("Portable SynthDef scan failed: " + error);
+                        return;
+                    }
+                    std::vector<std::string> names;
+                    for (const auto& file : files) names.push_back(file.name);
+                    std::lock_guard<std::mutex> catalogLock(editorCatalogMutex_);
+                    // Engine registration may have completed first. Never
+                    // replace its index mapping with an earlier discovery.
+                    if (editorExternalSynthNames_.empty())
+                        editorExternalSynthNames_ = std::move(names);
+                } catch (const std::exception& exception) {
+                    setEditorStatus(std::string("Catalog discovery failed: ") + exception.what());
+                } catch (...) {
+                    setEditorStatus("Catalog discovery failed unexpectedly.");
+                }
+            });
+            catalogDiscoveryStarted_ = true;
+        } catch (const std::exception& exception) {
+            setEditorStatus(std::string("Could not start catalog worker: ") + exception.what());
+        }
+    }
+
+    void joinCatalogThread() {
+        std::lock_guard<std::mutex> lock(catalogThreadMutex_);
+        if (catalogThread_.joinable()) catalogThread_.join();
     }
 
     static void addMidiNoteEvent(IEventList* outputEvents, int32 sampleOffset,
@@ -1479,9 +2687,11 @@ private:
         return amplitude;
     }
 
-    float safeSynthFrequency(int synthIndex, int midiNote) const {
+    float safeSynthFrequency(int synthIndex, int midiNote,
+                             float pitchShift = 0.0f) const {
         const float requested = 440.0f * std::pow(
-            2.0f, static_cast<float>(midiNote - 69) / 12.0f);
+            2.0f, static_cast<float>(midiNote - 69) / 12.0f +
+                      std::clamp(pitchShift, -24.0f, 24.0f) / 12.0f);
         float highestPartial = 1.0f;
         if (synthIndex == 5)
             highestPartial = 1.005f;
@@ -1505,6 +2715,12 @@ private:
     void deactivateAudioVoice(AudioVoice& voice) {
         if (voice.activeSynth)
             Node_SetRun(&voice.activeSynth->mNode, 0);
+        for (auto* graph : voice.eventEffectGraphs) {
+            if (graph) {
+                Node_SetRun(&graph->mNode, 0);
+                Node_End(&graph->mNode);
+            }
+        }
         const auto synthGraphs = voice.synthGraphs;
         auto userSynthGraphs = std::move(voice.userSynthGraphs);
         voice = {};
@@ -1520,6 +2736,59 @@ private:
         voice.releaseEndSample =
             tailStartSample + envelopeSamples(kReverbSendReleaseSeconds);
         voice.releaseStartGain = 0.0f;
+    }
+
+    bool beginNoteEventEffectTail(AudioVoice& voice,
+                                  std::uint64_t tailStartSample) {
+        if (voice.eventEffectChainCount == 0 ||
+            voice.playerIndex < 0 ||
+            voice.playerIndex >= static_cast<int>(kPlayerCount))
+            return false;
+        dexter::EventEffectTailState tail;
+        for (std::size_t stage = 0; stage < voice.eventEffectChainCount; ++stage) {
+            const int effectIndex = voice.eventEffectUserSynthIndices[stage];
+            if (!voice.eventEffectGraphs[stage] || effectIndex < 0 ||
+                static_cast<std::size_t>(effectIndex) >=
+                    userSynthDefinitions_.size())
+                return false;
+            auto candidate = dexter::beginEventEffectTail(
+                userSynthDefinitions_[static_cast<std::size_t>(effectIndex)].name,
+                tailStartSample, sampleRate_);
+            if (candidate.active &&
+                candidate.quietGraceSamples > tail.quietGraceSamples)
+                tail = candidate;
+        }
+        if (!tail.active)
+            return false;
+
+        const auto playerBegin =
+            audioVoices_.begin() +
+            static_cast<std::ptrdiff_t>(voice.playerIndex) *
+                static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer);
+        const auto playerEnd =
+            playerBegin + static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer);
+        std::size_t activeTails = 0;
+        AudioVoice* oldestTail = nullptr;
+        for (auto it = playerBegin; it != playerEnd; ++it) {
+            if (!it->eventEffectTail.active)
+                continue;
+            ++activeTails;
+            if (!oldestTail ||
+                it->eventEffectTail.startSample <
+                    oldestTail->eventEffectTail.startSample)
+                oldestTail = &*it;
+        }
+        if (activeTails >= dexter::kMaxEventEffectTailVoicesPerPlayer &&
+            oldestTail)
+            deactivateAudioVoice(*oldestTail);
+
+        if (voice.activeSynth)
+            Node_SetRun(&voice.activeSynth->mNode, 0);
+        voice.midiNote = -1;
+        voice.releasing = true;
+        voice.reverbTail = false;
+        voice.eventEffectTail = tail;
+        return true;
     }
 
     Graph* graphForSynthIndex(AudioVoice& voice, int synthIndex) {
@@ -1601,7 +2870,7 @@ private:
         sc_msg_iter noControls(0, "");
         Graph* created = nullptr;
         const auto graphError =
-            Graph_New(world_, synthDefinitions_[graphIndex], nextDynamicGraphNodeId_++,
+            Graph_New(world_, synthDefinitions_[graphIndex], nextPrivateGraphNodeId(),
                       &noControls, &created, true);
         if (graphError != 0 || !created) {
             error = "SuperCollider could not create synth graph " +
@@ -1656,17 +2925,24 @@ private:
         sc_msg_iter noControls(0, "");
         Graph* created = nullptr;
         const auto graphError = Graph_New(world_, userDefinition.definition,
-                                          nextDynamicGraphNodeId_++, &noControls,
+                                          nextPrivateGraphNodeId(), &noControls,
                                           &created, true);
         if (graphError != 0 || !created) {
             error = "SuperCollider could not create user synth " + userDefinition.name +
                     " (error " + std::to_string(static_cast<int>(graphError)) + ").";
             return nullptr;
         }
-        const auto outputBus = kFirstAudioBus +
-                               kAudioBusStride * static_cast<int>(voiceIndex);
+        const auto outputBus = dexter::userSynthOutputBus(
+            userDefinition.outputChannels, voiceIndex, kFirstAudioBus,
+            kAudioBusStride, kStereoSynthOutputBaseBus);
         Graph_SetControl(created, userDefinition.outControl,
                          static_cast<float>(outputBus));
+        // Jazz Kit definitions retain normal SynthDef self-free behavior for
+        // sclang/FoxDot, but the VST owns graph lifetime. Disable doneAction
+        // self-free when the SynthDef exposes this opt-in control so cached
+        // graph pointers never outlive a node that freed itself.
+        if (userDefinition.hostManagedFreeControl >= 0)
+            Graph_SetControl(created, userDefinition.hostManagedFreeControl, 0.0f);
         if (userDefinition.frequencyControl >= 0)
             Graph_SetControl(created, userDefinition.frequencyControl, 440.0f);
         if (userDefinition.amplitudeControl >= 0)
@@ -1681,6 +2957,11 @@ private:
             Graph_SetControl(created, userDefinition.releaseControl, 0.04f);
         if (userDefinition.sustainControl >= 0)
             Graph_SetControl(created, userDefinition.sustainControl, 1.0f);
+        for (std::size_t control = 0;
+             control < userDefinition.liveControlCount; ++control)
+            Graph_SetControl(
+                created, userDefinition.liveControls[control].controlIndex,
+                userDefinition.liveControls[control].defaultValue);
         Group_AddTail(rootGroup_, &created->mNode);
         if (!startImmediately)
             Node_SetRun(&created->mNode, 0);
@@ -1688,10 +2969,14 @@ private:
         return created;
     }
 
-    bool createPlayerEffectGraph(std::size_t player, std::size_t userIndex,
+    bool createPlayerEffectGraph(std::size_t player, std::size_t slot,
+                                 std::size_t userIndex, int inputBus,
+                                 int outputBus,
                                  const std::array<double, 7>& controls,
+                                 Graph*& preparedGraph,
                                  std::string& error) {
         if (!world_ || !rootGroup_ || player >= kPlayerCount ||
+            slot >= kMaxPlayerEffectChain ||
             userIndex >= userSynthDefinitions_.size()) {
             error = "The requested per-player effect is not registered.";
             return false;
@@ -1702,14 +2987,17 @@ private:
             error = definition.name + " is not a supported persistent player effect.";
             return false;
         }
-        if (playerEffectGraphs_[player] &&
-            playerEffectDefinitionIndices_[player] == static_cast<int>(userIndex))
+        if (playerEffectGraphs_[player][slot] &&
+            playerEffectDefinitionIndices_[player][slot] ==
+                static_cast<int>(userIndex)) {
+            preparedGraph = playerEffectGraphs_[player][slot];
             return true;
+        }
 
         sc_msg_iter noControls(0, "");
         Graph* created = nullptr;
         const auto graphError = Graph_New(world_, definition.definition,
-                                          nextDynamicGraphNodeId_++, &noControls,
+                                          nextPrivateGraphNodeId(), &noControls,
                                           &created, true);
         if (graphError != 0 || !created) {
             error = "SuperCollider could not create the persistent " +
@@ -1718,10 +3006,6 @@ private:
             return false;
         }
 
-        const auto inputBus = kAirwindowsInputBusBase +
-                              static_cast<int>(player) * 2;
-        const auto outputBus = kAirwindowsOutputBusBase +
-                               static_cast<int>(player) * 2;
         Graph_SetControl(created, definition.inputBusControl,
                          static_cast<float>(inputBus));
         Graph_SetControl(created, definition.outControl,
@@ -1729,9 +3013,15 @@ private:
         for (std::size_t control = 0;
              control < definition.effectControlIndices.size(); ++control) {
             const auto controlIndex = definition.effectControlIndices[control];
-            if (controlIndex >= 0)
+            if (controlIndex >= 0) {
+                const auto normalized = std::clamp(controls[control], 0.0, 1.0);
+                const auto value =
+                    definition.effectControlMinimum[control] +
+                    normalized * (definition.effectControlMaximum[control] -
+                                 definition.effectControlMinimum[control]);
                 Graph_SetControl(created, controlIndex,
-                                 static_cast<float>(controls[control]));
+                                 value);
+            }
         }
 
         Group_AddTail(rootGroup_, &created->mNode);
@@ -1753,12 +3043,93 @@ private:
         created->mNode.mCalcFunc(&created->mNode);
         Node_SetRun(&created->mNode, 0);
 
-        if (auto* previous = playerEffectGraphs_[player]) {
-            Node_SetRun(&previous->mNode, 0);
-            Node_End(&previous->mNode);
+        preparedGraph = created;
+        return true;
+    }
+
+    void setNoteEventEffectGraphControls(
+        Graph* graph, std::size_t userIndex,
+        const NoteEventEffectControls& controls) {
+        if (!graph || userIndex >= userSynthDefinitions_.size())
+            return;
+        const auto& definition = userSynthDefinitions_[userIndex];
+        for (std::size_t control = 0;
+             control < definition.effectControlIndices.size(); ++control) {
+            const auto controlIndex = definition.effectControlIndices[control];
+            if (controlIndex < 0)
+                continue;
+            const auto normalized = std::clamp(controls[control], 0.0, 1.0);
+            const auto value =
+                definition.effectControlMinimum[control] +
+                normalized * (definition.effectControlMaximum[control] -
+                              definition.effectControlMinimum[control]);
+            Graph_SetControl(graph, controlIndex, static_cast<float>(value));
         }
-        playerEffectGraphs_[player] = created;
-        playerEffectDefinitionIndices_[player] = static_cast<int>(userIndex);
+    }
+
+    bool createNoteEventEffectGraph(std::size_t voiceIndex,
+                                    std::size_t stage,
+                                    std::size_t userIndex,
+                                    const NoteEventEffectControls& controls,
+                                    Graph*& preparedGraph,
+                                    std::string& error) {
+        if (!world_ || !rootGroup_ || voiceIndex >= kAudioVoiceCount ||
+            stage >= kMaxNoteEventEffectChain ||
+            userIndex >= userSynthDefinitions_.size()) {
+            error = "The requested per-note effect is not registered.";
+            return false;
+        }
+        const auto& definition = userSynthDefinitions_[userIndex];
+        if (!definition.persistentPlayerEffect ||
+            !isNoteEventEffectName(definition.name) ||
+            definition.inputBusControl < 0 || definition.outControl < 0) {
+            error = definition.name +
+                    " is not in the bounded per-note effect set.";
+            return false;
+        }
+
+        sc_msg_iter noControls(0, "");
+        Graph* created = nullptr;
+        const auto graphError = Graph_New(world_, definition.definition,
+                                          nextPrivateGraphNodeId(), &noControls,
+                                          &created, true);
+        if (graphError != 0 || !created) {
+            error = "SuperCollider could not create per-note effect " +
+                    definition.name + " (error " +
+                    std::to_string(static_cast<int>(graphError)) + ").";
+            return false;
+        }
+        const auto inputBus = stage == 0
+            ? kEventEffectInputBusBase +
+                  static_cast<int>(voiceIndex * 2)
+            : kEventEffectOutputBusBase +
+                  static_cast<int>(voiceIndex * kMaxNoteEventEffectChain * 2) +
+                  static_cast<int>((stage - 1) * 2);
+        const auto outputBus = kEventEffectOutputBusBase +
+                               static_cast<int>(voiceIndex *
+                                                kMaxNoteEventEffectChain * 2) +
+                               static_cast<int>(stage * 2);
+        Graph_SetControl(created, definition.inputBusControl,
+                         static_cast<float>(inputBus));
+        Graph_SetControl(created, definition.outControl,
+                         static_cast<float>(outputBus));
+        setNoteEventEffectGraphControls(created, userIndex, controls);
+        Group_AddTail(rootGroup_, &created->mNode);
+        if (!created->mNode.mCalcFunc) {
+            Node_End(&created->mNode);
+            error = "SuperCollider returned a per-note effect without a calculation function.";
+            return false;
+        }
+        const auto busLength = static_cast<std::size_t>(world_->mBufLength);
+        for (int channel = 0; channel < 2; ++channel) {
+            const auto bus = static_cast<std::size_t>(inputBus + channel);
+            auto* samples = world_->mAudioBus + bus * busLength;
+            std::fill(samples, samples + busLength, 0.0f);
+            world_->mAudioBusTouched[bus] = world_->mBufCounter;
+        }
+        created->mNode.mCalcFunc(&created->mNode);
+        Node_SetRun(&created->mNode, 0);
+        preparedGraph = created;
         return true;
     }
 
@@ -1849,11 +3220,14 @@ private:
                             return false;
                         }
                         // Buffer zero remains the nil buffer, as in FoxDot.
-                        if (sampleCache_.size() + 1 >= world_->mNumSndBufs) {
+                        unsigned freeBuffer = 1;
+                        while (freeBuffer < world_->mNumSndBufs &&
+                               world_->mSndBufs[freeBuffer].data) ++freeBuffer;
+                        if (freeBuffer >= world_->mNumSndBufs) {
                             error = "SuperCollider sample buffers are full. Reopen the plugin to clear the cache.";
                             return false;
                         }
-                        loaded->buffer = static_cast<int>(sampleCache_.size() + 1);
+                        loaded->buffer = static_cast<int>(freeBuffer);
                         cached = loaded.get();
                         // Publish ownership before either SC buffer mirror points at the vector.
                         sampleCache_.push_back(std::move(loaded));
@@ -1898,8 +3272,8 @@ private:
         std::uint8_t updateMask,
         const std::vector<std::string>& expectedUserSynthNames,
         std::string& error) {
-        // Run may follow a failed host setup (e.g. a previously missing UGen
-        // folder). Retry once on this worker, never on the audio callback.
+        // Start lazily on the Run worker, or retry a previous startup failure.
+        // Never initialize the engine on the audio callback or editor thread.
         if (!initializeWorld()) {
             std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
             error = worldInitializationError_;
@@ -1917,7 +3291,8 @@ private:
                 updates[player].active &&
                 (static_cast<std::size_t>(updates[player].synthIndex) >=
                      kSynthIndexToGraphIndex.size() ||
-                 updates[player].playerEffectUserIndex >= 0);
+                  updates[player].playerEffectCount > 0 ||
+                  updates[player].playerEffectUserIndex >= 0);
         if (usesUserSynth) {
             std::vector<std::string> loadedNames;
             loadedNames.reserve(userSynthDefinitions_.size());
@@ -1946,29 +3321,79 @@ private:
                 effectUserIndex = synthIndex -
                     static_cast<int>(kSynthIndexToGraphIndex.size());
             }
-            if (effectUserIndex >= 0) {
-                if (static_cast<std::size_t>(effectUserIndex) >=
+            auto effectCount = updates[player].playerEffectCount;
+            if (effectCount == 0 && effectUserIndex >= 0)
+                effectCount = 1;
+            std::array<Graph*, kMaxPlayerEffectChain> preparedEffects{};
+            std::array<int, kMaxPlayerEffectChain> preparedIndices{};
+            const auto discardPreparedEffects = [&] {
+                for (std::size_t slot = 0; slot < kMaxPlayerEffectChain; ++slot) {
+                    auto* created = preparedEffects[slot];
+                    if (created && created != playerEffectGraphs_[player][slot]) {
+                        Node_SetRun(&created->mNode, 0);
+                        Node_End(&created->mNode);
+                    }
+                }
+            };
+            for (std::size_t slot = 0; slot < effectCount; ++slot) {
+                const auto selectedIndex = updates[player].playerEffectCount > 0
+                    ? updates[player].playerEffects[slot].userSynthIndex
+                    : effectUserIndex;
+                if (selectedIndex < 0 ||
+                    static_cast<std::size_t>(selectedIndex) >=
                         userSynthDefinitions_.size() ||
                     !userSynthDefinitions_[static_cast<std::size_t>(
-                        effectUserIndex)].persistentPlayerEffect) {
-                    error = "The selected player effect is not a registered Airwindows delay.";
+                        selectedIndex)].persistentPlayerEffect) {
+                    error = "The selected player effect is not a registered persistent insert.";
+                    discardPreparedEffects();
                     return false;
                 }
+                preparedIndices[slot] = selectedIndex;
+                const auto inputBus = playerEffectChainInputBus(
+                    player, slot, kAirwindowsInputBusBase,
+                    kAirwindowsOutputBusBase);
+                const auto outputBus = playerEffectChainOutputBus(
+                    player, slot, kAirwindowsOutputBusBase);
+                const auto& effectControls =
+                    updates[player].playerEffectCount > 0
+                    ? updates[player].playerEffects[slot].controlValues
+                    : updates[player].playerEffectControlValues;
                 if (!createPlayerEffectGraph(
-                        player, static_cast<std::size_t>(effectUserIndex),
-                        updates[player].synthControls, error))
+                        player, slot, static_cast<std::size_t>(selectedIndex),
+                        inputBus, outputBus, effectControls,
+                        preparedEffects[slot], error)) {
+                    discardPreparedEffects();
                     return false;
-            }
-            if (static_cast<std::size_t>(synthIndex) >=
-                kSynthIndexToGraphIndex.size()) {
-                const auto userIndex = static_cast<std::size_t>(synthIndex) -
-                                       kSynthIndexToGraphIndex.size();
-                if (userSynthDefinitions_[userIndex].persistentPlayerEffect &&
-                    effectUserIndex != static_cast<int>(userIndex)) {
-                    if (!createPlayerEffectGraph(player, userIndex,
-                                                 updates[player].synthControls, error))
-                        return false;
                 }
+            }
+            // Commit only after every requested insert was constructed. A
+            // resource failure leaves the player's existing chain intact.
+            for (std::size_t slot = 0; slot < effectCount; ++slot) {
+                auto*& previous = playerEffectGraphs_[player][slot];
+                if (previous != preparedEffects[slot]) {
+                    if (previous) {
+                        Node_SetRun(&previous->mNode, 0);
+                        Node_End(&previous->mNode);
+                    }
+                    previous = preparedEffects[slot];
+                    playerEffectControlEffectIndices_[player][slot] = -1;
+                }
+                playerEffectDefinitionIndices_[player][slot] =
+                    preparedIndices[slot];
+            }
+            // Clearing a chain feeds it silence instead of deleting it: its
+            // remaining delay/reverb tail is mixed with the new dry signal.
+            for (std::size_t slot = effectCount == 0
+                     ? kMaxPlayerEffectChain : effectCount;
+                 slot < kMaxPlayerEffectChain; ++slot) {
+                if (auto* old = playerEffectGraphs_[player][slot]) {
+                    Node_SetRun(&old->mNode, 0);
+                    Node_End(&old->mNode);
+                    playerEffectGraphs_[player][slot] = nullptr;
+                }
+                playerEffectDefinitionIndices_[player][slot] = -1;
+                playerEffectControlEffectIndices_[player][slot] = -1;
+                playerEffectControlSmoothed_[player][slot].fill(0.0f);
             }
             // New-bank notes are born running, with controls configured before
             // World_Run. Do not create paused, never-rendered templates for them.
@@ -2005,6 +3430,27 @@ private:
         }
     }
 
+    static double tempoAtBeat(const PatternState& pattern, double beat) {
+        return pattern.tempoMap.bpmAtBeat(beat);
+    }
+
+    static double beatAtSeconds(const PatternState& pattern, double seconds) {
+        return pattern.tempoMap.beatAtSeconds(seconds);
+    }
+
+    double maxTempo(const PatternState& pattern) const {
+        return pattern.tempoMap.maximumBpm();
+    }
+
+    static ClockTempoNoteTiming clockNoteTiming(const PatternState& pattern,
+                                                double baseBeat, double delay,
+                                                double sustain) {
+        const double bpm = tempoAtBeat(pattern, baseBeat);
+        const double nudge = foxDotClockSwingOffsetBeats(
+            pattern.swingSeconds, bpm, baseBeat + delay) * 60.0 / bpm;
+        return pattern.tempoMap.noteTiming(baseBeat, delay, sustain, nudge);
+    }
+
     void collectMidiEvents(std::uint64_t blockStart, std::uint64_t blockEnd,
                            std::array<TimedMidiEvent, kMaxMidiEventsPerBlock>& result,
                            std::size_t& resultCount) const {
@@ -2025,39 +3471,62 @@ private:
             const auto patternStart = patternStartSamples_[player];
             if (blockEnd <= patternStart)
                 continue;
-            const double samplesPerBeat = sampleRate_ * 60.0 / pattern.bpm;
+            const double secondsIntoPattern = static_cast<double>(
+                blockStart > patternStart ? blockStart - patternStart : 0) /
+                sampleRate_;
             const double startBeat = blockStart <= patternStart ? 0.0
-                : static_cast<double>(blockStart - patternStart) / samplesPerBeat;
-            const double endBeat = static_cast<double>(blockEnd - patternStart) / samplesPerBeat;
+                : beatAtSeconds(pattern, secondsIntoPattern);
+            const double endBeat = beatAtSeconds(
+                pattern, static_cast<double>(blockEnd - patternStart) / sampleRate_);
             for (std::size_t i = 0; i < pattern.eventCount; ++i) {
                 const auto& note = pattern.events[i];
+                const double tempoRatio = maxTempo(pattern) /
+                                          pattern.tempoMap.minimumBpm();
                 const auto firstCycle = std::max<std::int64_t>(
                     0, static_cast<std::int64_t>(std::floor(
-                           (startBeat - note.beat - 15.0 - note.durationBeats) /
+                           (startBeat - note.beat -
+                            (15.0 + note.durationBeats) * tempoRatio) /
                            pattern.lengthBeats)) - 1);
-                const auto lastCycle = static_cast<std::int64_t>(
+                auto lastCycle = static_cast<std::int64_t>(
                     std::ceil((endBeat - note.beat) / pattern.lengthBeats)) + 1;
+                if (pattern.untilCycles > 0)
+                    lastCycle = std::min(
+                        lastCycle,
+                        static_cast<std::int64_t>(pattern.untilCycles) - 1);
                 for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
                     const double baseEventBeat =
                         static_cast<double>(cycle) * pattern.lengthBeats + note.beat;
+                    if (!dexter::sardineEventPasses(
+                            pattern.chanceProbability, pattern.chanceSeed,
+                            player, cycle, i, baseEventBeat, pattern.barLoaf,
+                            pattern.barOnMask))
+                        continue;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
-                    const double scheduledBeat = baseEventBeat + note.delayBeats + dynamicDelay;
-                    const double onsetBeat = scheduledBeat -
-                        foxDotClockSwingOffsetBeats(pattern.swingSeconds,
-                                                    pattern.bpm, scheduledBeat);
-                    const double offsetBeat = onsetBeat + note.durationBeats;
+                    const auto timing = clockNoteTiming(
+                        pattern, baseEventBeat, note.delayBeats + dynamicDelay,
+                        note.durationBeats);
+                    const double pitchShift = std::clamp(
+                        static_cast<double>(pattern.editorPshiftOverride
+                            ? pattern.editorPshiftCurrent
+                            : evaluateTimeVar(
+                                  pattern.noteEffectControls[11], baseEventBeat,
+                                  static_cast<float>(note.pshift))),
+                        -24.0, 24.0);
                     const auto onSample = patternStart + static_cast<std::uint64_t>(
-                        std::llround(onsetBeat * samplesPerBeat));
-                    const auto offSample = patternStart + static_cast<std::uint64_t>(
-                        std::llround(offsetBeat * samplesPerBeat));
+                        std::llround(timing.startSeconds * sampleRate_));
+                    const auto offSample = onSample + static_cast<std::uint64_t>(
+                        std::llround(timing.sustainSeconds * sampleRate_));
                     const auto noteId = static_cast<int32>(
                         ((player * kMaxPatternEvents + i) << 16) |
                         (static_cast<std::uint64_t>(cycle) & 0xffffu));
+                    const int midiNote = std::clamp(
+                        static_cast<int>(std::lround(note.midiNote + pitchShift)),
+                        0, 127);
                     append(onSample, noteId, static_cast<int>(player),
-                           note.midiNote, note.velocity, true);
+                           midiNote, note.velocity, true);
                     append(offSample, noteId, static_cast<int>(player),
-                           note.midiNote, 0, false);
+                           midiNote, 0, false);
                 }
             }
         }
@@ -2099,15 +3568,14 @@ private:
                 auto& gates = activeMidiGates_[player];
                 auto gate = std::find_if(gates.begin(), gates.end(),
                                          [&](const ActiveMidiGate& item) {
-                                             return item.noteId == event.noteId &&
-                                                    item.midiNote == event.midiNote;
+                                             return item.noteId == event.noteId;
                                          });
                 if (gate == gates.end())
                     continue;
                 if (gate->emitted)
                     addMidiNoteEvent(data.outputEvents,
                                      static_cast<int32>(event.sample - sampleClock_),
-                                     event.midiNote, 0, false,
+                                      gate->midiNote, 0, false,
                                      event.playerIndex, event.noteId);
                 *gate = {};
             }
@@ -2115,6 +3583,12 @@ private:
     }
 
     void updateSynthForBlock(std::uint64_t blockStart) {
+        for (auto& pattern : activePatterns_) {
+            if (pattern.active && pattern.editorPshiftOverride) {
+                pattern.editorPshiftCurrent = smoothEditorPlayerControl(
+                    pattern.editorPshiftCurrent, pattern.editorPshift, 0.25f);
+            }
+        }
         std::array<ScheduledAudioNote, kAudioVoiceCount> desired{};
         std::size_t desiredCount = 0;
         const auto midpoint = blockStart + kSCBlockSize / 2;
@@ -2125,8 +3599,8 @@ private:
                 pattern.lengthBeats <= 0.0 || pattern.bpm <= 0.0 ||
                 midpoint < patternStart)
                 continue;
-            const double samplesPerBeat = sampleRate_ * 60.0 / pattern.bpm;
-            const double beat = static_cast<double>(midpoint - patternStart) / samplesPerBeat;
+            const double beat = beatAtSeconds(
+                pattern, static_cast<double>(midpoint - patternStart) / sampleRate_);
             std::size_t playerVoices = 0;
             for (std::size_t i = 0; i < pattern.eventCount; ++i) {
                 const auto& event = pattern.events[i];
@@ -2145,36 +3619,66 @@ private:
                             minimumSampleRate = std::min(
                                 minimumSampleRate,
                                 std::abs(pattern.sampleRateControl.values[value]));
+                    double minimumPitchShift = pattern.editorPshiftOverride
+                        ? pattern.editorPshiftCurrent : event.pshift;
+                    if (pattern.noteEffectControls[11].active)
+                        for (std::size_t value = 0;
+                             value < pattern.noteEffectControls[11].count; ++value)
+                            minimumPitchShift = std::min(
+                                minimumPitchShift,
+                                static_cast<double>(
+                                    pattern.noteEffectControls[11].values[value]));
+                    minimumSampleRate *= std::exp2(
+                        std::clamp(minimumPitchShift, -24.0, 24.0) / 12.0);
                 }
                 double sampleSeconds = isSample && minimumSampleRate > 0.0
                     ? longestSampleSeconds / minimumSampleRate : 0.0;
-                if (isSample) {
-                    if (event.sampleLoop)
-                        sampleSeconds = event.durationBeats * 60.0 / pattern.bpm;
-                    else
-                        sampleSeconds *= event.sampleEnd - event.sampleStart;
-                }
-                if (isSample && event.sampleGate)
-                    sampleSeconds = std::min(sampleSeconds, event.durationBeats * 60.0 / pattern.bpm);
-                const double lookback = isSample ? sampleSeconds * pattern.bpm / 60.0 : event.durationBeats;
+                if (isSample)
+                    sampleSeconds *= event.sampleEnd - event.sampleStart;
+                const double tempoRatio = maxTempo(pattern) /
+                                          pattern.tempoMap.minimumBpm();
+                const double lookback = isSample && !event.sampleLoop && !event.sampleGate
+                    ? sampleSeconds * maxTempo(pattern) / 60.0
+                    : event.durationBeats * tempoRatio;
                 if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
                     break;
                 const auto firstCycle = std::max<std::int64_t>(
                     0, static_cast<std::int64_t>(std::floor(
-                           (beat - event.beat - 15.0 - lookback) /
+                           (beat - event.beat - 15.0 * tempoRatio - lookback) /
                            pattern.lengthBeats)) - 1);
-                const auto lastCycle = static_cast<std::int64_t>(
+                auto lastCycle = static_cast<std::int64_t>(
                     std::floor((beat - event.beat) / pattern.lengthBeats));
+                if (pattern.untilCycles > 0)
+                    lastCycle = std::min(
+                        lastCycle,
+                        static_cast<std::int64_t>(pattern.untilCycles) - 1);
                 for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
                     const double baseEventBeat =
                         static_cast<double>(cycle) * pattern.lengthBeats + event.beat;
+                    if (!dexter::sardineEventPasses(
+                            pattern.chanceProbability, pattern.chanceSeed,
+                            player, cycle, i, baseEventBeat, pattern.barLoaf,
+                            pattern.barOnMask))
+                        continue;
                     const double dynamicDelay = evaluateTimeVar(pattern.noteDelayControl,
                                                                  baseEventBeat, 0.0f);
-                    const double scheduledBeat =
-                        baseEventBeat + event.delayBeats + dynamicDelay;
-                    const double absoluteStartBeat = scheduledBeat -
-                        foxDotClockSwingOffsetBeats(pattern.swingSeconds,
-                                                    pattern.bpm, scheduledBeat);
+                    const auto timing = clockNoteTiming(
+                        pattern, baseEventBeat, event.delayBeats + dynamicDelay,
+                        event.durationBeats);
+                    const double absoluteStartBeat = timing.startBeat;
+                    const double sustainSeconds = timing.sustainSeconds;
+                    const float pitchShift = std::clamp(
+                        pattern.editorPshiftOverride
+                            ? pattern.editorPshiftCurrent
+                            : evaluateTimeVar(pattern.noteEffectControls[11],
+                                              absoluteStartBeat,
+                                              static_cast<float>(event.pshift)),
+                        -24.0f, 24.0f);
+                    const double noteCut = std::clamp(
+                        static_cast<double>(evaluateTimeVar(
+                            pattern.noteEffectControls[8], absoluteStartBeat,
+                            static_cast<float>(event.cut))),
+                        0.0, 1.0);
                     std::size_t selectedVariant = 0;
                     int selectedSampleBuffer = event.sampleBuffer;
                     double selectedSampleRate = event.sampleRate;
@@ -2199,21 +3703,25 @@ private:
                             ? evaluateTimeVar(pattern.sampleRateControl, absoluteStartBeat,
                                               static_cast<float>(event.sampleRate))
                             : event.sampleRate;
+                        const double shiftedRate = selectedSampleRate *
+                            std::exp2(static_cast<double>(pitchShift) / 12.0);
+                        selectedSampleRate = std::copysign(
+                            std::clamp(std::abs(shiftedRate), 0.015625, 32.0),
+                            shiftedRate);
                         if (selectedSampleBuffer < 1 ||
-                            std::abs(selectedSampleRate) < 0.0625 ||
-                            std::abs(selectedSampleRate) > 8.0)
+                            std::abs(selectedSampleRate) < 0.015625 ||
+                            std::abs(selectedSampleRate) > 32.0)
                             continue;
                         selectedSampleSeconds = event.sampleLoop
-                            ? event.durationBeats * 60.0 / pattern.bpm
+                            ? sustainSeconds
                             : event.sampleVariantDurations[selectedVariant] *
                                   (event.sampleEnd - event.sampleStart) /
                                   std::abs(selectedSampleRate);
                         if (event.sampleGate)
                             selectedSampleSeconds = std::min(
                                 selectedSampleSeconds,
-                                event.durationBeats * 60.0 / pattern.bpm);
+                                sustainSeconds);
                     }
-                    const double sustainEndBeat = absoluteStartBeat + event.durationBeats;
                     const bool isUserSynth =
                         static_cast<std::size_t>(pattern.synthIndex) >=
                         kSynthIndexToGraphIndex.size();
@@ -2221,54 +3729,106 @@ private:
                         usesFoxDotNativeEnvelope(pattern.synthIndex,
                                                  event.attackSeconds,
                                                  event.releaseSeconds);
-                    const double sustainSeconds =
-                        event.durationBeats * 60.0 / pattern.bpm;
                     // File-based upstream patches except sinepad do not apply blur.
                     const bool appliesBlur = !isUserSynth && pattern.synthIndex >= 31 &&
                         !(pattern.synthIndex >= 35 && pattern.synthIndex <= 40) &&
                         pattern.synthIndex != 42 && pattern.synthIndex != 48;
-                    const double envelopeSustain = sustainSeconds *
+                    const double cutSustainSeconds =
+                        foxDotCutSustainSeconds(sustainSeconds, noteCut);
+                    const double envelopeSustain = cutSustainSeconds *
                         (appliesBlur ? pattern.synthControls[6] : 1.0);
-                    const double sourceEnvelopeSeconds = isSample ? selectedSampleSeconds
+                    double sourceEnvelopeSeconds = isSample ? selectedSampleSeconds
                         : foxDotNativeEnvelope
                             ? foxDotEnvelopeDurationSeconds(pattern.synthIndex,
                                                             envelopeSustain,
                                                             event.attackSeconds)
-                            : sustainSeconds + (isUserSynth
+                            : cutSustainSeconds + (isUserSynth
                                 ? std::max(0.005, event.releaseSeconds) : 0.0);
-                    const double absoluteEndBeat = absoluteStartBeat +
-                        sourceEnvelopeSeconds * pattern.bpm / 60.0;
-                    if (beat < absoluteStartBeat || beat >= absoluteEndBeat)
+                    sourceEnvelopeSeconds = foxDotCutEnvelopeSeconds(
+                        sourceEnvelopeSeconds, sustainSeconds, noteCut);
+                    const double cutReleaseSeconds =
+                        noteCut < 1.0 ? 0.010 : event.releaseSeconds;
+                    const auto startSample = patternStart + static_cast<std::uint64_t>(
+                        std::llround(timing.startSeconds * sampleRate_));
+                    const auto endSample = startSample + static_cast<std::uint64_t>(
+                        std::llround(sourceEnvelopeSeconds * sampleRate_));
+                    if (midpoint < startSample || midpoint >= endSample)
                         continue;
                     if (playerVoices >= kMaxPolyphony || desiredCount >= desired.size())
                         break;
                     desired[desiredCount++] = ScheduledAudioNote{
-                        static_cast<int>(player), event.midiNote, event.velocity,
+                        static_cast<int>(player),
+                        static_cast<int32>((player * kMaxPatternEvents + i) << 16 |
+                            (static_cast<std::uint64_t>(cycle) & 0xffffu)),
+                        event.midiNote, event.velocity,
                         pattern.synthIndex, isSample ? static_cast<float>(selectedSampleRate) : pattern.synthRate,
                         pattern.amplitude, pattern.pan, pattern.cutoffHz,
                         pattern.lpfHz, pattern.lpr, pattern.hpfHz, pattern.hpr, pattern.bpfHz, pattern.bpr,
                         pattern.mousePan, pattern.mouseCutoff,
-                        event.attackSeconds, event.releaseSeconds,
-                        patternStart + static_cast<std::uint64_t>(
-                            std::llround(absoluteStartBeat * samplesPerBeat)),
-                        patternStart + static_cast<std::uint64_t>(
-                            std::llround(absoluteEndBeat * samplesPerBeat)),
-                        patternStart + static_cast<std::uint64_t>(
-                            std::llround(sustainEndBeat * samplesPerBeat)),
+                        event.attackSeconds, cutReleaseSeconds,
+                        startSample, endSample,
+                        startSample + static_cast<std::uint64_t>(
+                            std::llround(cutSustainSeconds * sampleRate_)),
                         foxDotNativeEnvelope, selectedSampleBuffer,
-                        event.sampleStart, event.sampleEnd, event.sampleLoop};
+                        event.sampleStart, event.sampleEnd, event.sampleLoop,
+                        sustainSeconds / event.durationBeats,
+                        evaluateTimeVar(pattern.noteEffectControls[0],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.vibDepth)),
+                        evaluateTimeVar(pattern.noteEffectControls[1],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.slide)),
+                        evaluateTimeVar(pattern.noteEffectControls[2],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.slideFrom)),
+                        evaluateTimeVar(pattern.noteEffectControls[3],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.slideDelay)),
+                        evaluateTimeVar(pattern.noteEffectControls[4],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.bend)),
+                        evaluateTimeVar(pattern.noteEffectControls[5],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.bendDelay)),
+                        evaluateTimeVar(pattern.noteEffectControls[6],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.chop)),
+                        evaluateTimeVar(pattern.noteEffectControls[7],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.spin)),
+                        evaluateTimeVar(pattern.noteEffectControls[9],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.coarse)),
+                        evaluateTimeVar(pattern.noteEffectControls[10],
+                                        absoluteStartBeat,
+                                        static_cast<float>(event.formant)),
+                        pitchShift,
+                        NoteEventEffectIndexChain{
+                            event.eventEffectUserSynthIndex,
+                            event.eventEffectSecondUserSynthIndex},
+                        event.eventEffectChainCount,
+                        NoteEventEffectControlChain{
+                            event.eventEffectControlValues,
+                            event.eventEffectSecondControlValues}};
                     ++playerVoices;
                 }
             }
         }
 
         for (auto& voice : audioVoices_) {
-            if (voice.reverbTail && voice.releaseEndSample <= blockStart)
+            if (voice.eventEffectTail.active &&
+                voice.eventEffectTail.finished)
                 deactivateAudioVoice(voice);
+            else if (voice.reverbTail &&
+                     voice.releaseEndSample <= blockStart) {
+                if (!beginNoteEventEffectTail(voice, blockStart))
+                    deactivateAudioVoice(voice);
+            }
             else if (!voice.releasing && voice.midiNote >= 0 &&
                      voice.endSample <= blockStart)
                 beginReverbTail(voice, blockStart);
             else if (voice.releasing && !voice.reverbTail &&
+                     !voice.eventEffectTail.active &&
                      voice.releaseEndSample <= blockStart)
                 beginReverbTail(voice, blockStart);
         }
@@ -2283,8 +3843,10 @@ private:
                             static_cast<std::ptrdiff_t>(kVoiceSlotsPerPlayer);
             auto found = std::find_if(voiceBegin, voiceEnd,
                                       [&](const AudioVoice& voice) {
-                                          return voice.playerIndex == note.playerIndex &&
-                                                 voice.midiNote == note.midiNote &&
+                                          return voice.midiNote >= 0 &&
+                                                 !voice.releasing &&
+                                                 voice.playerIndex == note.playerIndex &&
+                                                 voice.noteId == note.noteId &&
                                                  voice.startSample == note.startSample;
                                       });
             if (found == voiceEnd) {
@@ -2295,9 +3857,30 @@ private:
                 if (found == voiceEnd)
                     continue;
                 found->playerIndex = note.playerIndex;
+                found->noteId = note.noteId;
                 found->midiNote = note.midiNote;
                 found->velocity = note.velocity;
                 found->synthIndex = note.synthIndex;
+                found->eventEffectUserSynthIndices.fill(-1);
+                found->eventEffectChainCount = 0;
+                for (auto*& graph : found->eventEffectGraphs) {
+                    if (graph) {
+                        Node_SetRun(&graph->mNode, 0);
+                        Node_End(&graph->mNode);
+                        graph = nullptr;
+                    }
+                }
+                found->stereoUserSynth = false;
+                if (static_cast<std::size_t>(note.synthIndex) >=
+                    kSynthIndexToGraphIndex.size()) {
+                    const auto userIndex =
+                        static_cast<std::size_t>(note.synthIndex) -
+                        kSynthIndexToGraphIndex.size();
+                    if (userIndex < userSynthDefinitions_.size())
+                        found->stereoUserSynth =
+                            userSynthDefinitions_[userIndex].outputChannels == 2 &&
+                            !userSynthDefinitions_[userIndex].persistentPlayerEffect;
+                }
                 found->amplitude = foxDotAmplitude(note.synthIndex, note.amplitude);
                 found->mousePan = note.mousePan;
                 found->mouseCutoff = note.mouseCutoff;
@@ -2326,10 +3909,16 @@ private:
                 seedNoiseState(found->bpfNoise, seed ^ 0x9e3779b9u);
                 seedNoiseState(found->bprNoise, seed ^ 0x85ebca6bu);
                 found->filterState = 0.0f;
+                found->filterStateRight = 0.0f;
                 found->lpfState = {};
                 found->hpfState = {};
                 found->bpfState = {};
                 found->swellState = {};
+                found->lpfRightState = {};
+                found->hpfRightState = {};
+                found->bpfRightState = {};
+                found->swellRightState = {};
+                found->formantStateRight = {};
                 const double maxCutoff = sampleRate_ * 0.45;
                 const double clampedCutoff = std::min<double>(note.cutoffHz, maxCutoff);
                 const bool isUserSynth =
@@ -2342,11 +3931,24 @@ private:
                     clampedCutoff >= maxCutoff
                     ? 1.0f
                     : static_cast<float>(1.0 - std::exp(-2.0 * kPi * clampedCutoff / sampleRate_));
+                found->pshift = note.pshift;
                 found->frequencyHz = safeSynthFrequency(note.synthIndex,
-                                                        note.midiNote);
+                                                        note.midiNote,
+                                                        note.pshift);
                 found->startSample = note.startSample;
                 found->sustainEndSample = note.sustainEndSample;
                 found->endSample = note.endSample;
+                found->vibDepth = note.vibDepth;
+                found->slide = note.slide;
+                found->slideFrom = note.slideFrom;
+                found->slideDelay = note.slideDelay;
+                found->bend = note.bend;
+                found->bendDelay = note.bendDelay;
+                found->chop = note.chop;
+                found->spin = note.spin;
+                found->coarse = note.coarse;
+                found->formant = note.formant;
+                found->formantState = {};
                 found->foxDotNativeEnvelope = note.foxDotNativeEnvelope;
                 found->userSynthGateReleased = false;
                 found->releasing = false;
@@ -2418,6 +4020,10 @@ private:
                         continue;
                     }
                 }
+            found->midiNote = note.midiNote;
+            found->pshift = note.pshift;
+            found->frequencyHz = safeSynthFrequency(
+                note.synthIndex, note.midiNote, note.pshift);
                 if (found->activeSynth && found->activeSynth != selectedSynth)
                     Node_SetRun(&found->activeSynth->mNode, 0);
                 found->activeSynth = selectedSynth;
@@ -2515,12 +4121,13 @@ private:
                             for (std::size_t control = 0; control < state.synthControls.size(); ++control)
                                 Graph_SetControl(found->activeSynth, static_cast<int>(11 + control),
                                                 static_cast<float>(state.synthControls[control]));
+                            Graph_SetControl(found->activeSynth, 12, note.vibDepth);
                             Graph_SetControl(found->activeSynth, 10, note.amplitude);
                             Graph_SetControl(found->activeSynth, 18, note.cutoffHz);
                             Graph_SetControl(found->activeSynth, 19, static_cast<float>(note.attackSeconds));
                             Graph_SetControl(found->activeSynth, 20, static_cast<float>(note.releaseSeconds));
                             Graph_SetControl(found->activeSynth, 21,
-                                static_cast<float>(60.0 / state.bpm));
+                                static_cast<float>(note.beatDurationSeconds));
                             Graph_SetControl(found->activeSynth, 9, 1.0f);
                             found->triggerControlPendingReset = true;
                         }
@@ -2528,6 +4135,70 @@ private:
                     }
                     Node_SetRun(&found->activeSynth->mNode, 1);
                 }
+            }
+            bool sameEventEffectChain =
+                found->eventEffectChainCount == note.eventEffectChainCount;
+            for (std::size_t stage = 0;
+                 sameEventEffectChain &&
+                 stage < note.eventEffectChainCount; ++stage)
+                sameEventEffectChain =
+                    found->eventEffectUserSynthIndices[stage] ==
+                    note.eventEffectUserSynthIndices[stage];
+            if (!sameEventEffectChain) {
+                for (auto*& graph : found->eventEffectGraphs) {
+                    if (graph) {
+                        Node_SetRun(&graph->mNode, 0);
+                        Node_End(&graph->mNode);
+                        graph = nullptr;
+                    }
+                }
+                found->eventEffectUserSynthIndices.fill(-1);
+                found->eventEffectChainCount = 0;
+                std::array<Graph*, kMaxNoteEventEffectChain> preparedGraphs{};
+                std::string effectError;
+                const auto voiceIndex =
+                    static_cast<std::size_t>(
+                        std::distance(audioVoices_.begin(), found));
+                bool chainReady = true;
+                for (std::size_t stage = 0;
+                     stage < note.eventEffectChainCount; ++stage) {
+                    const int effectIndex =
+                        note.eventEffectUserSynthIndices[stage];
+                    if (effectIndex < 0 ||
+                        !createNoteEventEffectGraph(
+                            voiceIndex, stage,
+                            static_cast<std::size_t>(effectIndex),
+                            note.eventEffectControlValues[stage],
+                            preparedGraphs[stage], effectError)) {
+                        chainReady = false;
+                        break;
+                    }
+                }
+                if (chainReady) {
+                    found->eventEffectGraphs = preparedGraphs;
+                    found->eventEffectUserSynthIndices =
+                        note.eventEffectUserSynthIndices;
+                    found->eventEffectChainCount =
+                        note.eventEffectChainCount;
+                } else {
+                    for (auto* graph : preparedGraphs) {
+                        if (graph) {
+                            Node_SetRun(&graph->mNode, 0);
+                            Node_End(&graph->mNode);
+                        }
+                    }
+                    if (!effectError.empty())
+                        setEditorStatus(effectError +
+                                        " The note will play dry.");
+                }
+            } else {
+                for (std::size_t stage = 0;
+                     stage < note.eventEffectChainCount; ++stage)
+                    setNoteEventEffectGraphControls(
+                        found->eventEffectGraphs[stage],
+                        static_cast<std::size_t>(
+                            note.eventEffectUserSynthIndices[stage]),
+                        note.eventEffectControlValues[stage]);
             }
             found->velocity = note.velocity;
         }
@@ -2687,7 +4358,39 @@ private:
     }
 
     static bool isPersistentPlayerEffectName(std::string_view name) {
-        return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam";
+        return name == "AirwindowsTapeDelay2" || name == "AirwindowsEchojam" ||
+               name == "JPverb" || name == "Greyhole" ||
+                 name == "PortedResonatorFX" || name == "PortedFverbFX" ||
+                 name == "PortedAnalogTapeFX" ||
+                 name == "PortedAnalogChewFX" ||
+                 name == "PortedAnalogDegradeFX" ||
+                 name == "PortedAnalogLossFX" ||
+                 name == "PortedAnalogPhaserFX" ||
+                 name == "PortedAnalogVintageDistortionFX" ||
+                 name == "PortedLockhartWavefolderFX" ||
+                 name == "PortedDCompressorFX" ||
+                 name == "DexterGranularFX" ||
+                  name == "DexterMultiTapDelayFX" ||
+                  name == "DexterFeedbackDelayFX" ||
+               name == "Chorus" || name == "Flanger" ||
+               name == "Phaser" || name == "Tremolo" ||
+                name == "SCLOrkPhazerFX" ||
+                name == "SCLOrkDecimatorFX" ||
+                name == "SCLOrkCrossoverDistortionFX" ||
+               name == "LimutPingPong" || name == "LimutDuck" ||
+               name == "LimutDisperser" || name == "LimutFuzz" ||
+               name == "LimutShifter" || name == "LimutShimmer" ||
+                name == "LimutGatedVerb" || name == "LimutCompressor";
+    }
+
+    static bool isNoteEventEffectName(std::string_view name) {
+        return name == "AirwindowsTapeDelay2" ||
+               name == "AirwindowsEchojam" ||
+               name == "Chorus" || name == "Flanger" ||
+               name == "Phaser" || name == "Tremolo" ||
+               name == "JPverb" || name == "Greyhole" ||
+               name == "LimutPingPong" ||
+               name == "LimutShimmer" || name == "LimutGatedVerb";
     }
 
     static int synthControlIndex(GraphDef* definition, std::string_view wanted) {
@@ -2705,9 +4408,10 @@ private:
         return -1;
     }
 
-    static bool hasOutUnit(GraphDef* definition, std::size_t channels) {
+    static int synthOutputChannels(GraphDef* definition) {
         if (!definition || !definition->mUnitSpecs)
-            return false;
+            return 0;
+        int outputChannels = 0;
         for (uint32 index = 0; index < definition->mNumUnitSpecs; ++index) {
             const auto& unit = definition->mUnitSpecs[index];
             if (!unit.mUnitDef)
@@ -2717,11 +4421,14 @@ private:
             std::size_t length = 0;
             while (length < sizeof(unit.mUnitDef->mUnitDefName) && bytes[length] != '\0')
                 ++length;
-            if (std::string_view(bytes, length) == "Out" &&
-                unit.mNumInputs == channels + 1)
-                return true;
+            if (std::string_view(bytes, length) == "Out") {
+                outputChannels = dexter::mergeSynthOutputChannels(
+                    outputChannels, unit.mNumInputs);
+                if (outputChannels == 0)
+                    return 0;
+            }
         }
-        return false;
+        return outputChannels;
     }
 
     std::vector<std::string> availableUserSynthNames(std::string& error) {
@@ -2748,11 +4455,21 @@ private:
             error = "Portable/SynthDefs changed after the engine started. Close and reopen the DAW to load the updated SynthDef list.";
             return {};
         }
-        return worldIsReady ? loadedNames : names;
+        auto result = worldIsReady ? loadedNames : names;
+        {
+            std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+            editorExternalSynthNames_ = result;
+        }
+        return result;
     }
 
     bool loadUserSynthDefinitions(std::string& error) {
         userSynthDefinitions_.clear();
+        {
+            std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+            editorExternalSynthNames_.clear();
+            editorUserSynthControlSpecs_.clear();
+        }
         for (const auto& synthFile : userSynthFiles_) {
             const bool conflictsWithBuiltin =
                 isEmbeddedFoxDotSynthName(synthFile.name) ||
@@ -2790,6 +4507,73 @@ private:
             userDefinition.definition = loaded;
             userDefinition.persistentPlayerEffect =
                 isPersistentPlayerEffectName(userDefinition.name);
+            if (!userDefinition.persistentPlayerEffect) {
+                auto controlPath = synthFile.path;
+                controlPath.replace_extension(".controls");
+                std::error_code sidecarError;
+                const bool hasControlSidecar =
+                    std::filesystem::exists(controlPath, sidecarError);
+                if (sidecarError) {
+                    error = "Could not inspect " +
+                            controlPath.filename().string() + ".";
+                    return false;
+                }
+                if (hasControlSidecar) {
+                    const auto sidecarBytes =
+                        std::filesystem::file_size(controlPath, sidecarError);
+                    if (sidecarError ||
+                        sidecarBytes >
+                            dexter::kMaxPortableUserSynthControlFileBytes) {
+                        error = controlPath.filename().string() +
+                                " is unreadable or exceeds the 8192-byte control-map limit.";
+                        return false;
+                    }
+                    std::ifstream stream(controlPath, std::ios::binary);
+                    if (!stream) {
+                        error = "Could not read " +
+                                controlPath.filename().string() + ".";
+                        return false;
+                    }
+                    const auto boundedSize =
+                        static_cast<std::size_t>(sidecarBytes);
+                    std::string controlText(boundedSize, '\0');
+                    if (boundedSize > 0)
+                        stream.read(controlText.data(),
+                                    static_cast<std::streamsize>(boundedSize));
+                    if (static_cast<std::size_t>(stream.gcount()) !=
+                        boundedSize) {
+                        error = controlPath.filename().string() +
+                                " changed or could not be read completely.";
+                        return false;
+                    }
+                    char unexpectedExtraByte = 0;
+                    if (stream.get(unexpectedExtraByte)) {
+                        error = controlPath.filename().string() +
+                                " changed while it was being read.";
+                        return false;
+                    }
+                    std::vector<dexter::PortableUserSynthControlSpec> parsed;
+                    if (!dexter::parsePortableUserSynthControls(
+                            controlText, parsed, error)) {
+                        error = controlPath.filename().string() + ": " + error;
+                        return false;
+                    }
+                    for (auto& control : parsed) {
+                        control.controlIndex =
+                            synthControlIndex(loaded, control.name);
+                        if (control.controlIndex < 0) {
+                            error = controlPath.filename().string() +
+                                    " names a control not found in " +
+                                    synthFile.path.filename().string() + ": " +
+                                    control.name;
+                            return false;
+                        }
+                        userDefinition.liveControls[
+                            userDefinition.liveControlCount++] =
+                            std::move(control);
+                    }
+                }
+            }
             userDefinition.outControl = synthControlIndex(loaded, "out");
             userDefinition.inputBusControl = synthControlIndex(loaded, "inbus");
             userDefinition.frequencyControl = synthControlIndex(loaded, "freq");
@@ -2801,6 +4585,8 @@ private:
             userDefinition.sustainControl = synthControlIndex(loaded, "sustain");
             if (userDefinition.sustainControl < 0)
                 userDefinition.sustainControl = synthControlIndex(loaded, "sus");
+            userDefinition.hostManagedFreeControl =
+                synthControlIndex(loaded, "dexterAutoFree");
             constexpr std::array<std::string_view, 7> effectControlNames{{
                 "vib", "depth", "lforate", "lfowidth", "rq", "fmod", "blur"}};
             for (std::size_t index = 0; index < effectControlNames.size(); ++index)
@@ -2812,30 +4598,394 @@ private:
                 return false;
             }
             if (userDefinition.persistentPlayerEffect) {
-                // These two bundled SynthDefs have a deliberately fixed,
-                // regression-tested positional ABI. Resolve their control
-                // indices from that ABI rather than GraphDef's named-parameter
-                // lookup: some embedded SC builds omit the longer names from
-                // mParamSpecs even though the serialized SynthDef contains them.
                 const bool isTapeDelay =
                     userDefinition.name == "AirwindowsTapeDelay2";
-                const uint32 expectedControlCount = isTapeDelay ? 8u : 6u;
+                const bool isEchojam =
+                    userDefinition.name == "AirwindowsEchojam";
+                const bool isJPverb = userDefinition.name == "JPverb";
+                const bool isGreyhole = userDefinition.name == "Greyhole";
+                const bool isPortedResonatorFX =
+                    userDefinition.name == "PortedResonatorFX";
+                const bool isPortedFverbFX =
+                    userDefinition.name == "PortedFverbFX";
+                const bool isPortedAnalogTapeFX =
+                    userDefinition.name == "PortedAnalogTapeFX";
+                const bool isPortedAnalogChewFX =
+                    userDefinition.name == "PortedAnalogChewFX";
+                const bool isPortedAnalogDegradeFX =
+                    userDefinition.name == "PortedAnalogDegradeFX";
+                const bool isPortedAnalogLossFX =
+                    userDefinition.name == "PortedAnalogLossFX";
+                const bool isPortedAnalogPhaserFX =
+                    userDefinition.name == "PortedAnalogPhaserFX";
+                const bool isPortedAnalogVintageDistortionFX =
+                    userDefinition.name == "PortedAnalogVintageDistortionFX";
+                const bool isPortedLockhartWavefolderFX =
+                    userDefinition.name == "PortedLockhartWavefolderFX";
+                const bool isPortedDCompressorFX =
+                    userDefinition.name == "PortedDCompressorFX";
+                const bool isDexterGranularFX =
+                    userDefinition.name == "DexterGranularFX";
+                const bool isDexterMultiTapDelayFX =
+                    userDefinition.name == "DexterMultiTapDelayFX";
+                const bool isDexterFeedbackDelayFX =
+                    userDefinition.name == "DexterFeedbackDelayFX";
+                const bool isChorus = userDefinition.name == "Chorus";
+                const bool isFlanger = userDefinition.name == "Flanger";
+                const bool isPhaser = userDefinition.name == "Phaser";
+                const bool isTremolo = userDefinition.name == "Tremolo";
+                const bool isSCLOrkPhazer =
+                    userDefinition.name == "SCLOrkPhazerFX";
+                const bool isSCLOrkDecimator =
+                    userDefinition.name == "SCLOrkDecimatorFX";
+                const bool isSCLOrkCrossover =
+                    userDefinition.name == "SCLOrkCrossoverDistortionFX";
+                const bool isLimutPingPong =
+                    userDefinition.name == "LimutPingPong";
+                const bool isLimutDuck = userDefinition.name == "LimutDuck";
+                const bool isLimutDisperser =
+                    userDefinition.name == "LimutDisperser";
+                const bool isLimutFuzz = userDefinition.name == "LimutFuzz";
+                const bool isLimutShifter =
+                    userDefinition.name == "LimutShifter";
+                const bool isLimutShimmer =
+                    userDefinition.name == "LimutShimmer";
+                const bool isLimutGatedVerb =
+                    userDefinition.name == "LimutGatedVerb";
+                const bool isLimutCompressor =
+                    userDefinition.name == "LimutCompressor";
+                const uint32 expectedControlCount =
+                    isTapeDelay ? 9u : isEchojam ? 7u :
+                    (isPortedResonatorFX || isPortedFverbFX) ? 7u :
+                    (isPortedAnalogTapeFX || isPortedAnalogChewFX) ? 6u :
+                    (isPortedAnalogDegradeFX || isPortedAnalogLossFX) ? 7u :
+                    (isPortedAnalogPhaserFX ||
+                     isPortedAnalogVintageDistortionFX) ? 8u :
+                    isPortedLockhartWavefolderFX ? 5u :
+                    isPortedDCompressorFX ? 9u :
+                    isDexterGranularFX ? 9u :
+                    (isDexterMultiTapDelayFX || isDexterFeedbackDelayFX) ? 9u :
+                    isLimutPingPong ? 5u : isLimutDuck ? 7u :
+                    isLimutDisperser ? 6u : isLimutFuzz ? 5u :
+                    isLimutShifter ? 5u : isLimutShimmer ? 7u :
+                    isLimutGatedVerb ? 9u :
+                    isLimutCompressor ? 8u :
+                    isSCLOrkDecimator ? 7u :
+                    isSCLOrkCrossover ? 6u : 9u;
                 if (loaded->mNumControls != expectedControlCount) {
                     error = synthFile.path.filename().string() +
-                            " has an incompatible Airwindows control layout (expected " +
+                            " has an incompatible persistent-effect control layout (expected " +
                             std::to_string(expectedControlCount) + " controls).";
                     return false;
                 }
+                // Persistent insert SynthDefs have a fixed positional ABI:
+                // out, inbus, then the effect controls. Normalized player
+                // values are mapped to these controls' raw ranges. Resolve
+                // positions rather than relying on optional GraphDef names.
                 userDefinition.outControl = 0;
                 userDefinition.inputBusControl = 1;
-                userDefinition.effectControlIndices =
-                    isTapeDelay
-                    ? std::array<int, 7>{{2, 3, 4, 5, 6, -1, 7}}
-                    : std::array<int, 7>{{2, 3, 4, -1, -1, -1, 5}};
+                if (isTapeDelay) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 8, 7}};
+                } else if (isEchojam) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, 6, 5}};
+                } else if (isPortedResonatorFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 35.0f, 0.0f, 0.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 6000.0f, 1.0f, 1.0f,
+                                              1.0f, 1.0f, 1.0f}};
+                } else if (isPortedFverbFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f, 10.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 10.0f, 100.0f,
+                                              20000.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isPortedAnalogTapeFX ||
+                           isPortedAnalogChewFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f, 0.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 1.0f, 1.0f,
+                                              1.0f, 1.0f, 1.0f}};
+                } else if (isPortedAnalogDegradeFX ||
+                           isPortedAnalogLossFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f, 0.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 1.0f, 1.0f,
+                                              1.0f, 1.0f, 1.0f}};
+                } else if (isPortedAnalogPhaserFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, -1.0f, 0.0f,
+                                              0.0f, 1.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 8.0f, 1.0f, 0.95f,
+                                              1.0f, 50.0f, 1.0f}};
+                } else if (isPortedAnalogVintageDistortionFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f, 0.0001f,
+                                              0.001f, 20.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 2.5f, 0.3f,
+                                              0.3f, 20000.0f, 1.0f}};
+                } else if (isPortedLockhartWavefolderFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 1.0f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 20.0f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isPortedDCompressorFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 1.0f, -80.0f, 0.001f,
+                                              0.001f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 40.0f, 0.0f, 10.0f,
+                                              10.0f, 24.0f, 1.0f}};
+                } else if (isDexterGranularFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 1.0f, 0.01f,
+                                              0.5f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 3.0f, 40.0f, 0.25f,
+                                              2.0f, 1.0f, 1.0f}};
+                } else if (isDexterMultiTapDelayFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.015f, 1.0f,
+                                              0.0f, 0.0f, 0.001f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 2.0f, 1.0f, 4.0f,
+                                              0.92f, 1.0f, 300.0f}};
+                } else if (isDexterFeedbackDelayFX) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.015f, 0.0f, 0.0f,
+                                              0.5f, 0.1f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 3.8f, 0.92f, 4.0f,
+                                              2.0f, 60.0f, 1.0f}};
+                } else if (isJPverb) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.1f, 0.0f, 0.5f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 60.0f, 0.999f, 3.0f,
+                                              0.99f, 1.0f, 10.0f}};
+                } else if (isGreyhole) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.001f, 0.0f, 0.5f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.45f, 0.99f, 3.0f,
+                                              0.99f, 0.98f, 1.0f}};
+                } else if (isChorus) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f, 0.005f,
+                                              0.0f, 0.0f, 200.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 5.0f, 1.0f, 0.04f,
+                                              1.0f, 0.75f, 16000.0f}};
+                } else if (isFlanger) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f, 0.0005f,
+                                              0.0f, 0.0f, 200.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 4.0f, 1.0f, 0.015f,
+                                              1.0f, 0.95f, 16000.0f}};
+                } else if (isPhaser) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f, 150.0f,
+                                              0.0f, 0.0f, 200.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 8.0f, 1.0f, 1800.0f,
+                                              1.0f, 0.85f, 16000.0f}};
+                } else if (isSCLOrkPhazer) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f, 150.0f,
+                                              0.0f, 0.05f, 200.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 8.0f, 1.0f, 1800.0f,
+                                              1.0f, 1.0f, 16000.0f}};
+                } else if (isSCLOrkDecimator) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 80.0f, 1.0f, 0.5f,
+                                              200.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 22000.0f, 16.0f, 8.0f,
+                                              16000.0f, 1.0f, 1.0f}};
+                } else if (isSCLOrkCrossover) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.5f, 0.0f, 200.0f,
+                                              0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 8.0f, 1.0f, 16000.0f,
+                                              1.0f, 1.0f, 1.0f}};
+                } else if (isTremolo) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f, 0.0f,
+                                              0.0f, 0.0f, 200.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 20.0f, 1.0f, 1.0f,
+                                              1.0f, 1.0f, 16000.0f}};
+                } else if (isLimutPingPong) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.01f, 0.0f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 2.0f, 0.95f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutDuck) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.05f, 0.0f,
+                                              0.0f, 0.001f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 8.0f, 1.0f,
+                                              8.0f, 8.0f, 1.0f, 1.0f}};
+                } else if (isLimutDisperser) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 30.0f, 0.1f,
+                                              1.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 18000.0f, 10.0f,
+                                              24.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutFuzz) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 200.0f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 36.0f, 16000.0f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutShifter) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, -1, -1, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.5f, 0.02f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 2.0f, 0.5f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutShimmer) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, -1, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.5f, 0.02f,
+                                              0.0f, 0.0f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 2.0f, 0.5f,
+                                              1.0f, 1.0f, 1.0f, 1.0f}};
+                } else if (isLimutGatedVerb) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, 8}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, 0.0f, 0.0f,
+                                              0.001f, 0.0f, 0.001f, 0.01f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 1.0f, 1.0f,
+                                              0.25f, 2.0f, 0.25f, 1.0f}};
+                } else if (isLimutCompressor) {
+                    userDefinition.effectControlIndices =
+                        std::array<int, 7>{{2, 3, 4, 5, 6, 7, -1}};
+                    userDefinition.effectControlMinimum =
+                        std::array<float, 7>{{0.0f, -60.0f, 0.0f, 0.0f,
+                                              0.001f, 0.0f, 0.0f}};
+                    userDefinition.effectControlMaximum =
+                        std::array<float, 7>{{1.0f, 0.0f, 20.0f, 1.0f,
+                                              3.0f, 24.0f, 1.0f}};
+                }
                 const std::array<bool, 7> requiredEffectControls =
                     isTapeDelay
-                    ? std::array<bool, 7>{{true, true, true, true, true, false, true}}
-                    : std::array<bool, 7>{{true, true, true, false, false, false, true}};
+                    ? std::array<bool, 7>{{true, true, true, true, true, true, true}}
+                    : isEchojam
+                    ? std::array<bool, 7>{{true, true, true, false, false, true, true}}
+                    : isLimutPingPong
+                    ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
+                    : isLimutDuck
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isLimutDisperser
+                    ? std::array<bool, 7>{{true, true, true, true, false, false, false}}
+                    : isLimutFuzz
+                    ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
+                    : isLimutShifter
+                    ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
+                    : isLimutShimmer
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isLimutCompressor
+                    ? std::array<bool, 7>{{true, true, true, true, true, true, false}}
+                    : isSCLOrkDecimator
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isSCLOrkCrossover
+                    ? std::array<bool, 7>{{true, true, true, true, false, false, false}}
+                    : isPortedResonatorFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isPortedFverbFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isPortedAnalogTapeFX || isPortedAnalogChewFX
+                    ? std::array<bool, 7>{{true, true, true, true, false, false, false}}
+                    : isPortedAnalogDegradeFX || isPortedAnalogLossFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, false, false}}
+                    : isPortedAnalogPhaserFX ||
+                      isPortedAnalogVintageDistortionFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, true, false}}
+                    : isPortedLockhartWavefolderFX
+                    ? std::array<bool, 7>{{true, true, true, false, false, false, false}}
+                    : isPortedDCompressorFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, true, true}}
+                    : isDexterGranularFX
+                    ? std::array<bool, 7>{{true, true, true, true, true, true, true}}
+                    : std::array<bool, 7>{{true, true, true, true, true, true, true}};
                 bool missingRequiredEffectControl = false;
                 for (std::size_t index = 0;
                      index < requiredEffectControls.size(); ++index)
@@ -2844,18 +4994,22 @@ private:
                 if (userDefinition.inputBusControl < 0 ||
                     missingRequiredEffectControl) {
                     error = synthFile.path.filename().string() +
-                            " is missing a required inbus or Airwindows effect control.";
+                            " is missing a required inbus or persistent-effect control.";
                     return false;
                 }
-                if (!hasOutUnit(loaded, 2)) {
+                if (synthOutputChannels(loaded) != 2) {
                     error = synthFile.path.filename().string() +
-                            " needs an Out UGen that writes a stereo signal to its 'out' control.";
+                            " needs consistent stereo Out UGens routed to its 'out' control.";
                     return false;
                 }
-            } else if (!hasOutUnit(loaded, 1)) {
-                error = synthFile.path.filename().string() +
-                        " needs an Out UGen that writes exactly one mono signal to its 'out' control.";
-                return false;
+                userDefinition.outputChannels = 2;
+            } else {
+                userDefinition.outputChannels = synthOutputChannels(loaded);
+                if (userDefinition.outputChannels == 0) {
+                    error = synthFile.path.filename().string() +
+                            " needs consistent Out UGens with either one mono or two stereo channels routed to its 'out' control.";
+                    return false;
+                }
             }
 
             std::array<int32, kSCNodeDefNameLen> nameKey{};
@@ -2870,28 +5024,188 @@ private:
 
         for (auto& voice : audioVoices_)
             voice.userSynthGraphs.assign(userSynthDefinitions_.size(), nullptr);
+        {
+            std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+            editorExternalSynthNames_.clear();
+            editorExternalSynthNames_.reserve(userSynthDefinitions_.size());
+            editorUserSynthControlSpecs_.clear();
+            editorUserSynthControlSpecs_.reserve(userSynthDefinitions_.size());
+            for (const auto& definition : userSynthDefinitions_) {
+                editorExternalSynthNames_.push_back(definition.name);
+                std::vector<dexter::PortableUserSynthControlSpec> controls;
+                controls.reserve(definition.liveControlCount);
+                for (std::size_t index = 0;
+                     index < definition.liveControlCount; ++index)
+                    controls.push_back(definition.liveControls[index]);
+                editorUserSynthControlSpecs_.push_back(
+                    std::move(controls));
+            }
+        }
         return true;
     }
 
-    bool initializeWorld(double hostSampleRate = 0.0) {
-        LifecycleTrace trace("initializeWorld including locks", this);
-        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
-        if (hostSampleRate > 0.0) {
-            if (world_ && sampleRate_ == hostSampleRate)
-                return true;
-            // Keep teardown, sample-rate change and creation under one lock so
-            // a Run worker cannot initialize at the previous host sample rate.
-            stopWorldLocked();
-            sampleRate_ = hostSampleRate;
-            hostProcessingConfigured_ = true;
-        } else if (world_) {
+    int nextPrivateGraphNodeId() {
+        for (std::size_t attempt = 0; attempt < kWorldNodeCapacity; ++attempt) {
+            if (nextDynamicGraphNodeId_ >= dexter::sclang::kLanguageFirstNodeId)
+                nextDynamicGraphNodeId_ = 100;
+            const auto id = nextDynamicGraphNodeId_++;
+            if (!World_GetNode(world_, id)) return id;
+        }
+        // A full table is reported by Graph_New; SC may use a private negative
+        // ID, which the language bridge never allows clients to address.
+        return -1;
+    }
+
+    static void hostSuperColliderReply(ReplyAddress* address, char* bytes, int size) {
+        if (address && address->mReplyData && size > 0)
+            static_cast<DexterSCTone*>(address->mReplyData)->scHostBridge_.reply(
+                static_cast<std::uint16_t>(address->mPort), bytes,
+                static_cast<std::size_t>(size));
+    }
+
+    bool dispatchHostSuperCollider(std::vector<char>& packet, std::uint16_t port) {
+        using namespace dexter::sclang;
+        std::unique_lock<std::mutex> lock(worldAccessMutex_, std::try_to_lock);
+        if (!lock.owns_lock()) return false;
+        auto reply = [&](const std::vector<char>& bytes) {
+            scHostBridge_.reply(port, bytes.data(), bytes.size());
+        };
+        HostOscMessage message;
+        const auto invalid = protectHostCommand(packet, message);
+        if (!invalid.empty() || !world_) {
+            reply(hostOscFailure(message.address.empty() ? "/bridge" : message.address,
+                !world_ ? "Embedded engine is not ready" : invalid));
             return true;
         }
+        if (message.address == "/notify" && message.args[0].integer(packet) == 1 &&
+            languageClientPort_ != port) {
+            // UDP has no TCP disconnect event. Retire the previous helper's
+            // registration on a new launch, otherwise maxLogins=1 prevents
+            // every retry after a timeout/crash from becoming ready.
+            if (auto* group = World_GetGroup(world_, 1)) Group_DeleteAll(group);
+            world_->hw->mNodeEnds.Perform();
+            world_->hw->mNodeMsgs.Perform();
+            world_->hw->mTriggers.Perform();
+            world_->hw->mDeleteGraphDefs.Perform();
+            world_->hw->mUsers->clear();
+            world_->hw->mClientIDdict->clear();
+            world_->hw->mAvailableClientIDs->clear();
+            world_->hw->mAvailableClientIDs->push_back(0);
+            languageClientPort_ = port;
+            scHostBridge_.clearScheduled();
+        }
+        if (message.address != "/status" && message.address != "/version" &&
+            message.address != "/notify" && languageClientPort_ != port) {
+            reply(hostOscFailure(message.address, "Language client is not registered"));
+            return true;
+        }
+        if (message.address == "/clearSched") {
+            scHostBridge_.clearScheduled();
+            return true;
+        }
+        if (message.address == "/g_new" && message.args.size() == 3 &&
+            message.args[0].integer(packet) == 1 && World_GetGroup(world_, 1))
+            return true; // CmdPeriod/initTree may recreate the surviving default group.
+        if (message.address == "/status") {
+            // Native AudioStatusCmd dereferences an absent hardware driver.
+            auto status = hostOscMessage("/status.reply", ",iiiiiffdd");
+            appendOscU32(status, 1);
+            appendOscU32(status, world_->mNumUnits);
+            appendOscU32(status, world_->mNumGraphs);
+            appendOscU32(status, world_->mNumGroups);
+            appendOscU32(status, world_->hw->mGraphDefLib->NumItems());
+            appendOscFloat(status, 0.0f); // Hardware-driver CPU metrics unavailable.
+            appendOscFloat(status, 0.0f);
+            appendOscDouble(status, sampleRate_);
+            appendOscDouble(status, sampleRate_);
+            reply(status);
+            return true;
+        }
+        if (message.address == "/d_recv") {
+            LifecycleTrace trace("language bridge SynthDef receive", this);
+            const auto& blob = message.args[0];
+            auto* definitions = GraphDef_Recv(world_, packet.data() + blob.offset,
+                                               blob.size, nullptr);
+            if (!definitions) {
+                reply(hostOscFailure("/d_recv", "SynthDef rejected; check its UGens"));
+                return true;
+            }
+            auto newNames = languageSynthDefNames_;
+            std::string error;
+            std::vector<GraphDef*> originals;
+            for (auto* d = definitions; d; d = d->mNext) {
+                if (d == d->mOriginal) originals.push_back(d);
+                const auto name = synthDefName(d);
+                if (World_GetGraphDef(world_, d->mNodeDef.mName) &&
+                    !languageSynthDefNames_.count(name))
+                    error = "Cannot replace a FoxDot/bundled SynthDef; use a new name";
+                newNames.insert(name);
+            }
+            if (newNames.size() > kMaxLanguageSynthDefs)
+                error = "Language SynthDef limit is " +
+                    std::to_string(kMaxLanguageSynthDefs) + " distinct names";
+            if (!error.empty()) {
+                for (auto* d : originals) GraphDef_Free(d);
+                reply(hostOscFailure("/d_recv", error));
+                return true;
+            }
+            GraphDef_Define(world_, definitions);
+            languageSynthDefNames_ = std::move(newNames);
+            auto done = hostOscMessage("/done", ",s");
+            appendOscString(done, "/d_recv");
+            reply(done);
+            return true;
+        }
+        ReplyAddress address{};
+        address.mAddress = boost::asio::ip::address_v4::loopback();
+        address.mProtocol = kUDP;
+        address.mPort = port;
+        address.mSocket = 0;
+        address.mReplyFunc = &DexterSCTone::hostSuperColliderReply;
+        address.mReplyData = this;
+        // NRT commands execute synchronously here, serialized with host audio.
+        PerformOSCMessage(world_, static_cast<int>(packet.size()),
+                          packet.data(), &address);
+        return true;
+    }
+
+    void maintainHostSuperCollider() {
+        std::unique_lock<std::mutex> lock(worldAccessMutex_, std::try_to_lock);
+        if (!lock.owns_lock() || !world_) return;
+        // Replace the absent driver's non-RT notification/deletion service.
+        world_->hw->mNodeEnds.Perform();
+        world_->hw->mNodeMsgs.Perform();
+        world_->hw->mTriggers.Perform();
+        world_->hw->mDeleteGraphDefs.Perform();
+    }
+
+    void configureHostProcessing(double hostSampleRate) {
+        LifecycleTrace trace("configure host audio without engine startup", this);
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        if (hostProcessingConfigured_ && sampleRate_ == hostSampleRate)
+            return;
+        // Initial setup records the rate only. If an existing World is being
+        // reconfigured, retire it safely; the next Run creates its replacement.
+        if (world_)
+            stopWorldLocked();
+        sampleRate_ = hostSampleRate;
+        hostProcessingConfigured_ = true;
+        worldInitializationError_.clear();
+        setEditorStatus("Host audio configured. The embedded engine starts on first Run.");
+    }
+
+    bool initializeWorld() {
+        LifecycleTrace trace("initializeWorld including locks", this);
+        std::lock_guard<std::mutex> worldLock(worldAccessMutex_);
+        if (world_)
+            return true;
         auto fail = [this](std::string message) {
             worldInitializationError_ = std::move(message);
             setEditorStatus(worldInitializationError_);
             return false;
         };
+        if (diskCleanupFailed_)
+            return fail("DiskIO teardown could not drain outstanding work safely. Fully close and restart the DAW before retrying this instance.");
         if (!hostProcessingConfigured_)
             return fail("The host has not configured audio processing yet. Enable the DAW audio engine (or start playback), then press Run again.");
         worldInitializationError_.clear();
@@ -2905,6 +5219,7 @@ private:
             return fail("SuperCollider startup failed: the bundled SCPlugins folder is missing or inaccessible. Restore the UGen files, restart the host, and press Run.");
         }
         ugenPluginPath_ = ugenModuleSearchPath();
+        diskIO_.preload(pluginBinaryPath().parent_path().parent_path().parent_path() / "Portable");
         std::string synthScanError;
         userSynthFiles_ = discoverUserSynthFiles(synthScanError);
         if (!synthScanError.empty())
@@ -2914,7 +5229,8 @@ private:
                 (kSynthGraphCount + kReverbGraphCount))
             return fail("Too many SynthDefs are installed for SuperCollider's graph-definition table.");
         const auto graphDefinitionCapacity =
-            scPoolCapacity(kSynthGraphCount + kReverbGraphCount + userSynthFiles_.size());
+            scPoolCapacity(kSynthGraphCount + kReverbGraphCount + userSynthFiles_.size() +
+                           dexter::sclang::kMaxLanguageSynthDefs);
 
         try {
             LifecycleTrace allocationTrace("echo buffer allocation", this);
@@ -2930,12 +5246,17 @@ private:
         options.mBufLength = kSCBlockSize;
         options.mMaxNodes = static_cast<uint32>(kWorldNodeCapacity);
         options.mMaxGraphDefs = static_cast<uint32>(graphDefinitionCapacity);
-        // Size both SuperCollider pools from the actual embedded graph bank,
-        // voice slots, and reverb bank; adding a registered synth grows them.
-        // SuperCollider measures this field in KiB. 64 MiB is enough for
-        // persistent Airwindows delay state on all eight players, without
-        // multiplying those large delay buffers by note polyphony.
-        options.mRealTimeMemorySize = 65536;
+        options.mMaxLogins = 1; // One private sclang client; not an audio-device server.
+        // SuperCollider measures this field in KiB. 64 MiB is enough for the
+        // normal graph bank and persistent delay inserts. Both reverbs' upstream
+        // documentation explicitly requires memSize_(65536 * 4), so reserve
+        // 256 MiB only when either optional SynthDef is installed.
+        const bool hasSpaceReverb = std::any_of(
+            userSynthFiles_.begin(), userSynthFiles_.end(),
+            [](const UserSynthFile& file) {
+                return file.name == "JPverb" || file.name == "Greyhole";
+            });
+        options.mRealTimeMemorySize = hasSpaceReverb ? 65536u * 4u : 65536u;
         options.mNumInputBusChannels = 0;
         options.mNumOutputBusChannels = 2;
         options.mNumAudioBusChannels = kNumAudioBusChannels;
@@ -2962,6 +5283,9 @@ private:
         }
         moduleStatus += ". Compatible Portable/SCPlugins modules load at startup; restart the DAW after adding one.";
         World_SetSampleRate(world_, sampleRate_);
+        // World_OpenTCP silently drops packets for an NRT World without an
+        // SC_AudioDriver. The VST owns the audio callback: use our bounded
+        // loopback worker and synchronous NRT dispatch instead.
         {
             LifecycleTrace startTrace("World_Start", this);
             World_Start(world_);
@@ -3095,24 +5419,58 @@ private:
         for (const auto& definition : userSynthDefinitions_)
             moduleStatus += " " + definition.name;
         moduleStatus += ".";
+        std::string bridgeError;
+        scLanguageServerPort_ = dexter::sclang::findAvailableServerPort();
+        if (scLanguageServerPort_ <= 0 || !scHostBridge_.start(
+                scLanguageServerPort_,
+                [this](std::vector<char>& packet, std::uint16_t port) {
+                    return dispatchHostSuperCollider(packet, port);
+                },
+                [this] { maintainHostSuperCollider(); }, bridgeError)) {
+            scLanguageServerPort_ = 0;
+            moduleStatus += " SuperCollider language bridge unavailable: " + bridgeError;
+        }
         setEditorStatus("SuperCollider ready. Press Run to evaluate the script. " + moduleStatus);
         return true;
     }
 
     void discardPartialWorld() {
+        scLanguageRuntime_.shutdown();
+        scHostBridge_.stop();
+        languageSynthDefNames_.clear();
+        languageClientPort_ = 0;
         if (world_) {
             World_Cleanup(world_, false);
             world_ = nullptr;
         }
+        scLanguageServerPort_ = 0;
         for (auto& voice : audioVoices_)
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
-        playerEffectGraphs_.fill(nullptr);
-        playerEffectDefinitionIndices_.fill(-1);
+        for (auto& playerGraphs : playerEffectGraphs_)
+            playerGraphs.fill(nullptr);
+        playerEffectTransitions_ = {};
+        shapeEffectSmoothed_.fill(0.0f);
+        driveEffectSmoothed_.fill(0.0f);
+        bitsEffectSmoothed_.fill(0.0f);
+        crushEffectSmoothed_.fill(1.0f);
+        bitcrusherStates_.fill({});
+        for (auto& effectSlots : playerEffectDefinitionIndices_)
+            effectSlots.fill(-1);
+        for (auto& indices : playerEffectControlEffectIndices_)
+            indices.fill(-1);
+        for (auto& player : playerEffectControlSmoothed_)
+            for (auto& controls : player)
+                controls.fill(0.0f);
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
         userSynthFiles_.clear();
+        {
+            std::lock_guard<std::mutex> lock(editorCatalogMutex_);
+            editorExternalSynthNames_.clear();
+            editorUserSynthControlSpecs_.clear();
+        }
         rootGroup_ = nullptr;
         nextDynamicGraphNodeId_ = 100;
     }
@@ -3123,6 +5481,21 @@ private:
     }
 
     void renderSCBlock(std::uint64_t blockStart) {
+        // Control modulation is block-rate, interpolated inside the 64-sample
+        // block. Note scheduling uses the exact map, not this approximation.
+        std::array<double, kPlayerCount> controlBeatStart{};
+        std::array<double, kPlayerCount> controlBeatStep{};
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            const auto& pattern = activePatterns_[player];
+            const auto start = patternStartSamples_[player];
+            const double elapsed = blockStart >= start
+                ? static_cast<double>(blockStart - start) / sampleRate_ : 0.0;
+            controlBeatStart[player] = beatAtSeconds(pattern, elapsed);
+            const double endBeat = beatAtSeconds(
+                pattern, elapsed + static_cast<double>(kSCBlockSize) / sampleRate_);
+            controlBeatStep[player] =
+                (endBeat - controlBeatStart[player]) / kSCBlockSize;
+        }
         for (auto& voice : audioVoices_) {
             if (!voice.activeSynth || (voice.midiNote < 0 && !voice.releasing) ||
                 voice.playerIndex < 0 ||
@@ -3153,15 +5526,52 @@ private:
                     Graph_SetControl(voice.activeSynth, definition.gateControl, 0.0f);
                     voice.userSynthGateReleased = true;
                 }
+                if (definition.liveControlCount > 0) {
+                    const double blockSeconds =
+                        static_cast<double>(kSCBlockSize) / sampleRate_;
+                    const bool resetSmoothing =
+                        !voice.userSynthControlSmoothingInitialized ||
+                        voice.userSynthControlDefinitionIndex != userIndex;
+                    for (std::size_t control = 0;
+                         control < definition.liveControlCount; ++control) {
+                        const bool hasOverride =
+                            pattern.userSynthControlDefinitionIndex ==
+                                static_cast<int>(userIndex) &&
+                            (pattern.userSynthControlOverrideMask &
+                             static_cast<std::uint8_t>(1u << control)) != 0;
+                        const float target = hasOverride
+                            ? pattern.userSynthControlValues[control]
+                            : definition.liveControls[control].defaultNormalized();
+                        auto& current =
+                            voice.userSynthControlSmoothed[control];
+                        current = resetSmoothing
+                            ? target
+                            : smoothAirwindowsFxControl(current, target,
+                                                        blockSeconds);
+                        const auto& spec = definition.liveControls[control];
+                        Graph_SetControl(
+                            voice.activeSynth, spec.controlIndex,
+                            spec.map(current));
+                    }
+                    voice.userSynthControlDefinitionIndex =
+                        static_cast<int>(userIndex);
+                    voice.userSynthControlSmoothingInitialized = true;
+                } else {
+                    voice.userSynthControlDefinitionIndex = -1;
+                    voice.userSynthControlSmoothingInitialized = false;
+                }
             } else if (voice.synthIndex >= 31 && !isPlayerEffect) {
-                const auto start = patternStartSamples_[player];
-                const double beat = blockStart >= start
-                    ? static_cast<double>(blockStart - start) * pattern.bpm /
-                          (60.0 * sampleRate_) : 0.0;
+                const double beat = controlBeatStart[player];
                 Graph_SetControl(voice.activeSynth, 10,
-                    evaluateTimeVar(pattern.ampControl, beat, pattern.amplitude));
+                    pattern.editorAmpOverride
+                        ? editorAmplitudeCurrent_[player]
+                        : evaluateTimeVar(pattern.ampControl, beat,
+                                          pattern.amplitude));
                 Graph_SetControl(voice.activeSynth, 18,
-                    evaluateTimeVar(pattern.cutoffControl, beat, pattern.cutoffHz));
+                    pattern.editorCutoffOverride
+                        ? editorCutoffCurrent_[player]
+                        : evaluateTimeVar(pattern.cutoffControl, beat,
+                                          pattern.cutoffHz));
             }
             if (!isUserSynth || isPlayerEffect) {
                 const float level = reverbEnabled(pattern)
@@ -3173,6 +5583,76 @@ private:
             }
         }
         World_Run(world_);
+        const auto eventEffectBusLength =
+            static_cast<std::size_t>(world_->mBufLength);
+        for (std::size_t voiceIndex = 0;
+             voiceIndex < audioVoices_.size(); ++voiceIndex) {
+            auto& voice = audioVoices_[voiceIndex];
+            if (voice.eventEffectChainCount == 0 ||
+                !voice.eventEffectGraphs[0] ||
+                (!voice.releasing && voice.midiNote < 0))
+                continue;
+            const auto sourceBus = voice.stereoUserSynth
+                ? static_cast<std::size_t>(kStereoSynthOutputBaseBus) +
+                      voiceIndex * 2
+                : static_cast<std::size_t>(kFirstAudioBus) +
+                      voiceIndex * static_cast<std::size_t>(kAudioBusStride);
+            const auto inputBus =
+                static_cast<std::size_t>(kEventEffectInputBusBase) +
+                voiceIndex * 2;
+            for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
+                const auto sample = static_cast<std::size_t>(sampleIndex);
+                const auto sourceOffset = sourceBus * eventEffectBusLength + sample;
+                const float left = voice.eventEffectTail.active
+                    ? 0.0f : world_->mAudioBus[sourceOffset];
+                const float right = voice.eventEffectTail.active
+                    ? 0.0f
+                    : voice.stereoUserSynth
+                          ? world_->mAudioBus[(sourceBus + 1) *
+                                                  eventEffectBusLength +
+                                              sample]
+                          : left;
+                world_->mAudioBus[inputBus * eventEffectBusLength + sample] =
+                    left;
+                world_->mAudioBus[(inputBus + 1) * eventEffectBusLength +
+                                  sample] = right;
+            }
+            world_->mAudioBusTouched[inputBus] = world_->mBufCounter;
+            world_->mAudioBusTouched[inputBus + 1] = world_->mBufCounter;
+            for (std::size_t stage = 0;
+                 stage < voice.eventEffectChainCount; ++stage) {
+                if (!voice.eventEffectGraphs[stage])
+                    break;
+                Graph_Calc(voice.eventEffectGraphs[stage]);
+                const auto outputBus =
+                    static_cast<std::size_t>(kEventEffectOutputBusBase) +
+                    voiceIndex * kMaxNoteEventEffectChain * 2 + stage * 2;
+                world_->mAudioBusTouched[outputBus] = world_->mBufCounter;
+                world_->mAudioBusTouched[outputBus + 1] = world_->mBufCounter;
+            }
+            if (voice.eventEffectTail.active) {
+                const auto outputBus =
+                    static_cast<std::size_t>(kEventEffectOutputBusBase) +
+                    voiceIndex * kMaxNoteEventEffectChain * 2 +
+                    (voice.eventEffectChainCount - 1) * 2;
+                double energy = 0.0;
+                for (int sampleIndex = 0; sampleIndex < kSCBlockSize;
+                     ++sampleIndex) {
+                    const auto sample = static_cast<std::size_t>(sampleIndex);
+                    const float left = world_->mAudioBus[
+                        outputBus * eventEffectBusLength + sample];
+                    const float right = world_->mAudioBus[
+                        (outputBus + 1) * eventEffectBusLength + sample];
+                    energy += static_cast<double>(left) * left +
+                              static_cast<double>(right) * right;
+                }
+                const float rms = static_cast<float>(
+                    std::sqrt(energy / (2.0 * kSCBlockSize)));
+                dexter::updateEventEffectTail(
+                    voice.eventEffectTail, rms, blockStart, kSCBlockSize);
+            }
+        }
+        diskIO_.renderBlock();
         for (auto& voice : audioVoices_) {
             if (voice.triggerControlPendingReset && voice.activeSynth) {
                 Graph_SetControl(voice.activeSynth, 9, 0.0f);
@@ -3194,6 +5674,14 @@ private:
                 playerMuteGain_[player] += mouseSmoothing * (target - playerMuteGain_[player]);
                 playerMuteGainBlock[player][static_cast<std::size_t>(sampleIndex)] =
                     playerMuteGain_[player];
+                editorAmplitudeCurrent_[player] =
+                    smoothEditorPlayerControl(
+                        editorAmplitudeCurrent_[player],
+                        activePatterns_[player].amplitude,
+                        mouseSmoothing);
+                editorCutoffCurrent_[player] = smoothEditorPlayerControl(
+                    editorCutoffCurrent_[player],
+                    activePatterns_[player].cutoffHz, mouseSmoothing);
             }
             std::array<float, kPlayerCount> playerLeft{};
             std::array<float, kPlayerCount> playerRight{};
@@ -3201,7 +5689,9 @@ private:
             std::size_t contributingVoices = 0;
             for (std::size_t voiceIndex = 0; voiceIndex < audioVoices_.size(); ++voiceIndex) {
                 auto& voice = audioVoices_[voiceIndex];
-                const float envelope = voiceEnvelopeAt(voice, absoluteSample);
+                const bool eventEffectTail = voice.eventEffectTail.active;
+                const float envelope = eventEffectTail
+                    ? 1.0f : voiceEnvelopeAt(voice, absoluteSample);
                 if (envelope <= 0.0f || voice.velocity <= 0 || voice.playerIndex < 0 ||
                     voice.playerIndex >= static_cast<int>(kPlayerCount))
                     continue;
@@ -3209,15 +5699,42 @@ private:
                                  voiceIndex * static_cast<std::size_t>(kAudioBusStride);
                 const auto busLength = static_cast<std::size_t>(world_->mBufLength);
                 const auto offset = bus * busLength + static_cast<std::size_t>(sampleIndex);
-                const float source = world_->mAudioBus[offset];
+                float source = world_->mAudioBus[offset];
+                float sourceRight = source;
+                const bool stereoOutput =
+                    voice.stereoUserSynth ||
+                    voice.eventEffectChainCount > 0;
+                if (voice.eventEffectChainCount > 0) {
+                    const auto effectBus =
+                        static_cast<std::size_t>(kEventEffectOutputBusBase) +
+                        voiceIndex * kMaxNoteEventEffectChain * 2 +
+                        (voice.eventEffectChainCount - 1) * 2;
+                    source = world_->mAudioBus[
+                        effectBus * busLength +
+                        static_cast<std::size_t>(sampleIndex)];
+                    sourceRight = world_->mAudioBus[
+                        (effectBus + 1) * busLength +
+                        static_cast<std::size_t>(sampleIndex)];
+                } else if (voice.stereoUserSynth) {
+                    const auto stereoBus =
+                        static_cast<std::size_t>(kStereoSynthOutputBaseBus) +
+                        voiceIndex * 2;
+                    source = world_->mAudioBus[
+                        stereoBus * busLength +
+                        static_cast<std::size_t>(sampleIndex)];
+                    sourceRight = world_->mAudioBus[
+                        (stereoBus + 1) * busLength +
+                        static_cast<std::size_t>(sampleIndex)];
+                }
                 const auto controlPlayerIndex = static_cast<std::size_t>(voice.playerIndex);
                 const auto& livePattern = activePatterns_[controlPlayerIndex];
-                const auto patternStart = patternStartSamples_[controlPlayerIndex];
-                const double beat = livePattern.bpm > 0.0 && absoluteSample >= patternStart
-                    ? static_cast<double>(absoluteSample - patternStart) * livePattern.bpm /
-                          (60.0 * sampleRate_)
-                    : 0.0;
-                if (livePattern.ampControl.active &&
+                const double beat = controlBeatStart[controlPlayerIndex] +
+                    controlBeatStep[controlPlayerIndex] * sampleIndex;
+                if (livePattern.editorAmpOverride) {
+                    voice.amplitude = foxDotAmplitude(
+                        voice.synthIndex,
+                        editorAmplitudeCurrent_[controlPlayerIndex]);
+                } else if (livePattern.ampControl.active &&
                     (voice.synthIndex < 31 ||
                      static_cast<std::size_t>(voice.synthIndex) >=
                          kSynthIndexToGraphIndex.size())) {
@@ -3229,7 +5746,7 @@ private:
                     else
                         voice.amplitude += mouseSmoothing * (targetAmp - voice.amplitude);
                 }
-                if (voice.mousePan) {
+                if (voice.mousePan && !livePattern.editorPanOverride) {
                     const float mouseX = std::clamp(
                         world_->mAudioBus[(bus + 1) * busLength + static_cast<std::size_t>(sampleIndex)],
                         0.0f, 1.0f);
@@ -3237,6 +5754,13 @@ private:
                     voice.pan += mouseSmoothing * (targetPan - voice.pan);
                     voice.leftGain = std::sqrt(std::max(0.0f, (1.0f - voice.pan) * 0.5f));
                     voice.rightGain = std::sqrt(std::max(0.0f, (1.0f + voice.pan) * 0.5f));
+                } else if (livePattern.editorPanOverride) {
+                    voice.pan += mouseSmoothing *
+                        (livePattern.editorPan - voice.pan);
+                    voice.leftGain = std::sqrt(
+                        std::max(0.0f, (1.0f - voice.pan) * 0.5f));
+                    voice.rightGain = std::sqrt(
+                        std::max(0.0f, (1.0f + voice.pan) * 0.5f));
                 } else if (livePattern.panControl.active) {
                     const float targetPan = evaluateTimeVar(livePattern.panControl, beat,
                                                             livePattern.pan);
@@ -3249,11 +5773,14 @@ private:
                 }
                 bool dynamicCutoff = voice.mouseCutoff;
                 float targetCutoff = voice.cutoffHz;
-                if (voice.mouseCutoff) {
+                if (voice.mouseCutoff && !livePattern.editorCutoffOverride) {
                     const float mouseY = std::clamp(
                         world_->mAudioBus[(bus + 2) * busLength + static_cast<std::size_t>(sampleIndex)],
                         0.0f, 1.0f);
                     targetCutoff = 200.0f + mouseY * 7800.0f;
+                } else if (livePattern.editorCutoffOverride) {
+                    targetCutoff = livePattern.editorCutoffHz;
+                    dynamicCutoff = true;
                 } else if (livePattern.cutoffControl.active) {
                     targetCutoff = evaluateTimeVar(livePattern.cutoffControl, beat,
                                                    livePattern.cutoffHz);
@@ -3278,6 +5805,9 @@ private:
                     voice.filterState = source;
                 else
                     voice.filterState += voice.filterCoefficient * (source - voice.filterState);
+                if (stereoOutput)
+                    voice.filterStateRight += voice.filterCoefficient *
+                        (sourceRight - voice.filterStateRight);
                 const float velocity = static_cast<float>(voice.velocity) / 127.0f;
                 auto updateFilterControl = [&](float& current, const TimeVarControl& control, float fallback) {
                     if (!control.active) return;
@@ -3330,15 +5860,81 @@ private:
                                     voice.modulatedBpr, 2);
                     configureBiquad(voice.swellState, voice.swellCutoffHz,
                                     voice.hpr, 1);
+                    if (stereoOutput) {
+                        configureBiquad(voice.lpfRightState, voice.lpfHz,
+                                        voice.lpr, 0);
+                        configureBiquad(voice.hpfRightState, voice.hpfHz,
+                                        voice.hpr, 1);
+                        configureBiquad(voice.bpfRightState,
+                                        voice.modulatedBpfHz,
+                                        voice.modulatedBpr, 2);
+                        configureBiquad(voice.swellRightState,
+                                        voice.swellCutoffHz, voice.hpr, 1);
+                    }
                 }
                 float shaped = processBiquad(voice.lpfState, voice.filterState);
                 shaped = processBiquad(voice.hpfState, shaped);
                 shaped = processBiquad(voice.bpfState, shaped);
                 shaped = processBiquad(voice.swellState, shaped);
-                const float amplitude = shaped * envelope * velocity * voice.amplitude;
+                float shapedRight = shaped;
+                if (stereoOutput) {
+                    shapedRight = processBiquad(voice.lpfRightState,
+                                                voice.filterStateRight);
+                    shapedRight = processBiquad(voice.hpfRightState,
+                                                shapedRight);
+                    shapedRight = processBiquad(voice.bpfRightState,
+                                                shapedRight);
+                    shapedRight = processBiquad(voice.swellRightState,
+                                                shapedRight);
+                }
+                if (voice.formant >= 0.0f)
+                    shaped = dexter::foxDotFormantSample(
+                        voice.formantState, shaped, voice.formant, sampleRate_);
+                if (stereoOutput && voice.formant >= 0.0f)
+                    shapedRight = dexter::foxDotFormantSample(
+                        voice.formantStateRight, shapedRight, voice.formant,
+                        sampleRate_);
+                const double effectDuration =
+                    voice.sustainEndSample > voice.startSample
+                    ? static_cast<double>(voice.sustainEndSample -
+                                          voice.startSample)
+                    : 0.0;
+                const double effectProgress = !eventEffectTail &&
+                    effectDuration > 0.0
+                    ? static_cast<double>(absoluteSample - voice.startSample) /
+                          effectDuration
+                    : 1.0;
+                const float noteEffectGain = eventEffectTail ? 1.0f :
+                    dexter::foxDotNoteEffectGain(
+                        effectProgress, voice.slide, voice.slideFrom,
+                        voice.slideDelay, voice.bend, voice.bendDelay);
+                const float chopGain = eventEffectTail ? 1.0f :
+                    dexter::foxDotChopGain(effectProgress, voice.chop);
+                const float coarseGain = eventEffectTail ? 1.0f :
+                    dexter::foxDotCoarseGain(effectProgress, voice.coarse);
+                const double elapsedSeconds =
+                    static_cast<double>(absoluteSample - voice.startSample) /
+                    sampleRate_;
+                auto spinGains = dexter::foxDotSpinGains(
+                    elapsedSeconds, voice.spin);
+                if (eventEffectTail)
+                    spinGains = {1.0f, 1.0f};
                 const auto player = static_cast<std::size_t>(voice.playerIndex);
-                playerLeft[player] += amplitude * voice.leftGain;
-                playerRight[player] += amplitude * voice.rightGain;
+                const float noteGain = envelope * velocity * voice.amplitude *
+                    noteEffectGain * chopGain * coarseGain;
+                const float amplitude = shaped * noteGain;
+                if (stereoOutput) {
+                    const auto balance = dexter::stereoBalanceGains(voice.pan);
+                    playerLeft[player] += amplitude * balance[0] *
+                        spinGains.left;
+                    playerRight[player] += shapedRight * noteGain * balance[1] *
+                        spinGains.right;
+                } else {
+                    playerLeft[player] += amplitude * voice.leftGain *
+                        spinGains.left;
+                    playerRight[player] += amplitude * voice.rightGain *
+                        spinGains.right;
+                }
                 playerHasVoice[player] = playerMuteGain_[player] > 1e-4f;
                 if (playerMuteGain_[player] > 1e-4f)
                     ++contributingVoices;
@@ -3356,16 +5952,58 @@ private:
                 contributingVoices;
         }
 
+        // Native FoxDot-compatible player inserts run on the summed player
+        // signal, before optional user SynthDef effects. Modulated controls
+        // are smoothed sample-by-sample to avoid zipper noise.
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            const auto& pattern = activePatterns_[player];
+            auto& shape = shapeEffectSmoothed_[player];
+            auto& drive = driveEffectSmoothed_[player];
+            auto& bits = bitsEffectSmoothed_[player];
+            auto& crush = crushEffectSmoothed_[player];
+            auto& bitcrusher = bitcrusherStates_[player];
+            const float bitcrusherSmoothing = static_cast<float>(
+                1.0 - std::exp(-1.0 / (0.01 * sampleRate_)));
+            for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
+                const double beat = controlBeatStart[player] +
+                    controlBeatStep[player] * sampleIndex;
+                const float targetShape = evaluateTimeVar(
+                    pattern.shapeControl, beat, pattern.shape);
+                const float targetDrive = evaluateTimeVar(
+                    pattern.driveControl, beat, pattern.drive);
+                const float targetBits = evaluateTimeVar(
+                    pattern.bitsControl, beat, pattern.bits);
+                const float targetCrush = evaluateTimeVar(
+                    pattern.crushControl, beat, pattern.crush);
+                shape = dexter::smoothPlayerEffectControl(
+                    shape, targetShape, mouseSmoothing);
+                drive = dexter::smoothPlayerEffectControl(
+                    drive, targetDrive, mouseSmoothing);
+                bits = dexter::smoothPlayerEffectControl(
+                    bits, targetBits, bitcrusherSmoothing);
+                crush = dexter::smoothPlayerEffectControl(
+                    crush, targetCrush, bitcrusherSmoothing);
+                auto& left = playerLeftBlock[player][
+                    static_cast<std::size_t>(sampleIndex)];
+                auto& right = playerRightBlock[player][
+                    static_cast<std::size_t>(sampleIndex)];
+                left = dexter::processFoxDotDrive(
+                    dexter::processFoxDotShape(left, shape), drive);
+                right = dexter::processFoxDotDrive(
+                    dexter::processFoxDotShape(right, shape), drive);
+                const auto crushed = dexter::processFoxDotBitcrusher(
+                    bitcrusher, left, right, bits, crush, sampleRate_,
+                    bitcrusherSmoothing);
+                left = crushed[0];
+                right = crushed[1];
+            }
+        }
+
         const auto busLength = static_cast<std::size_t>(world_->mBufLength);
         for (std::size_t player = 0; player < kPlayerCount; ++player) {
-            auto* graph = playerEffectGraphs_[player];
-            if (!graph)
-                continue;
             const auto& pattern = activePatterns_[player];
             const bool effectSelected = pattern.active &&
-                pattern.playerEffectUserIndex >= 0 &&
-                pattern.playerEffectUserIndex ==
-                    playerEffectDefinitionIndices_[player];
+                pattern.playerEffectCount > 0;
             const auto inputBus = static_cast<std::size_t>(kAirwindowsInputBusBase) +
                                   player * 2;
             for (int channel = 0; channel < 2; ++channel) {
@@ -3378,24 +6016,107 @@ private:
                         ? source[static_cast<std::size_t>(sampleIndex)] : 0.0f;
                 world_->mAudioBusTouched[bus] = world_->mBufCounter;
             }
-            const auto userIndex = pattern.playerEffectUserIndex >= 0
-                ? static_cast<std::size_t>(pattern.playerEffectUserIndex)
-                : userSynthDefinitions_.size();
-            if (effectSelected && userIndex < userSynthDefinitions_.size()) {
-                const auto& definition = userSynthDefinitions_[userIndex];
-                for (std::size_t control = 0;
-                     control < definition.effectControlIndices.size(); ++control) {
-                    const auto controlIndex = definition.effectControlIndices[control];
-                    if (controlIndex >= 0)
-                        Graph_SetControl(graph, controlIndex,
-                                         static_cast<float>(pattern.synthControls[control]));
+            for (std::size_t slot = 0; slot < kMaxPlayerEffectChain; ++slot) {
+                auto* graph = playerEffectGraphs_[player][slot];
+                if (!graph)
+                    continue;
+                const auto graphUserIndex =
+                    playerEffectDefinitionIndices_[player][slot];
+                if (graphUserIndex < 0 ||
+                    static_cast<std::size_t>(graphUserIndex) >=
+                        userSynthDefinitions_.size())
+                    continue;
+                const auto& graphDefinition =
+                    userSynthDefinitions_[static_cast<std::size_t>(
+                        graphUserIndex)];
+                const bool slotSelected = effectSelected &&
+                    slot < pattern.playerEffectCount &&
+                    pattern.playerEffects[slot].userSynthIndex ==
+                        graphUserIndex;
+                if (!slotSelected)
+                    playerEffectControlEffectIndices_[player][slot] = -1;
+                if (slotSelected) {
+                    const auto userIndex = static_cast<std::size_t>(
+                        pattern.playerEffects[slot].userSynthIndex);
+                    if (userIndex >= userSynthDefinitions_.size()) {
+                        playerEffectControlEffectIndices_[player][slot] = -1;
+                        continue;
+                    }
+                    const auto& definition = userSynthDefinitions_[userIndex];
+                    const bool newEffect =
+                        playerEffectControlEffectIndices_[player][slot] !=
+                        pattern.playerEffects[slot].userSynthIndex;
+                    const double effectBeat = controlBeatStart[player] +
+                        controlBeatStep[player] * (kSCBlockSize * 0.5);
+                    const float blockSeconds =
+                        static_cast<float>(kSCBlockSize / sampleRate_);
+                    for (std::size_t control = 0;
+                         control < definition.effectControlIndices.size(); ++control) {
+                        const auto controlIndex =
+                            definition.effectControlIndices[control];
+                        if (controlIndex < 0)
+                            continue;
+                        const float normalizedTarget = evaluateTimeVar(
+                            pattern.playerEffects[slot].controlVariables[control],
+                            effectBeat,
+                            static_cast<float>(
+                                pattern.playerEffects[slot].controlValues[control]));
+                        auto& current =
+                            playerEffectControlSmoothed_[player][slot][control];
+                        current = newEffect ? normalizedTarget :
+                            smoothAirwindowsFxControl(current, normalizedTarget,
+                                                      blockSeconds);
+                        const float mapped =
+                            definition.effectControlMinimum[control] +
+                            current * (definition.effectControlMaximum[control] -
+                                       definition.effectControlMinimum[control]);
+                        Graph_SetControl(graph, controlIndex, mapped);
+                    }
+                    playerEffectControlEffectIndices_[player][slot] =
+                        pattern.playerEffects[slot].userSynthIndex;
+                } else {
+                    const int feedbackControl =
+                        playerEffectFeedbackControlSlot(graphDefinition.name);
+                    // Stop new feedback regeneration as soon as the player
+                    // stops. The SynthDef smooths this control and lets the
+                    // already-buffered final echo pass once.
+                    if (feedbackControl >= 0 &&
+                        graphDefinition.effectControlIndices[
+                            static_cast<std::size_t>(feedbackControl)] >= 0)
+                        Graph_SetControl(
+                            graph,
+                            graphDefinition.effectControlIndices[
+                                static_cast<std::size_t>(feedbackControl)],
+                            graphDefinition.effectControlMinimum[
+                                static_cast<std::size_t>(feedbackControl)]);
                 }
+                // The paused insert graph is advanced once after its source or
+                // previous insert's return bus is ready.
+                Graph_Calc(graph);
             }
-            // The graph is paused in the root group and is advanced exactly
-            // once here, after its summed stereo input bus is ready.
-            Graph_Calc(graph);
         }
 
+        std::array<std::size_t, kPlayerCount> effectGraphCounts{};
+        std::array<bool, kPlayerCount> selectedEffectChains{};
+        for (std::size_t player = 0; player < kPlayerCount; ++player) {
+            auto& count = effectGraphCounts[player];
+            while (count < kMaxPlayerEffectChain &&
+                   playerEffectGraphs_[player][count])
+                ++count;
+            const auto& pattern = activePatterns_[player];
+            bool selected = pattern.active && pattern.playerEffectCount > 0 &&
+                pattern.playerEffectCount == count;
+            std::uint64_t signature = 0;
+            for (std::size_t slot = 0; slot < count; ++slot) {
+                selected &= playerEffectDefinitionIndices_[player][slot] ==
+                    pattern.playerEffects[slot].userSynthIndex;
+                signature |= static_cast<std::uint64_t>(
+                    playerEffectDefinitionIndices_[player][slot] + 1) << (slot * 16);
+            }
+            selectedEffectChains[player] = selected;
+            playerEffectTransitions_[player].select(
+                selected ? signature : 0, sampleRate_);
+        }
         for (int sampleIndex = 0; sampleIndex < kSCBlockSize; ++sampleIndex) {
             const auto absoluteSample = blockStart + static_cast<std::uint64_t>(sampleIndex);
             std::array<float, kPlayerCount> playerLeft{};
@@ -3421,26 +6142,27 @@ private:
             std::size_t effectTailPlayers = 0;
             for (std::size_t player = 0; player < kPlayerCount; ++player) {
                 const auto& pattern = activePatterns_[player];
-                const auto* effectGraph = playerEffectGraphs_[player];
-                const bool effectSelected = pattern.active && effectGraph &&
-                    pattern.playerEffectUserIndex >= 0 &&
-                    pattern.playerEffectUserIndex ==
-                        playerEffectDefinitionIndices_[player];
+                const auto effectCount = effectGraphCounts[player];
+                const bool hasEffectGraph = effectCount > 0;
+                const bool effectSelected = selectedEffectChains[player];
                 const auto effectOutputBus =
-                    static_cast<std::size_t>(kAirwindowsOutputBusBase) + player * 2;
-                const float effectLeft = effectGraph
+                    static_cast<std::size_t>(playerEffectChainOutputBus(
+                        player, hasEffectGraph ? effectCount - 1 : 0,
+                        kAirwindowsOutputBusBase));
+                const float effectLeft = hasEffectGraph
                     ? world_->mAudioBus[effectOutputBus * busLength +
                                         static_cast<std::size_t>(sampleIndex)]
                     : 0.0f;
-                const float effectRight = effectGraph
+                const float effectRight = hasEffectGraph
                     ? world_->mAudioBus[(effectOutputBus + 1) * busLength +
                                         static_cast<std::size_t>(sampleIndex)]
                     : 0.0f;
-                const float dryLeft = effectSelected
-                    ? effectLeft : playerLeft[player] + effectLeft;
-                const float dryRight = effectSelected
-                    ? effectRight : playerRight[player] + effectRight;
-                if (effectGraph && !playerHasVoice[player] &&
+                const auto routed = playerEffectTransitions_[player].process(
+                    effectSelected ? effectLeft : playerLeft[player] + effectLeft,
+                    effectSelected ? effectRight : playerRight[player] + effectRight);
+                const float dryLeft = routed[0];
+                const float dryRight = routed[1];
+                if (hasEffectGraph && !playerHasVoice[player] &&
                     playerMuteGain_[player] > 1e-4f &&
                     (std::abs(effectLeft) > 1e-6f ||
                      std::abs(effectRight) > 1e-6f))
@@ -3458,11 +6180,9 @@ private:
                     ++reverbTailPlayers;
                 const float reverbedLeft = dryLeft * (1.0f - reverbMix) + wetLeft * reverbMix;
                 const float reverbedRight = dryRight * (1.0f - reverbMix) + wetRight * reverbMix;
-                const auto patternStart = patternStartSamples_[player];
-                const double playerBeat = pattern.bpm > 0.0 && absoluteSample >= patternStart
-                    ? static_cast<double>(absoluteSample - patternStart) * pattern.bpm /
-                          (60.0 * sampleRate_)
-                    : 0.0;
+                const double playerBeat = controlBeatStart[player] +
+                    controlBeatStep[player] * sampleIndex;
+                const double playerBpm = tempoAtBeat(pattern, playerBeat);
                 auto& echoMix = echoMixSmoothed_[player];
                 const float echoBeats = evaluateTimeVar(pattern.echoControl, playerBeat,
                                                         static_cast<float>(pattern.echoBeats));
@@ -3475,13 +6195,13 @@ private:
                 auto& delaySeconds = echoDelaySmoothed_[player];
                 const float targetDelaySeconds = requestedDelayTime > 0.0f
                     ? requestedDelayTime
-                    : (pattern.bpm > 0.0 ? echoBeats * 60.0f / static_cast<float>(pattern.bpm) : 0.0f);
+                    : static_cast<float>(echoBeats * 60.0 / playerBpm);
                 delaySeconds += (targetDelaySeconds - delaySeconds) * mixSmoothing;
                 if (sampleIndex % kSCBlockSize == 0) {
                     const float decayBeats = evaluateTimeVar(pattern.echoDecayControl, playerBeat,
                                                             static_cast<float>(pattern.echoDecayBeats));
-                    const double decaySeconds = pattern.bpm > 0.0
-                        ? static_cast<double>(decayBeats) * 60.0 / pattern.bpm : 0.0;
+                    const double decaySeconds =
+                        static_cast<double>(decayBeats) * 60.0 / playerBpm;
                     const float requestedFeedback = evaluateTimeVar(pattern.echoFeedbackControl,
                                                                      playerBeat, pattern.echoFeedback);
                     echoFeedbackTarget_[player] = requestedFeedback >= 0.0f
@@ -3526,15 +6246,33 @@ private:
                                             ? 1.0f
                                             : 1.0f / static_cast<float>(mixContributors);
             mixGain_ += (targetMixGain - mixGain_) * mixSmoothing;
-            outputBlock_[0][static_cast<std::size_t>(sampleIndex)] = leftMixed * mixGain_;
-            outputBlock_[1][static_cast<std::size_t>(sampleIndex)] = rightMixed * mixGain_;
+            // The language tab writes normal SC hardware-output buses 0/1.
+            // FoxDot uses private buses; include each direct bus only when it
+            // was written this block, so stale tails cannot repeat forever.
+            const auto direct = [&](int channel) {
+                if (world_->mAudioBusTouched[channel] != world_->mBufCounter)
+                    return 0.0f;
+                const auto value = world_->mAudioBus[
+                    channel * world_->mBufLength + sampleIndex];
+                return std::isfinite(value) ? value : 0.0f;
+            };
+            outputBlock_[0][static_cast<std::size_t>(sampleIndex)] = leftMixed * mixGain_ +
+                diskIO_.left(static_cast<unsigned>(sampleIndex)) + direct(0);
+            outputBlock_[1][static_cast<std::size_t>(sampleIndex)] = rightMixed * mixGain_ +
+                diskIO_.right(static_cast<unsigned>(sampleIndex)) + direct(1);
         }
 
         const auto blockEnd = blockStart + static_cast<std::uint64_t>(kSCBlockSize);
         for (auto& voice : audioVoices_) {
-            if (voice.reverbTail && voice.releaseEndSample <= blockEnd) {
+            if (voice.eventEffectTail.active &&
+                voice.eventEffectTail.finished) {
                 deactivateAudioVoice(voice);
+            } else if (voice.reverbTail &&
+                       voice.releaseEndSample <= blockEnd) {
+                if (!beginNoteEventEffectTail(voice, blockEnd))
+                    deactivateAudioVoice(voice);
             } else if (voice.releasing && !voice.reverbTail &&
+                       !voice.eventEffectTail.active &&
                        voice.releaseEndSample <= blockEnd) {
                 // SynthDef reverb sends use a control-rate Lag. Keep the graph alive
                 // after its voice envelope reaches zero so a later block can set the
@@ -3560,11 +6298,22 @@ private:
 
     // Caller owns worldAccessMutex_. Never call the locking wrapper recursively.
     void stopWorldLocked() {
+        scLanguageRuntime_.shutdown();
+        scHostBridge_.stop();
+        languageSynthDefNames_.clear();
+        languageClientPort_ = 0;
+        scLanguageServerPort_ = 0;
         if (world_) {
+            std::string diskError;
+            const bool diskDrained = diskIO_.closeAll(diskError);
+            diskCleanupFailed_ |= !diskDrained;
             detachSampleBuffers();
             std::lock_guard<std::mutex> lifecycleLock(scLibraryLifecycleMutex);
             LifecycleTrace cleanupTrace("World_Cleanup", this);
-            World_Cleanup(world_, false);
+            if (diskDrained) World_Cleanup(world_, false);
+            else std::fprintf(stderr, "Dexter DiskIO: %s; retaining the inactive SC World rather than freeing memory still referenced by disk I/O.\n", diskError.c_str());
+            if (diskDrained && !diskError.empty())
+                std::fprintf(stderr, "Dexter DiskIO finalization error: %s\n", diskError.c_str());
             world_ = nullptr;
         }
         sampleCache_.clear();
@@ -3574,8 +6323,21 @@ private:
             voice = {};
         for (auto& player : reverbGraphs_)
             player.fill(nullptr);
-        playerEffectGraphs_.fill(nullptr);
-        playerEffectDefinitionIndices_.fill(-1);
+        for (auto& graphs : playerEffectGraphs_)
+            graphs.fill(nullptr);
+        playerEffectTransitions_ = {};
+        shapeEffectSmoothed_.fill(0.0f);
+        driveEffectSmoothed_.fill(0.0f);
+        bitsEffectSmoothed_.fill(0.0f);
+        crushEffectSmoothed_.fill(1.0f);
+        bitcrusherStates_.fill({});
+        for (auto& indices : playerEffectDefinitionIndices_)
+            indices.fill(-1);
+        for (auto& indices : playerEffectControlEffectIndices_)
+            indices.fill(-1);
+        for (auto& player : playerEffectControlSmoothed_)
+            for (auto& controls : player)
+                controls.fill(0.0f);
         synthDefinitions_.fill(nullptr);
         userSynthDefinitions_.clear();
         userSynthFiles_.clear();
@@ -3590,34 +6352,73 @@ private:
         echoFeedbackSmoothed_.fill(0.0f);
         reverbMixSmoothed_.fill(0.0f);
         mixGain_ = 0.0f;
-        for (auto& pattern : activePatterns_)
-            pattern = {};
-        for (auto& playerGates : activeMidiGates_)
-            playerGates.fill({});
-        pendingPlayerMask_ = 0;
-        pendingMuteMask_ = 0;
-        pendingMuteStates_.fill(false);
-        mutedPlayers_.fill(false);
-        playerMuteGain_.fill(1.0f);
+        {
+            std::lock_guard<std::mutex> patternLock(patternMutex_);
+            for (auto& pattern : activePatterns_)
+                pattern = {};
+            for (auto& pattern : pendingPatterns_)
+                pattern = {};
+            for (auto& control : pendingEditorControls_)
+                control = {};
+            for (auto& playerGates : activeMidiGates_)
+                playerGates.fill({});
+            pendingPlayerMask_ = 0;
+            pendingMuteMask_ = 0;
+            pendingMuteStates_.fill(false);
+            mutedPlayers_.fill(false);
+            playerMuteGain_.fill(1.0f);
+            editorAmplitudeCurrent_.fill(1.0f);
+            editorCutoffCurrent_.fill(20000.0f);
+            for (std::size_t player = 0; player < kPlayerCount; ++player)
+                publishEditorPlayerState(player);
+        }
     }
 
     std::string scriptNamespace_;
     double sampleRate_ = 48000.0;
+    dexter::MicLoopCapture micLoop_{};
     std::mutex worldAccessMutex_;
     bool hostProcessingConfigured_ = false;
     std::string worldInitializationError_;
     World* world_ = nullptr;
+    int scLanguageServerPort_ = 0;
+    dexter::sclang::Runtime scLanguageRuntime_;
+    dexter::sclang::HostOscBridge scHostBridge_;
+    std::set<std::string> languageSynthDefNames_;
+    std::uint16_t languageClientPort_ = 0;
+    PortableDiskIO diskIO_;
+    bool diskCleanupFailed_ = false;
     Group* rootGroup_ = nullptr;
     std::array<GraphDef*, kSynthGraphCount> synthDefinitions_{};
     std::vector<UserSynthFile> userSynthFiles_;
     std::vector<UserSynthDefinition> userSynthDefinitions_;
+    std::vector<std::vector<dexter::PortableUserSynthControlSpec>>
+        editorUserSynthControlSpecs_;
     int32 nextDynamicGraphNodeId_ = 100;
     std::array<AudioVoice, kAudioVoiceCount> audioVoices_{};
     std::array<std::array<Graph*, 3>, kPlayerCount> reverbGraphs_{};
-    std::array<Graph*, kPlayerCount> playerEffectGraphs_{};
-    std::array<int, kPlayerCount> playerEffectDefinitionIndices_ = [] {
-        std::array<int, kPlayerCount> indices{};
-        indices.fill(-1);
+    std::array<std::array<Graph*, kMaxPlayerEffectChain>, kPlayerCount>
+        playerEffectGraphs_{};
+    std::array<PlayerEffectChainTransition, kPlayerCount> playerEffectTransitions_{};
+    std::array<float, kPlayerCount> shapeEffectSmoothed_{};
+    std::array<float, kPlayerCount> driveEffectSmoothed_{};
+    std::array<float, kPlayerCount> bitsEffectSmoothed_{};
+    std::array<float, kPlayerCount> crushEffectSmoothed_{};
+    std::array<dexter::FoxDotBitcrusherState, kPlayerCount> bitcrusherStates_{};
+    std::array<std::array<std::array<float, 7>, kMaxPlayerEffectChain>,
+               kPlayerCount> playerEffectControlSmoothed_{};
+    std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount>
+        playerEffectControlEffectIndices_ = [] {
+        std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount> indices{};
+        for (auto& player : indices)
+            player.fill(-1);
+        return indices;
+    }();
+    std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount>
+        playerEffectDefinitionIndices_ = [] {
+        std::array<std::array<int, kMaxPlayerEffectChain>, kPlayerCount> indices{};
+        for (auto& player : indices)
+            player.fill(-1);
         return indices;
     }();
     std::string ugenPluginPath_;
@@ -3642,6 +6443,21 @@ private:
     std::uint64_t sampleWorldGeneration_ = 1;
     std::array<PatternState, kPlayerCount> activePatterns_{};
     std::array<PatternState, kPlayerCount> pendingPatterns_{};
+    std::array<PendingEditorControl, kPlayerCount> pendingEditorControls_{};
+    std::array<PendingEditorEffectControls, kPlayerCount>
+        pendingEditorEffectControls_{};
+    std::array<PendingEditorUserSynthControls, kPlayerCount>
+        pendingEditorUserSynthControls_{};
+    std::array<std::atomic<std::uint32_t>, kPlayerCount> editorPlayerState_{};
+    std::array<std::array<std::atomic<float>, 7>, kPlayerCount>
+        editorPlayerValues_{};
+    std::array<std::array<std::array<std::atomic<float>, 7>,
+                          kMaxPlayerEffectChain>, kPlayerCount>
+        editorPlayerEffectValues_{};
+    std::array<std::array<std::atomic<float>,
+                          dexter::kMaxPortableUserSynthControls>,
+                kPlayerCount> editorPlayerUserSynthValues_{};
+    std::array<std::atomic<std::uint64_t>, kPlayerCount> editorPlayerEffectChain_{};
     std::uint8_t pendingPlayerMask_ = 0;
     std::array<bool, kPlayerCount> pendingMuteStates_{};
     std::uint8_t pendingMuteMask_ = 0;
@@ -3651,20 +6467,39 @@ private:
         values.fill(1.0f);
         return values;
     }();
+    std::array<float, kPlayerCount> editorAmplitudeCurrent_ = [] {
+        std::array<float, kPlayerCount> values{};
+        values.fill(1.0f);
+        return values;
+    }();
+    std::array<float, kPlayerCount> editorCutoffCurrent_ = [] {
+        std::array<float, kPlayerCount> values{};
+        values.fill(20000.0f);
+        return values;
+    }();
     std::array<std::uint64_t, kPlayerCount> patternStartSamples_{};
     std::uint64_t sampleClock_ = 0;
     std::array<std::array<ActiveMidiGate, kMaxPolyphony>, kPlayerCount> activeMidiGates_{};
     std::atomic<bool> stopRequested_{false};
     std::mutex scriptThreadMutex_;
     std::thread scriptThread_;
+    std::atomic<std::uint64_t> scSourceGeneration_{0};
+    std::atomic<bool> scPreparationStatusOverride_{false};
+    std::mutex catalogThreadMutex_;
+    std::thread catalogThread_;
+    bool catalogDiscoveryStarted_ = false;
     std::atomic<bool> scriptRunning_{false};
     std::atomic<std::uint64_t> scriptGeneration_{0};
     std::mutex statusMutex_;
     std::string editorStatus_ = "Ready. Use p1 >> sequence(...) or play().";
+    std::mutex editorCatalogMutex_;
+    std::vector<std::string> editorExternalSynthNames_;
     std::mutex editorStateMutex_;
     std::string editorSource_ =
         "tempo(120)\r\nplay([60, 64, 67, 72], step=0.5, duration=0.45)\r\n";
     bool hasEditorSource_ = true;
+    std::string superColliderSource_ = defaultSuperColliderSource();
+    bool hasSuperColliderSource_ = true;
 };
 
 } // namespace Steinberg::Vst
@@ -3677,7 +6512,7 @@ DEF_CLASS2(INLINE_UID(0xC7F03BC1, 0xDEEC47AA, 0x8E28B107, 0xF9B1A553),
            "Dexter U.S FoxDot",
            0,
            "Instrument|Synth",
-           "0.4.78",
+    DEXTER_PLUGIN_VERSION,
            kVstVersionString,
            Steinberg::Vst::DexterSCTone::createInstance)
 

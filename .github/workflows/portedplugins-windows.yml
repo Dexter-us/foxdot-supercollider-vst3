@@ -1,0 +1,212 @@
+name: Windows PortedPlugins (formerly MKPlugins) add-on pack
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-portedplugins:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out pinned SuperCollider 3.15 headers only
+        uses: actions/checkout@v4
+        with:
+          repository: supercollider/supercollider
+          ref: ef5771bce3d1c9c780cafd58cf032ec4a3f36d10
+          path: sc-source
+          submodules: false
+          fetch-depth: 1
+
+      - name: Check out pinned PortedPlugins source
+        uses: actions/checkout@v4
+        with:
+          repository: madskjeldgaard/portedplugins
+          ref: c6c0d7430e9bc8e8aaeae3db8263e1dbb8f398eb
+          path: portedplugins-source
+          submodules: false
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate player wrappers and categorized example
+        shell: pwsh
+        run: |
+          python tools/test-pattern-api.py `
+            spikes/vst3-callback/python_runtime.cpp `
+            spikes/vst3-callback/Portable
+          if ($LASTEXITCODE -ne 0) { throw "PortedPlugins wrapper compatibility tests failed." }
+
+      - name: Configure scsynth modules only
+        shell: pwsh
+        run: |
+          cmake -S .\portedplugins-source -B "$env:RUNNER_TEMP\portedplugins-build" `
+            -DSC_PATH="$env:GITHUB_WORKSPACE\sc-source" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\portedplugins-install" `
+            -DCMAKE_CXX_FLAGS="/D_USE_MATH_DEFINES" `
+            -DSUPERNOVA=OFF -DSCSYNTH=ON -DNOVA_SIMD=OFF `
+            -DUSE_DAISYSP_LIB=ON
+          if ($LASTEXITCODE -ne 0) { throw "PortedPlugins CMake configuration failed." }
+
+      - name: Build modules and install classes/help
+        shell: pwsh
+        run: |
+          cmake --build "$env:RUNNER_TEMP\portedplugins-build" `
+            --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "PortedPlugins Windows build failed." }
+          cmake --install "$env:RUNNER_TEMP\portedplugins-build" --config Release
+          if ($LASTEXITCODE -ne 0) { throw "PortedPlugins install step failed." }
+
+      - name: Verify module set and package corresponding sources
+        shell: pwsh
+        run: |
+          $expected = @(
+            "AnalogBassDrum", "AnalogChew", "AnalogDegrade", "AnalogFoldOsc",
+            "AnalogLoss", "AnalogPhaser", "AnalogPhaserMod", "AnalogSnareDrum",
+            "AnalogTape", "AnalogVintageDistortion", "BLOsc", "Chen",
+            "DCompressor", "Fverb", "HarmonicOsc", "LockhartWavefolder", "LPG",
+            "NeoFormant", "NeoVarSawOsc", "NonlinearFilter", "OscBank",
+            "PhasorModal", "Resonator", "Rongs", "StringVoice", "VA1Pole",
+            "VadimFilter", "VADiodeFilter", "VAKorg35", "VALadder", "VASEM12",
+            "VarShapeOsc", "VosimOsc", "ZOsc"
+          )
+          $installed = "$env:RUNNER_TEMP\portedplugins-install\PortedPlugins"
+          $build = "$env:RUNNER_TEMP\portedplugins-build"
+          foreach ($name in $expected) {
+            $module = Get-ChildItem $build -Filter "${name}_scsynth.scx" `
+              -File -Recurse | Select-Object -First 1
+            if (-not $module) {
+              $module = Get-ChildItem $installed -Filter "${name}_scsynth.scx" `
+                -File -Recurse | Select-Object -First 1
+            }
+            $class = Join-Path "$installed\Classes" "$name.sc"
+            $help = Join-Path "$installed\HelpSource\Classes" "$name.schelp"
+            if (-not $module) { throw "Missing module $name.scx" }
+            if (-not (Test-Path $class)) { throw "Missing SuperCollider class $name.sc" }
+            if (-not (Test-Path $help)) { throw "Missing help file $name.schelp" }
+          }
+
+          $pack = "$env:RUNNER_TEMP\dexter-portedplugins-win-x64"
+          $extension = "$pack\Extensions\PortedPlugins"
+          New-Item -ItemType Directory -Force `
+            "$pack\Portable\SCPlugins", $extension, `
+            "$pack\Portable\SynthDefs", "$pack\Portable\Examples", `
+            "$pack\Sources\PortedPlugins-SynthDef-source", `
+            "$pack\Licenses" | Out-Null
+          Copy-Item "$installed\*" $extension -Recurse -Force
+          foreach ($name in $expected) {
+            $module = Get-ChildItem $build -Filter "${name}_scsynth.scx" `
+              -File -Recurse | Select-Object -First 1
+            if (-not $module) {
+              $module = Get-ChildItem $installed -Filter "${name}_scsynth.scx" `
+                -File -Recurse | Select-Object -First 1
+            }
+            Copy-Item $module.FullName "$pack\Portable\SCPlugins"
+          }
+          $wrapperNames = @(
+            "PortedAnalogBassDrum", "PortedAnalogSnareDrum",
+            "PortedAnalogFoldOsc", "PortedBLOsc", "PortedNeoVarSawOsc",
+            "PortedStringVoice", "PortedVosimOsc", "PortedZOsc",
+            "PortedRongs", "PortedPhasorModal", "PortedResonator",
+            "PortedResonatorFX", "PortedFverbFX",
+            "PortedAnalogTapeFX", "PortedAnalogChewFX",
+            "PortedAnalogDegradeFX", "PortedAnalogLossFX",
+            "PortedAnalogPhaserFX", "PortedAnalogVintageDistortionFX",
+            "PortedLockhartWavefolderFX", "PortedDCompressorFX"
+          )
+          $wrapperSource = "$env:GITHUB_WORKSPACE\UGens\PortedPlugins\SynthDefs"
+          foreach ($name in $wrapperNames) {
+            $binary = Join-Path $wrapperSource ($name + ".scsyndef")
+            if (-not (Test-Path $binary)) {
+              throw "Missing precompiled player wrapper: $name.scsyndef"
+            }
+            Copy-Item $binary "$pack\Portable\SynthDefs"
+            Copy-Item $binary "$pack\Sources\PortedPlugins-SynthDef-source"
+            $sidecar = Join-Path $wrapperSource ($name + ".controls")
+            if (Test-Path $sidecar) {
+              Copy-Item $sidecar "$pack\Portable\SynthDefs"
+              Copy-Item $sidecar "$pack\Sources\PortedPlugins-SynthDef-source"
+            }
+          }
+          Copy-Item "$env:GITHUB_WORKSPACE\UGens\PortedPlugins\build-player-synthdefs.scd" `
+            "$pack\Sources\PortedPlugins-SynthDef-source"
+          Copy-Item "UGens\PortedPlugins\Examples\232-portedplugins-players.py", `
+            "UGens\PortedPlugins\Examples\232b-ported-wrapper-octave-check.py", `
+            "UGens\PortedPlugins\Examples\233-ported-modal-resonator-voices.py", `
+            "UGens\PortedPlugins\Examples\234-ported-resonator-with-reverb.py", `
+            "UGens\PortedPlugins\Examples\235-ported-analog-tape.py", `
+            "UGens\PortedPlugins\Examples\236-ported-analog-chew.py", `
+            "UGens\PortedPlugins\Examples\237-ported-analog-degrade.py", `
+            "UGens\PortedPlugins\Examples\238-ported-analog-loss.py", `
+            "UGens\PortedPlugins\Examples\239-ported-analog-phaser.py", `
+            "UGens\PortedPlugins\Examples\240-ported-vintage-distortion.py", `
+            "UGens\PortedPlugins\Examples\241-ported-lockhart-wavefolder.py", `
+            "UGens\PortedPlugins\Examples\242-ported-dcompressor.py" `
+            "$pack\Portable\Examples"
+
+          $sourceArchive = "$pack\Sources\PortedPlugins-source.zip"
+          git -C "$env:GITHUB_WORKSPACE\portedplugins-source" archive `
+            --format=zip `
+            --output="$sourceArchive" `
+            c6c0d7430e9bc8e8aaeae3db8263e1dbb8f398eb
+          if ($LASTEXITCODE -ne 0) { throw "Could not archive pinned PortedPlugins source." }
+
+          $daisy = "$env:RUNNER_TEMP\portedplugins-build\_deps\daisysp-src"
+          if (-not (Test-Path "$daisy\LICENSE")) {
+            throw "The pinned DaisySP source or license is missing."
+          }
+          Compress-Archive -Path "$daisy\*" `
+            -DestinationPath "$pack\Sources\DaisySP-v0.0.2-source.zip" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\portedplugins-source\LICENSE" `
+            "$pack\Licenses\PortedPlugins-GPL-3.0.txt"
+          Copy-Item "$daisy\LICENSE" "$pack\Licenses\DaisySP-LICENSE.txt"
+          Copy-Item "UGens\PortedPlugins\README.md" "$pack\README-install.txt"
+
+          $manifest = "$pack\SHA256SUMS.txt"
+          Get-ChildItem $pack -File -Recurse |
+            Where-Object { $_.FullName -ne $manifest } |
+            Sort-Object FullName |
+            ForEach-Object {
+              $relative = $_.FullName.Substring($pack.Length + 1)
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $relative"
+            } | Set-Content -Encoding ascii $manifest
+
+          if ((Get-ChildItem "$pack\Portable\SCPlugins" -Filter "*.scx").Count -ne $expected.Count) {
+            throw "The VST Portable/SCPlugins payload is incomplete."
+          }
+          if ((Get-ChildItem "$pack\Portable\SynthDefs" -Filter "*.scsyndef").Count -ne $wrapperNames.Count) {
+            throw "The VST Portable/SynthDefs payload is incomplete."
+          }
+          $controlFiles = Get-ChildItem "$pack\Portable\SynthDefs" -Filter "*.controls"
+          if ($controlFiles.Count -lt 10 -or $controlFiles.Count -gt $wrapperNames.Count) {
+            throw "The userSynth control sidecar set is incomplete."
+          }
+          Compress-Archive -Path "$pack\*" `
+            -DestinationPath "$env:RUNNER_TEMP\dexter-portedplugins-win-x64.zip" -Force
+          $archive = [System.IO.Compression.ZipFile]::OpenRead(
+            "$env:RUNNER_TEMP\dexter-portedplugins-win-x64.zip")
+          try {
+            $count = ($archive.Entries | Where-Object {
+              $_.FullName -match "^Portable/SCPlugins/[^/]+\.scx$"
+            }).Count
+            if ($count -ne $expected.Count) {
+              throw "Pack archive contains $count modules; expected $($expected.Count)."
+            }
+          } finally {
+            $archive.Dispose()
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dexter-portedplugins-win-x64-sc-3.15
+          path: ${{ runner.temp }}/dexter-portedplugins-win-x64.zip
+          if-no-files-found: error
+          retention-days: 14

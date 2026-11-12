@@ -1,6 +1,108 @@
 # Dexter U.S. FoxDot VST3
 
+## User manual (offline HTML)
+
+[Download the HTML manual](https://raw.githubusercontent.com/Dexter-us/foxdot-supercollider-vst3/refs/heads/spike/airwindows-timevar-controls/spikes/vst3-callback/Portable/Dexter-US-FoxDot-Manual.html) · [View the manual source](spikes/vst3-callback/Portable/Dexter-US-FoxDot-Manual.html)
+
+The revised v0.4.201 manual includes a first-15-minutes tutorial, categorized
+instrument/effect directory, bounded control ranges, troubleshooting, embedded
+examples, and author/GitHub/Patreon information. It is self-contained and works
+offline. The Windows packager includes it as
+`dexter_sc_tone.vst3/Portable/Dexter-US-FoxDot-Manual.html`; open that file in a
+web browser, not in the Python or SuperCollider Run tab. The directory is a
+reference catalog: optional instrument/effect entries still require their matching
+add-on packs. Documentation-only update; the VST version remains 0.4.201.
+
+
 A Windows x64 VST3 prototype for Python-based live-coded music, using a small FoxDot-inspired pattern API and an embedded SuperCollider synthesis engine.
+
+Version 0.4.195 adds `DexterGranularFX`, a stock-SuperCollider player insert
+with four selectable modes: grain cloud, rhythmic slicing, captured freeze, and
+live-player granulation. Its bounded controls appear in the Effects panel under
+Granular → Cloud / Slicer / Freeze / Live. Portable Examples 243–246 show one
+mode each. No external UGen pack is needed.
+
+Version 0.4.194 adds eight PortedPlugins effects as categorized player inserts:
+AnalogTape, AnalogChew, AnalogDegrade, AnalogLoss, AnalogPhaser,
+AnalogVintageDistortion, LockhartWavefolder, and DCompressor. Each gets bounded
+live controls and an isolated Portable example (235–242). DCompressor uses its
+internal detector because the player chain has no external sidechain bus;
+AnalogLoss controls are smoothed and should not be rapidly automated. Both
+Windows add-on workflows package the wrappers with their matching PortedPlugins
+modules and examples.
+
+Version 0.4.193 added three PortedPlugins resonator voices, a stereo Resonator
+insert, and the pack's Fverb stereo reverb insert. Examples 232b–234 cover safe
+octave checks, the modal voices, and the Resonator/Fverb inserts alongside
+JPverb. The optional Windows add-on includes the corresponding wrappers and
+slider controls with their required PortedPlugins `.scx` modules.
+
+Version 0.4.192 added eight curated PortedPlugins player wrappers: two analog
+drums, five oscillator voices, and a plucked-string voice. The separate Windows
+add-on keeps their `.scsyndef` files and bounded `.controls` sidecars together
+with the required PortedPlugins `.scx` modules. Example 232 covers those voices.
+
+Version 0.4.191 adds finite pattern-valued `sleep()` and Sardine-style
+oversleeping inside bounded `@swim`: `sleep(P[0.5, 1.25])` selects by cycle
+iterator `i`, and later events may land after the next cycle starts. Expanded
+events are kept in chronological order; each sample hit remains paired with its
+sample request. Per-call and total offsets, event counts, and the 4096-beat
+timeline stay bounded. This does not add Sardine's SPL/Ziffers/Vortex languages
+or its `D()`/`N()` senders; see Example 231.
+
+Version 0.4.190 adds bounded ordered chains of up to two per-note inserts:
+`fx_event=P[("Chorus", "Greyhole"), None, ...]` applies each pair in order,
+and seeded `PRand` can choose among such chains. `fx_event_mix` is broadcast
+to both inserts; their other controls use SynthDef defaults. This is a
+PbindFx-inspired subset, not a complete clone; see Example 230.
+Version 0.4.189 adds a smoothed `fx_mix` dry/wet control to Airwindows
+TapeDelay2 and Echojam, and lets seeded `PRand` choose between installed
+per-note effects. Example 229 demonstrates reproducible random delay choices
+and a separately seeded per-note wet amount.
+Version 0.4.188 lets `fx_event` select installed delay and reverb SynthDefs per
+note, including JPverb, Greyhole, and selected Limut effects.
+Each note has its own stereo insert graph; tails process zero input until quiet
+or a 12-second cap, with at most four tails per player. It also fixes the sclang
+audio-bus range mismatch exposed by 0.4.187's Windows integration test. Example
+228 demonstrates the per-note delay/reverb selector.
+
+Version 0.4.186 makes the script worker's state visible: Run changes to a
+disabled Busy button until the current request finishes, and duplicate Run
+attempts receive a wait-for-ready message rather than a misleading compatibility
+error. PShift is now a per-player control; its slider is hidden until a selected
+player actually uses `pshift`.
+
+Version 0.4.146 keeps the full player-control row visible and disabled until a
+player is selected, so PShift is discoverable. Clicking a `pN >>` assignment
+in the editor selects that player in the Players panel. Example 184 demonstrates
+the PShift and bitcrusher controls together.
+
+Version 0.4.145 adds bounded `PIndex`, seeded `PxRand` (no adjacent
+repeats), and seeded weighted `PwRand`, with Portable Example 183. Synth and
+Effect family categories now start collapsed, and their first click expands
+them.
+
+Version 0.4.144 adds the FoxDot finite generators `P10`, `PBern`, `PSine`,
+`PTri`, and `PSum`; corrects the compatibility checker so `.expand()` is
+accepted on `Pvar` but not ordinary finite `P` patterns; adds a live PShift
+semitone slider for any selected player; and makes the Synths/Effects category
+headings collapsible. Examples 181 and 182 demonstrate the generators and
+PShift slider.
+
+Version 0.4.143 groups the Synths and Effects catalogs by family and adds
+player-specific Bits and Crush sliders. See Example 180.
+
+Version 0.4.142 expands the editor catalog: sorted instruments, a fuller native
+Effects list, right-click Insert/About actions, and drag-and-drop onto player
+lines—including a blank `p3 >>` starter. About opens a bundled HTML reference
+with effect ranges and optional-pack notes. Example 179 demonstrates the workflow.
+Catalog actions edit the script; click Run to apply. Audio remains in the VST's
+local engine, with no OSC/server change.
+
+Version 0.4.79 adds beat-synced `var()`/`linvar()` modulation for the
+per-player Airwindows TapeDelay2 and Echojam controls, with 15 ms smoothing for
+changes and Portable Example 105. The current sample pack and UGen requirements
+are unchanged.
 
 Version 0.4.68 adds `Clock.swing(amount=0.1)`, matching FoxDot's alternating
 half-beat clock nudge in the plugin's sample-accurate scheduler; zero disables
@@ -69,7 +171,7 @@ build-time graph compilation, and the explicit host/safety adaptations.
 
 ## Current prototype
 
-- Windows native editor with Run, Stop, Open, Save, and Save As. Ninety-two starter patterns are separate `.py` files in the `Portable` folder.
+- Windows native editor with Run, Stop, Open, Save, and Save As. Starter patterns are separate `.py` files in the `Portable` folder.
 - Open and Save As explicitly start in the `Portable` folder beside the VST3 bundle; ordinary Save writes back to the currently opened or saved script.
 - The current script is stored in VST3 project state. Restoring a project restores the code but does not execute it automatically.
 - `tempo(bpm)`, `scale(name="major", root=60)`, `play(...)`, and eight independently editable players (`p1`–`p8`) using `p1 >> sequence(...)`; `.stop()` stops one player without stopping the others. Pattern helpers include `reverse`, `rotate`, `repeat`, `palindrome`, `stutter`, `interleave`, `transpose`, and `euclid`; finite FoxDot-style `P[...]` note/rest/chord literals and numeric `+`/`-` transposition are supported. Players can choose the four basic oscillator modes plus twenty-one embedded FoxDot-derived synths: bass, varsaw, dirt, jbass, noise, dub, growl, soprano, crunch, lazer, rave, bell, gong, marimba, pluck, twang, donk, squish, charm, spark, and blip. These controls affect plugin audio; MIDI output remains note events.

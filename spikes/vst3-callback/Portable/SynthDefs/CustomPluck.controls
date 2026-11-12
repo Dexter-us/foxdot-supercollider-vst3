@@ -1,0 +1,4 @@
+# Optional live timbre controls for the bundled CustomPluck SynthDef.
+# Defaults preserve its original sine-only tone.
+brightness 0.0 1.0 0.0
+sub 0.0 0.5 0.0

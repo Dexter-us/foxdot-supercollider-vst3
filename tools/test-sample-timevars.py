@@ -9,6 +9,8 @@ source = (root / "spikes/vst3-callback/processor.cpp").read_text()
 start = source.index("    static bool parseTimeVarControl(")
 end = source.index("    void setEditorStatus(", start)
 functions = source[start:end]
+struct_start = source.index("    struct TimeVarControl {")
+control_struct = source[struct_start:source.index("\n    };", struct_start) + 7]
 cpp = r"""
 #include <algorithm>
 #include <array>
@@ -19,12 +21,8 @@ cpp = r"""
 #include <string>
 class SampleControls {
 public:
-    struct TimeVarControl {
-        bool active=false, linear=false;
-        std::size_t count=0;
-        std::array<double,8> values{}, durations{};
-    };
 """
+cpp += control_struct
 cpp += functions
 cpp += r"""
 };

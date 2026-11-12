@@ -1,6 +1,7 @@
 # Example 94: play a precompiled SynthDef from Portable/SynthDefs.
-# CustomPluck.scsyndef is included in Portable/SynthDefs. To edit the patch,
-# compile its .scd source offline with sclang and restart the DAW.
+# Select either player in Players to adjust CustomPluck's brightness/sub sliders.
+# Defaults preserve the original sine-only sound. To edit the patch, compile
+# its .scd source offline with sclang and restart the DAW.
 tempo(112)
 Scale.default.set("minor")
 
