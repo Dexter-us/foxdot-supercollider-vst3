@@ -74,6 +74,21 @@ class DelaySynthDefBuilderTests(unittest.TestCase):
             ]):
                 BUILDER.main()
 
+    def test_mode_switches_use_numeric_selectors(self):
+        multi = (
+            BUILDER.SOURCE_DIR /
+            "DexterMultiTapDelayFX.scd"
+        ).read_text(encoding="utf-8")
+        feedback = (
+            BUILDER.SOURCE_DIR /
+            "DexterFeedbackDelayFX.scd"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Select.kr(mode, [1, 1, randomGate])", multi)
+        self.assertIn(
+            "Select.kr(fx_mode.round.clip(0, 4), [1, 1, 1, 1, chance])",
+            feedback)
+        self.assertNotIn("Select.kr(mode == ", multi + feedback)
+
 
 if __name__ == "__main__":
     unittest.main()

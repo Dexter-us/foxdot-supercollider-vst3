@@ -1,9 +1,12 @@
 # Dexter U.S. FoxDot-inspired SuperCollider VST3 prototype
 
-Version 0.4.198 fixes packaging compilation for the 0.4.197 delay inserts:
-both SynthDefs are now sent to one pinned sclang session, avoiding a second class
-library startup. The bounded timeout reports partial sclang output if startup or
-compilation stalls, so a Windows failure identifies the actual stage.
+Version 0.4.199 fixes the delay SynthDef mode selectors: they now pass integer
+indices to SuperCollider `Select` rather than Boolean comparisons. The Windows
+retry exposed a real graph-build error that had previously hidden behind the
+sclang process waiting after the failed definition.
+Version 0.4.198 sends both delay SynthDefs to one pinned sclang session,
+avoiding a second class-library startup, and reports partial sclang output if
+startup or compilation stalls.
 `DexterMultiTapDelayFX` provides beat-synced, free-seconds, and per-tap
 probability modes; `DexterFeedbackDelayFX` provides filtered, saturated,
 pitch-shifted, stereo cross-feedback, and seconds-based chance-gated feedback

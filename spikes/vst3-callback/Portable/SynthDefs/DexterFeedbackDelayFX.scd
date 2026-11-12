@@ -13,7 +13,7 @@ SynthDef(\DexterFeedbackDelayFX, {
     var ratio = Lag.kr(fx_pitch.clip(0.5, 2), 0.025);
     var timer = Impulse.kr(1 / fx_interval.clip(0.1, 60));
     var chance = Lag.kr(TRand.kr(0, 1, timer) < fx_probability.clip(0, 1), 0.03);
-    var timedGate = Select.kr(mode == 4, [1, chance]);
+    var timedGate = Select.kr(fx_mode.round.clip(0, 4), [1, 1, 1, 1, chance]);
     var filtered = LPF.ar(source, 6500);
     var saturated = tanh(source * 4);
     var shifted = PitchShift.ar(source, 0.12, ratio, 0, 0);

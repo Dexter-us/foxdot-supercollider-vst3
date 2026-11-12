@@ -25,7 +25,7 @@ SynthDef(\DexterMultiTapDelayFX, {
         var active = Lag.kr((taps >= (index + 1)), 0.02);
         var randomGate = Lag.kr(
             (TRand.kr(0, 1, onset) < probability), 0.025);
-        var gate = Select.kr(mode == 2, [1, randomGate]);
+        var gate = Select.kr(mode, [1, 1, randomGate]);
         var tapTime = (baseTime * (index + 1)).clip(0.01, 7.95);
         var tap = CombC.ar(mono, 8.1, tapTime, decay);
         var pan = ((index % 2) * 2 - 1) * 0.6;

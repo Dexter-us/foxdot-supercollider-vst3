@@ -1,8 +1,12 @@
-0.4.198 fixes packaging compilation for the 0.4.197 delay effects. Both
-SynthDefs are sent through one pinned sclang session, so the class library is
-loaded once instead of once per definition. The bounded timeout now preserves
-partial sclang output for diagnosing a stall. Windows packaging still uses the
-cached SuperCollider 3.15 runtime and does not rebuild the engine or UGen modules.
+0.4.199 fixes the delay SynthDef mode selectors to pass numeric indices to
+SuperCollider Select; Boolean comparison results were rejected during graph
+construction. The failed definition had left sclang waiting, so the timeout
+diagnostics now expose the actual graph error.
+
+0.4.198 sends both definitions through one pinned sclang session, loading the
+class library only once, and preserves partial output at the bounded timeout.
+Windows packaging uses the cached SuperCollider 3.15 runtime; it does not rebuild
+the engine or UGen modules.
 
 0.4.197 adds two built-in player delay effects to Effects → Delay:
 DexterMultiTapDelayFX and DexterFeedbackDelayFX. Windows packaging compiles
