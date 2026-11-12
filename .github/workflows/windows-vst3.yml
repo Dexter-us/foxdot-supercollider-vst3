@@ -14,6 +14,12 @@ on:
       - "tools/test-sclang-host-bridge.cpp"
       - ".github/workflows/windows-vst3.yml"
   workflow_dispatch:
+    inputs:
+      allow_cold_build:
+        description: 'Allow a one-time full SuperCollider and UGen build when caches miss'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -65,6 +71,9 @@ jobs:
           if ("${{ steps.sc_cache.outputs.cache-hit }}" -eq "true") {
             Write-Host "SuperCollider build cache hit; compiling the VST3 only."
             $buildParameters["UseCachedSuperColliderBuild"] = $true
+          }
+          elseif ("${{ inputs.allow_cold_build }}" -eq "true") {
+            Write-Host "Explicitly approved cold build; compiling SuperCollider and bundled UGens."
           }
           else {
             throw "SuperCollider cache miss: stopping rather than rebuilding the engine/UGens. Reuse the populated PR cache or obtain explicit approval for another one-time cold build."
